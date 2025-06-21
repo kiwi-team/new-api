@@ -103,6 +103,15 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	}
 
 	request := buildTestRequest(testModel)
+	requestJson, err := json.Marshal(request)
+	if err != nil {
+		common.SysError(fmt.Sprintf("marshal request failed: %s", err.Error()))
+		// Depending on how you want to handle this error, you might return here
+		// return err, nil
+	}
+	// Now requestJson is a byte slice containing the JSON representation of request
+	// You can convert it to a string if needed: string(requestJson)
+
 	// 创建一个用于日志的 info 副本，移除 ApiKey
 	logInfo := *info
 	logInfo.ApiKey = ""
@@ -168,7 +177,7 @@ func testChannel(channel *model.Channel, testModel string) (err error, openAIErr
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
 	model.RecordConsumeLog(c, 1, channel.Id, usage.PromptTokens, usage.CompletionTokens, info.OriginModelName, "模型测试",
-		quota, "模型测试", 0, quota, int(consumedTime), false, info.Group, other)
+		quota, "模型测试", 0, quota, int(consumedTime), false, info.Group, other, string(requestJson), string(respBody))
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return nil, nil
 }

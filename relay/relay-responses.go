@@ -14,6 +14,7 @@ import (
 	"one-api/service"
 	"one-api/setting"
 	"one-api/setting/model_setting"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -47,12 +48,23 @@ func getInputTokens(req *dto.OpenAIResponsesRequest, info *relaycommon.RelayInfo
 }
 
 func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
 	req, err := getAndValidateResponsesRequest(c)
 	if err != nil {
 		common.LogError(c, fmt.Sprintf("getAndValidateResponsesRequest error: %s", err.Error()))
 		return service.OpenAIErrorWrapperLocal(err, "invalid_responses_request", http.StatusBadRequest)
 	}
 
+	requestStr := ""
+	if saveRequestResponse {
+		// 序列化 textRequest 为 JSON 字符串
+		requestBytes, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			common.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
+		} else {
+			requestStr = string(requestBytes)
+		}
+	}
 	relayInfo := relaycommon.GenRelayInfoResponses(c, req)
 
 	if setting.ShouldCheckPromptSensitive() {
@@ -155,6 +167,19 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 		}
 	}
 
+	// Read the response body to capture it for logging and then reset it for further processing
+	responseStr := ""
+	if saveRequestResponse {
+		responseBodyBytes, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			common.LogError(c, fmt.Sprintf("read response body failed: %s", err.Error()))
+			return service.OpenAIErrorWrapperLocal(err, "read_response_body_failed", http.StatusInternalServerError)
+		}
+		_ = httpResp.Body.Close()
+		httpResp.Body = io.NopCloser(bytes.NewBuffer(responseBodyBytes))
+		responseStr = string(responseBodyBytes)
+	}
+
 	usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
 	if openaiErr != nil {
 		// reset status code 重置状态码
@@ -165,7 +190,7 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 	if strings.HasPrefix(relayInfo.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
 	} else {
-		postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
+		postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
 	}
 	return nil
 }

@@ -225,7 +225,7 @@ func RelaySwapFace(c *gin.Context) *dto.MidjourneyResponse {
 				other["model_price"] = modelPrice
 				other["group_ratio"] = groupRatio
 				model.RecordConsumeLog(c, userId, channelId, 0, 0, modelName, tokenName,
-					quota, logContent, tokenId, userQuota, 0, false, group, other)
+					quota, logContent, tokenId, userQuota, 0, false, group, other, "", "")
 				model.UpdateUserUsedQuotaAndRequestCount(userId, quota)
 				channelId := c.GetInt("channel_id")
 				model.UpdateChannelUsedQuota(channelId, quota)
@@ -527,7 +527,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *dto.MidjourneyRespons
 				other["model_price"] = modelPrice
 				other["group_ratio"] = groupRatio
 				model.RecordConsumeLog(c, userId, channelId, 0, 0, modelName, tokenName,
-					quota, logContent, tokenId, userQuota, 0, false, group, other)
+					quota, logContent, tokenId, userQuota, 0, false, group, other, "", "")
 				model.UpdateUserUsedQuotaAndRequestCount(userId, quota)
 				channelId := c.GetInt("channel_id")
 				model.UpdateChannelUsedQuota(channelId, quota)

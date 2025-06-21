@@ -19,6 +19,7 @@ import (
 	"one-api/setting"
 	"one-api/setting/model_setting"
 	"one-api/setting/operation_setting"
+	"os"
 	"strings"
 	"time"
 
@@ -94,6 +95,19 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	if err != nil {
 		common.LogError(c, fmt.Sprintf("getAndValidateTextRequest failed: %s", err.Error()))
 		return service.OpenAIErrorWrapperLocal(err, "invalid_text_request", http.StatusBadRequest)
+	}
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+
+	requestStr := ""
+	responseStr := ""
+	// 序列化 textRequest 为 JSON 字符串
+	if saveRequestResponse {
+		requestBytes, marshalErr := json.Marshal(textRequest)
+		if marshalErr != nil {
+			common.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
+		} else {
+			requestStr = string(requestBytes)
+		}
 	}
 
 	if textRequest.WebSearchOptions != nil {
@@ -231,6 +245,18 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		}
 	}
 
+	if saveRequestResponse {
+		// Read the response body to capture it for logging and then reset it for further processing
+		responseBodyBytes, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			common.LogError(c, fmt.Sprintf("read response body failed: %s", err.Error()))
+			return service.OpenAIErrorWrapperLocal(err, "read_response_body_failed", http.StatusInternalServerError)
+		}
+		_ = httpResp.Body.Close()
+		httpResp.Body = io.NopCloser(bytes.NewBuffer(responseBodyBytes))
+		responseStr = string(responseBodyBytes)
+	}
+
 	usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
 	if openaiErr != nil {
 		// reset status code 重置状态码
@@ -241,7 +267,7 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	if strings.HasPrefix(relayInfo.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
 	} else {
-		postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
+		postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
 	}
 	return nil
 }
@@ -340,7 +366,7 @@ func returnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo, us
 }
 
 func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
-	usage *dto.Usage, preConsumedQuota int, userQuota int, priceData helper.PriceData, extraContent string) {
+	usage *dto.Usage, preConsumedQuota int, userQuota int, priceData helper.PriceData, extraContent string, requestStr string, responseStr string) {
 	if usage == nil {
 		usage = &dto.Usage{
 			PromptTokens:     relayInfo.PromptTokens,
@@ -543,5 +569,5 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		other["audio_input_price"] = audioInputPrice
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, relayInfo.ChannelId, promptTokens, completionTokens, logModel,
-		tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other)
+		tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other, requestStr, responseStr)
 }

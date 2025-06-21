@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tiktoken-go/tokenizer"
-	"github.com/tiktoken-go/tokenizer/codec"
 	"image"
 	"log"
 	"math"
@@ -16,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/tiktoken-go/tokenizer"
+	"github.com/tiktoken-go/tokenizer/codec"
 )
 
 // tokenEncoderMap won't grow after initialization
@@ -73,6 +74,13 @@ func getTokenNum(tokenEncoder tokenizer.Codec, text string) int {
 }
 
 func getImageToken(info *relaycommon.RelayInfo, imageUrl *dto.MessageImageUrl, model string, stream bool) (int, error) {
+	// 我们的key都是无限的。不用关系估算费用的问题
+	if imageUrl == nil {
+		return 0, fmt.Errorf("image_url_is_nil")
+	}
+	return 0, nil
+}
+func getImageTokenBak(info *relaycommon.RelayInfo, imageUrl *dto.MessageImageUrl, model string, stream bool) (int, error) {
 	if imageUrl == nil {
 		return 0, fmt.Errorf("image_url_is_nil")
 	}
@@ -153,6 +161,9 @@ func getImageToken(info *relaycommon.RelayInfo, imageUrl *dto.MessageImageUrl, m
 }
 
 func CountTokenChatRequest(info *relaycommon.RelayInfo, request dto.GeneralOpenAIRequest) (int, error) {
+	return 0, nil
+}
+func CountTokenChatRequestBak(info *relaycommon.RelayInfo, request dto.GeneralOpenAIRequest) (int, error) {
 	tkm := 0
 	msgTokens, err := CountTokenMessages(info, request.Messages, request.Model, request.Stream)
 	if err != nil {

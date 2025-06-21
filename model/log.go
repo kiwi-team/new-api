@@ -35,6 +35,8 @@ type Log struct {
 	Group            string `json:"group" gorm:"index"`
 	Ip               string `json:"ip" gorm:"index;default:''"`
 	Other            string `json:"other"`
+	Request          string `json:"request" gorm:"type:text"`
+	Response         string `json:"response" gorm:"type:text"`
 }
 
 const (
@@ -138,7 +140,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 
 func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens int, completionTokens int,
 	modelName string, tokenName string, quota int, content string, tokenId int, userQuota int, useTimeSeconds int,
-	isStream bool, group string, other map[string]interface{}) {
+	isStream bool, group string, other map[string]interface{}, requestStr string, responseStr string) {
 	common.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, 用户调用前余额=%d, channelId=%d, promptTokens=%d, completionTokens=%d, modelName=%s, tokenName=%s, quota=%d, content=%s", userId, userQuota, channelId, promptTokens, completionTokens, modelName, tokenName, quota, content))
 	if !common.LogConsumeEnabled {
 		return
@@ -176,7 +178,9 @@ func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens in
 			}
 			return ""
 		}(),
-		Other: otherStr,
+		Other:    otherStr,
+		Request:  requestStr,
+		Response: responseStr,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
