@@ -193,7 +193,7 @@ func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens in
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, export bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -226,7 +226,12 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	if export {
+		//err = tx.Order("logs.id asc").Omit("request", "response").Find(&logs).Error
+		err = tx.Order("logs.id asc").Find(&logs).Error
+	} else {
+		err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	}
 	if err != nil {
 		return nil, 0, err
 	}

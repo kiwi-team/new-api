@@ -1097,6 +1097,47 @@ const LogsTable = () => {
     setLogs(logs);
   };
 
+  const exportLogs = async (startIdx, pageSize, customLogType = null) => {
+    let url = '';
+    const {
+      username,
+      token_name,
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+      group,
+      logType: formLogType,
+    } = getFormValues(); 
+
+    // 使用传入的 logType 或者表单中的 logType 或者状态中的 logType
+    const currentLogType =
+      customLogType !== null
+        ? customLogType
+        : formLogType !== undefined
+          ? formLogType
+          : logType;
+
+    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    if (isAdminUser) {
+      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&export=true`;
+    } else {
+      url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}&export=true`;
+    }
+    url = encodeURI(url);
+    const res = await API.get(url);
+    console.log(res.data, res.data?.url);
+    if (res.data.data?.url) {
+        // 直接下载URL
+        window.open(res.data.data.url, '_blank');
+        showSuccess('导出成功，文件已生成');
+    } else {
+        // 显示错误信息
+        showError(res.data.data?.message || '导出失败，请重试');
+    }
+  }
+
   const loadLogs = async (startIdx, pageSize, customLogType = null) => {
     setLoading(true);
 
@@ -1400,6 +1441,16 @@ const LogsTable = () => {
                       className='!rounded-full'
                     >
                       {t('列设置')}
+                    </Button>
+                    <Button
+                      type='primary'
+                      loading={loading}
+                      className='!rounded-full'
+                      onClick={async () => {
+                        await exportLogs(1, pageSize);
+                      }}
+                    >
+                      {t('导出')}
                     </Button>
                   </div>
                 </div>
