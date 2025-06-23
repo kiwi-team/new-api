@@ -17,6 +17,14 @@ func SetWebRouter(router *gin.Engine, buildFS embed.FS, indexPage []byte) {
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 	router.Use(middleware.GlobalWebRateLimit())
 	router.Use(middleware.Cache())
+	// CSV文件下载中间件
+	router.Use(func(c *gin.Context) {
+		if strings.HasSuffix(c.Request.URL.Path, ".csv") {
+			c.Header("Content-Type", "text/csv")
+			c.Header("Content-Disposition", "attachment; filename=\""+strings.TrimPrefix(c.Request.URL.Path, "/")+"\"")
+		}
+		c.Next()
+	})
 	// 优先服务运行时创建的静态文件
 	router.Use(static.Serve("/", static.LocalFile("./web/dist", false)))
 	// 回退到嵌入的静态文件
