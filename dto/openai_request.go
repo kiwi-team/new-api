@@ -18,6 +18,11 @@ type FormatJsonSchema struct {
 	Strict      any    `json:"strict,omitempty"`
 }
 
+type AnthropicThinking struct {
+	Type         string `json:"type,omitempty"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
 type GeneralOpenAIRequest struct {
 	Model               string            `json:"model,omitempty"`
 	Messages            []Message         `json:"messages,omitempty"`
@@ -53,7 +58,7 @@ type GeneralOpenAIRequest struct {
 	Modalities          json.RawMessage   `json:"modalities,omitempty"`
 	Audio               json.RawMessage   `json:"audio,omitempty"`
 	EnableThinking      any               `json:"enable_thinking,omitempty"` // ali
-	THINKING            json.RawMessage   `json:"thinking,omitempty"`        // doubao
+	THINKING            json.RawMessage   `json:"thinking,omitempty"`        // doubao,anthropic
 	ExtraBody           json.RawMessage   `json:"extra_body,omitempty"`
 	WebSearchOptions    *WebSearchOptions `json:"web_search_options,omitempty"`
 	// OpenRouter Params

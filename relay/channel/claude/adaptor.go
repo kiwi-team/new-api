@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -69,6 +70,17 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	if strings.HasPrefix(request.Model, "claude-") {
+		var thinking dto.AnthropicThinking
+		err := json.Unmarshal(request.THINKING, &thinking)
+		if err != nil {
+			return nil, err
+		}
+		if request.THINKING != nil && thinking.Type == "enabled" {
+			request.Model = request.Model + "-thinking"
+		}
+	}
+
 	if a.RequestMode == RequestModeCompletion {
 		return RequestOpenAI2ClaudeComplete(*request), nil
 	} else {
