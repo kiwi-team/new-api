@@ -91,6 +91,9 @@ func Relay(c *gin.Context) {
 
 		go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
+		body, _ := common.GetRequestBody(c)
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, *openaiErr, string(body), requestId, c.ClientIP())
+
 		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
 			break
 		}
@@ -355,7 +358,7 @@ func RelayMidjourney(c *gin.Context) {
 func RelayNotImplemented(c *gin.Context) {
 	err := dto.OpenAIError{
 		Message: "API not implemented",
-		Type:    "new_api_error",
+		Type:    "toio_api_error",
 		Param:   "",
 		Code:    "api_not_implemented",
 	}

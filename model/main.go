@@ -257,6 +257,7 @@ func migrateDB() error {
 		&QuotaData{},
 		&Task{},
 		&Setup{},
+		&ErrorLog{},
 	)
 	if err != nil {
 		return err
