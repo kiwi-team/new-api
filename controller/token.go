@@ -1,11 +1,12 @@
 package controller
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"one-api/common"
 	"one-api/model"
 	"strconv"
+
+	"github.com/gin-gonic/gin"
 )
 
 func GetAllTokens(c *gin.Context) {
@@ -19,6 +20,21 @@ func GetAllTokens(c *gin.Context) {
 		size = common.ItemsPerPage
 	} else if size > 100 {
 		size = 100
+	}
+	getTotal, _ := strconv.Atoi(c.Query("return_total"))
+	if getTotal < 0 {
+		getTotal = 0
+	}
+	if getTotal == 1 {
+		tokens, _ := model.GetAllUserTokens(userId, (p-1)*100, 100)
+		total, _ := model.CountUserTokens(userId)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    tokens,
+			"total":   total,
+		})
+		return
 	}
 	tokens, err := model.GetAllUserTokens(userId, (p-1)*size, size)
 	if err != nil {

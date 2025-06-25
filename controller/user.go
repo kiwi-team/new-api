@@ -251,7 +251,7 @@ func GetAllUsers(c *gin.Context) {
 	if p < 1 {
 		p = 1
 	}
-	if pageSize < 0 {
+	if pageSize <= 0 {
 		pageSize = common.ItemsPerPage
 	}
 	users, total, err := model.GetAllUsers((p-1)*pageSize, pageSize)
