@@ -134,6 +134,8 @@ type MediaContent struct {
 	InputAudio any    `json:"input_audio,omitempty"`
 	File       any    `json:"file,omitempty"`
 	VideoUrl   any    `json:"video_url,omitempty"`
+	AudioUrl   any    `json:"audio_url,omitempty"`
+	InputVideo any    `json:"input_video,omitempty"`
 	// OpenRouter Params
 	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
@@ -213,12 +215,18 @@ type MessageVideoUrl struct {
 	Url string `json:"url"`
 }
 
+type MessageAudioUrl struct {
+	Url    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
 const (
 	ContentTypeText       = "text"
 	ContentTypeImageURL   = "image_url"
 	ContentTypeInputAudio = "input_audio"
 	ContentTypeFile       = "file"
 	ContentTypeVideoUrl   = "video_url" // 阿里百炼视频识别
+	ContentTypeAudioUrl   = "audio_url" // 阿里百炼视频识别
 )
 
 func (m *Message) GetPrefix() bool {
@@ -415,6 +423,29 @@ func (m *Message) ParseContent() []MediaContent {
 					Type: ContentTypeVideoUrl,
 					VideoUrl: &MessageVideoUrl{
 						Url: videoUrl,
+					},
+				})
+			} else if videoMap, ok := contentItem["video_url"].(map[string]any); ok {
+				contentList = append(contentList, MediaContent{
+					Type: ContentTypeVideoUrl,
+					VideoUrl: &MessageVideoUrl{
+						Url: videoMap["url"].(string),
+					},
+				})
+			}
+		case ContentTypeAudioUrl:
+			if audioUrl, ok := contentItem["audio_url"].(string); ok {
+				contentList = append(contentList, MediaContent{
+					Type: ContentTypeAudioUrl,
+					AudioUrl: &MessageAudioUrl{
+						Url: audioUrl,
+					},
+				})
+			} else if audioMap, ok := contentItem["audio_url"].(map[string]any); ok {
+				contentList = append(contentList, MediaContent{
+					Type: ContentTypeAudioUrl,
+					AudioUrl: &MessageAudioUrl{
+						Url: audioMap["url"].(string),
 					},
 				})
 			}

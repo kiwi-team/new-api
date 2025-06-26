@@ -187,6 +187,47 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
+	if strings.HasPrefix(request.Model, "gemini") {
+		//把给chat的gemini请求  audio_url, video_url 转换为 image_url
+		if strings.Contains(info.BaseUrl, "chataiapi") {
+			newMessages := make([]dto.Message, 0, len(request.Messages))
+			for _, message := range request.Messages {
+				newContentArr := make([]dto.MediaContent, 0)
+				arr := message.ParseContent()
+				for _, content := range arr {
+					var newContent dto.MediaContent
+					switch content.Type {
+					case dto.ContentTypeAudioUrl:
+						audioUrl := content.AudioUrl.(*dto.MessageAudioUrl)
+						newContent = dto.MediaContent{
+							Type: dto.ContentTypeImageURL,
+							ImageUrl: dto.MessageImageUrl{
+								Url: audioUrl.Url,
+							},
+						}
+					case dto.ContentTypeVideoUrl:
+						videoUrl := content.VideoUrl.(*dto.MessageVideoUrl)
+						newContent = dto.MediaContent{
+							Type: dto.ContentTypeImageURL,
+							ImageUrl: dto.MessageImageUrl{
+								Url: videoUrl.Url,
+							},
+						}
+					default:
+						newContent = content
+					}
+					newContentArr = append(newContentArr, newContent)
+				}
+				newMessage := message
+				newMessage.Content = newContentArr
+				newMessages = append(newMessages, newMessage)
+			}
+			request.Messages = newMessages
+		}
+		// gemini 模型去掉max_tokens参数
+		request.MaxTokens = 0
+	}
+
 	return request, nil
 }
 

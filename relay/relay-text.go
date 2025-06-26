@@ -81,6 +81,12 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 			return nil, errors.New("field instruction is required")
 		}
 	}
+	// 判断字符串是否以"o3"开头
+	if strings.HasPrefix(textRequest.Model, "o3") ||
+		strings.HasPrefix(textRequest.Model, "o1") {
+		// 处理以o3开头的模型
+		textRequest.TopK = 0
+	}
 	relayInfo.IsStream = textRequest.Stream
 	return textRequest, nil
 }
