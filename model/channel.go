@@ -633,3 +633,11 @@ func CountChannelsGroupByType() (map[int64]int64, error) {
 	}
 	return counts, nil
 }
+
+// 通过模型名称，查找对应的渠道
+func GetChannelsByModelName(modelName string) ([]*Channel, error) {
+	var channels []*Channel
+	sql := "select a.* from channels a join abilities b on a.id = b.channel_id where b.model = ? and a.status = ? and b.enabled = true"
+	err := DB.Raw(sql, modelName, 1).Scan(&channels).Error
+	return channels, err
+}

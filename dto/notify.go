@@ -7,6 +7,15 @@ type Notify struct {
 	Values  []interface{} `json:"values"`
 }
 
+type FeishuNotify struct {
+	MsgType string        `json:"msg_type"`
+	Content FeishuContent `json:"content"`
+}
+
+type FeishuContent struct {
+	Text string `json:"text"`
+}
+
 const ContentValueParam = "{{value}}"
 
 const (

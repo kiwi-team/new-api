@@ -701,3 +701,21 @@ func GetTagModels(c *gin.Context) {
 	})
 	return
 }
+
+func GetChannelsByModelName(c *gin.Context) {
+	modelName := c.Query("model")
+	channels, err := model.GetChannelsByModelName(modelName)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    channels,
+	})
+	return
+}

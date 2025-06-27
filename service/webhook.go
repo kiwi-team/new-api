@@ -116,3 +116,38 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 
 	return nil
 }
+
+func SendFeishuNotify(webhookURL string, secret string, data dto.FeishuNotify) error {
+	// 序列化负载
+	payloadBytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook payload: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create webhook request: %v", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+
+	// 如果有 secret，生成签名
+	if secret != "" {
+		signature := generateSignature(secret, payloadBytes)
+		req.Header.Set("X-Webhook-Signature", signature)
+	}
+
+	// 发送请求
+	client := GetImpatientHttpClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send webhook request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook request failed with status code: %d", resp.StatusCode)
+	}
+	return nil
+}
