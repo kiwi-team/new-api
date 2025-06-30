@@ -2,7 +2,6 @@ package controller
 
 import (
 	"fmt"
-	"github.com/samber/lo"
 	"net/http"
 	"one-api/common"
 	"one-api/constant"
@@ -16,6 +15,8 @@ import (
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/setting"
+
+	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 )

@@ -21,6 +21,7 @@ import (
 	"one-api/relay/channel/openai"
 	"one-api/relay/channel/palm"
 	"one-api/relay/channel/perplexity"
+	"one-api/relay/channel/sensenova"
 	"one-api/relay/channel/siliconflow"
 	"one-api/relay/channel/task/kling"
 	"one-api/relay/channel/task/suno"
@@ -92,6 +93,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &xai.Adaptor{}
 	case constant.APITypeCoze:
 		return &coze.Adaptor{}
+	case constant.APITypeSensenova:
+		return &sensenova.Adaptor{}
 	}
 	return nil
 }

@@ -189,7 +189,8 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 
 	if strings.HasPrefix(request.Model, "gemini") {
 		//把给chat的gemini请求  audio_url, video_url 转换为 image_url
-		if strings.Contains(info.BaseUrl, "chataiapi") {
+		if strings.Contains(info.BaseUrl, "chataiapi") ||
+			strings.Contains(info.BaseUrl, "guoguo") {
 			newMessages := make([]dto.Message, 0, len(request.Messages))
 			for _, message := range request.Messages {
 				newContentArr := make([]dto.MediaContent, 0)
