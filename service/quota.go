@@ -381,20 +381,7 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
 	if quota > 0 {
-		//userQuota, _ := model.GetUserQuota(relayInfo.UserId, true)
 		err = model.DecreaseUserQuota(relayInfo.UserId, quota)
-		//webhookUrl := common.OptionMap["feishu_robot_url"]
-		////webhookUrl := "https://open.feishu.cn/open-apis/bot/v2/hook/f752871b-9e7e-493a-8799-a8eed2469b34"
-		//secret := common.OptionMap["feishu_robot_secret"]
-		//err1 := SendFeishuNotify(webhookUrl, secret, dto.FeishuNotify{
-		//	MsgType: "text",
-		//	Content: dto.FeishuContent{
-		//		Text: fmt.Sprintf("用户 %d 消耗 %s 额度", relayInfo.UserId, common.FormatQuota(quota)),
-		//	},
-		//})
-		//if err1 != nil {
-		//	common.LogError(context.Background(), "error sending webhook notify: "+err.Error())
-		//}
 	} else {
 		err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
 	}

@@ -95,4 +95,10 @@ func LoadEnv() {
 	GlobalWebRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_WEB_RATE_LIMIT_ENABLE", true)
 	GlobalWebRateLimitNum = GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT", 60)
 	GlobalWebRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT_DURATION", 180))
+
+	QuotaWarningEnabled = GetEnvOrDefaultBool("QUOTA_WARNING_ENABLED", false)
+	QuotaWarningThreshold = GetEnvOrDefault("QUOTA_WARNING_THRESHOLD", 1000)
+	QuotaWarningInterval = GetEnvOrDefault("QUOTA_WARNING_INTERVAL", 5)
+	QuotaWarningUserIds = GetEnvOrDefaultString("QUOTA_WARNING_USER_IDS", "")
+
 }
