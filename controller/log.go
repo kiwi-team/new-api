@@ -61,10 +61,11 @@ func GetAllLogs(c *gin.Context) {
 	}
 	if export {
 		csvData := "ID\tUserID\tCreatedAt\tType\tContent\tUsername\tTokenName\tModelName\tQuota\tPromptTokens\tCompletionTokens\tUseTime\tIsStream\tChannelId\tChannelName\tTokenId\tGroup\tIP\tOther\tRequest\tResponse\n"
+		lc, _ := time.LoadLocation("Asia/Shanghai")
 		for _, log := range logs {
+
 			requestStr, err := parseUnicodeEscape(log.Request)
 			if err != nil {
-				common.LogInfo(c, "asdfasdfasf:"+err.Error())
 				requestStr = log.Request
 			}
 			requestStr = strings.ReplaceAll(requestStr, "\t", "\\t")
@@ -77,7 +78,7 @@ func GetAllLogs(c *gin.Context) {
 			responseStr = strings.ReplaceAll(responseStr, "\t", "\\t")
 			responseStr = strings.ReplaceAll(responseStr, "\n", "\\n")
 			csvData += fmt.Sprintf("%d\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%t\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				log.Id, log.UserId, time.Unix(log.CreatedAt, 0).Format("2006-01-02 15:04:05"), log.Type, log.Content, log.Username, log.TokenName, log.ModelName,
+				log.Id, log.UserId, time.Unix(log.CreatedAt, 0).In(lc).Format("2006-01-02 15:04:05"), log.Type, log.Content, log.Username, log.TokenName, log.ModelName,
 				log.Quota, log.PromptTokens, log.CompletionTokens, log.UseTime, log.IsStream, log.ChannelId, log.ChannelName, log.TokenId, log.Group, log.Ip, log.Other, requestStr, responseStr)
 		}
 

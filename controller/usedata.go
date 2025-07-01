@@ -8,6 +8,7 @@ import (
 	"one-api/dto"
 	"one-api/model"
 	"one-api/service"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -87,17 +88,30 @@ func WarningUserQuota() {
 		userIds := strings.Split(common.QuotaWarningUserIds, ",")
 		for _, userIdStr := range userIds {
 			userId, err := strconv.Atoi(userIdStr)
+			fileName := fmt.Sprintf("quota_warning_%d.txt", userId)
 			if err != nil {
 				common.LogError(ctx, "error parsing user id: "+err.Error())
 				continue
 			}
 			prevWarningTime, ok := prevWarningTimeMap[userId]
 			if !ok {
-				prevWarningTimeMap[userId] = time.Now().Add(-time.Duration(common.QuotaWarningInterval) * time.Minute).Unix()
-				prevWarningTime = prevWarningTimeMap[userId]
+
+				// 从fileName中读取上次预警时间
+				data, err1 := os.ReadFile(fileName)
+				if err1 != nil {
+					common.LogError(ctx, "error reading file: "+err1.Error())
+					continue
+				}
+				prevWarningTime, err = strconv.ParseInt(string(data), 10, 64)
+				if err != nil {
+					common.LogError(ctx, "error parsing file data: "+err.Error())
+					continue
+				}
+				prevWarningTimeMap[userId] = prevWarningTime
 			}
-			startTimeStr := time.Unix(prevWarningTime, 0).Format("2006-01-02 15:04:05")
-			endTimeStr := time.Unix(now, 0).Format("2006-01-02 15:04:05")
+			loc, _ := time.LoadLocation("Asia/Shanghai")
+			startTimeStr := time.Unix(prevWarningTime, 0).In(loc).Format("2006-01-02 15:04:05")
+			endTimeStr := time.Unix(now, 0).In(loc).Format("2006-01-02 15:04:05")
 			common.SysLog("[" + startTimeStr + "~" + endTimeStr + "]" + ":" + ":消耗预警轮询开始")
 
 			quota, err := model.GetQuotaByTime(userId, prevWarningTime, now)
@@ -120,6 +134,12 @@ func WarningUserQuota() {
 				}
 				common.SysLog("消耗预警:" + content)
 				prevWarningTimeMap[userId] = now
+
+				// 将 now 的值写入文件
+				err = os.WriteFile(fileName, []byte(strconv.FormatInt(now, 10)), 0644)
+				if err != nil {
+					common.LogError(ctx, "error writing now to file: "+err.Error())
+				}
 			} else {
 				common.SysLog("[" + startTimeStr + "~" + endTimeStr + "]" + ":" + strconv.Itoa(dollerQuota) + ":未超过阈值")
 			}
