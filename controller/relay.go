@@ -110,6 +110,7 @@ func Relay(c *gin.Context) {
 			openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
 		}
 		openaiErr.Error.Message = common.MessageWithRequestId(openaiErr.Error.Message, requestId)
+		openaiErr.Error.Type = "toio_api_error"
 		c.JSON(openaiErr.StatusCode, gin.H{
 			"error": openaiErr.Error,
 		})

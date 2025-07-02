@@ -26,15 +26,15 @@ func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
 				})
 			} else if content.Type == dto.ContentTypeImageURL {
 				imageUrl := content.ImageUrl.(*dto.MessageImageUrl).Url
-				if strings.HasPrefix(imageUrl, "data:") {
-					contentArray = append(contentArray, ContentItem{
-						Type:        "image_base64",
-						ImageBase64: imageUrl,
-					})
-				} else {
+				if strings.HasPrefix(imageUrl, "http") {
 					contentArray = append(contentArray, ContentItem{
 						Type:     "image_url",
 						ImageUrl: imageUrl,
+					})
+				} else {
+					contentArray = append(contentArray, ContentItem{
+						Type:        "image_base64",
+						ImageBase64: imageUrl,
 					})
 
 				}
