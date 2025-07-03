@@ -81,14 +81,59 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 			return nil, errors.New("field instruction is required")
 		}
 	}
+	filterParmas(textRequest)
 	// 判断字符串是否以"o3"开头
 	if strings.HasPrefix(textRequest.Model, "o3") ||
 		strings.HasPrefix(textRequest.Model, "o1") {
 		// 处理以o3开头的模型
 		textRequest.TopK = 0
 	}
+
 	relayInfo.IsStream = textRequest.Stream
 	return textRequest, nil
+}
+
+func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
+	filterConfig := common.OptionMap["ModelParamsFilter"]
+	filterConfigMap := &model.ModelParamsFilterMap{}
+	err := json.Unmarshal([]byte(filterConfig), filterConfigMap)
+	if err != nil {
+		common.SysError("filterParmas Unmarshal failed: " + err.Error())
+		return
+	}
+	if filterConfigMap.SetTopKZero != nil {
+		for _, model := range *filterConfigMap.SetTopKZero {
+			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
+				textRequest.TopK = 0
+			}
+		}
+	}
+	if filterConfigMap.SetMaxTokensZero != nil {
+		for _, model := range *filterConfigMap.SetMaxTokensZero {
+			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
+				textRequest.MaxTokens = 0
+			}
+		}
+	}
+	if filterConfigMap.SetTemperatureZero != nil {
+		for _, model := range *filterConfigMap.SetTemperatureZero {
+			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
+				textRequest.Temperature = nil
+			}
+		}
+	}
+	if filterConfigMap.SetMaxTokens != nil {
+		for _, item := range *filterConfigMap.SetMaxTokens {
+			// get key from item
+			for key, val := range item {
+				if key == textRequest.Model || common.RegMatch(key, textRequest.Model) {
+					if int(textRequest.MaxTokens) > val && val > 0 {
+						textRequest.MaxTokens = uint(val)
+					}
+				}
+			}
+		}
+	}
 }
 
 func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {

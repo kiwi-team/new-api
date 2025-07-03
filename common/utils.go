@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -257,32 +258,32 @@ func GetAudioDuration(ctx context.Context, filename string, ext string) (float64
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to get audio duration")
 	}
-  durationStr := string(bytes.TrimSpace(output))
-  if durationStr == "N/A" {
-    // Create a temporary output file name
-    tmpFp, err := os.CreateTemp("", "audio-*"+ext)
-    if err != nil {
-      return 0, errors.Wrap(err, "failed to create temporary file")
-    }
-    tmpName := tmpFp.Name()
-    // Close immediately so ffmpeg can open the file on Windows.
-    _ = tmpFp.Close()
-    defer os.Remove(tmpName)
+	durationStr := string(bytes.TrimSpace(output))
+	if durationStr == "N/A" {
+		// Create a temporary output file name
+		tmpFp, err := os.CreateTemp("", "audio-*"+ext)
+		if err != nil {
+			return 0, errors.Wrap(err, "failed to create temporary file")
+		}
+		tmpName := tmpFp.Name()
+		// Close immediately so ffmpeg can open the file on Windows.
+		_ = tmpFp.Close()
+		defer os.Remove(tmpName)
 
-    // ffmpeg -y -i filename -vcodec copy -acodec copy <tmpName>
-    ffmpegCmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", filename, "-vcodec", "copy", "-acodec", "copy", tmpName)
-    if err := ffmpegCmd.Run(); err != nil {
-      return 0, errors.Wrap(err, "failed to run ffmpeg")
-    }
+		// ffmpeg -y -i filename -vcodec copy -acodec copy <tmpName>
+		ffmpegCmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", filename, "-vcodec", "copy", "-acodec", "copy", tmpName)
+		if err := ffmpegCmd.Run(); err != nil {
+			return 0, errors.Wrap(err, "failed to run ffmpeg")
+		}
 
-    // Recalculate the duration of the new file
-    c = exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", tmpName)
-    output, err := c.Output()
-    if err != nil {
-      return 0, errors.Wrap(err, "failed to get audio duration after ffmpeg")
-    }
-    durationStr = string(bytes.TrimSpace(output))
-  }
+		// Recalculate the duration of the new file
+		c = exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", tmpName)
+		output, err := c.Output()
+		if err != nil {
+			return 0, errors.Wrap(err, "failed to get audio duration after ffmpeg")
+		}
+		durationStr = string(bytes.TrimSpace(output))
+	}
 	return strconv.ParseFloat(durationStr, 64)
 }
 
@@ -301,4 +302,24 @@ func BuildURL(base string, endpoint string) string {
 		return base + endpoint
 	}
 	return u.ResolveReference(ref).String()
+}
+
+// 去掉base64的前缀部分
+func ExtractBase64(data string) string {
+	parts := strings.Split(data, ",")
+	if len(parts) == 2 {
+		return parts[1] // 返回逗号后的部分
+	}
+	return data // 如果没有逗号，返回原字符串
+}
+
+// 判断某个字符串是否匹配正则表达式
+func RegMatch(reg, content string) bool {
+	matched, err := regexp.MatchString(reg, content)
+	if err != nil {
+		SysError("正则表达式错误:" + err.Error())
+		return false
+	}
+	return matched
+
 }

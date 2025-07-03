@@ -34,7 +34,7 @@ func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
 				} else {
 					contentArray = append(contentArray, ContentItem{
 						Type:        "image_base64",
-						ImageBase64: imageUrl,
+						ImageBase64: common.ExtractBase64(imageUrl),
 					})
 
 				}

@@ -16,6 +16,13 @@ type Option struct {
 	Value string `json:"value"`
 }
 
+type ModelParamsFilterMap struct {
+	SetTemperatureZero *[]string         `json:"set_temperature_zero,omitempty"` // o系列模型，不再支持temperature这个参数
+	SetMaxTokensZero   *[]string         `json:"set_max_tokens_zero,omitempty"`  //  - gemini相关的模型，也不推荐传递max_tokens这个参数，如果设置过小，很容出现返回内容为空的情况
+	SetTopKZero        *[]string         `json:"set_top_k_zero,omitempty"`       // openai的模型，建议都设置成0
+	SetMaxTokens       *[]map[string]int `json:"set_max_tokens,omitempty"`       // [{"doubao":116384}]
+}
+
 func AllOption() ([]*Option, error) {
 	var options []*Option
 	var err error
