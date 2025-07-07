@@ -27,6 +27,7 @@ import (
 	"one-api/relay/channel/task/suno"
 	"one-api/relay/channel/tencent"
 	"one-api/relay/channel/vertex"
+	"one-api/relay/channel/visualvolcengine"
 	"one-api/relay/channel/volcengine"
 	"one-api/relay/channel/xai"
 	"one-api/relay/channel/xunfei"
@@ -95,6 +96,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &coze.Adaptor{}
 	case constant.APITypeSensenova:
 		return &sensenova.Adaptor{}
+	case constant.APITypeVisualVolcEngine:
+		return &visualvolcengine.Adaptor{}
 	}
 	return nil
 }

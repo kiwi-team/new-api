@@ -134,5 +134,9 @@ export const CHANNEL_OPTIONS = [
     value: 51,
     color: 'blue',
     label: 'Sensenova',
+  },{
+    value: 52,
+    color: 'red',
+    label: 'visual-volcengine',
   }
 ];

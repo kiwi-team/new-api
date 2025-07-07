@@ -267,7 +267,7 @@ func OpenaiHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
 		//return service.OpenAIErrorWrapper(err, "copy_response_body_failed", http.StatusInternalServerError), nil
-		common.SysError("error copying response body: " + err.Error())
+		common.SysError(simpleResponse.Model + "error copying response body: " + err.Error())
 	}
 	resp.Body.Close()
 	return nil, &simpleResponse.Usage

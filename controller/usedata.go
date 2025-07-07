@@ -102,7 +102,7 @@ func WarningUserQuota() {
 					common.LogError(ctx, "error reading file: "+err1.Error())
 					continue
 				}
-				prevWarningTime, err = strconv.ParseInt(string(data), 10, 64)
+				prevWarningTime, err = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 				if err != nil {
 					common.LogError(ctx, "error parsing file data: "+err.Error())
 					continue

@@ -54,7 +54,7 @@ func OaiResponsesHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	// copy response body
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
-		common.SysError("error copying response body: " + err.Error())
+		common.SysError(responsesResponse.Model + "error copying response body: " + err.Error())
 	}
 	resp.Body.Close()
 	// compute usage

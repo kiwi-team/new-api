@@ -35,6 +35,7 @@ const (
 	APITypeXai
 	APITypeCoze
 	APITypeSensenova
+	APITypeVisualVolcEngine
 	APITypeDummy // this one is only for count, do not add any channel after this
 )
 
@@ -101,6 +102,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = APITypeCoze
 	case common.ChannelTypeSensenova:
 		apiType = APITypeSensenova
+	case common.ChannelTypeVisualVolcEngine:
+		apiType = APITypeVisualVolcEngine
 	}
 	if apiType == -1 {
 		return APITypeOpenAI, false
