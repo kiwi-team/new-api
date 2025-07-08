@@ -12,6 +12,7 @@ import (
 	"one-api/constant"
 	"one-api/dto"
 	"one-api/model"
+	"one-api/relay/channel/openrouter"
 	relaycommon "one-api/relay/common"
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
@@ -82,15 +83,52 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 		}
 	}
 	filterParmas(textRequest)
+	transParmas(textRequest, relayInfo)
 	// 判断字符串是否以"o3"开头
 	if strings.HasPrefix(textRequest.Model, "o3") ||
 		strings.HasPrefix(textRequest.Model, "o1") {
 		// 处理以o3开头的模型
 		textRequest.TopK = 0
 	}
+	// 处理不同渠道的参数，很多渠道用openai的格式来提供claude的服务，但是开启thinking的方法不一样
 
 	relayInfo.IsStream = textRequest.Stream
 	return textRequest, nil
+}
+
+func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) error {
+	isOpenRouter := info.ChannelType == common.ChannelTypeOpenRouter || strings.Contains(info.BaseUrl, "openrouter")
+	if isOpenRouter && textRequest.THINKING != nil && strings.HasPrefix(textRequest.Model, "claude") {
+		// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
+		var thinking dto.AnthropicThinking
+		err := json.Unmarshal(textRequest.THINKING, &thinking)
+		if err != nil {
+			fmt.Printf("json.Unmarshal failed: %v\n", err)
+			return err
+		}
+		if textRequest.THINKING != nil && thinking.Type == "enabled" {
+			if thinking.BudgetTokens > 0 {
+				reasoning := openrouter.RequestReasoning{
+					MaxTokens: thinking.BudgetTokens,
+				}
+				reasoningJSON, err := json.Marshal(reasoning)
+				if err != nil {
+					return fmt.Errorf("failed to marshal reasoning: %w", err)
+				}
+				textRequest.Reasoning = reasoningJSON
+			} else {
+				reasoning := openrouter.RequestReasoning{
+					Effort: "medium",
+				}
+				reasoningJSON, err := json.Marshal(reasoning)
+				if err != nil {
+					return fmt.Errorf("failed to marshal reasoning: %w", err)
+				}
+				textRequest.Reasoning = reasoningJSON
+			}
+		}
+	}
+	return nil
 }
 
 func filterParmas(textRequest *dto.GeneralOpenAIRequest) {

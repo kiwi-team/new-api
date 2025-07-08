@@ -179,8 +179,8 @@ func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens in
 			return ""
 		}(),
 		Other:    otherStr,
-		Request:  requestStr,
-		Response: responseStr,
+		Request:  strings.TrimSpace(requestStr),
+		Response: strings.TrimSpace(responseStr),
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {

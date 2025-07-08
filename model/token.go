@@ -24,7 +24,8 @@ type Token struct {
 	ModelLimitsEnabled bool           `json:"model_limits_enabled" gorm:"default:false"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:varchar(1024);default:''"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"`       // used quota
+	ChannelRules       string         `json:"channel_rules" gorm:"default:'{}'"` // 这个key配置的渠道规则
 	Group              string         `json:"group" gorm:"default:''"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
