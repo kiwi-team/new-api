@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"one-api/common"
 	constant2 "one-api/constant"
+	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/setting/ratio_setting"
 
@@ -36,6 +37,22 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupR
 	groupRatioInfo := GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
 		GroupSpecialRatio: -1,
+	}
+	// 如果key的维度，针对某个模型设置了分组倍率，就已这个为最优先的分组倍率
+	rules, ok := ctx.Get("token_channel_rules")
+	if ok {
+		tokenChannelRules := rules.(map[string]dto.ChannelRulesItem)
+		if tokenGroupRuleItem, exists := (tokenChannelRules)[ctx.GetString("original_model")]; exists {
+			// 针对模型设置了分组倍率，就以这个为最优先的分组倍率
+			for _, channel := range tokenGroupRuleItem.Channels {
+				if channel.Id == relayInfo.ChannelId {
+					if ratio, ok1 := channel.GroupRatio[relayInfo.Group]; ok1 {
+						groupRatioInfo.GroupRatio = float64(ratio)
+						return groupRatioInfo
+					}
+				}
+			}
+		}
 	}
 
 	// check auto group

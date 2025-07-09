@@ -257,6 +257,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			//return nil, err
 		}
 		taskId := respData.Data.TaskID
+		i := 0
+		max := 50
 		for {
 			result, err := service.GetTaskResult(&service.GetTaskResultRequest{
 				TaskID:  taskId,
@@ -291,6 +293,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:"+result.Status, http.StatusInternalServerError)
 			}
 			time.Sleep(time.Second * 5)
+			if i > max {
+				return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:timeout", http.StatusInternalServerError)
+			}
+			i++
 		}
 	default:
 		return nil, service.OpenAIErrorWrapper(errors.New("not supported"), "not_suported", http.StatusInternalServerError)

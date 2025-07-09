@@ -3,6 +3,8 @@ package model
 import (
 	"encoding/json"
 	"one-api/common"
+	"one-api/dto"
+	"slices"
 	"strings"
 	"sync"
 
@@ -182,6 +184,35 @@ func GetChannelById(id int, selectAll bool) (*Channel, error) {
 		err = DB.Omit("key").First(&channel, "id = ?", id).Error
 	}
 	return &channel, err
+}
+
+func GetChannelByRule(channelRules dto.ChannelRulesItem) (*Channel, error) {
+	disabledChannels := channelRules.DisableChannels
+	for _, item := range channelRules.Channels {
+		if slices.Contains(disabledChannels, item.Id) {
+			continue
+		}
+		channel, err := GetChannelById(item.Id, true)
+		if err == nil && channel.Status == common.ChannelStatusEnabled {
+			return channel, nil
+		}
+
+	}
+	return nil, nil
+}
+
+func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem) (channelIds []int) {
+	disabledChannels := channelRules.DisableChannels
+	for _, item := range channelRules.Channels {
+		if slices.Contains(disabledChannels, item.Id) {
+			continue
+		}
+		channel, err := GetChannelById(item.Id, true)
+		if err == nil && channel.Status == common.ChannelStatusEnabled {
+			channelIds = append(channelIds, channel.Id)
+		}
+	}
+	return channelIds
 }
 
 func BatchInsertChannels(channels []Channel) error {

@@ -1,9 +1,11 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"one-api/common"
+	"one-api/dto"
 	"strings"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -237,6 +239,19 @@ func (token *Token) GetModelLimitsMap() map[string]bool {
 		limitsMap[limit] = true
 	}
 	return limitsMap
+}
+
+func (token *Token) GetChannelRules() map[string]dto.ChannelRulesItem {
+	channelRules := token.ChannelRules
+	if channelRules == "{}" || channelRules == "" {
+		return nil
+	}
+	var channelRulesMap map[string]dto.ChannelRulesItem
+	err := json.Unmarshal([]byte(channelRules), &channelRulesMap)
+	if err != nil {
+		return nil
+	}
+	return channelRulesMap
 }
 
 func DisableModelLimits(tokenId int) error {

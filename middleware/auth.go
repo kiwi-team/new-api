@@ -247,6 +247,7 @@ func TokenAuth() func(c *gin.Context) {
 		} else {
 			c.Set("token_model_limit_enabled", false)
 		}
+		c.Set("token_channel_rules", token.GetChannelRules())
 		c.Set("allow_ips", token.GetIpLimitsMap())
 		c.Set("token_group", token.Group)
 		if len(parts) > 1 {

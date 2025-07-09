@@ -28,7 +28,7 @@ func Distribute() func(c *gin.Context) {
 		allowIpsMap := c.GetStringMap("allow_ips")
 		if len(allowIpsMap) != 0 {
 			clientIp := c.ClientIP()
-			if _, ok := allowIpsMap[clientIp]; !ok {
+			if _, okIp := allowIpsMap[clientIp]; !okIp {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在令牌允许访问的列表中")
 				return
 			}
@@ -40,6 +40,29 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid request, "+err.Error())
 			return
 		}
+		modelName := modelRequest.Model
+		channelRulesMapAny, okRule := c.Get("token_channel_rules")
+		var channelRulesMap map[string]dto.ChannelRulesItem
+		if okRule {
+			channelRulesMap = channelRulesMapAny.(map[string]dto.ChannelRulesItem)
+		} else {
+			channelRulesMap = make(map[string]dto.ChannelRulesItem)
+		}
+		// channelRules will be used in the next if block to store channel rules for the model
+		// 这个key，相关的渠道配置信息
+		var channelRules *dto.ChannelRulesItem
+		for key, val := range channelRulesMap {
+			if key == modelName || common.RegMatch(key, modelName) {
+				channelRules = &val
+			}
+		}
+		var channelIds []int
+		if channelRules != nil {
+			c.Set("new_retry_times", channelRules.Retry)
+			channelIds = model.GetChannelIdsByRule(channelRules)
+			c.Set("token_channel_ids", channelIds)
+		}
+
 		userGroup := c.GetString(constant.ContextKeyUserGroup)
 		tokenGroup := c.GetString("token_group")
 		if tokenGroup != "" {
@@ -58,14 +81,15 @@ func Distribute() func(c *gin.Context) {
 			userGroup = tokenGroup
 		}
 		c.Set("group", userGroup)
+		// 指定了渠道
 		if ok {
-			id, err := strconv.Atoi(channelId.(string))
-			if err != nil {
+			id, err1 := strconv.Atoi(channelId.(string))
+			if err1 != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return
 			}
-			channel, err = model.GetChannelById(id, true)
-			if err != nil {
+			channel, err1 = model.GetChannelById(id, true)
+			if err1 != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return
 			}
@@ -97,7 +121,12 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 
-			if shouldSelectChannel {
+			if channelRules != nil {
+				tmpChannel, errTmp := model.GetChannelByRule(*channelRules)
+				if errTmp == nil && tmpChannel != nil {
+					channel = tmpChannel
+				}
+			} else if shouldSelectChannel {
 				var selectGroup string
 				channel, selectGroup, err = model.CacheGetRandomSatisfiedChannel(c, userGroup, modelRequest.Model, 0)
 				if err != nil {

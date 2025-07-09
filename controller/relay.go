@@ -8,16 +8,16 @@ import (
 	"log"
 	"net/http"
 	"one-api/common"
-	constant2 "one-api/constant"
+	"one-api/constant"
 	"one-api/dto"
 	"one-api/middleware"
 	"one-api/model"
 	"one-api/relay"
-	"one-api/relay/constant"
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -46,7 +46,7 @@ func relayHandler(c *gin.Context, relayMode int) *dto.OpenAIErrorWithStatusCode 
 		err = relay.TextHelper(c)
 	}
 
-	if constant2.ErrorLogEnabled && err != nil {
+	if constant.ErrorLogEnabled && err != nil {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
@@ -69,14 +69,34 @@ func relayHandler(c *gin.Context, relayMode int) *dto.OpenAIErrorWithStatusCode 
 }
 
 func Relay(c *gin.Context) {
-	relayMode := constant.Path2RelayMode(c.Request.URL.Path)
+	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 	requestId := c.GetString(common.RequestIdKey)
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
 	var openaiErr *dto.OpenAIErrorWithStatusCode
+	retryTimes := common.RetryTimes
+	if c.GetInt("new_retry_times") > 0 {
+		retryTimes = c.GetInt("new_retry_times")
+	}
+	tokenChannelIdsAny, ok := c.Get("token_channel_ids")
+	var tokenChannelIds []int
+	if ok {
+		tokenChannelIds = tokenChannelIdsAny.([]int)
+	}
+	var channel *model.Channel
+	var err error
+	for i := 0; i <= retryTimes; i++ {
+		if len(tokenChannelIds) > 0 {
+			if i >= len(tokenChannelIds) {
+				break
+			}
+			channel, err = model.GetChannelById(tokenChannelIds[i], true)
+			c.Set(constant.ContextKeyRequestStartTime, time.Now())
+			middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+		} else {
+			channel, err = getChannel(c, group, originalModel, i)
+		}
 
-	for i := 0; i <= common.RetryTimes; i++ {
-		channel, err := getChannel(c, group, originalModel, i)
 		if err != nil {
 			common.LogError(c, err.Error())
 			openaiErr = service.OpenAIErrorWrapperLocal(err, "get_channel_failed", http.StatusInternalServerError)
@@ -86,6 +106,7 @@ func Relay(c *gin.Context) {
 		openaiErr = relayRequest(c, relayMode, channel)
 
 		if openaiErr == nil {
+			err = nil
 			return // 成功处理请求，直接返回
 		}
 
@@ -94,7 +115,7 @@ func Relay(c *gin.Context) {
 		body, _ := common.GetRequestBody(c)
 		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, *openaiErr, string(body), requestId, c.ClientIP())
 
-		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
+		if !shouldRetry(c, openaiErr, retryTimes-i) {
 			break
 		}
 	}
@@ -136,14 +157,19 @@ func WssRelay(c *gin.Context) {
 		return
 	}
 
-	relayMode := constant.Path2RelayMode(c.Request.URL.Path)
+	relayMode := relayconstant.Path2RelayMode(c.Request.URL.Path)
 	requestId := c.GetString(common.RequestIdKey)
 	group := c.GetString("group")
 	//wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01
 	originalModel := c.GetString("original_model")
 	var openaiErr *dto.OpenAIErrorWithStatusCode
 
-	for i := 0; i <= common.RetryTimes; i++ {
+	retryTimes := common.RetryTimes
+	if c.GetInt("new_retry_times") > 0 {
+		retryTimes = c.GetInt("new_retry_times")
+	}
+
+	for i := 0; i <= retryTimes; i++ {
 		channel, err := getChannel(c, group, originalModel, i)
 		if err != nil {
 			common.LogError(c, err.Error())
@@ -159,7 +185,7 @@ func WssRelay(c *gin.Context) {
 
 		go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
-		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
+		if !shouldRetry(c, openaiErr, retryTimes-i) {
 			break
 		}
 	}
@@ -184,8 +210,12 @@ func RelayClaude(c *gin.Context) {
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
 	var claudeErr *dto.ClaudeErrorWithStatusCode
+	retryTimes := common.RetryTimes
+	if c.GetInt("new_retry_times") > 0 {
+		retryTimes = c.GetInt("new_retry_times")
+	}
 
-	for i := 0; i <= common.RetryTimes; i++ {
+	for i := 0; i <= retryTimes; i++ {
 		channel, err := getChannel(c, group, originalModel, i)
 		if err != nil {
 			common.LogError(c, err.Error())
@@ -203,7 +233,7 @@ func RelayClaude(c *gin.Context) {
 
 		go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
-		if !shouldRetry(c, openaiErr, common.RetryTimes-i) {
+		if !shouldRetry(c, openaiErr, retryTimes-i) {
 			break
 		}
 	}
@@ -284,6 +314,14 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	tokenChannelIdsAny, ok := c.Get("token_channel_ids")
+	var tokenChannelIds []int
+	if ok {
+		tokenChannelIds = tokenChannelIdsAny.([]int)
+	}
+	if len(tokenChannelIds) > 0 {
+		return true
+	}
 	if openaiErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
@@ -311,6 +349,7 @@ func shouldRetry(c *gin.Context, openaiErr *dto.OpenAIErrorWithStatusCode, retry
 	if openaiErr.StatusCode/100 == 2 {
 		return false
 	}
+
 	return true
 }
 
@@ -382,6 +421,9 @@ func RelayNotFound(c *gin.Context) {
 
 func RelayTask(c *gin.Context) {
 	retryTimes := common.RetryTimes
+	if c.GetInt("new_retry_times") > 0 {
+		retryTimes = c.GetInt("new_retry_times")
+	}
 	channelId := c.GetInt("channel_id")
 	relayMode := c.GetInt("relay_mode")
 	group := c.GetString("group")

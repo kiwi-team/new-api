@@ -103,7 +103,6 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		var thinking dto.AnthropicThinking
 		err := json.Unmarshal(textRequest.THINKING, &thinking)
 		if err != nil {
-			fmt.Printf("json.Unmarshal failed: %v\n", err)
 			return err
 		}
 		if textRequest.THINKING != nil && thinking.Type == "enabled" {
