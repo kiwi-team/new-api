@@ -145,7 +145,7 @@ func doRequest(method string, queries url.Values, body []byte, key string, secre
 	if response.StatusCode == http.StatusOK {
 		return response, nil
 	} else {
-		return nil, fmt.Errorf("request failed with status %d", response.StatusCode)
+		return response, fmt.Errorf("request failed with status %d", response.StatusCode)
 	}
 
 }
@@ -228,6 +228,8 @@ func GetTaskResult(req *GetTaskResultRequest, key string, secret string) (*GetTa
 	}
 	resp, err := doRequest(http.MethodPost, queries, jsonstr, key, secret)
 	if err != nil {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Println("error body:" + string(body))
 		return nil, err
 	}
 	var respData GetTaskResultResponse

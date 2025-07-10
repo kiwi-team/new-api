@@ -55,6 +55,7 @@ const EditToken = (props) => {
     model_limits: [],
     allow_ips: '',
     group: '',
+    channel_rules: {},
   };
   const [inputs, setInputs] = useState(originInputs);
   const {
@@ -72,6 +73,15 @@ const EditToken = (props) => {
   const navigate = useNavigate();
 
   const handleInputChange = (name, value) => {
+    if (name === 'channel_rules') {
+      try {
+        value = JSON.parse(value);
+      } catch (e) {
+        setInputs((inputs) => ({ ...inputs, [name]: value }));
+        return
+
+      }
+    }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
   };
 
@@ -152,6 +162,13 @@ const EditToken = (props) => {
       } else {
         data.model_limits = [];
       }
+      if (data.channel_rules) {
+        try {
+            data.channel_rules = JSON.parse(data.channel_rules);
+        } catch (error) {
+            data.channel_rules = {};
+        }
+      }
       setInputs(data);
     } else {
       showError(message);
@@ -216,6 +233,20 @@ const EditToken = (props) => {
         localInputs.expired_time = Math.ceil(time / 1000);
       }
       localInputs.model_limits = localInputs.model_limits.join(',');
+      // 如果 channel_rules 是对象，将其转换为字符串
+      if (typeof localInputs.channel_rules === 'object') {
+        localInputs.channel_rules = JSON.stringify(localInputs.channel_rules);
+      }
+      try {
+        // 只有当 channel_rules 是字符串时才尝试解析
+        if (typeof localInputs.channel_rules === 'string' && localInputs.channel_rules.trim() !== '') {
+          JSON.parse(localInputs.channel_rules);
+        }
+      } catch (error) {
+        showError(t('请认真核对渠道规则，不是合法json:'+error.toString()));
+        setLoading(false);
+        return;
+      }
       let res = await API.put(`/api/token/`, {
         ...localInputs,
         id: parseInt(props.editingToken.id),
@@ -601,6 +632,49 @@ const EditToken = (props) => {
                 />
                 <Text type='tertiary' className='mt-1 block text-xs'>
                   {t('请勿过度信任此功能，IP可能被伪造')}
+                </Text>
+              </div>
+
+              <div>
+                <Text strong className='block mb-2'>
+                  {t('设置渠道规则')}
+                </Text>
+                <TextArea
+                  placeholder={t(`{
+    "gpt-4o-mini": {  // 模型名称，可以写一个正则表达式，比如gpt-.* 就代表所有gpt-开头的模型。
+        "retry": 1,  // 重试次数（如果配置0，那么就只用channels的第一个渠道进行请求出处理。
+        "disable_channels": [   // 让某个模型，不要走的渠道，可以为空列表。
+            10,
+            23
+        ],
+        "channels": [   // 模型按照顺序，走下面的渠道，如果第一个请求失败，就会自动切换成下一个渠道来处理请求
+            {
+                "id": 1,
+                "group_ratio": {  // 每一个渠道，能单独配置分组倍率，key的分组。
+                    "default": 1,
+                    "zero": 0
+                }
+            },
+            {
+                "id": 6
+            }
+        ]
+    }
+}`)}
+                  onChange={(value) => {
+                    try {
+                      handleInputChange('channel_rules', JSON.parse(value));
+                    } catch (e) {
+                      handleInputChange('channel_rules', value);
+                    }
+                  }}
+                  value={typeof inputs.channel_rules === 'object' ? JSON.stringify(inputs.channel_rules, null, 4) : inputs.channel_rules}
+                  style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                  className='!rounded-lg'
+                  rows={20}
+                />
+                <Text type='tertiary' className='mt-1 block text-xs'>
+                  {t('请认真核对规则，否则可能会导致请求失败')}
                 </Text>
               </div>
 
