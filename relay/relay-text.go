@@ -82,6 +82,7 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 			return nil, errors.New("field instruction is required")
 		}
 	}
+	//setMultiModelTags(c, textRequest)
 	filterParmas(textRequest)
 	transParmas(textRequest, relayInfo)
 	// 判断字符串是否以"o3"开头
@@ -171,6 +172,28 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 			}
 		}
 	}
+}
+
+func setMultiModelTags(c *gin.Context, textRequest *dto.GeneralOpenAIRequest) {
+	tags := make([]string, 0)
+	if len(textRequest.Tools) > 0 {
+		tags = append(tags, "tools")
+	}
+	for _, message := range textRequest.Messages {
+		arr := message.ParseContent()
+		for _, content := range arr {
+			switch content.Type {
+			case dto.ContentTypeAudioUrl:
+				tags = append(tags, "audio")
+			case dto.ContentTypeImageURL:
+				tags = append(tags, "image")
+			case dto.ContentTypeVideoUrl:
+				tags = append(tags, "video")
+			}
+		}
+	}
+
+	c.Set("multi_model_tags", tags)
 }
 
 func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {

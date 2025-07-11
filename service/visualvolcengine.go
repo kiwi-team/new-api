@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -230,7 +231,7 @@ func GetTaskResult(req *GetTaskResultRequest, key string, secret string) (*GetTa
 	if err != nil {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Println("error body:" + string(body))
-		return nil, err
+		return nil, errors.New(strings.ReplaceAll(string(body), "Post", ""))
 	}
 	var respData GetTaskResultResponse
 	// 复制resp,获取body数据
