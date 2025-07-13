@@ -58,7 +58,8 @@ func Playground(c *gin.Context) {
 		c.Set("group", group)
 	}
 	c.Set("token_name", "playground-"+group)
-	channel, finalGroup, err := model.CacheGetRandomSatisfiedChannel(c, group, playgroundRequest.Model, 0)
+	tags := make([]string, 0)
+	channel, finalGroup, err := model.CacheGetRandomSatisfiedChannel(c, group, playgroundRequest.Model, 0, tags)
 	if err != nil {
 		message := fmt.Sprintf("当前分组 %s 下对于模型 %s 无可用渠道", finalGroup, playgroundRequest.Model)
 		openaiErr = service.OpenAIErrorWrapperLocal(errors.New(message), "get_playground_channel_failed", http.StatusInternalServerError)

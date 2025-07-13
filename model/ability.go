@@ -71,26 +71,48 @@ func getPriority(group string, model string, retry int) (int, error) {
 	return priorityToUse, nil
 }
 
-func getChannelQuery(group string, model string, retry int) *gorm.DB {
-	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, commonTrueVal)
-	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, commonTrueVal, maxPrioritySubQuery)
+func getChannelQuery(group string, model string, retry int, tags []string) *gorm.DB {
+	channleIds := make([]int, 0)
+	tagsWhere := ""
+	for _, tag := range tags {
+		if tagsWhere != "" {
+			tagsWhere += " and   tag like '%" + tag + "%'"
+		} else {
+			tagsWhere = " tag like '%" + tag + "%' "
+		}
+	}
+	if tagsWhere != "" {
+		tagsWhere = fmt.Sprintf(" or ( %s ) ", tagsWhere)
+	}
+	DB.Model(&Channel{}).Where("status = 1 and (tag = '' "+tagsWhere+") and models like ?", "%"+model+"%").Pluck("id", &channleIds)
+	//fmt.Printf("tagsWhere: %s  retry: %d,channelIds: %v\n", tagsWhere, retry, channleIds)
+	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ? ", group, model, commonTrueVal)
+	maxPrioritySubQuery.Where("channel_id in (?)", channleIds)
+	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?) ", group, model, commonTrueVal, maxPrioritySubQuery)
+	channelQuery.Where("channel_id in (?)", channleIds)
+
 	if retry != 0 {
 		priority, err := getPriority(group, model, retry)
 		if err != nil {
 			common.SysError(fmt.Sprintf("Get priority failed: %s", err.Error()))
 		} else {
-			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ?", group, model, commonTrueVal, priority)
+			fmt.Printf("tagsWhere22: %s\n", tagsWhere)
+			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ? and (tag ='' "+tagsWhere+")", group, model, commonTrueVal, priority)
 		}
 	}
 
 	return channelQuery
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
-	channelQuery := getChannelQuery(group, model, retry)
+	channelQuery := getChannelQuery(group, model, retry, tags)
+	// sql := channelQuery.ToSQL(func(tx *gorm.DB) *gorm.DB {
+	// 	return tx.Order("weight DESC").Find(&abilities)
+	// })
+	// fmt.Println("SQL Query:", sql)
 	if common.UsingSQLite || common.UsingPostgreSQL {
 		err = channelQuery.Order("weight DESC").Find(&abilities).Error
 	} else {

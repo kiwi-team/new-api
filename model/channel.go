@@ -186,13 +186,16 @@ func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	return &channel, err
 }
 
-func GetChannelByRule(channelRules dto.ChannelRulesItem) (*Channel, error) {
+func GetChannelByRule(channelRules dto.ChannelRulesItem, tags []string) (*Channel, error) {
 	disabledChannels := channelRules.DisableChannels
 	for _, item := range channelRules.Channels {
 		if slices.Contains(disabledChannels, item.Id) {
 			continue
 		}
 		channel, err := GetChannelById(item.Id, true)
+		if !CheckMultiTags(tags, channel.GetTag()) {
+			continue
+		}
 		if err == nil && channel.Status == common.ChannelStatusEnabled {
 			return channel, nil
 		}
@@ -201,7 +204,21 @@ func GetChannelByRule(channelRules dto.ChannelRulesItem) (*Channel, error) {
 	return nil, nil
 }
 
-func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem) (channelIds []int) {
+// 检查渠道的标签,是否包含这个请求的所有标签
+// 如果渠道的标签为空,则返回true
+func CheckMultiTags(tags []string, channelTags string) bool {
+	if channelTags == "" {
+		return true
+	}
+	for _, tag := range tags {
+		if !strings.Contains(channelTags, tag) {
+			return false
+		}
+	}
+	return true
+}
+
+func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (channelIds []int) {
 	disabledChannels := channelRules.DisableChannels
 	for _, item := range channelRules.Channels {
 		if slices.Contains(disabledChannels, item.Id) {
@@ -209,6 +226,11 @@ func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem) (channelIds []int) 
 		}
 		channel, err := GetChannelById(item.Id, true)
 		if err == nil && channel.Status == common.ChannelStatusEnabled {
+			channelTag := channel.GetTag()
+			allIn := CheckMultiTags(tags, channelTag)
+			if !allIn {
+				continue // 如果这个渠道不能处理这个请求的所有模态，就跳过这个渠道，继续寻找满足条件的。
+			}
 			channelIds = append(channelIds, channel.Id)
 		}
 	}

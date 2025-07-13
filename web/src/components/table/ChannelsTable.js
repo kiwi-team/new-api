@@ -181,6 +181,7 @@ const ChannelsTable = () => {
     PRIORITY: 'priority',
     WEIGHT: 'weight',
     OPERATE: 'operate',
+    TAG:'tag',
   };
 
   // State for column visibility
@@ -221,6 +222,7 @@ const ChannelsTable = () => {
   const getDefaultColumnVisibility = () => {
     return {
       [COLUMN_KEYS.ID]: true,
+      [COLUMN_KEYS.TAG]: true,
       [COLUMN_KEYS.NAME]: true,
       [COLUMN_KEYS.GROUP]: true,
       [COLUMN_KEYS.TYPE]: true,
@@ -263,6 +265,11 @@ const ChannelsTable = () => {
       key: COLUMN_KEYS.ID,
       title: t('ID'),
       dataIndex: 'id',
+    },
+    {
+        key:COLUMN_KEYS.TAG,
+        title:t('TAG'),
+        dataIndex:'tag',
     },
     {
       key: COLUMN_KEYS.NAME,

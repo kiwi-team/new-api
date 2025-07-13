@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"one-api/common"
+	"one-api/dto"
 	"one-api/model"
 	"strconv"
 	"strings"
@@ -247,6 +248,8 @@ func TokenAuth() func(c *gin.Context) {
 		} else {
 			c.Set("token_model_limit_enabled", false)
 		}
+
+		setMultiModelTags(c)
 		c.Set("token_channel_rules", token.GetChannelRules())
 		c.Set("allow_ips", token.GetIpLimitsMap())
 		c.Set("token_group", token.Group)
@@ -260,4 +263,28 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		c.Next()
 	}
+}
+
+func setMultiModelTags(c *gin.Context) []string {
+	textRequest := &dto.GeneralOpenAIRequest{}
+	common.UnmarshalBodyReusable(c, textRequest)
+	tags := make([]string, 0)
+	if len(textRequest.Tools) > 0 {
+		tags = append(tags, "tools")
+	}
+	for _, message := range textRequest.Messages {
+		arr := message.ParseContent()
+		for _, content := range arr {
+			switch content.Type {
+			case dto.ContentTypeAudioUrl:
+				tags = append(tags, "audio")
+			case dto.ContentTypeImageURL:
+				tags = append(tags, "image")
+			case dto.ContentTypeVideoUrl:
+				tags = append(tags, "video")
+			}
+		}
+	}
+	c.Set("multi_model_tags", tags)
+	return tags
 }

@@ -57,9 +57,14 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		var channelIds []int
+		tags := make([]string, 0)
+		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
+			tags = tagsAny.([]string)
+		}
+		//fmt.Printf("tags: %v\n", tags)
 		if channelRules != nil {
 			c.Set("new_retry_times", channelRules.Retry)
-			channelIds = model.GetChannelIdsByRule(channelRules)
+			channelIds = model.GetChannelIdsByRule(channelRules, tags)
 			c.Set("token_channel_ids", channelIds)
 		}
 
@@ -97,6 +102,10 @@ func Distribute() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "该渠道已被禁用")
 				return
 			}
+			if !model.CheckMultiTags(tags, channel.GetTag()) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("该渠道不能完整支持:%v模态", tags))
+				return
+			}
 		} else {
 			// Select a channel for the user
 			// check token model mapping
@@ -122,19 +131,22 @@ func Distribute() func(c *gin.Context) {
 			}
 
 			if channelRules != nil {
-				tmpChannel, errTmp := model.GetChannelByRule(*channelRules)
+				tmpChannel, errTmp := model.GetChannelByRule(*channelRules, tags)
 				if errTmp == nil && tmpChannel != nil {
 					channel = tmpChannel
 				}
 			} else if shouldSelectChannel {
 				var selectGroup string
-				channel, selectGroup, err = model.CacheGetRandomSatisfiedChannel(c, userGroup, modelRequest.Model, 0)
+				channel, selectGroup, err = model.CacheGetRandomSatisfiedChannel(c, userGroup, modelRequest.Model, 0, tags)
 				if err != nil {
 					showGroup := userGroup
 					if userGroup == "auto" {
 						showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 					}
 					message := fmt.Sprintf("当前分组 %s 下对于模型 %s 无可用渠道", showGroup, modelRequest.Model)
+					if len(tags) > 0 {
+						message = fmt.Sprintf("当前分组 %s 下对于模型 %s 的多模态 %v 无可用渠道", showGroup, modelRequest.Model, tags)
+					}
 					// 如果错误，但是渠道不为空，说明是数据库一致性问题
 					if channel != nil {
 						common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))

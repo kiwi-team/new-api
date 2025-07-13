@@ -8,7 +8,7 @@ type ChannelRulesItem struct {
 }
 
 type ChannelItem struct {
-	GroupRatio map[string]float32 `json:"group_ratio,omitempty"`
+	GroupRatio map[string]float64 `json:"group_ratio,omitempty"`
 	Name       string             `json:"name,omitempty"` // 名称可以是正则表达式，减少配置成本
 	Id         int                `json:"id,omitempty"`
 	Weight     int32              `json:"weight,omitempty"`

@@ -293,7 +293,9 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, retryCount)
+	tagsAny, _ := c.Get("multi_model_tag")
+	tags := tagsAny.([]string)
+	channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, retryCount, tags)
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("获取重试渠道失败: %s", err.Error()))
 	}
@@ -433,8 +435,13 @@ func RelayTask(c *gin.Context) {
 	if taskErr == nil {
 		retryTimes = 0
 	}
+	tags := make([]string, 0)
+	tagsAny, tagOk := c.Get("multi_model_tags")
+	if tagOk {
+		tags = tagsAny.([]string)
+	}
 	for i := 0; shouldRetryTaskRelay(c, channelId, taskErr, retryTimes) && i < retryTimes; i++ {
-		channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, i)
+		channel, _, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, i, tags)
 		if err != nil {
 			common.LogError(c, fmt.Sprintf("CacheGetRandomSatisfiedChannel failed: %s", err.Error()))
 			break

@@ -78,7 +78,7 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, model string, retry int) (*Channel, string, error) {
+func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, model string, retry int, tags []string) (*Channel, string, error) {
 	var channel *Channel
 	var err error
 	selectGroup := group
@@ -90,7 +90,7 @@ func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, model string, 
 			if common.DebugEnabled {
 				println("autoGroup:", autoGroup)
 			}
-			channel, _ = getRandomSatisfiedChannel(autoGroup, model, retry)
+			channel, _ = getRandomSatisfiedChannel(autoGroup, model, retry, tags)
 			if channel == nil {
 				continue
 			} else {
@@ -103,7 +103,7 @@ func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, model string, 
 			}
 		}
 	} else {
-		channel, err = getRandomSatisfiedChannel(group, model, retry)
+		channel, err = getRandomSatisfiedChannel(group, model, retry, tags)
 		if err != nil {
 			return nil, group, err
 		}
@@ -114,7 +114,7 @@ func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, model string, 
 	return channel, selectGroup, nil
 }
 
-func getRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
+func getRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
 	if strings.HasPrefix(model, "gpt-4-gizmo") {
 		model = "gpt-4-gizmo-*"
 	}
@@ -124,11 +124,17 @@ func getRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetRandomSatisfiedChannel(group, model, retry)
+		return GetRandomSatisfiedChannel(group, model, retry, tags)
 	}
 
 	channelSyncLock.RLock()
-	channels := group2model2channels[group][model]
+	channelList := group2model2channels[group][model]
+	channels := make([]*Channel, 0)
+	for _, channel := range channelList {
+		if CheckMultiTags(tags, channel.GetTag()) {
+			channels = append(channels, channel)
+		}
+	}
 	channelSyncLock.RUnlock()
 
 	if len(channels) == 0 {

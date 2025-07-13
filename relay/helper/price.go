@@ -47,7 +47,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupR
 			for _, channel := range tokenGroupRuleItem.Channels {
 				if channel.Id == relayInfo.ChannelId {
 					if ratio, ok1 := channel.GroupRatio[relayInfo.Group]; ok1 {
-						groupRatioInfo.GroupRatio = float64(ratio)
+						groupRatioInfo.GroupRatio = ratio
 						return groupRatioInfo
 					}
 				}
