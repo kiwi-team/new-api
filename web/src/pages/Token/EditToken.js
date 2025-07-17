@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     API,
@@ -71,18 +71,28 @@ const EditToken = (props) => {
     const [models, setModels] = useState([]);
     const [groups, setGroups] = useState([]);
     const navigate = useNavigate();
+    const inputsRef = useRef({...inputs});
+
+    const updateInputs = (newInputs) => {
+        const targetInputs = {
+            ...inputsRef.current,
+            ...newInputs
+        };
+        setInputs(targetInputs);
+        inputsRef.current = targetInputs;
+    }
 
     const handleInputChange = (name, value) => {
         if (name === 'channel_rules') {
             try {
                 value = JSON.parse(value);
             } catch (e) {
-                setInputs((inputs) => ({ ...inputs, [name]: value }));
+                updateInputs({ [name]: value });
                 return
 
             }
         }
-        setInputs((inputs) => ({ ...inputs, [name]: value }));
+        updateInputs({ [name]: value });
     };
 
     const handleCancel = () => {
@@ -98,14 +108,14 @@ const EditToken = (props) => {
         seconds += minute * 60;
         if (seconds !== 0) {
             timestamp += seconds;
-            setInputs({ ...inputs, expired_time: timestamp2string(timestamp) });
+            updateInputs({ expired_time: timestamp2string(timestamp) });
         } else {
-            setInputs({ ...inputs, expired_time: -1 });
+            updateInputs({ expired_time: -1 });
         }
     };
 
     const setUnlimitedQuota = () => {
-        setInputs({ ...inputs, unlimited_quota: !unlimited_quota });
+        updateInputs({ unlimited_quota: !unlimited_quota });
     };
 
     const loadModels = async () => {
@@ -142,7 +152,9 @@ const EditToken = (props) => {
             }
             setGroups(localGroupOptions);
             if (statusState?.status?.default_use_auto_group) {
-                setInputs({ ...inputs, group: 'auto' });
+                //console.log('input groups', inputs)
+                // alert(JSON.stringify(inputs))
+                updateInputs({ group: 'auto' });
             }
         } else {
             showError(t(message));
@@ -169,7 +181,9 @@ const EditToken = (props) => {
                     data.channel_rules = {};
                 }
             }
-            setInputs(data);
+            updateInputs(data);
+            //console.log('inputs', inputs)
+            // alert(JSON.stringify(data));
         } else {
             showError(message);
         }
@@ -182,7 +196,7 @@ const EditToken = (props) => {
 
     useEffect(() => {
         if (!isEdit) {
-            setInputs(originInputs);
+            updateInputs(originInputs);
             loadModels();
             loadGroups();
         } else {
@@ -306,9 +320,11 @@ const EditToken = (props) => {
             }
         }
         setLoading(false);
-        setInputs(originInputs); // 重置表单
+        updateInputs(originInputs); // 重置表单
         setTokenCount(1); // 重置数量为默认值
     };
+
+    //console.log('data inputs', inputs)
 
     return (
         <SideSheet
