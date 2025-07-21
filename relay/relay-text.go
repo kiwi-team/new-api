@@ -171,6 +171,14 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 			}
 		}
 	}
+	if filterConfigMap.SetStopNil != nil {
+		for _, item := range *filterConfigMap.SetStopNil {
+			// get key from item
+			if item == textRequest.Model || common.RegMatch(item, textRequest.Model) {
+				textRequest.Stop = nil
+			}
+		}
+	}
 }
 
 func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
