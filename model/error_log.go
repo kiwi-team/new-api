@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"one-api/common"
 	"one-api/dto"
@@ -20,24 +21,48 @@ type ErrorLog struct {
 	RequestId   string `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
 	StatusCode  int    `json:"status_code" gorm:"default:0"`
 	Body        string `json:"body" gorm:"default:''"`
-	Ip          string `json:"ip gorm:"default:''"`
+	Ip          string `json:"ip" gorm:"default:''"`
 }
 
-func GetAllErrorLog(startIdx int, num int, channelId int, modelName string) ([]*ErrorLog, error) {
+func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	var errorLogs []*ErrorLog
 	var err error
-	if channelId > 0 {
-		if modelName == "" {
-			err = DB.Order("id desc").Where("channel_id = ? ", channelId).Limit(num).Offset(startIdx).Find(&errorLogs).Error
-		} else {
-			err = DB.Order("id desc").Where("channel_id = ? and model_name = ?", channelId, modelName).Limit(num).Offset(startIdx).Find(&errorLogs).Error
-		}
-	} else {
-		if modelName != "" {
-			err = DB.Order("id desc").Where("model_name = ?", modelName).Limit(num).Offset(startIdx).Find(&errorLogs).Error
-		}
+	channelId := req.ChannelId
+	page := req.Page
+	pageSize := req.PageSize
+	if page <= 1 {
+		page = 1
 	}
-	return errorLogs, err
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	num := pageSize
+	startIdx := (page - 1) * num
+	query := DB.Model(&ErrorLog{})
+	if channelId > 0 {
+		query = query.Where("channel_id = ? ", channelId)
+	}
+	if req.EndTime-req.StartTime > 7*86400 {
+		return nil, 0, errors.New("错误日志最多只支持查询7天的范围")
+	}
+	if req.StartTime > 0 {
+		query = query.Where("created_at >= ?", req.StartTime)
+	} else {
+		query = query.Where("created_at >= ?", common.GetTimestamp()-7*86400)
+	}
+	if req.EndTime > 0 {
+		query = query.Where("created_at <= ?", req.EndTime)
+	}
+	if req.RequestId != "" {
+		query = query.Where("request_id = ?", req.RequestId)
+	}
+	if req.ModelName != "" {
+		query = query.Where("model_name = ?", req.ModelName)
+	}
+	var total int64
+	_ = query.Count(&total)
+	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
+	return errorLogs, total, err
 }
 
 func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err dto.OpenAIErrorWithStatusCode, body string, requestId string, ip string) error {

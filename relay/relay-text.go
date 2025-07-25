@@ -98,13 +98,19 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 
 func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) error {
 	isOpenRouter := info.ChannelType == common.ChannelTypeOpenRouter || strings.Contains(info.BaseUrl, "openrouter")
-	if isOpenRouter && textRequest.THINKING != nil && strings.HasPrefix(textRequest.Model, "claude") {
-		// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
-		var thinking dto.AnthropicThinking
+	isChat := strings.Contains(info.BaseUrl, "chataiapi")
+	fmt.Printf("ischat: %v \n", isChat)
+	isNuwa := strings.Contains(info.BaseUrl, "nuwaapi")
+	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
+	var thinking dto.AnthropicThinking
+	var extraBody dto.ExtraBody
+	if textRequest.THINKING != nil {
 		err := json.Unmarshal(textRequest.THINKING, &thinking)
 		if err != nil {
 			return err
 		}
+	}
+	if isOpenRouter && textRequest.THINKING != nil {
 		if textRequest.THINKING != nil && thinking.Type == "enabled" {
 			if thinking.BudgetTokens > 0 {
 				reasoning := openrouter.RequestReasoning{
@@ -119,6 +125,9 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				reasoning := openrouter.RequestReasoning{
 					Effort: "medium",
 				}
+				if textRequest.ReasoningEffort != "" {
+					reasoning.Effort = textRequest.ReasoningEffort
+				}
 				reasoningJSON, err := json.Marshal(reasoning)
 				if err != nil {
 					return fmt.Errorf("failed to marshal reasoning: %w", err)
@@ -126,7 +135,42 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Reasoning = reasoningJSON
 			}
 		}
+	} else if isChat && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			textRequest.Model = textRequest.Model + "-thinking"
+			info.UpstreamModelName = textRequest.Model
+		}
+	} else if isNuwa && textRequest.THINKING != nil {
+		if textRequest.THINKING != nil && thinking.Type == "enabled" {
+			textRequest.Model = textRequest.Model + "-thinking"
+			info.UpstreamModelName = textRequest.Model
+			if thinking.BudgetTokens > 0 {
+				// extraBody.Google.ThinkingConfig.IncludeThoughts = true
+				// extraBody.Google.ThinkingConfig.ThinkingBudget = thinking.BudgetTokens
+				// extraBodyJSON, err := json.Marshal(struct {
+				// 	ExtraBody dto.ExtraBody `json:"extra_body"`
+				// }{ExtraBody: extraBody})
+				// if err != nil {
+				// 	return fmt.Errorf("failed to marshal reasoning: %w", err)
+				// }
+				// textRequest.ExtraBody = extraBodyJSON
+				//OpenAI API 提供三种思考控制级别："low"、"medium" 和 "high"，分别对应于 1,024、8,192 和 24,576 个令牌
+				if thinking.BudgetTokens >= 24576 {
+					textRequest.ReasoningEffort = "high"
+				} else if thinking.BudgetTokens >= 8000 {
+					textRequest.ReasoningEffort = "medium"
+				} else {
+					textRequest.ReasoningEffort = "low"
+				}
+
+			} else {
+				if textRequest.ReasoningEffort == "" {
+					textRequest.ReasoningEffort = "medium"
+				}
+			}
+		}
 	}
+
 	return nil
 }
 

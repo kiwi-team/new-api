@@ -67,6 +67,11 @@ const SiderBar = () => {
         to: '/log',
       },
       {
+        text: t('错误日志'),
+        itemKey: 'error-log',
+        to: '/log/error-logs',
+      },
+      {
         text: t('绘图日志'),
         itemKey: 'midjourney',
         to: '/midjourney',

@@ -23,6 +23,29 @@ type AnthropicThinking struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+/*
+*
+
+	{
+	      'extra_body': {
+	        "google": {
+	          "thinking_config": {
+	            "thinking_budget": 800,#Gemini 思考模型还会生成思考摘要，并且可以使用确切的思考预算。 您可以使用 extra_body 字段在请求中添加这些字段。请注意，reasoning_effort 和 thinking_budget 的功能重叠，因此不能同时使用。
+	            "include_thoughts": True
+	          }
+	        }
+	      }
+	    }
+*/
+type ExtraBody struct {
+	Google struct {
+		ThinkingConfig struct {
+			ThinkingBudget  int  `json:"thinking_budget"`
+			IncludeThoughts bool `json:"include_thoughts"`
+		} `json:"thinking_config"`
+	} `json:"google"`
+}
+
 type GeneralOpenAIRequest struct {
 	Model               string            `json:"model,omitempty"`
 	Messages            []Message         `json:"messages,omitempty"`
