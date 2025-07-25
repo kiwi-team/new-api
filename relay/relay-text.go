@@ -103,7 +103,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isNuwa := strings.Contains(info.BaseUrl, "nuwaapi")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
-	var extraBody dto.ExtraBody
+	//var extraBody dto.ExtraBody
 	if textRequest.THINKING != nil {
 		err := json.Unmarshal(textRequest.THINKING, &thinking)
 		if err != nil {
@@ -137,13 +137,17 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		}
 	} else if isChat && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
-			textRequest.Model = textRequest.Model + "-thinking"
-			info.UpstreamModelName = textRequest.Model
+			if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+				textRequest.Model = textRequest.Model + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
 		}
 	} else if isNuwa && textRequest.THINKING != nil {
 		if textRequest.THINKING != nil && thinking.Type == "enabled" {
-			textRequest.Model = textRequest.Model + "-thinking"
-			info.UpstreamModelName = textRequest.Model
+			if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+				textRequest.Model = textRequest.Model + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
 			if thinking.BudgetTokens > 0 {
 				// extraBody.Google.ThinkingConfig.IncludeThoughts = true
 				// extraBody.Google.ThinkingConfig.ThinkingBudget = thinking.BudgetTokens
