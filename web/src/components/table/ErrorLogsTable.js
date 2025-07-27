@@ -1,0 +1,689 @@
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  API,
+  copy,
+  getTodayStartTimestamp,
+  isAdmin,
+  showError,
+  showSuccess,
+  timestamp2string,
+} from '../../helpers';
+
+import {
+  Button,
+  Descriptions,
+  Empty,
+  Modal,
+  Table,
+  Tag,
+  Tooltip,
+  Checkbox,
+  Card,
+  Typography,
+  Divider,
+  Form,
+} from '@douyinfe/semi-ui';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
+import { ITEMS_PER_PAGE } from '../../constants';
+import { IconSetting, IconSearch, IconHelpCircle } from '@douyinfe/semi-icons';
+
+
+
+const ErrorLogsTable = () => {
+  const { t } = useTranslation();
+
+
+
+
+  // Define column keys for selection
+  const COLUMN_KEYS = {
+    ID: 'id',
+    USERID: 'user_id',
+    CREATEDAT: 'created_at',
+    CHANNELID: 'channel_id',
+    CHANNELNAME: 'channel_name',
+    MODELNAME: 'model_name',
+    MESSAGE:'message',
+    TYPE: 'type',
+    PARAM: 'param',
+    CODE: 'code',
+    REQUESTID: 'request_id',
+    STATUSCODE: 'status_code',
+    IP: 'ip',
+  };
+
+  // State for column visibility
+  const [visibleColumns, setVisibleColumns] = useState({});
+  const [showColumnSelector, setShowColumnSelector] = useState(false);
+
+  // Load saved column preferences from localStorage
+  useEffect(() => {
+    const savedColumns = localStorage.getItem('error-logs-table-columns');
+    if (savedColumns) {
+      try {
+        const parsed = JSON.parse(savedColumns);
+        // Make sure all columns are accounted for
+        const defaults = getDefaultColumnVisibility();
+        const merged = { ...defaults, ...parsed };
+        setVisibleColumns(merged);
+      } catch (e) {
+        console.error('Failed to parse saved column preferences', e);
+        initDefaultColumns();
+      }
+    } else {
+      initDefaultColumns();
+    }
+  }, []);
+
+  // Get default column visibility based on user role
+  const getDefaultColumnVisibility = () => {
+    return {
+      [COLUMN_KEYS.ID]: true,
+      [COLUMN_KEYS.USERID]: true,
+      [COLUMN_KEYS.CHANNELID]: isAdminUser,
+      [COLUMN_KEYS.CHANNELNAME]: true,
+      [COLUMN_KEYS.CREATEDAT]: true,
+      [COLUMN_KEYS.TYPE]: true,
+      [COLUMN_KEYS.MODELNAME]: true,
+      [COLUMN_KEYS.MESSAGE]: true,
+      [COLUMN_KEYS.PARAM]: true,
+      [COLUMN_KEYS.CODE]: true,
+      [COLUMN_KEYS.REQUESTID]: true,
+      [COLUMN_KEYS.STATUSCODE]: isAdminUser,
+      [COLUMN_KEYS.IP]: true,
+    };
+  };
+
+  // Initialize default column visibility
+  const initDefaultColumns = () => {
+    const defaults = getDefaultColumnVisibility();
+    setVisibleColumns(defaults);
+    localStorage.setItem('error-logs-table-columns', JSON.stringify(defaults));
+  };
+
+  // Handle column visibility change
+  const handleColumnVisibilityChange = (columnKey, checked) => {
+    const updatedColumns = { ...visibleColumns, [columnKey]: checked };
+    setVisibleColumns(updatedColumns);
+  };
+
+  // Handle "Select All" checkbox
+  const handleSelectAll = (checked) => {
+    const allKeys = Object.keys(COLUMN_KEYS).map((key) => COLUMN_KEYS[key]);
+    const updatedColumns = {};
+
+    allKeys.forEach((key) => {
+      // For admin-only columns, only enable them if user is admin
+      if (
+        (key === COLUMN_KEYS.CHANNELID ||
+          key === COLUMN_KEYS.USERID ||
+          key === COLUMN_KEYS.REQUESTID) &&
+        !isAdminUser
+      ) {
+        updatedColumns[key] = false;
+      } else {
+        updatedColumns[key] = checked;
+      }
+    });
+
+    setVisibleColumns(updatedColumns);
+  };
+
+  // Define all columns
+  const allColumns = [
+    {
+      key: COLUMN_KEYS.CREATEDAT,
+      title: t('时间'),
+      dataIndex: 'timestamp2string',
+    },
+    {
+      key: COLUMN_KEYS.CHANNELNAME,
+      title: t('渠道'),
+      dataIndex: 'channel_name',
+      className: 'tableShow' ,
+      render: (text, record, index) => {
+        return <>{t(text)-record.CHANNELID}</>
+      },
+    },
+    {
+      key: COLUMN_KEYS.USERID,
+      title: t('用户ID'),
+      dataIndex: 'user_id',
+      className:  'tableShow',
+      render: (text, record, index) => {
+        return <>{t(text)}</>
+      },
+    },
+    {
+      key: COLUMN_KEYS.MESSAGE,
+      title: t('Message'),
+      dataIndex: 'message',
+      render: (text, record, index) => {
+          return <>{t(text)}</>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.MODELNAME,
+      title: t('模型'),
+      dataIndex: 'model_name',
+      render: (text, record, index) => {
+        return (
+          <>{t(text)}</>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.PARAM,
+      title: t('param'),
+      dataIndex: 'param',
+      render: (text, record, index) => {
+        return (
+          <>{t(text)}</>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.IP,
+      title: (
+        <div className="flex items-center gap-1">
+          {t('IP')}
+          <Tooltip content={t('只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录')}>
+            <IconHelpCircle className="text-gray-400 cursor-help" />
+          </Tooltip>
+        </div>
+      ),
+      dataIndex: 'ip',
+      render: (text, record, index) => {
+        return (record.type === 2 || record.type === 5) && text ? (
+          <Tooltip content={text}>
+            <Tag
+              color='orange'
+              size='large'
+              shape='circle'
+              onClick={(event) => {
+                copyText(event, text);
+              }}
+            >
+              {text}
+            </Tag>
+          </Tooltip>
+        ) : (
+          <></>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.REQUESTID,
+      title: t('requestID'),
+      dataIndex: 'request_id',
+      className: isAdmin() ? 'tableShow' : 'tableHiddle',
+      render: (text, record, index) => {
+        return <>{t(text)}</>
+      },
+    },
+    {
+      key: COLUMN_KEYS.STATUSCODE,
+      title: t('status_code'),
+      dataIndex: 'status_code',
+      fixed: 'right',
+      render: (text, record, index) => {
+        return <>{t(text)}</>
+      },
+    },
+  ];
+
+  // Update table when column visibility changes
+  useEffect(() => {
+    if (Object.keys(visibleColumns).length > 0) {
+      // Save to localStorage
+      localStorage.setItem(
+        'error-logs-table-columns',
+        JSON.stringify(visibleColumns),
+      );
+    }
+  }, [visibleColumns]);
+
+  // Filter columns based on visibility settings
+  const getVisibleColumns = () => {
+    return allColumns.filter((column) => visibleColumns[column.key]);
+  };
+
+  // Column selector modal
+  const renderColumnSelector = () => {
+    return (
+      <Modal
+        title={t('列设置')}
+        visible={showColumnSelector}
+        onCancel={() => setShowColumnSelector(false)}
+        footer={
+          <div className='flex justify-end'>
+            <Button
+              theme='light'
+              onClick={() => initDefaultColumns()}
+              className='!rounded-full'
+            >
+              {t('重置')}
+            </Button>
+            <Button
+              theme='light'
+              onClick={() => setShowColumnSelector(false)}
+              className='!rounded-full'
+            >
+              {t('取消')}
+            </Button>
+            <Button
+              type='primary'
+              onClick={() => setShowColumnSelector(false)}
+              className='!rounded-full'
+            >
+              {t('确定')}
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ marginBottom: 20 }}>
+          <Checkbox
+            checked={Object.values(visibleColumns).every((v) => v === true)}
+            indeterminate={
+              Object.values(visibleColumns).some((v) => v === true) &&
+              !Object.values(visibleColumns).every((v) => v === true)
+            }
+            onChange={(e) => handleSelectAll(e.target.checked)}
+          >
+            {t('全选')}
+          </Checkbox>
+        </div>
+        <div
+          className='flex flex-wrap max-h-96 overflow-y-auto rounded-lg p-4'
+          style={{ border: '1px solid var(--semi-color-border)' }}
+        >
+          {allColumns.map((column) => {
+            // Skip admin-only columns for non-admin users
+            if (
+              !isAdminUser &&
+              (column.key === COLUMN_KEYS.CHANNELID ||
+                column.key === COLUMN_KEYS.USERID ||
+                column.key === COLUMN_KEYS.REQUESTID )
+            ) {
+              return null;
+            }
+
+            return (
+              <div key={column.key} className='w-1/2 mb-4 pr-2'>
+                <Checkbox
+                  checked={!!visibleColumns[column.key]}
+                  onChange={(e) =>
+                    handleColumnVisibilityChange(column.key, e.target.checked)
+                  }
+                >
+                  {column.title}
+                </Checkbox>
+              </div>
+            );
+          })}
+        </div>
+      </Modal>
+    );
+  };
+
+  const [logs, setLogs] = useState([]);
+  const [expandData, setExpandData] = useState({});
+  const [showStat, setShowStat] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingStat, setLoadingStat] = useState(false);
+  const [activePage, setActivePage] = useState(1);
+  const [logCount, setLogCount] = useState(ITEMS_PER_PAGE);
+  const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
+  const [logType, setLogType] = useState(0);
+  const isAdminUser = isAdmin();
+  let now = new Date();
+
+  // Form 初始值
+  const formInitValues = {
+    p:1,
+    page_size: 10,
+    channel: 0,
+    request_id: '',
+    model_name: '',
+    channel: '',
+    dateRange: [
+      timestamp2string(getTodayStartTimestamp()),
+      timestamp2string(now.getTime() / 1000 + 3600),
+    ],
+  };
+
+  const [stat, setStat] = useState({
+    quota: 0,
+    token: 0,
+  });
+
+  // Form API 引用
+  const [formApi, setFormApi] = useState(null);
+
+  // 获取表单值的辅助函数，确保所有值都是字符串
+  const getFormValues = () => {
+    const formValues = formApi ? formApi.getValues() : {};
+
+    // 处理时间范围
+    let start_timestamp = timestamp2string(getTodayStartTimestamp());
+    let end_timestamp = timestamp2string(now.getTime() / 1000 + 3600);
+
+    if (
+      formValues.dateRange &&
+      Array.isArray(formValues.dateRange) &&
+      formValues.dateRange.length === 2
+    ) {
+      start_timestamp = formValues.dateRange[0];
+      end_timestamp = formValues.dateRange[1];
+    }
+
+    return {
+      model_name: formValues.model_name || '',
+      start_timestamp,
+      end_timestamp,
+      channel: formValues.channel || 0,
+      request_id: formValues.request_id,
+      p: formValues.p || 1,
+      page_size : formValues.page_size || 10,
+    };
+  };
+
+
+  const getErrorLogStat = async () => {
+    const {
+     request_id,
+     p,
+     page_size,
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+    } = getFormValues();
+    const currentLogType = formLogType !== undefined ? formLogType : logType;
+    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    let url = `/api/log/error-log?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}`;
+    url = encodeURI(url);
+    let res = await API.get(url);
+    const { success, message, data } = res.data;
+    if (success) {
+      setStat(data);
+    } else {
+      showError(message);
+    }
+  };
+
+  const handleEyeClick = async () => {
+    return;
+    if (loadingStat) {
+      return;
+    }
+    setLoadingStat(true);
+    //await getErrorLogStat();
+    if (isAdminUser) {
+    } else {
+      //await getLogSelfStat();
+    }
+    setShowStat(true);
+    setLoadingStat(false);
+  };
+
+
+  const setLogsFormat = (logs) => {
+    for (let i = 0; i < logs.length; i++) {
+      logs[i].timestamp2string = timestamp2string(logs[i].created_at);
+      logs[i].key = logs[i].id;
+    }
+    setLogs(logs);
+  };
+
+
+  const loadLogs = async (startIdx, pageSize, customLogType = null) => {
+    setLoading(true);
+
+    let url = '';
+    const {
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+      request_id,
+    } = getFormValues();
+
+
+    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    url = `/api/log/error-log?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}`;
+    url = encodeURI(url);
+    const res = await API.get(url);
+    const { success, message, data } = res.data;
+    if (success) {
+      const newPageData = data.items;
+      setActivePage(data.page);
+      setPageSize(data.page_size);
+      setLogCount(data.total);
+
+      setLogsFormat(newPageData);
+    } else {
+      showError(message);
+    }
+    setLoading(false);
+  };
+
+  const handlePageChange = (page) => {
+    setActivePage(page);
+    loadLogs(page, pageSize).then((r) => {}); // 不传入logType，让其从表单获取最新值
+  };
+
+  const handlePageSizeChange = async (size) => {
+    localStorage.setItem('page-size', size + '');
+    setPageSize(size);
+    setActivePage(1);
+    loadLogs(activePage, size)
+      .then()
+      .catch((reason) => {
+        showError(reason);
+      });
+  };
+
+  const refresh = async () => {
+    setActivePage(1);
+    //handleEyeClick();
+    await loadLogs(1, pageSize); // 不传入logType，让其从表单获取最新值
+  };
+
+  const copyText = async (e, text) => {
+    e.stopPropagation();
+    if (await copy(text)) {
+      showSuccess('已复制：' + text);
+    } else {
+      Modal.error({ title: t('无法复制到剪贴板，请手动复制'), content: text });
+    }
+  };
+
+  useEffect(() => {
+    const localPageSize =
+      parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
+    setPageSize(localPageSize);
+    loadLogs(activePage, localPageSize)
+      .then()
+      .catch((reason) => {
+        showError(reason);
+      });
+  }, []);
+
+  // 当 formApi 可用时，初始化统计
+  useEffect(() => {
+    if (formApi) {
+      //handleEyeClick();
+    }
+  }, [formApi]);
+
+  const expandRowRender = (record, index) => {
+    return <Descriptions data={expandData[record.key]} />;
+  };
+
+  // 检查是否有任何记录有展开内容
+  const hasExpandableRows = () => {
+    return logs.some(
+      (log) => expandData[log.key] && expandData[log.key].length > 0,
+    );
+  };
+
+  return (
+    <>
+      {renderColumnSelector()}
+      <Card
+        className='!rounded-2xl mb-4'
+        title={
+          <div className='flex flex-col w-full'>
+            <Divider margin='12px' />
+
+            {/* 搜索表单区域 */}
+            <Form
+              initValues={formInitValues}
+              getFormApi={(api) => setFormApi(api)}
+              onSubmit={refresh}
+              allowEmpty={true}
+              autoComplete='off'
+              layout='vertical'
+              trigger='change'
+              stopValidateWithError={false}
+            >
+              <div className='flex flex-col gap-4'>
+                <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
+                  {/* 时间选择器 */}
+                  <div className='col-span-1 lg:col-span-2'>
+                    <Form.DatePicker
+                      field='dateRange'
+                      className='w-full'
+                      type='dateTimeRange'
+                      placeholder={[t('开始时间'), t('结束时间')]}
+                      showClear
+                      pure
+                    />
+                  </div>
+
+                  {/* 其他搜索字段 */}
+                  <Form.Input
+                    field='request_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('requestID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+
+                  <Form.Input
+                    field='channel'
+                    prefix={<IconSearch />}
+                    placeholder={t('channelID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+
+
+                </div>
+
+                {/* 操作按钮区域 */}
+                <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
+                  {/* 日志类型选择器 */}
+
+                  <div className='flex gap-2 w-full sm:w-auto justify-end'>
+                    <Button
+                      type='primary'
+                      htmlType='submit'
+                      loading={loading}
+                      className='!rounded-full'
+                    >
+                      {t('查询')}
+                    </Button>
+                    <Button
+                      theme='light'
+                      onClick={() => {
+                        if (formApi) {
+                          formApi.reset();
+                          //setLogType(0);
+                          // 重置后立即查询，使用setTimeout确保表单重置完成
+                          setTimeout(() => {
+                            refresh();
+                          }, 100);
+                        }
+                      }}
+                      className='!rounded-full'
+                    >
+                      {t('重置')}
+                    </Button>
+                    <Button
+                      theme='light'
+                      type='tertiary'
+                      icon={<IconSetting />}
+                      onClick={() => setShowColumnSelector(true)}
+                      className='!rounded-full'
+                    >
+                      {t('列设置')}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Form>
+          </div>
+        }
+        shadows='always'
+        bordered={false}
+      >
+        <Table
+          columns={getVisibleColumns()}
+          {...(hasExpandableRows() && {
+            expandedRowRender: expandRowRender,
+            expandRowByClick: true,
+            rowExpandable: (record) =>
+              expandData[record.key] && expandData[record.key].length > 0,
+          })}
+          dataSource={logs}
+          rowKey='key'
+          loading={loading}
+          scroll={{ x: 'max-content' }}
+          className='rounded-xl overflow-hidden'
+          size='middle'
+          empty={
+            <Empty
+              image={
+                <IllustrationNoResult style={{ width: 150, height: 150 }} />
+              }
+              darkModeImage={
+                <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+              }
+              description={t('搜索无结果')}
+              style={{ padding: 30 }}
+            />
+          }
+          pagination={{
+            formatPageText: (page) =>
+              t('第 {{start}} - {{end}} 条，共 {{total}} 条', {
+                start: page.currentStart,
+                end: page.currentEnd,
+                total: logCount,
+              }),
+            currentPage: activePage,
+            pageSize: pageSize,
+            total: logCount,
+            pageSizeOptions: [10, 20, 50, 100],
+            showSizeChanger: true,
+            onPageSizeChange: (size) => {
+              handlePageSizeChange(size);
+            },
+            onPageChange: handlePageChange,
+          }}
+        />
+      </Card>
+    </>
+  );
+};
+
+export default ErrorLogsTable;
