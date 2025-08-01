@@ -225,7 +225,7 @@ function App() {
           }
         />
         <Route
-          path='/console/error-log'
+          path='/console/errorlog'
           element={
             <PrivateRoute>
               <ErrorLog />

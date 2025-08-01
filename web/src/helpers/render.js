@@ -112,6 +112,13 @@ export function getLucideIcon(key, selected = false) {
           color={selected ? sidebarIconColors.chart : 'currentColor'}
         />
       );
+    case 'errorlog':
+      return (
+        <BarChart3
+          {...commonProps}
+          color={selected ? sidebarIconColors.chart : 'currentColor'}
+        />
+      );
     case 'midjourney':
       return (
         <ImageIcon

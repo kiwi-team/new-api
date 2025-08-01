@@ -24,6 +24,7 @@ const routerMap = {
   topup: '/console/topup',
   user: '/console/user',
   log: '/console/log',
+  errorlog: '/console/errorlog',
   midjourney: '/console/midjourney',
   setting: '/console/setting',
   about: '/about',
@@ -68,8 +69,8 @@ const SiderBar = () => {
       },
       {
         text: t('错误日志'),
-        itemKey: 'error-log',
-        to: '/log/error-logs',
+        itemKey: 'errorlog',
+        to: '/errorlog',
       },
       {
         text: t('绘图日志'),
@@ -235,6 +236,7 @@ const SiderBar = () => {
       case 'chat': return sidebarIconColors.message;
       case 'token': return sidebarIconColors.key;
       case 'log': return sidebarIconColors.chart;
+      case 'errorlog': return sidebarIconColors.chart;
       case 'midjourney': return sidebarIconColors.image;
       case 'task': return sidebarIconColors.check;
       case 'topup': return sidebarIconColors.credit;

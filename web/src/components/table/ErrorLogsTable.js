@@ -29,7 +29,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { ITEMS_PER_PAGE } from '../../constants';
-import { IconSetting, IconSearch, IconHelpCircle } from '@douyinfe/semi-icons';
+import {IconSetting, IconSearch, IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
 
 
 
@@ -54,11 +54,14 @@ const ErrorLogsTable = () => {
     REQUESTID: 'request_id',
     STATUSCODE: 'status_code',
     IP: 'ip',
+    BODY: 'body',
   };
 
   // State for column visibility
   const [visibleColumns, setVisibleColumns] = useState({});
   const [showColumnSelector, setShowColumnSelector] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailContent, setDetailContent] = useState('');
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -90,6 +93,7 @@ const ErrorLogsTable = () => {
       [COLUMN_KEYS.TYPE]: true,
       [COLUMN_KEYS.MODELNAME]: true,
       [COLUMN_KEYS.MESSAGE]: true,
+      [COLUMN_KEYS.BODY]: true,
       [COLUMN_KEYS.PARAM]: true,
       [COLUMN_KEYS.CODE]: true,
       [COLUMN_KEYS.REQUESTID]: true,
@@ -146,7 +150,7 @@ const ErrorLogsTable = () => {
       dataIndex: 'channel_name',
       className: 'tableShow' ,
       render: (text, record, index) => {
-        return <>{t(text)-record.CHANNELID}</>
+        return <>{t(text)}({record.channel_id})</>
       },
     },
     {
@@ -163,7 +167,61 @@ const ErrorLogsTable = () => {
       title: t('Message'),
       dataIndex: 'message',
       render: (text, record, index) => {
-          return <>{t(text)}</>;
+          return (
+            <div className="flex items-center gap-2">
+              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="flex gap-1">
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconEyeOpened />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    showDetailDialog(text, false);
+                  }}
+                />
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconCopy />}
+                  onClick={(e) => copyBodyContent(e, text)}
+                />
+              </div>
+            </div>
+          );
+      },
+    },
+    {
+      key: COLUMN_KEYS.BODY,
+      title: t('Body'),
+      dataIndex: 'body',
+      render: (text, record, index) => {
+          return (
+            <div className="flex items-center gap-2">
+              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="flex gap-1">
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconEyeOpened />}
+                  onClick={(e) => {
+                     e.stopPropagation();
+                     showDetailDialog(text, true);
+                   }}
+                />
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconCopy />}
+                  onClick={(e) => copyBodyContent(e, text)}
+                />
+              </div>
+            </div>
+          );
       },
     },
     {
@@ -198,7 +256,7 @@ const ErrorLogsTable = () => {
       ),
       dataIndex: 'ip',
       render: (text, record, index) => {
-        return (record.type === 2 || record.type === 5) && text ? (
+        return (
           <Tooltip content={text}>
             <Tag
               color='orange'
@@ -211,8 +269,6 @@ const ErrorLogsTable = () => {
               {text}
             </Tag>
           </Tooltip>
-        ) : (
-          <></>
         );
       },
     },
@@ -406,7 +462,7 @@ const ErrorLogsTable = () => {
     const currentLogType = formLogType !== undefined ? formLogType : logType;
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/error-log?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}`;
+    let url = `/api/log/error-logs?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}`;
     url = encodeURI(url);
     let res = await API.get(url);
     const { success, message, data } = res.data;
@@ -457,7 +513,7 @@ const ErrorLogsTable = () => {
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    url = `/api/log/error-log?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}`;
+    url = `/api/log/error-logs?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}`;
     url = encodeURI(url);
     const res = await API.get(url);
     const { success, message, data } = res.data;
@@ -505,6 +561,27 @@ const ErrorLogsTable = () => {
     }
   };
 
+  // 格式化JSON内容
+  const formatJsonContent = (content) => {
+    try {
+      const parsed = JSON.parse(content);
+      return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      return content;
+    }
+  };
+
+  // 显示详情弹框
+  const showDetailDialog = (content, isJson = true) => {
+    setDetailContent(isJson ? formatJsonContent(content) : content);
+    setShowDetailModal(true);
+  };
+
+  // 复制body内容
+  const copyBodyContent = async (e, content) => {
+    await copyText(e, content);
+  };
+
   useEffect(() => {
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
@@ -534,14 +611,53 @@ const ErrorLogsTable = () => {
     );
   };
 
+  // 渲染详情弹框
+  const renderDetailModal = () => {
+    return (
+      <Modal
+        title={t('详情')}
+        visible={showDetailModal}
+        onCancel={() => setShowDetailModal(false)}
+        width={800}
+        footer={
+          <div className='flex justify-end gap-2'>
+            <Button
+              theme='light'
+              onClick={async (e) => {
+                await copyText(e, detailContent);
+              }}
+              className='!rounded-full'
+            >
+              {t('复制')}
+            </Button>
+            <Button
+              type='primary'
+              onClick={() => setShowDetailModal(false)}
+              className='!rounded-full'
+            >
+              {t('关闭')}
+            </Button>
+          </div>
+        }
+      >
+        <div className='bg-gray-50 p-4 rounded-lg max-h-96 overflow-auto'>
+          <pre className='whitespace-pre-wrap text-sm font-mono'>
+            {detailContent}
+          </pre>
+        </div>
+      </Modal>
+    );
+  };
+
   return (
     <>
       {renderColumnSelector()}
+      {renderDetailModal()}
       <Card
         className='!rounded-2xl mb-4'
         title={
           <div className='flex flex-col w-full'>
-            <Divider margin='12px' />
+            {/* <Divider margin='12px' /> */}
 
             {/* 搜索表单区域 */}
             <Form
@@ -573,6 +689,15 @@ const ErrorLogsTable = () => {
                     field='request_id'
                     prefix={<IconSearch />}
                     placeholder={t('requestID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+
+                  <Form.Input
+                    field='model_name'
+                    prefix={<IconSearch />}
+                    placeholder={t('modelName')}
                     className='!rounded-full'
                     showClear
                     pure

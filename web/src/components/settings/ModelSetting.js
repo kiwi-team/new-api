@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import SettingGeminiModel from '../../pages/Setting/Model/SettingGeminiModel.js';
 import SettingClaudeModel from '../../pages/Setting/Model/SettingClaudeModel.js';
 import SettingGlobalModel from '../../pages/Setting/Model/SettingGlobalModel.js';
+import SettingChannelConfig from '../../pages/Setting/Model/SettingChannelConfig.js';
 
 const ModelSetting = () => {
   const { t } = useTranslation();
@@ -22,6 +23,8 @@ const ModelSetting = () => {
     'general_setting.ping_interval_seconds': 60,
     'gemini.thinking_adapter_enabled': false,
     'gemini.thinking_adapter_budget_tokens_percentage': 0.6,
+    'GlobalFirstChannelsSwitch': false,
+    'GlobalFirstChannels': '',
   });
 
   let [loading, setLoading] = useState(false);
@@ -75,6 +78,9 @@ const ModelSetting = () => {
   return (
     <>
       <Spin spinning={loading} size='large'>
+        <Card style={{ marginTop: '10px' }}>
+          <SettingChannelConfig options={inputs} refresh={onRefresh} />
+        </Card>
         {/* OpenAI */}
         <Card style={{ marginTop: '10px' }}>
           <SettingGlobalModel options={inputs} refresh={onRefresh} />

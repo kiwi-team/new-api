@@ -99,7 +99,6 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) error {
 	isOpenRouter := info.ChannelType == common.ChannelTypeOpenRouter || strings.Contains(info.BaseUrl, "openrouter")
 	isChat := strings.Contains(info.BaseUrl, "chataiapi")
-	fmt.Printf("ischat: %v \n", isChat)
 	isNuwa := strings.Contains(info.BaseUrl, "nuwaapi")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
@@ -143,7 +142,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			}
 		}
 	} else if isNuwa && textRequest.THINKING != nil {
-		if textRequest.THINKING != nil && thinking.Type == "enabled" {
+		if thinking.Type == "enabled" {
 			if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
 				textRequest.Model = textRequest.Model + "-thinking"
 				info.UpstreamModelName = textRequest.Model
@@ -171,6 +170,11 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				if textRequest.ReasoningEffort == "" {
 					textRequest.ReasoningEffort = "medium"
 				}
+			}
+		} else {
+			if strings.Contains(strings.ToLower(textRequest.Model), "gemini") {
+				textRequest.Model = textRequest.Model + "-nothinking"
+				info.UpstreamModelName = textRequest.Model
 			}
 		}
 	}

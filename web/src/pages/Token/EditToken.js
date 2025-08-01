@@ -56,6 +56,7 @@ const EditToken = (props) => {
         allow_ips: '',
         group: '',
         channel_rules: {},
+        channel_ratios:{},
     };
     const [inputs, setInputs] = useState(originInputs);
     const {
@@ -83,7 +84,7 @@ const EditToken = (props) => {
     }
 
     const handleInputChange = (name, value) => {
-        if (name === 'channel_rules') {
+        if (name === 'channel_rules' || name === "channel_ratios") {
             try {
                 value = JSON.parse(value);
             } catch (e) {
@@ -181,6 +182,13 @@ const EditToken = (props) => {
                     data.channel_rules = {};
                 }
             }
+            if (data.channel_ratios) {
+                try {
+                    data.channel_ratios = JSON.parse(data.channel_ratios);
+                } catch (error) {
+                    data.channel_ratios = {};
+                } 
+            }
             updateInputs(data);
             //console.log('inputs', inputs)
             // alert(JSON.stringify(data));
@@ -253,6 +261,10 @@ const EditToken = (props) => {
             if (typeof localInputs.channel_rules === 'object') {
                 localInputs.channel_rules = JSON.stringify(localInputs.channel_rules);
             }
+            if (typeof localInputs.channel_ratios=== 'object') {
+                localInputs.channel_ratios= JSON.stringify(localInputs.channel_ratios);
+            }
+            
             try {
                 // 只有当 channel_rules 是字符串时才尝试解析
                 if (typeof localInputs.channel_rules === 'string' && localInputs.channel_rules.trim() !== '') {
@@ -260,6 +272,16 @@ const EditToken = (props) => {
                 }
             } catch (error) {
                 showError(t('请认真核对渠道规则，不是合法json:' + error.toString()));
+                setLoading(false);
+                return;
+            }
+            try {
+                // 只有当 channel_rules 是字符串时才尝试解析
+                if (typeof localInputs.channel_ratios === 'string' && localInputs.channel_ratios.trim() !== '') {
+                    JSON.parse(localInputs.channel_ratios);
+                }
+            } catch (error) {
+                showError(t('请认真核对渠道倍率，不是合法json:' + error.toString()));
                 setLoading(false);
                 return;
             }
@@ -652,8 +674,36 @@ const EditToken = (props) => {
                                     {t('请勿过度信任此功能，IP可能被伪造')}
                                 </Text>
                             </div>
+                            <div>
+                                
+                            </div>
+                                <Text strong className='block mb-2'>
+                                    {t('设置渠道倍率')}
+                                </Text>
+                                <TextArea
+                                    placeholder={t(`{
+                                        "12":0.01,
+                                        "14": 1.5
+}`)}
+                                    onChange={(value) => {
+                                        try {
+                                            handleInputChange('channel_ratios', JSON.parse(value));
+                                        } catch (e) {
+                                            handleInputChange('channel_ratios', value);
+                                        }
+                                    }}
+                                    value={typeof inputs.channel_ratios=== 'object' ? JSON.stringify(inputs.channel_ratios, null, 4) : inputs.channel_ratios}
+                                    style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                                    className='!rounded-lg'
+                                    rows={5}
+                                />
+                                <Text type='tertiary' className='mt-1 block text-xs'>
+                                    {t('渠道id要用双引号包裹起来')}
+                                </Text>
+                            
 
                             <div>
+
                                 <Text strong className='block mb-2'>
                                     {t('设置渠道规则')}
                                 </Text>

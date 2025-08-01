@@ -182,6 +182,7 @@ const ChannelsTable = () => {
     WEIGHT: 'weight',
     OPERATE: 'operate',
     TAG:'tag',
+    RATIO:'ratio',
   };
 
   // State for column visibility
@@ -223,6 +224,7 @@ const ChannelsTable = () => {
     return {
       [COLUMN_KEYS.ID]: true,
       [COLUMN_KEYS.TAG]: true,
+      [COLUMN_KEYS.RATIO]: true,
       [COLUMN_KEYS.NAME]: true,
       [COLUMN_KEYS.GROUP]: true,
       [COLUMN_KEYS.TYPE]: true,
@@ -270,6 +272,11 @@ const ChannelsTable = () => {
         key:COLUMN_KEYS.TAG,
         title:t('TAG'),
         dataIndex:'tag',
+    },
+    {
+        key:COLUMN_KEYS.RATIO,
+        title:t('倍率'),
+        dataIndex:'ratio',
     },
     {
       key: COLUMN_KEYS.NAME,

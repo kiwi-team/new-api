@@ -5,6 +5,7 @@ type ChannelRulesItem struct {
 	Retry           int           `json:"retry,omitempty"`
 	DisableChannels []int         `json:"disable_channels,omitempty"`
 	Channels        []ChannelItem `json:"channels,omitempty"`
+	RandomType      string        `json:"random_type,omitempty"` // random,order
 }
 
 type ChannelItem struct {

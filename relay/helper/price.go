@@ -3,6 +3,7 @@ package helper
 import (
 	"fmt"
 	"one-api/common"
+	"one-api/constant"
 	constant2 "one-api/constant"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
@@ -53,6 +54,29 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupR
 				}
 			}
 		}
+	}
+	//key channel ratio
+	ratios, ok1 := ctx.Get("token_channel_ratios")
+	if ok1 {
+		ratioMap := ratios.(map[int]float64)
+		if ratio, exists := ratioMap[relayInfo.ChannelId]; exists {
+			groupRatioInfo.GroupRatio = ratio
+			return groupRatioInfo
+		}
+	}
+
+	// channel default ratio
+	ratioAny, ok2 := ctx.Get("channel_ratio")
+	if ok2 {
+		ratio := ratioAny.(*float64)
+		if ratio != nil {
+			if *ratio > constant.LessIsZero {
+				groupRatioInfo.GroupRatio = *ratio
+			} else {
+				groupRatioInfo.GroupRatio = 0.0
+			}
+		}
+		return groupRatioInfo
 	}
 
 	// check auto group

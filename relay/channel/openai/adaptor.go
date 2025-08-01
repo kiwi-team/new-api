@@ -152,9 +152,99 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	return nil
 }
 
+func ConvertChatRequestToResponseRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	// 把completions的请求，转化为responses的格式
+	var newRequest dto.OpenAIResponsesRequest
+
+	// 基本字段映射
+	newRequest.Model = request.Model
+	newRequest.Stream = request.Stream
+	newRequest.MaxOutputTokens = request.MaxTokens
+	if request.Temperature != nil {
+		newRequest.Temperature = float64(*request.Temperature)
+	}
+	newRequest.TopP = request.TopP
+	newRequest.User = request.User
+	if request.Reasoning != nil {
+		var reasoning dto.Reasoning
+		err := json.Unmarshal(request.Reasoning, &reasoning)
+		if err != nil {
+			return nil, err
+		}
+		newRequest.Reasoning = &reasoning
+	}
+
+	// 将Messages转换为Input
+	if len(request.Messages) > 0 {
+		var input []dto.OpenAIResponsesRequestInputItem
+		for _, m := range request.Messages {
+			contentList := make([]dto.OpenAIResponsesRequestInputItemContent, 0)
+			for _, cnt := range m.ParseContent() {
+				switch cnt.Type {
+				case dto.ContentTypeText:
+					contentList = append(contentList, dto.OpenAIResponsesRequestInputItemContent{
+						Type: "input_text",
+						Text: cnt.Text,
+					})
+				case dto.ContentTypeImageURL:
+					contentList = append(contentList, dto.OpenAIResponsesRequestInputItemContent{
+						Type:     "input_image",
+						ImageUrl: cnt.ImageUrl.(dto.MessageImageUrl).Url,
+					})
+				}
+			}
+			input = append(input, dto.OpenAIResponsesRequestInputItem{
+				Role:    m.Role,
+				Content: contentList,
+			})
+		}
+		messagesJson, err := json.Marshal(input)
+		if err != nil {
+			return nil, err
+		}
+		newRequest.Input = json.RawMessage(messagesJson)
+	}
+
+	// 转换Tools
+	if len(request.Tools) > 0 {
+		var responseTools []dto.ResponsesToolsCall
+		for _, tool := range request.Tools {
+			responseTool := dto.ResponsesToolsCall{
+				Type:        tool.Type,
+				Name:        tool.Function.Name,
+				Description: tool.Function.Description,
+			}
+			if tool.Function.Parameters != nil {
+				paramsJson, err := json.Marshal(tool.Function.Parameters)
+				if err != nil {
+					return nil, err
+				}
+				responseTool.Parameters = json.RawMessage(paramsJson)
+			}
+			responseTools = append(responseTools, responseTool)
+		}
+		newRequest.Tools = responseTools
+	}
+
+	// 转换ToolChoice
+	if request.ToolChoice != nil {
+		toolChoiceJson, err := json.Marshal(request.ToolChoice)
+		if err != nil {
+			return nil, err
+		}
+		newRequest.ToolChoice = json.RawMessage(toolChoiceJson)
+	}
+
+	return newRequest, nil
+}
+
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+
+	if c.GetString(constant2.ContextKeyCompletionsResponses) == "yes" {
+		return ConvertChatRequestToResponseRequest(c, info, request)
 	}
 	if info.ChannelType != common.ChannelTypeOpenAI && info.ChannelType != common.ChannelTypeAzure {
 		request.StreamOptions = nil

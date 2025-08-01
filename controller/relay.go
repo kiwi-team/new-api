@@ -16,6 +16,8 @@ import (
 	relayconstant "one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/service"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +84,27 @@ func Relay(c *gin.Context) {
 	var tokenChannelIds []int
 	if ok {
 		tokenChannelIds = tokenChannelIdsAny.([]int)
+	} else {
+		idsStr := common.OptionMap["GlobalFirstChannels"]
+		theSwitch := common.OptionMap["GlobalFirstChannelsSwitch"]
+		if theSwitch == "true" {
+			idsArr := strings.Split(idsStr, ",")
+			// todo 66666 去掉不支持模型的渠道
+			for _, id := range idsArr {
+				if idInt, er := strconv.Atoi(id); er == nil {
+					ch, err2 := model.GetChannelById(idInt, false)
+					if err2 != nil {
+						continue
+					}
+					if ch.Status != common.ChannelStatusEnabled {
+						continue
+					}
+					if slices.Contains(strings.Split(ch.Models, ","), c.GetString("original_model")) {
+						tokenChannelIds = append(tokenChannelIds, idInt)
+					}
+				}
+			}
+		}
 	}
 	var channel *model.Channel
 	var err error

@@ -139,11 +139,87 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 		if lastStreamData != "" {
 			err := handleStreamFormat(c, info, lastStreamData, forceFormat, thinkToContent)
+			common.SysLog("handleStreamFormat:" + lastStreamData)
 			if err != nil {
 				common.SysError("error handling stream format: " + err.Error())
 			}
 		}
+		if c.GetString(constant.ContextKeyCompletionsResponses) == "yes" {
+			var responsesItem dto.ResponsesStreamResponse
+			var chatItem dto.ChatCompletionsStreamResponse
+			err1 := common.DecodeJsonStr(data, &responsesItem)
+			if err1 != nil {
+				common.SysError("error handling stream format1 : " + err1.Error())
+			}
+
+			// 通过responsesItem的值构建chatItem
+			chatItem = dto.ChatCompletionsStreamResponse{
+				Id:      common.GetRandomString(32),
+				Object:  "chat.completion.chunk",
+				Created: common.GetTimestamp(),
+				Choices: []dto.ChatCompletionsStreamResponseChoice{},
+			}
+
+			// 根据responsesItem的类型设置chatItem的内容
+			switch responsesItem.Type {
+			case "response.created", "response.output_item.added", "response.in_progress", "response.content_part.added":
+				common.SysLog("streaming:" + responsesItem.Type)
+				//return false
+			case "response.output_text.delta", "response.reasoning_summary_text.delta":
+				// 处理文本增量输出
+				var choice dto.ChatCompletionsStreamResponseChoice
+				choice.Delta.SetContentString(responsesItem.Delta)
+				chatItem.Choices = append(chatItem.Choices, choice)
+
+			case "response.completed":
+				// 处理完成状态
+				var choice dto.ChatCompletionsStreamResponseChoice
+				finishReason := constant.FinishReasonStop
+				choice.FinishReason = &finishReason
+				chatItem.Choices = append(chatItem.Choices, choice)
+				if responsesItem.Response != nil {
+					chatItem.Id = responsesItem.Response.ID
+					chatItem.Model = responsesItem.Response.Model
+					chatItem.Usage = &dto.Usage{}
+					if responsesItem.Response.Usage != nil {
+						//chatItem.Usage = responsesItem.Response.Usage
+						chatItem.Usage.PromptTokens = responsesItem.Response.Usage.InputTokens
+						chatItem.Usage.CompletionTokens = responsesItem.Response.Usage.OutputTokens
+						chatItem.Usage.TotalTokens = responsesItem.Response.Usage.TotalTokens
+						chatItem.Usage.PromptTokensDetails = *responsesItem.Response.Usage.InputTokensDetails
+						chatItem.Usage.CompletionTokenDetails = responsesItem.Response.Usage.OutputTokenDetails
+					}
+				}
+
+			// case "response.output_item.added":
+			// 	// 处理输出项添加
+			// 	if responsesItem.Item != nil && len(responsesItem.Item.Content) > 0 {
+			// 		var choice dto.ChatCompletionsStreamResponseChoice
+			// 		choice.Delta.SetContentString(responsesItem.Item.Content[0].Text)
+			// 		chatItem.Choices = append(chatItem.Choices, choice)
+			// 	}
+
+			case "response.output_item.done":
+				// 处理输出项完成
+				if responsesItem.Item != nil {
+					var choice dto.ChatCompletionsStreamResponseChoice
+					if responsesItem.Item.Status == "completed" {
+						finishReason := constant.FinishReasonStop
+						choice.FinishReason = &finishReason
+					}
+					chatItem.Choices = append(chatItem.Choices, choice)
+				}
+			}
+
+			// 如果成功构建了chatItem，则发送数据
+			chatItemJson, jsonErr := json.Marshal(chatItem)
+			if jsonErr != nil {
+				common.SysError("error marshalling chat item: " + jsonErr.Error())
+			}
+			data = string(chatItemJson)
+		}
 		lastStreamData = data
+		fmt.Println("dataxxxx:" + data)
 		streamItems = append(streamItems, data)
 		return true
 	})

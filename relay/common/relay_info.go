@@ -262,6 +262,9 @@ func GenRelayInfo(c *gin.Context) *RelayInfo {
 			SendLastThinkingContent: false,
 		},
 	}
+	if c.GetString(constant.ContextKeyCompletionsResponses) == "yes" {
+		info.RequestURLPath = "/v1/responses"
+	}
 	if strings.HasPrefix(c.Request.URL.Path, "/pg") {
 		info.IsPlayground = true
 		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")

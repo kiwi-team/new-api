@@ -12,6 +12,7 @@ import (
 	"one-api/service"
 	"one-api/setting"
 	"one-api/setting/ratio_setting"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -61,7 +62,6 @@ func Distribute() func(c *gin.Context) {
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
 			tags = tagsAny.([]string)
 		}
-		//fmt.Printf("tags: %v\n", tags)
 		if channelRules != nil {
 			c.Set("new_retry_times", channelRules.Retry)
 			channelIds = model.GetChannelIdsByRule(channelRules, tags)
@@ -164,6 +164,13 @@ func Distribute() func(c *gin.Context) {
 		}
 		c.Set(constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		c.Set(constant.ContextKeyCompletionsResponses, "no")
+		responsesModelListStr := common.OptionMap["ResponsesModelList"]
+		ResponsesModelList := strings.Split(responsesModelListStr, ",")
+		if strings.Contains(c.Request.URL.Path, "/chat/completions") && slices.Contains(ResponsesModelList, modelName) {
+			//用chat来请求responses
+			c.Set(constant.ContextKeyCompletionsResponses, "yes")
+		}
 		c.Next()
 	}
 }
@@ -279,6 +286,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	c.Set("channel_id", channel.Id)
 	c.Set("channel_name", channel.Name)
 	c.Set("channel_type", channel.Type)
+	c.Set("channel_ratio", channel.Ratio)
 	c.Set("channel_create_time", channel.CreatedTime)
 	c.Set("channel_setting", channel.GetSetting())
 	c.Set("param_override", channel.GetParamOverride())

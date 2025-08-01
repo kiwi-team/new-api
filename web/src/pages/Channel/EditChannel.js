@@ -95,6 +95,7 @@ const EditChannel = (props) => {
     priority: 0,
     weight: 0,
     tag: '',
+    ratio:0.0,
   };
   const [batch, setBatch] = useState(false);
   const [autoBan, setAutoBan] = useState(true);
@@ -168,6 +169,9 @@ const EditChannel = (props) => {
       setBasicModels(localModels);
     }
     //setAutoBan
+    if(type == "ratio") {
+        console.log("tttt",value,typeof value);
+    }
   };
 
   const loadChannel = async () => {
@@ -1009,6 +1013,27 @@ useEffect(() => {
                   </div>
                 )}
 
+                 <div>
+                  <Text strong className="block mb-2">{t('渠道倍率')}</Text>
+                   <Input
+                    name='ratio'
+                    type='number'
+                    step='0.01'
+                    placeholder={t('渠道倍率')}
+                    onChange={(value) => {
+                      const number = parseFloat(value);
+                      if (isNaN(number)) {
+                        handleInputChange('ratio', value);
+                      } else {
+                        handleInputChange('ratio', number);
+                      }
+                    }}
+                    value={inputs.ratio}
+                    size="large"
+                    className="!rounded-lg"
+                  />
+                </div>
+
                 <div>
                   <Text strong className="block mb-2">{t('渠道标签')}</Text>
                   <Input
@@ -1021,6 +1046,7 @@ useEffect(() => {
                     className="!rounded-lg"
                   />
                 </div>
+
 
                 <div>
                   <Text strong className="block mb-2">{t('渠道优先级')}</Text>

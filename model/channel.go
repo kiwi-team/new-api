@@ -2,11 +2,13 @@ package model
 
 import (
 	"encoding/json"
+	"math/rand"
 	"one-api/common"
 	"one-api/dto"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -32,13 +34,14 @@ type Channel struct {
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
 	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
-	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
-	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
-	AutoBan           *int    `json:"auto_ban" gorm:"default:1"`
-	OtherInfo         string  `json:"other_info"`
-	Tag               *string `json:"tag" gorm:"index"`
-	Setting           *string `json:"setting" gorm:"type:text"`
-	ParamOverride     *string `json:"param_override" gorm:"type:text"`
+	StatusCodeMapping *string  `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
+	Priority          *int64   `json:"priority" gorm:"bigint;default:0"`
+	AutoBan           *int     `json:"auto_ban" gorm:"default:1"`
+	OtherInfo         string   `json:"other_info"`
+	Ratio             *float64 `json:"ratio"`
+	Tag               *string  `json:"tag" gorm:"index"`
+	Setting           *string  `json:"setting" gorm:"type:text"`
+	ParamOverride     *string  `json:"param_override" gorm:"type:text"`
 }
 
 func (channel *Channel) GetModels() []string {
@@ -233,6 +236,14 @@ func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (cha
 			}
 			channelIds = append(channelIds, channel.Id)
 		}
+	}
+	if channelRules.RandomType == "random" {
+		// 打乱channelIds顺序
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		r.Shuffle(len(channelIds), func(i, j int) {
+			channelIds[i], channelIds[j] = channelIds[j], channelIds[i]
+		})
+		return channelIds
 	}
 	return channelIds
 }
