@@ -407,7 +407,7 @@ const ErrorLogsTable = () => {
     model_name: '',
     channel: '',
     dateRange: [
-      timestamp2string(getTodayStartTimestamp()),
+      timestamp2string(now.getTime() / 1000 - 3600),
       timestamp2string(now.getTime() / 1000 + 3600),
     ],
   };
@@ -425,7 +425,7 @@ const ErrorLogsTable = () => {
     const formValues = formApi ? formApi.getValues() : {};
 
     // 处理时间范围
-    let start_timestamp = timestamp2string(getTodayStartTimestamp());
+    let start_timestamp = timestamp2string(now.getTime() / 1000 - 3600);
     let end_timestamp = timestamp2string(now.getTime() / 1000 + 3600);
 
     if (

@@ -162,9 +162,8 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 			// 根据responsesItem的类型设置chatItem的内容
 			switch responsesItem.Type {
-			case "response.created", "response.output_item.added", "response.in_progress", "response.content_part.added":
-				common.SysLog("streaming:" + responsesItem.Type)
-				//return false
+			//case "response.created", "response.output_item.added", "response.in_progress", "response.content_part.added":
+			//return false
 			case "response.output_text.delta", "response.reasoning_summary_text.delta":
 				// 处理文本增量输出
 				var choice dto.ChatCompletionsStreamResponseChoice
@@ -191,13 +190,13 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 					}
 				}
 
-			// case "response.output_item.added":
-			// 	// 处理输出项添加
-			// 	if responsesItem.Item != nil && len(responsesItem.Item.Content) > 0 {
-			// 		var choice dto.ChatCompletionsStreamResponseChoice
-			// 		choice.Delta.SetContentString(responsesItem.Item.Content[0].Text)
-			// 		chatItem.Choices = append(chatItem.Choices, choice)
-			// 	}
+			case "response.output_item.added":
+				// 处理输出项添加
+				if responsesItem.Item != nil && len(responsesItem.Item.Content) > 0 {
+					var choice dto.ChatCompletionsStreamResponseChoice
+					choice.Delta.SetContentString(responsesItem.Item.Content[0].Text)
+					chatItem.Choices = append(chatItem.Choices, choice)
+				}
 
 			case "response.output_item.done":
 				// 处理输出项完成
