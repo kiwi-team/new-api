@@ -136,14 +136,16 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		}
 	} else if isChat && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
-			if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
 				textRequest.Model = textRequest.Model + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
 		}
 	} else if isNuwa && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
-			if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
 				textRequest.Model = textRequest.Model + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
@@ -172,7 +174,8 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				}
 			}
 		} else {
-			if strings.Contains(strings.ToLower(textRequest.Model), "gemini") {
+			//if strings.Contains(strings.ToLower(textRequest.Model), "gemini") {
+			if textRequest.Model == "gemini-2.5-flash" {
 				textRequest.Model = textRequest.Model + "-nothinking"
 				info.UpstreamModelName = textRequest.Model
 			}

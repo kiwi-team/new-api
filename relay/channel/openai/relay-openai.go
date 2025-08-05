@@ -139,7 +139,6 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 		if lastStreamData != "" {
 			err := handleStreamFormat(c, info, lastStreamData, forceFormat, thinkToContent)
-			common.SysLog("handleStreamFormat:" + lastStreamData)
 			if err != nil {
 				common.SysError("error handling stream format: " + err.Error())
 			}
@@ -154,7 +153,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 			// 通过responsesItem的值构建chatItem
 			chatItem = dto.ChatCompletionsStreamResponse{
-				Id:      common.GetRandomString(32),
+				Id:      "toio-" + common.GetRandomString(32),
 				Object:  "chat.completion.chunk",
 				Created: common.GetTimestamp(),
 				Choices: []dto.ChatCompletionsStreamResponseChoice{},
@@ -218,7 +217,6 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 			data = string(chatItemJson)
 		}
 		lastStreamData = data
-		fmt.Println("dataxxxx:" + data)
 		streamItems = append(streamItems, data)
 		return true
 	})
