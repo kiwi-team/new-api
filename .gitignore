@@ -13,3 +13,7 @@ one-api
 tiktoken_cache
 tmp/
 oneapi
+quota_warning_1.txt
+error_warning.txt
+pprof/
+py/

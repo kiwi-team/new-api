@@ -33,6 +33,11 @@ var QuotaWarningThreshold = 1000 // unit: dollar
 var QuotaWarningInterval = 5     // unit: minute,每5分钟检查一次，最近消耗是否超过1000美元，超过了就发飞书消息
 var QuotaWarningUserIds = ""
 
+var ErrorWarningEnabled = false
+var ErrorWarningThreshold = 100 // unit: count, 超过100条错误日志就发飞书消息
+var ErrorWarningInterval = 30   // unit: minute, 每30分钟检查一次
+var ErrorWarningUserIds = ""
+
 // Any options with "Secret", "Token" in its key won't be return by GetOptions
 
 var SessionSecret = uuid.New().String()

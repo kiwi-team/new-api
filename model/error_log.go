@@ -88,3 +88,23 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 	}
 	return err1
 }
+
+type ErrorLogStatistics struct {
+	ChannelId   int    `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	ModelName   string `json:"model_name"`
+	Total       int    `json:"total"`
+	Message     string `json:"message"`
+	StatusCode  int    `json:"status_code"`
+	Code        string `json:"code"`
+}
+
+// 统计分析错误日志
+// 按照模型统计分析
+// 按照渠道统计分析
+// 安装渠道-模型统计分析
+func StatisticsErrorLog(start int64, end int64) []ErrorLogStatistics {
+	var errorLogStatistics []ErrorLogStatistics
+	DB.Model(&ErrorLog{}).Select("channel_id,max(channel_name) as channel_name,model_name,count(*) as total,max(message) as message,max(status_code) as status_code,code").Where("created_at > ? and created_at < ?", start, end).Group("model_name,channel_id,code").Order("total desc").Scan(&errorLogStatistics)
+	return errorLogStatistics
+}

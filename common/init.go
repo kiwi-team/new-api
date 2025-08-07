@@ -101,4 +101,8 @@ func LoadEnv() {
 	QuotaWarningInterval = GetEnvOrDefault("QUOTA_WARNING_INTERVAL", 5)
 	QuotaWarningUserIds = GetEnvOrDefaultString("QUOTA_WARNING_USER_IDS", "")
 
+	ErrorWarningEnabled = GetEnvOrDefaultBool("ERROR_WARNING_ENABLED", false)
+	ErrorWarningThreshold = GetEnvOrDefault("ERROR_WARNING_THRESHOLD", 100)
+	ErrorWarningInterval = GetEnvOrDefault("ERROR_WARNING_INTERVAL", 30)
+	ErrorWarningUserIds = GetEnvOrDefaultString("ERROR_WARNING_USER_IDS", "")
 }

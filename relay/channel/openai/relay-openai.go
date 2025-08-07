@@ -101,7 +101,6 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 			lastStreamResponse.Choices[i].Delta.Reasoning = nil
 		}
 	}
-
 	return helper.ObjectData(c, lastStreamResponse)
 }
 
@@ -153,7 +152,7 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 			// 通过responsesItem的值构建chatItem
 			chatItem = dto.ChatCompletionsStreamResponse{
-				Id:      "toio-" + common.GetRandomString(32),
+				Id:      "chatcmpl-" + common.GetRandomString(32),
 				Object:  "chat.completion.chunk",
 				Created: common.GetTimestamp(),
 				Choices: []dto.ChatCompletionsStreamResponseChoice{},
@@ -244,7 +243,10 @@ func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	}
 
 	if shouldSendLastResp {
-		sendStreamData(c, info, lastStreamData, forceFormat, thinkToContent)
+		err = sendStreamData(c, info, lastStreamData, forceFormat, thinkToContent)
+		if err != nil {
+			common.SysError("error sending stream data: " + err.Error())
+		}
 		//err = handleStreamFormat(c, info, lastStreamData, forceFormat, thinkToContent)
 	}
 
