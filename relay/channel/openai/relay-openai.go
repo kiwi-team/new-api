@@ -28,7 +28,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if data == "" {
 		return nil
 	}
-
+	data = setDeltaRole(c, info, data)
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -53,6 +53,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		if len(choice.Delta.GetContentString()) > 0 {
 			hasContent = true
 		}
+
 	}
 
 	// Handle think to content conversion
@@ -102,6 +103,36 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		}
 	}
 	return helper.ObjectData(c, lastStreamResponse)
+}
+
+func setDeltaRole(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
+	var setRoleValue string
+	if setR, ok := info.ChannelSetting[constant.SetRole].(string); ok {
+		setRoleValue = setR
+	}
+	if setRoleValue == "" {
+		return lastStreamData
+	}
+	var lastStreamResponse dto.ChatCompletionsStreamResponse
+	err := common.DecodeJsonStr(lastStreamData, &lastStreamResponse)
+	if err != nil {
+		common.SysError("error setting delta role: " + err.Error())
+		return lastStreamData
+	}
+	if len(lastStreamResponse.Choices) == 0 {
+		return lastStreamData
+	}
+	for i := range lastStreamResponse.Choices {
+		if len(lastStreamResponse.Choices[i].Delta.Role) == 0 {
+			lastStreamResponse.Choices[i].Delta.Role = setRoleValue
+		}
+	}
+	byteArr, err1 := common.EncodeJson(lastStreamResponse)
+	if err1 != nil {
+		common.SysError("error setting delta role: " + err1.Error())
+		return lastStreamData
+	}
+	return string(byteArr)
 }
 
 func OaiStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
