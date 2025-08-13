@@ -67,8 +67,10 @@ func WarningErrorLog() {
 	webhookUrl := common.OptionMap["ErrorWarningFeishuRobotUrl"]
 	secret := common.OptionMap["ErrorWarningFeishuRobotSecret"]
 	envName := common.OptionMap["ErrorWarningEnvName"]
+	interval := common.OptionMap["ErrorWarningInterval"]
+	intervalInt, _ := strconv.Atoi(interval)
 	for {
-		time.Sleep(time.Duration(common.ErrorWarningInterval) * time.Minute)
+		time.Sleep(time.Duration(intervalInt) * time.Minute)
 		now := time.Now().Unix()
 		ctx := context.TODO()
 

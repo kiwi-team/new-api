@@ -100,6 +100,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isOpenRouter := info.ChannelType == common.ChannelTypeOpenRouter || strings.Contains(info.BaseUrl, "openrouter")
 	isChat := strings.Contains(info.BaseUrl, "chataiapi")
 	isNuwa := strings.Contains(info.BaseUrl, "nuwaapi")
+	isYunwu := strings.Contains(info.BaseUrl, "yunwu")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
 	//var extraBody dto.ExtraBody
@@ -180,6 +181,19 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				info.UpstreamModelName = textRequest.Model
 			}
 		}
+	} else if isYunwu && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+				textRequest.Model = textRequest.Model + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		} else {
+			if textRequest.Model == "gemini-2.5-flash" {
+				textRequest.Model = textRequest.Model + "-nothinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		}
 	}
 
 	return nil
@@ -200,6 +214,13 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 			}
 		}
 	}
+	if filterConfigMap.SetTopPZero != nil {
+		for _, model := range *filterConfigMap.SetTopPZero {
+			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
+				textRequest.TopP = 0
+			}
+		}
+	}
 	if filterConfigMap.SetMaxTokensZero != nil {
 		for _, model := range *filterConfigMap.SetMaxTokensZero {
 			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
@@ -211,6 +232,14 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 		for _, model := range *filterConfigMap.SetTemperatureZero {
 			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
 				textRequest.Temperature = nil
+			}
+		}
+	}
+	if filterConfigMap.SetTemperatureOne != nil {
+		for _, model := range *filterConfigMap.SetTemperatureOne {
+			if textRequest.Model == model || common.RegMatch(model, textRequest.Model) {
+				temp := 1.0
+				textRequest.Temperature = &temp
 			}
 		}
 	}
