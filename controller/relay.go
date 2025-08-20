@@ -116,7 +116,9 @@ func Relay(c *gin.Context) {
 				break
 			}
 			channel, err1 = model.GetChannelById(tokenChannelIds[i], true)
-			err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			if err1 != nil {
+				err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			}
 			//c.Set(constant.ContextKeyRequestStartTime, time.Now())
 			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 			middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
@@ -139,7 +141,7 @@ func Relay(c *gin.Context) {
 		go processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		body, _ := common.GetRequestBody(c)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, *newAPIError, string(body), requestId, c.ClientIP())
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, newAPIError, string(body), requestId, c.ClientIP())
 
 		//if !shouldRetry(c, openaiErr, retryTimes-i) {
 		if !shouldRetry(c, newAPIError, retryTimes-i) {

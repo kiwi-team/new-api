@@ -106,12 +106,33 @@ func (e *NewAPIError) SetMessage(message string) {
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
 	switch e.ErrorType {
 	case ErrorTypeOpenAIError:
-		return e.RelayError.(OpenAIError)
-	case ErrorTypeClaudeError:
-		claudeError := e.RelayError.(ClaudeError)
+		if e.RelayError != nil {
+			if openAIError, ok := e.RelayError.(OpenAIError); ok {
+				return openAIError
+			}
+		}
+		// 如果类型断言失败，返回默认的 OpenAI 错误
 		return OpenAIError{
 			Message: e.Error(),
-			Type:    claudeError.Type,
+			Type:    "toio_api_error",
+			Param:   "",
+			Code:    e.errorCode,
+		}
+	case ErrorTypeClaudeError:
+		if e.RelayError != nil {
+			if claudeError, ok := e.RelayError.(ClaudeError); ok {
+				return OpenAIError{
+					Message: e.Error(),
+					Type:    claudeError.Type,
+					Param:   "",
+					Code:    e.errorCode,
+				}
+			}
+		}
+		// 如果类型断言失败，返回默认的 OpenAI 错误
+		return OpenAIError{
+			Message: e.Error(),
+			Type:    "",
 			Param:   "",
 			Code:    e.errorCode,
 		}

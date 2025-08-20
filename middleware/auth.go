@@ -338,5 +338,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 			return fmt.Errorf("普通用户不支持指定渠道")
 		}
 	}
+	c.Set("token_channel_rules", token.GetChannelRules())
+	c.Set("token_channel_ratios", token.GetChannelRatios())
 	return nil
 }
