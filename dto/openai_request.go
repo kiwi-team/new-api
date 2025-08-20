@@ -83,8 +83,10 @@ type GeneralOpenAIRequest struct {
 	EnableThinking      any               `json:"enable_thinking,omitempty"` // ali
 	THINKING            json.RawMessage   `json:"thinking,omitempty"`        // doubao,anthropic
 	ExtraBody           json.RawMessage   `json:"extra_body,omitempty"`
+	SearchParameters    any               `json:"search_parameters,omitempty"` //xai
 	WebSearchOptions    *WebSearchOptions `json:"web_search_options,omitempty"`
 	// OpenRouter Params
+	Usage     json.RawMessage `json:"usage,omitempty"`
 	Reasoning json.RawMessage `json:"reasoning,omitempty"`
 	// Ali Qwen Params
 	VlHighResolutionImages json.RawMessage `json:"vl_high_resolution_images,omitempty"`
@@ -92,8 +94,8 @@ type GeneralOpenAIRequest struct {
 
 func (r *GeneralOpenAIRequest) ToMap() map[string]any {
 	result := make(map[string]any)
-	data, _ := common.EncodeJson(r)
-	_ = common.DecodeJson(data, &result)
+	data, _ := common.Marshal(r)
+	_ = common.Unmarshal(data, &result)
 	return result
 }
 
@@ -486,26 +488,29 @@ type WebSearchOptions struct {
 	UserLocation      json.RawMessage `json:"user_location,omitempty"`
 }
 
+// https://platform.openai.com/docs/api-reference/responses/create
 type OpenAIResponsesRequest struct {
-	Model              string               `json:"model"`
-	Input              json.RawMessage      `json:"input,omitempty"`
-	Include            json.RawMessage      `json:"include,omitempty"`
-	Instructions       json.RawMessage      `json:"instructions,omitempty"`
-	MaxOutputTokens    uint                 `json:"max_output_tokens,omitempty"`
-	Metadata           json.RawMessage      `json:"metadata,omitempty"`
-	ParallelToolCalls  bool                 `json:"parallel_tool_calls,omitempty"`
-	PreviousResponseID string               `json:"previous_response_id,omitempty"`
-	Reasoning          *Reasoning           `json:"reasoning,omitempty"`
-	ServiceTier        string               `json:"service_tier,omitempty"`
-	Store              bool                 `json:"store,omitempty"`
-	Stream             bool                 `json:"stream,omitempty"`
-	Temperature        float64              `json:"temperature,omitempty"`
-	Text               json.RawMessage      `json:"text,omitempty"`
-	ToolChoice         json.RawMessage      `json:"tool_choice,omitempty"`
-	Tools              []ResponsesToolsCall `json:"tools,omitempty"`
-	TopP               float64              `json:"top_p,omitempty"`
-	Truncation         string               `json:"truncation,omitempty"`
-	User               string               `json:"user,omitempty"`
+	Model              string           `json:"model"`
+	Input              json.RawMessage  `json:"input,omitempty"`
+	Include            json.RawMessage  `json:"include,omitempty"`
+	Instructions       json.RawMessage  `json:"instructions,omitempty"`
+	MaxOutputTokens    uint             `json:"max_output_tokens,omitempty"`
+	Metadata           json.RawMessage  `json:"metadata,omitempty"`
+	ParallelToolCalls  bool             `json:"parallel_tool_calls,omitempty"`
+	PreviousResponseID string           `json:"previous_response_id,omitempty"`
+	Reasoning          *Reasoning       `json:"reasoning,omitempty"`
+	ServiceTier        string           `json:"service_tier,omitempty"`
+	Store              bool             `json:"store,omitempty"`
+	Stream             bool             `json:"stream,omitempty"`
+	Temperature        float64          `json:"temperature,omitempty"`
+	Text               json.RawMessage  `json:"text,omitempty"`
+	ToolChoice         json.RawMessage  `json:"tool_choice,omitempty"`
+	Tools              []map[string]any `json:"tools,omitempty"` // 需要处理的参数很少，MCP 参数太多不确定，所以用 map
+	TopP               float64          `json:"top_p,omitempty"`
+	Truncation         string           `json:"truncation,omitempty"`
+	User               string           `json:"user,omitempty"`
+	MaxToolCalls       uint             `json:"max_tool_calls,omitempty"`
+	Prompt             json.RawMessage  `json:"prompt,omitempty"`
 }
 
 type OpenAIResponsesRequestInputItem struct {
@@ -541,4 +546,6 @@ type ResponsesToolsCall struct {
 	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Function    json.RawMessage `json:"function,omitempty"`
+	Container   json.RawMessage `json:"container,omitempty"`
 }

@@ -2,9 +2,9 @@ package service
 
 import (
 	"bytes"
-	"fmt"
-	goahocorasick "github.com/anknown/ahocorasick"
 	"strings"
+
+	goahocorasick "github.com/anknown/ahocorasick"
 )
 
 func SundaySearch(text string, pattern string) bool {
@@ -60,7 +60,6 @@ func InitAc(words []string) *goahocorasick.Machine {
 	m := new(goahocorasick.Machine)
 	dict := readRunes(words)
 	if err := m.Build(dict); err != nil {
-		fmt.Println(err)
 		return nil
 	}
 	return m

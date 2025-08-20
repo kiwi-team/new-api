@@ -8,7 +8,7 @@ import (
 	"one-api/common"
 	"one-api/dto"
 	"one-api/relay/helper"
-	"one-api/service"
+	"one-api/types"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -78,24 +78,24 @@ func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
 	return chatRequest
 }
 
-func sensenovaHandler(c *gin.Context, resp *http.Response) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+func sensenovaHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError, *dto.Usage) {
 	var newResponse ChatResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError), nil
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), nil
 	}
 	err = resp.Body.Close()
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusInternalServerError), nil
 	}
 	err = json.Unmarshal(responseBody, &newResponse)
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "unmarshal_response_body_failed", http.StatusInternalServerError), nil
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
 	}
 	fullTextResponse := responseSensenova2OpenAI(&newResponse)
 	jsonResponse, err := json.Marshal(fullTextResponse)
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "marshal_response_body_failed", http.StatusInternalServerError), nil
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError), nil
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)
@@ -103,7 +103,7 @@ func sensenovaHandler(c *gin.Context, resp *http.Response) (*dto.OpenAIErrorWith
 	return nil, &fullTextResponse.Usage
 }
 
-func sensenovaStreamHandler(c *gin.Context, resp *http.Response) (*dto.OpenAIErrorWithStatusCode, *dto.Usage) {
+func sensenovaStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError, *dto.Usage) {
 	var usage dto.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
@@ -159,7 +159,7 @@ func sensenovaStreamHandler(c *gin.Context, resp *http.Response) (*dto.OpenAIErr
 
 	err := resp.Body.Close()
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusInternalServerError), nil
 	}
 	return nil, &usage
 }

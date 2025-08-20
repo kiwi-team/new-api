@@ -312,4 +312,11 @@ var ChannelBaseURLs = []string{
 	"https://api.klingai.com",                   //50
 	"https://api.sensenova.cn",                  //51
 	"https://visual.volcengineapi.com",          //52
+	"",
 }
+
+const (
+	TopUpStatusPending = "pending"
+	TopUpStatusSuccess = "success"
+	TopUpStatusExpired = "expired"
+)

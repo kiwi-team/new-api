@@ -109,7 +109,7 @@ func getImageTokenBak(info *relaycommon.RelayInfo, imageUrl *dto.MessageImageUrl
 	if !constant.GetMediaToken {
 		return 3 * baseTokens, nil
 	}
-	if info.ChannelType == common.ChannelTypeGemini || info.ChannelType == common.ChannelTypeVertexAi || info.ChannelType == common.ChannelTypeAnthropic {
+	if info.ChannelType == constant.ChannelTypeGemini || info.ChannelType == constant.ChannelTypeVertexAi || info.ChannelType == constant.ChannelTypeAnthropic {
 		return 3 * baseTokens, nil
 	}
 	var config image.Config
@@ -183,9 +183,6 @@ func CountTokenChatRequestBak(info *relaycommon.RelayInfo, request dto.GeneralOp
 			}
 		}
 		toolTokens := CountTokenInput(countStr, request.Model)
-		if err != nil {
-			return 0, err
-		}
 		tkm += 8
 		tkm += toolTokens
 	}
@@ -206,9 +203,6 @@ func CountTokenClaudeRequest(request dto.ClaudeRequest, model string) (int, erro
 	// Count tokens in system message
 	if request.System != "" {
 		systemTokens := CountTokenInput(request.System, model)
-		if err != nil {
-			return 0, err
-		}
 		tkm += systemTokens
 	}
 

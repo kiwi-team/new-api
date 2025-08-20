@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"one-api/common"
 	"one-api/dto"
@@ -123,6 +124,18 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("id", id)
 	c.Set("group", session.Get("group"))
 	c.Set("use_access_token", useAccessToken)
+
+	//userCache, err := model.GetUserCache(id.(int))
+	//if err != nil {
+	//	c.JSON(http.StatusOK, gin.H{
+	//		"success": false,
+	//		"message": err.Error(),
+	//	})
+	//	c.Abort()
+	//	return
+	//}
+	//userCache.WriteContext(c)
+
 	c.Next()
 }
 
@@ -185,7 +198,7 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 		// gemini api 从query中获取key
-		if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") {
+		if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") || strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
 			skKey := c.Query("key")
 			if skKey != "" {
 				c.Request.Header.Set("Authorization", "Bearer "+skKey)
@@ -234,33 +247,39 @@ func TokenAuth() func(c *gin.Context) {
 
 		userCache.WriteContext(c)
 
-		c.Set("id", token.UserId)
-		c.Set("token_id", token.Id)
-		c.Set("token_key", token.Key)
-		c.Set("token_name", token.Name)
-		c.Set("token_unlimited_quota", token.UnlimitedQuota)
-		if !token.UnlimitedQuota {
-			c.Set("token_quota", token.RemainQuota)
-		}
-		if token.ModelLimitsEnabled {
-			c.Set("token_model_limit_enabled", true)
-			c.Set("token_model_limit", token.GetModelLimitsMap())
-		} else {
-			c.Set("token_model_limit_enabled", false)
-		}
-
-		setMultiModelTags(c)
-		c.Set("token_channel_rules", token.GetChannelRules())
-		c.Set("token_channel_ratios", token.GetChannelRatios())
-		c.Set("allow_ips", token.GetIpLimitsMap())
-		c.Set("token_group", token.Group)
-		if len(parts) > 1 {
-			if model.IsAdmin(token.UserId) {
-				c.Set("specific_channel_id", parts[1])
-			} else {
-				abortWithOpenAiMessage(c, http.StatusForbidden, "普通用户不支持指定渠道")
-				return
+		/*
+			c.Set("id", token.UserId)
+			c.Set("token_id", token.Id)
+			c.Set("token_key", token.Key)
+			c.Set("token_name", token.Name)
+			c.Set("token_unlimited_quota", token.UnlimitedQuota)
+			if !token.UnlimitedQuota {
+				c.Set("token_quota", token.RemainQuota)
 			}
+			if token.ModelLimitsEnabled {
+				c.Set("token_model_limit_enabled", true)
+				c.Set("token_model_limit", token.GetModelLimitsMap())
+			} else {
+				c.Set("token_model_limit_enabled", false)
+			}
+
+			setMultiModelTags(c)
+			c.Set("token_channel_rules", token.GetChannelRules())
+			c.Set("token_channel_ratios", token.GetChannelRatios())
+			c.Set("allow_ips", token.GetIpLimitsMap())
+			c.Set("token_group", token.Group)
+			if len(parts) > 1 {
+				if model.IsAdmin(token.UserId) {
+					c.Set("specific_channel_id", parts[1])
+				} else {
+					abortWithOpenAiMessage(c, http.StatusForbidden, "普通用户不支持指定渠道")
+					return
+				}
+			}
+		*/
+		err = SetupContextForToken(c, token, parts...)
+		if err != nil {
+			return
 		}
 		c.Next()
 	}
@@ -288,4 +307,36 @@ func setMultiModelTags(c *gin.Context) []string {
 	}
 	c.Set("multi_model_tags", tags)
 	return tags
+}
+func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) error {
+	if token == nil {
+		return fmt.Errorf("token is nil")
+	}
+	c.Set("id", token.UserId)
+	c.Set("token_id", token.Id)
+	c.Set("token_key", token.Key)
+	c.Set("token_name", token.Name)
+	c.Set("token_unlimited_quota", token.UnlimitedQuota)
+	if !token.UnlimitedQuota {
+		c.Set("token_quota", token.RemainQuota)
+	}
+	if token.ModelLimitsEnabled {
+		c.Set("token_model_limit_enabled", true)
+		c.Set("token_model_limit", token.GetModelLimitsMap())
+	} else {
+		c.Set("token_model_limit_enabled", false)
+	}
+
+	setMultiModelTags(c)
+	c.Set("allow_ips", token.GetIpLimitsMap())
+	c.Set("token_group", token.Group)
+	if len(parts) > 1 {
+		if model.IsAdmin(token.UserId) {
+			c.Set("specific_channel_id", parts[1])
+		} else {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "普通用户不支持指定渠道")
+			return fmt.Errorf("普通用户不支持指定渠道")
+		}
+	}
+	return nil
 }

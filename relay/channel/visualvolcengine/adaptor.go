@@ -14,6 +14,7 @@ import (
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
 	"one-api/service"
+	"one-api/types"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -238,7 +239,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 
 }
 
-func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *dto.OpenAIErrorWithStatusCode) {
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NewAPIError) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
 		//err, usage = openai.OpenaiHandlerWithUsage(c, resp, info)
@@ -247,13 +248,21 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		secret := apiKey[1]
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+			//return nil, service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+			return nil, &types.NewAPIError{
+				StatusCode: http.StatusInternalServerError,
+				ErrorType:  "read_response_body_failed",
+			}
 		}
 		var respData service.SubmitTaskResponse
 		err = json.Unmarshal(body, &respData)
 		if err != nil {
 			//return nil, openapi.ErrorWithStatusCode(err, resp.StatusCode)
-			return nil, service.OpenAIErrorWrapper(err, "unmarshal_response_body_failed", http.StatusInternalServerError)
+			//return nil, service.OpenAIErrorWrapper(err, "unmarshal_response_body_failed", http.StatusInternalServerError)
+			return nil, &types.NewAPIError{
+				StatusCode: http.StatusInternalServerError,
+				ErrorType:  "unmarshal_response_body_failed",
+			}
 			//return nil, err
 		}
 		taskId := respData.Data.TaskID
@@ -265,7 +274,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				ReqJson: "{\"return_url\":true}",
 			}, key, secret)
 			if err != nil {
-				return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed", http.StatusInternalServerError)
+				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed", http.StatusInternalServerError)
+				return nil, &types.NewAPIError{
+					StatusCode: http.StatusInternalServerError,
+					ErrorType:  "get_task_result_failed",
+				}
 			}
 			switch result.Status {
 			case "in_queue", "generating":
@@ -281,7 +294,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				})
 				jsonResponse, jsonErr := json.Marshal(openAIResponse)
 				if jsonErr != nil {
-					return nil, service.OpenAIErrorWrapper(jsonErr, "marshal_response_failed", http.StatusInternalServerError)
+					//return nil, service.OpenAIErrorWrapper(jsonErr, "marshal_response_failed", http.StatusInternalServerError)
+					return nil, &types.NewAPIError{
+						Err:        jsonErr,
+						StatusCode: http.StatusInternalServerError,
+						ErrorType:  "marshal_response_failed",
+					}
+
 				}
 				c.Writer.Header().Set("Content-Type", "application/json")
 				c.Writer.WriteHeader(resp.StatusCode)
@@ -290,16 +309,28 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 					TotalTokens: 0,
 				}, nil
 			default:
-				return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:"+result.Status, http.StatusInternalServerError)
+				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:"+result.Status, http.StatusInternalServerError)
+				return nil, &types.NewAPIError{
+					StatusCode: http.StatusInternalServerError,
+					ErrorType:  "get_task_result_failed",
+				}
 			}
 			time.Sleep(time.Second * 5)
 			if i > max {
-				return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:timeout", http.StatusInternalServerError)
+				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:timeout", http.StatusInternalServerError)
+				return nil, &types.NewAPIError{
+					StatusCode: http.StatusInternalServerError,
+					ErrorType:  "get_task_result_failed:timeout",
+				}
 			}
 			i++
 		}
 	default:
-		return nil, service.OpenAIErrorWrapper(errors.New("not supported"), "not_suported", http.StatusInternalServerError)
+		//return nil, service.OpenAIErrorWrapper(errors.New("not supported"), "not_suported", http.StatusInternalServerError)
+		return nil, &types.NewAPIError{
+			StatusCode: http.StatusInternalServerError,
+			ErrorType:  "not_suported",
+		}
 	}
 }
 

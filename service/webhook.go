@@ -101,7 +101,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 		}
 
 		// 发送请求
-		client := GetImpatientHttpClient()
+		client := GetHttpClient()
 		resp, err = client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to send webhook request: %v", err)
@@ -138,7 +138,7 @@ func SendFeishuNotify(webhookURL string, secret string, data dto.FeishuNotify) e
 	}
 
 	// 发送请求
-	client := GetImpatientHttpClient()
+	client := GetHttpClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send webhook request: %v", err)

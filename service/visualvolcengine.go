@@ -204,7 +204,6 @@ func SubmitTask(req *SubmitTaskRequest, key string, secret string) (*http.Respon
 	}
 	resp, err := doRequest(http.MethodPost, queries, jsonstr, key, secret)
 	if err != nil {
-		fmt.Printf("err:%s", err.Error())
 		return nil, err
 	}
 	return resp, nil
@@ -230,7 +229,6 @@ func GetTaskResult(req *GetTaskResultRequest, key string, secret string) (*GetTa
 	resp, err := doRequest(http.MethodPost, queries, jsonstr, key, secret)
 	if err != nil {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("error body:" + string(body))
 		return nil, errors.New(strings.ReplaceAll(string(body), "Post", ""))
 	}
 	var respData GetTaskResultResponse

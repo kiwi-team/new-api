@@ -26,10 +26,7 @@ func GetAllQuotaDates(c *gin.Context) {
 	}
 	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, defaultTime)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -58,10 +55,7 @@ func GetUserQuotaDates(c *gin.Context) {
 	}
 	dates, err := model.GetQuotaDataByUserId(userId, startTimestamp, endTimestamp, defaultTime)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

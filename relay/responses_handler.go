@@ -14,6 +14,7 @@ import (
 	"one-api/service"
 	"one-api/setting"
 	"one-api/setting/model_setting"
+	"one-api/types"
 	"os"
 	"strings"
 
@@ -47,12 +48,13 @@ func getInputTokens(req *dto.OpenAIResponsesRequest, info *relaycommon.RelayInfo
 	return inputTokens
 }
 
-func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
+// func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
+func ResponsesHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
 	req, err := getAndValidateResponsesRequest(c)
 	if err != nil {
 		common.LogError(c, fmt.Sprintf("getAndValidateResponsesRequest error: %s", err.Error()))
-		return service.OpenAIErrorWrapperLocal(err, "invalid_responses_request", http.StatusBadRequest)
+		return types.NewError(err, types.ErrorCodeInvalidRequest)
 	}
 
 	requestStr := ""
@@ -71,13 +73,13 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 		sensitiveWords, err := checkInputSensitive(req, relayInfo)
 		if err != nil {
 			common.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(sensitiveWords, ", ")))
-			return service.OpenAIErrorWrapperLocal(err, "check_request_sensitive_error", http.StatusBadRequest)
+			return types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
 		}
 	}
 
 	err = helper.ModelMappedHelper(c, relayInfo, req)
 	if err != nil {
-		return service.OpenAIErrorWrapperLocal(err, "model_mapped_error", http.StatusBadRequest)
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
 	}
 
 	if value, exists := c.Get("prompt_tokens"); exists {
@@ -90,52 +92,52 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, relayInfo.PromptTokens, int(req.MaxOutputTokens))
 	if err != nil {
-		return service.OpenAIErrorWrapperLocal(err, "model_price_error", http.StatusInternalServerError)
+		return types.NewError(err, types.ErrorCodeModelPriceError)
 	}
 	// pre consume quota
-	preConsumedQuota, userQuota, openaiErr := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
-	if openaiErr != nil {
-		return openaiErr
+	preConsumedQuota, userQuota, newAPIError := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
+	if newAPIError != nil {
+		return newAPIError
 	}
 	defer func() {
-		if openaiErr != nil {
+		if newAPIError != nil {
 			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		}
 	}()
 	adaptor := GetAdaptor(relayInfo.ApiType)
 	if adaptor == nil {
-		return service.OpenAIErrorWrapperLocal(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), "invalid_api_type", http.StatusBadRequest)
+		return types.NewError(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), types.ErrorCodeInvalidApiType)
 	}
 	adaptor.Init(relayInfo)
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
 		body, err := common.GetRequestBody(c)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "get_request_body_error", http.StatusInternalServerError)
+			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, relayInfo, *req)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "convert_request_error", http.StatusBadRequest)
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
 		jsonData, err := json.Marshal(convertedRequest)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "marshal_request_error", http.StatusInternalServerError)
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
 		// apply param override
 		if len(relayInfo.ParamOverride) > 0 {
 			reqMap := make(map[string]interface{})
 			err = json.Unmarshal(jsonData, &reqMap)
 			if err != nil {
-				return service.OpenAIErrorWrapperLocal(err, "param_override_unmarshal_failed", http.StatusInternalServerError)
+				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid)
 			}
 			for key, value := range relayInfo.ParamOverride {
 				reqMap[key] = value
 			}
 			jsonData, err = json.Marshal(reqMap)
 			if err != nil {
-				return service.OpenAIErrorWrapperLocal(err, "param_override_marshal_failed", http.StatusInternalServerError)
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 			}
 		}
 
@@ -148,7 +150,7 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, relayInfo, requestBody)
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -157,31 +159,34 @@ func ResponsesHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) 
 		httpResp = resp.(*http.Response)
 
 		if httpResp.StatusCode != http.StatusOK {
-			openaiErr = service.RelayErrorHandler(httpResp, false)
+			newAPIError = service.RelayErrorHandler(httpResp, false)
 			// reset status code 重置状态码
-			service.ResetStatusCode(openaiErr, statusCodeMappingStr)
-			return openaiErr
+			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+			return newAPIError
 		}
 	}
 
-	// Read the response body to capture it for logging and then reset it for further processing
+	// 创建流式响应记录器（如果需要记录响应）
 	responseStr := ""
+	var streamRecorder *helper.StreamResponseRecorder
 	if saveRequestResponse {
-		responseBodyBytes, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			common.LogError(c, fmt.Sprintf("read response body failed: %s", err.Error()))
-			return service.OpenAIErrorWrapperLocal(err, "read_response_body_failed", http.StatusInternalServerError)
-		}
-		_ = httpResp.Body.Close()
-		httpResp.Body = io.NopCloser(bytes.NewBuffer(responseBodyBytes))
-		responseStr = string(responseBodyBytes)
+		// 使用流式记录器包装原始响应体，不影响实时传输
+		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+		httpResp.Body = streamRecorder
 	}
 
-	usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
-	if openaiErr != nil {
+	//usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
+	//if openaiErr != nil {
+	usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
+	if newAPIError != nil {
 		// reset status code 重置状态码
-		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
-		return openaiErr
+		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		return newAPIError
+	}
+
+	// 在流式传输完成后，从记录器中获取完整的响应数据
+	if saveRequestResponse && streamRecorder != nil {
+		responseStr = streamRecorder.GetRecordedString()
 	}
 
 	if strings.HasPrefix(relayInfo.OriginModelName, "gpt-4o-audio") {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"one-api/common"
 	"one-api/dto"
+	"one-api/types"
 )
 
 type ErrorLog struct {
@@ -65,17 +66,17 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	return errorLogs, total, err
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err dto.OpenAIErrorWithStatusCode, body string, requestId string, ip string) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.NewAPIError, body string, requestId string, ip string) error {
 	log := &ErrorLog{
 		UserId:      userId,
 		CreatedAt:   common.GetTimestamp(),
 		ChannelId:   channelId,
-		Message:     err.Error.Message,
-		Type:        err.Error.Type,
-		Param:       err.Error.Param,
+		Message:     err.ToOpenAIError().Message,
+		Type:        string(err.ErrorType),
+		Param:       err.ToOpenAIError().Param,
 		ChannelName: channelName,
 		ModelName:   modelName,
-		Code:        fmt.Sprintf("%v", err.Error.Code),
+		Code:        fmt.Sprintf("%v", err.ToOpenAIError().Code),
 		StatusCode:  err.StatusCode,
 		Body:        body,
 		Ip:          ip,

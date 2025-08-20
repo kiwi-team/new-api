@@ -138,5 +138,11 @@ export const CHANNEL_OPTIONS = [
     value: 52,
     color: 'red',
     label: 'visual-volcengine',
-  }
+  },{
+    value: 53,
+    color: 'red',
+    label: '即梦',
+  },
 ];
+
+export const MODEL_TABLE_PAGE_SIZE = 10;

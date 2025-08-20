@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"one-api/common"
 	"one-api/constant"
-	constant2 "one-api/constant"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/setting/ratio_setting"
@@ -15,6 +14,7 @@ import (
 type GroupRatioInfo struct {
 	GroupRatio        float64
 	GroupSpecialRatio float64
+	HasSpecialRatio   bool
 }
 
 type PriceData struct {
@@ -33,7 +33,7 @@ func (p PriceData) ToSetting() string {
 	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, ShouldPreConsumedQuota: %d, ImageRatio: %f", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.ShouldPreConsumedQuota, p.ImageRatio)
 }
 
-// HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.Group if present
+// HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupRatioInfo {
 	groupRatioInfo := GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
@@ -47,7 +47,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupR
 			// 针对模型设置了分组倍率，就以这个为最优先的分组倍率
 			for _, channel := range tokenGroupRuleItem.Channels {
 				if channel.Id == relayInfo.ChannelId {
-					if ratio, ok1 := channel.GroupRatio[relayInfo.Group]; ok1 {
+					if ratio, ok1 := channel.GroupRatio[relayInfo.UsingGroup]; ok1 {
 						groupRatioInfo.GroupRatio = ratio
 						return groupRatioInfo
 					}
@@ -85,18 +85,19 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) GroupR
 		if common.DebugEnabled {
 			println(fmt.Sprintf("final group: %s", autoGroup))
 		}
-		relayInfo.Group = autoGroup.(string)
+		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
 	// check user group special ratio
-	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.Group)
+	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
 	if ok {
 		// user group special ratio
 		groupRatioInfo.GroupSpecialRatio = userGroupRatio
 		groupRatioInfo.GroupRatio = userGroupRatio
+		groupRatioInfo.HasSpecialRatio = true
 	} else {
 		// normal group ratio
-		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.Group)
+		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
 	return groupRatioInfo
@@ -119,17 +120,15 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			preConsumedTokens = promptTokens + maxTokens
 		}
 		var success bool
-		modelRatio, success = ratio_setting.GetModelRatio(info.OriginModelName)
+		var matchName string
+		modelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
 		if !success {
 			acceptUnsetRatio := false
-			if accept, ok := info.UserSetting[constant2.UserAcceptUnsetRatioModel]; ok {
-				b, ok := accept.(bool)
-				if ok {
-					acceptUnsetRatio = b
-				}
+			if info.UserSetting.AcceptUnsetRatioModel {
+				acceptUnsetRatio = true
 			}
 			if !acceptUnsetRatio {
-				return PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", info.OriginModelName, info.OriginModelName)
+				return PriceData{}, fmt.Errorf("模型 %s 倍率或价格未配置，请联系管理员设置或开始自用模式；Model %s ratio or price not set, please set or start self-use mode", matchName, matchName)
 			}
 		}
 		completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
@@ -161,12 +160,41 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	return priceData, nil
 }
 
+type PerCallPriceData struct {
+	ModelPrice     float64
+	Quota          int
+	GroupRatioInfo GroupRatioInfo
+}
+
+// ModelPriceHelperPerCall 按次计费的 PriceHelper (MJ、Task)
+func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) PerCallPriceData {
+	groupRatioInfo := HandleGroupRatio(c, info)
+
+	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+	// 如果没有配置价格，则使用默认价格
+	if !success {
+		defaultPrice, ok := ratio_setting.GetDefaultModelRatioMap()[info.OriginModelName]
+		if !ok {
+			modelPrice = 0.1
+		} else {
+			modelPrice = defaultPrice
+		}
+	}
+	quota := int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+	priceData := PerCallPriceData{
+		ModelPrice:     modelPrice,
+		Quota:          quota,
+		GroupRatioInfo: groupRatioInfo,
+	}
+	return priceData
+}
+
 func ContainPriceOrRatio(modelName string) bool {
 	_, ok := ratio_setting.GetModelPrice(modelName, false)
 	if ok {
 		return true
 	}
-	_, ok = ratio_setting.GetModelRatio(modelName)
+	_, ok, _ = ratio_setting.GetModelRatio(modelName)
 	if ok {
 		return true
 	}

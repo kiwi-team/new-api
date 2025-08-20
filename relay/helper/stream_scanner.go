@@ -22,7 +22,9 @@ import (
 const (
 	InitialScannerBufferSize = 64 << 10 // 64KB (64*1024)
 	MaxScannerBufferSize     = 10 << 20 // 10MB (10*1024*1024)
-	DefaultPingInterval      = 10 * time.Second
+	//InitialScannerBufferSize = 1 << 10 // 64KB (64*1024)
+	//MaxScannerBufferSize     = 2 << 10 // 10MB (10*1024*1024)
+	DefaultPingInterval = 10 * time.Second
 )
 
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string) bool) {
@@ -62,6 +64,13 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 	if pingEnabled {
 		pingTicker = time.NewTicker(pingInterval)
+	}
+
+	if common.DebugEnabled {
+		// print timeout and ping interval for debugging
+		println("relay timeout seconds:", common.RelayTimeout)
+		println("streaming timeout seconds:", int64(streamingTimeout.Seconds()))
+		println("ping interval seconds:", int64(pingInterval.Seconds()))
 	}
 
 	// 改进资源清理，确保所有 goroutine 正确退出
