@@ -336,8 +336,11 @@ func getChannel(c *gin.Context, group, originalModel string, retryCount int) (*m
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	tagsAny, _ := c.Get("multi_model_tag")
-	tags := tagsAny.([]string)
+	tags := make([]string, 0)
+	tagsAny, t := c.Get("multi_model_tags")
+	if t {
+		tags = tagsAny.([]string)
+	}
 	channel, selectGroup, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, retryCount, tags)
 	//channel, selectGroup, err := model.CacheGetRandomSatisfiedChannel(c, group, originalModel, retryCount)
 	if err != nil {
