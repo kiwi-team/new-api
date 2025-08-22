@@ -374,6 +374,9 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*dto.Cla
 				if message.ToolCalls != nil {
 					for _, toolCall := range message.ParseToolCalls() {
 						inputObj := make(map[string]any)
+						if toolCall.Function.Arguments == "" {
+							toolCall.Function.Arguments = "{}"
+						}
 						if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
 							common.SysError("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
 							continue
