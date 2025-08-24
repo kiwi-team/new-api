@@ -141,7 +141,9 @@ func Relay(c *gin.Context) {
 		go processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		body, _ := common.GetRequestBody(c)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, newAPIError, string(body), requestId, c.ClientIP())
+
+		openaiError := newAPIError.ToOpenAIError()
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, string(body), requestId, c.ClientIP())
 
 		//if !shouldRetry(c, openaiErr, retryTimes-i) {
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
@@ -154,22 +156,6 @@ func Relay(c *gin.Context) {
 		common.LogInfo(c, retryLogStr)
 	}
 
-	// if openaiErr != nil {
-	// 	if openaiErr.StatusCode == http.StatusTooManyRequests {
-	// 		common.LogError(c, fmt.Sprintf("origin 429 error: %s", openaiErr.Error.Message))
-	// 		openaiErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
-	// 	}
-	// 	openaiErr.Error.Message = common.MessageWithRequestId(openaiErr.Error.Message, requestId)
-	// 	openaiErr.Error.Type = "toio_api_error"
-	// 	c.JSON(openaiErr.StatusCode, gin.H{
-	// 		"error": openaiErr.Error,
-	// 	})
-	// }
-	// newAPIError will never be nil at this point since we're already in the error handling branch
-	//if newAPIError.StatusCode == http.StatusTooManyRequests {
-	//	common.LogError(c, fmt.Sprintf("origin 429 error: %s", newAPIError.Error()))
-	//	newAPIError.SetMessage("当前分组上游负载已饱和，请稍后再试")
-	//}
 	if newAPIError != nil {
 		newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 		c.JSON(newAPIError.StatusCode, gin.H{

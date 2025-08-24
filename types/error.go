@@ -8,10 +8,11 @@ import (
 )
 
 type OpenAIError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Param   string `json:"param"`
-	Code    any    `json:"code"`
+	Message    string `json:"message"`
+	Type       string `json:"type"`
+	Param      string `json:"param"`
+	Code       any    `json:"code"`
+	StatusCode int    `json:"status_code,omitempty"`
 }
 
 type ClaudeError struct {
@@ -104,44 +105,53 @@ func (e *NewAPIError) SetMessage(message string) {
 }
 
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
+	if e.StatusCode == 0 {
+		e.StatusCode = http.StatusInternalServerError
+	}
 	switch e.ErrorType {
 	case ErrorTypeOpenAIError:
 		if e.RelayError != nil {
 			if openAIError, ok := e.RelayError.(OpenAIError); ok {
+				openAIError.Message = e.Error()
+				openAIError.StatusCode = e.StatusCode
 				return openAIError
 			}
 		}
 		// 如果类型断言失败，返回默认的 OpenAI 错误
 		return OpenAIError{
-			Message: e.Error(),
-			Type:    "toio_api_error",
-			Param:   "",
-			Code:    e.errorCode,
+			Message:    e.Error(),
+			Type:       "toio_api_error",
+			Param:      "",
+			Code:       e.errorCode,
+			StatusCode: e.StatusCode,
 		}
 	case ErrorTypeClaudeError:
 		if e.RelayError != nil {
 			if claudeError, ok := e.RelayError.(ClaudeError); ok {
 				return OpenAIError{
-					Message: e.Error(),
-					Type:    claudeError.Type,
-					Param:   "",
-					Code:    e.errorCode,
+					Message:    e.Error(),
+					Type:       claudeError.Type,
+					Param:      "",
+					Code:       e.errorCode,
+					StatusCode: e.StatusCode,
 				}
 			}
 		}
 		// 如果类型断言失败，返回默认的 OpenAI 错误
 		return OpenAIError{
-			Message: e.Error(),
-			Type:    "",
-			Param:   "",
-			Code:    e.errorCode,
+			Message:    e.Error(),
+			Type:       "",
+			Param:      "",
+			Code:       e.errorCode,
+			StatusCode: e.StatusCode,
 		}
 	default:
 		return OpenAIError{
-			Message: e.Error(),
-			Type:    string(e.ErrorType),
-			Param:   "",
-			Code:    e.errorCode,
+			Message:    e.Error(),
+			Type:       string(e.ErrorType),
+			Param:      "",
+			Code:       e.errorCode,
+			StatusCode: e.StatusCode,
 		}
 	}
 }

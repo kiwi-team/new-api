@@ -208,6 +208,19 @@ func Max(a int, b int) int {
 }
 
 func MessageWithRequestId(message string, id string) string {
+	rewrite := OptionMap["RewriteMessage"]
+	var ruleArr []string
+	err := json.Unmarshal([]byte(rewrite), &ruleArr)
+	if err != nil {
+		SysError("rewrite Unmarshal failed: " + err.Error())
+	}
+	if len(ruleArr) > 0 {
+		for _, rule := range ruleArr {
+			if RegMatch(rule, message) {
+				return fmt.Sprintf("%s (request id: %s)", "请求失败，请稍后再尝试", id)
+			}
+		}
+	}
 	return fmt.Sprintf("%s (request id: %s)", message, id)
 }
 

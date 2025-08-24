@@ -66,20 +66,20 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	return errorLogs, total, err
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err *types.NewAPIError, body string, requestId string, ip string) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
-	openAIError := err.ToOpenAIError()
+	//openAIError := err.ToOpenAIError()
 
 	log := &ErrorLog{
 		UserId:      userId,
 		CreatedAt:   common.GetTimestamp(),
 		ChannelId:   channelId,
-		Message:     openAIError.Message,
-		Type:        string(err.ErrorType),
-		Param:       openAIError.Param,
+		Message:     err.Message,
+		Type:        string(err.Type),
+		Param:       err.Param,
 		ChannelName: channelName,
 		ModelName:   modelName,
-		Code:        fmt.Sprintf("%v", openAIError.Code),
+		Code:        fmt.Sprintf("%v", err.Code),
 		StatusCode:  err.StatusCode,
 		Body:        body,
 		Ip:          ip,
