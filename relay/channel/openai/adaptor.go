@@ -251,6 +251,99 @@ func ConvertChatRequestToResponseRequest(c *gin.Context, info *relaycommon.Relay
 	return newRequest, nil
 }
 
+// # For Gemini, only `enum` field when the type is `string`.
+/*
+当 某一个 property type 不是string，同时还有enum字段，需要把enum的内容，追加到description中 同时去掉enum属性
+例如：
+修改前：
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The name of the person"
+    },
+    "age": {
+      "type": "number",
+      "description": "The age of the person"
+    },
+    "gender": {
+      "type": "array",
+	  "items": {
+		"type": "string"
+	  },
+      "description": "The gender of the person ",
+	  "enum": [
+		"male",
+		"female",
+		"other"
+	  ]
+	}
+  }
+}
+
+修改后：
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The name of the person"
+    },
+    "age": {
+      "type": "number",
+      "description": "The age of the person"
+    },
+    "gender": {
+      "type": "array",
+	  "items": {
+		"type": "string"
+	  },
+      "description": "The gender of the person  Enum values:[male, female, other]"
+	   }
+  }
+}
+*/
+func dealFunctionCall(request *dto.GeneralOpenAIRequest) {
+	if request.Tools == nil {
+		return
+	}
+	for i, tool := range request.Tools {
+		if tool.Function.Parameters == nil {
+			continue
+		}
+		params, ok := tool.Function.Parameters.(map[string]any)
+		if !ok {
+			continue
+		}
+		if properties, ok := params["properties"]; ok {
+			if properties, ok := properties.(map[string]any); ok {
+				for j, prop := range properties {
+					if prop, ok := prop.(map[string]any); ok {
+						if typ, ok := prop["type"]; ok {
+							if enum, ok := prop["enum"]; ok {
+								if typ != "string" {
+									if description, ok := prop["description"].(string); ok {
+										if enum, ok := enum.([]any); ok {
+											var enumValues []string
+											for _, v := range enum {
+												enumValues = append(enumValues, fmt.Sprintf("%v", v))
+											}
+											prop["description"] = description + " \n Enum values:[" + strings.Join(enumValues, ", ") + "]"
+											delete(prop, "enum")
+											request.Tools[i].Function.Parameters.(map[string]any)["properties"].(map[string]any)[j] = prop
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
@@ -337,7 +430,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		// gemini 模型去掉max_tokens参数
 		request.MaxTokens = 0
 	}
-
+	dealFunctionCall(request)
 	return request, nil
 }
 

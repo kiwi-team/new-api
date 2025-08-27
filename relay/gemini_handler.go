@@ -15,6 +15,7 @@ import (
 	"one-api/setting"
 	"one-api/setting/model_setting"
 	"one-api/types"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -203,6 +204,19 @@ func GeminiHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		println("Gemini request body: %s", string(requestBody))
 	}
 
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+
+	requestStr := ""
+	responseStr := ""
+
+	// 创建流式响应记录器（如果需要记录响应）
+	var streamRecorder *helper.StreamResponseRecorder
+
+	// 序列化 textRequest 为 JSON 字符串
+	if saveRequestResponse {
+		requestStr = string(requestBody)
+	}
+
 	resp, err := adaptor.DoRequest(c, relayInfo, bytes.NewReader(requestBody))
 	if err != nil {
 		common.LogError(c, "Do gemini request failed: "+err.Error())
@@ -223,12 +237,23 @@ func GeminiHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		}
 	}
 
-	usage, openaiErr := adaptor.DoResponse(c, resp.(*http.Response), relayInfo)
+	if saveRequestResponse {
+		// 使用流式记录器包装原始响应体，不影响实时传输
+		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+		httpResp.Body = streamRecorder
+	}
+
+	usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
 	if openaiErr != nil {
 		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
 		return openaiErr
 	}
 
-	postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", "", "")
+	// 在流式传输完成后，从记录器中获取完整的响应数据
+	if saveRequestResponse && streamRecorder != nil {
+		responseStr = streamRecorder.GetRecordedString()
+	}
+
+	postConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
 	return nil
 }
