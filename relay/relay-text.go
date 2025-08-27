@@ -102,6 +102,8 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isChat := strings.Contains(info.BaseUrl, "chataiapi")
 	isNuwa := strings.Contains(info.BaseUrl, "nuwaapi")
 	isYunwu := strings.Contains(info.BaseUrl, "yunwu")
+	isSiliconflow := strings.Contains(info.BaseUrl, "siliconflow")
+	isVolcengine := strings.Contains(info.BaseUrl, "volces")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
 	//var extraBody dto.ExtraBody
@@ -194,6 +196,14 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Model = textRequest.Model + "-nothinking"
 				info.UpstreamModelName = textRequest.Model
 			}
+		}
+	}
+
+	if textRequest.Model == "deepseek-reasoner" {
+		if isSiliconflow {
+			textRequest.EnableThinking = true
+		} else if isVolcengine {
+			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
 		}
 	}
 
