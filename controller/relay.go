@@ -259,6 +259,10 @@ func RelayClaude(c *gin.Context) {
 
 		go processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
+		body, _ := common.GetRequestBody(c)
+		openaiError := newAPIError.ToOpenAIError()
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, string(body), requestId, c.ClientIP())
+
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
 		//if !shouldRetry(c, openaiErr, retryTimes-i) {

@@ -13,6 +13,7 @@ import (
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,11 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 	if textRequest.Stream {
 		relayInfo.IsStream = true
 	}
+
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+
+	requestStr := ""
+	responseStr := ""
 
 	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
 	if err != nil {
@@ -119,6 +125,12 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 	}
+
+	// 序列化 textRequest 为 JSON 字符串
+	if saveRequestResponse {
+		requestStr = string(jsonData)
+	}
+
 	requestBody = bytes.NewBuffer(jsonData)
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -139,6 +151,13 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		}
 	}
 
+	var streamRecorder *helper.StreamResponseRecorder
+	if saveRequestResponse {
+		// 使用流式记录器包装原始响应体，不影响实时传输
+		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+		httpResp.Body = streamRecorder
+	}
+
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
 	//log.Printf("usage: %v", usage)
 	if newAPIError != nil {
@@ -146,7 +165,13 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}
-	service.PostClaudeConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
+
+	// 在流式传输完成后，从记录器中获取完整的响应数据
+	if saveRequestResponse && streamRecorder != nil {
+		responseStr = streamRecorder.GetRecordedString()
+	}
+
+	service.PostClaudeConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
 	return nil
 }
 
