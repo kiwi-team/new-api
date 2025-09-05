@@ -113,6 +113,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 		if e.RelayError != nil {
 			if openAIError, ok := e.RelayError.(OpenAIError); ok {
 				openAIError.Message = e.Error()
+				openAIError.Type = "toio_api_error"
 				openAIError.StatusCode = e.StatusCode
 				return openAIError
 			}
@@ -127,10 +128,10 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 		}
 	case ErrorTypeClaudeError:
 		if e.RelayError != nil {
-			if claudeError, ok := e.RelayError.(ClaudeError); ok {
+			if _, ok := e.RelayError.(ClaudeError); ok {
 				return OpenAIError{
 					Message:    e.Error(),
-					Type:       claudeError.Type,
+					Type:       "toio_api_error",
 					Param:      "",
 					Code:       e.errorCode,
 					StatusCode: e.StatusCode,
@@ -140,7 +141,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 		// 如果类型断言失败，返回默认的 OpenAI 错误
 		return OpenAIError{
 			Message:    e.Error(),
-			Type:       "",
+			Type:       "toio_api_error",
 			Param:      "",
 			Code:       e.errorCode,
 			StatusCode: e.StatusCode,
@@ -148,7 +149,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 	default:
 		return OpenAIError{
 			Message:    e.Error(),
-			Type:       string(e.ErrorType),
+			Type:       "toio_api_error",
 			Param:      "",
 			Code:       e.errorCode,
 			StatusCode: e.StatusCode,
