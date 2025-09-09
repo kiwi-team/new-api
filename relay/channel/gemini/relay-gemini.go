@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,6 +371,49 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					InlineData: &GeminiInlineData{
 						MimeType: "audio/" + part.GetInputAudio().Format,
 						Data:     base64String,
+					},
+				})
+			} else if part.Type == dto.ContentTypeAudioUrl {
+				// https://aice.seedsnote.com/google
+				if !strings.Contains(info.BaseUrl, "seedsnote") {
+					continue
+				}
+				audioFileUrl := ""
+				if audioUrl, ok := part.AudioUrl.(string); ok {
+					audioFileUrl = audioUrl
+				} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
+					audioFileUrl = audioMap.Url
+				}
+				uploadedFile, err := UploadFileToGemini(context.Background(), audioFileUrl, info.ApiKey, info.BaseUrl)
+				if err != nil {
+					return nil, fmt.Errorf("upload audio file to gemini failed: %s", err.Error())
+				}
+				parts = append(parts, GeminiPart{
+					FileData: &GeminiFileData{
+						MimeType: uploadedFile.MIMEType,
+						FileUri:  uploadedFile.URI,
+					},
+				})
+
+			} else if part.Type == dto.ContentTypeVideoUrl {
+				// https://aice.seedsnote.com/google
+				if !strings.Contains(info.BaseUrl, "seedsnote") {
+					continue
+				}
+				videoFileUrl := ""
+				if videoUrl, ok := part.VideoUrl.(string); ok {
+					videoFileUrl = videoUrl
+				} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
+					videoFileUrl = videoMap.Url
+				}
+				uploadedFile, err := UploadFileToGemini(context.Background(), videoFileUrl, info.ApiKey, info.BaseUrl)
+				if err != nil {
+					return nil, fmt.Errorf("upload vidoe file to gemini failed: %s", err.Error())
+				}
+				parts = append(parts, GeminiPart{
+					FileData: &GeminiFileData{
+						MimeType: uploadedFile.MIMEType,
+						FileUri:  uploadedFile.URI,
 					},
 				})
 			}
