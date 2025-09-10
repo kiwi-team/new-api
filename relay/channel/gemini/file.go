@@ -3,7 +3,6 @@ package gemini
 import (
 	"context"
 	"fmt"
-	"log"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -54,9 +53,5 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 	// get image data from response
 	///imageData, err := io.ReadAll(response.Body)
 	file, err := client.Files.Upload(ctx, response.Body, uploadConfig)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return file, nil
-
+	return file, err
 }
