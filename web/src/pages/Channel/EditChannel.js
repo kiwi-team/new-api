@@ -773,6 +773,8 @@ const EditChannel = (props) => {
     );
   };
 
+  console.log('inputs', inputs);
+
   return (
     <>
       <SideSheet
@@ -1364,7 +1366,7 @@ const EditChannel = (props) => {
                 {inputs.type === 41 && (
                   <div>
                     <Text strong className="block mb-2">{t('部署地区')}</Text>
-                    <TextArea
+                    <Form.TextArea
                       name='other'
                       placeholder={t(
                         '请输入部署地区，例如：us-central1\n支持使用模型映射格式\n' +
@@ -1439,6 +1441,7 @@ const EditChannel = (props) => {
                     name='ratio'
                     type='number'
                     step='0.01'
+                    field='ratio'
                     placeholder={t('渠道倍率')}
                     onChange={(value) => {
                       const number = parseFloat(value);
@@ -1448,14 +1451,13 @@ const EditChannel = (props) => {
                         handleInputChange('ratio', number);
                       }
                     }}
-                    value={inputs.ratio}
+                    // value={inputs.ratio}
                     size="large"
                     className="!rounded-lg"
                   />
                 </div>
 
                 <div>
-                  <Text strong className="block mb-2">{t('渠道标签')}</Text>
                   <Form.Input
                     name='tag'
                     field='tag'

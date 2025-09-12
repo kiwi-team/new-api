@@ -650,7 +650,7 @@ const ErrorLogsTable = () => {
   };
 
   return (
-    <>
+    <div className='mt-[64px]'>
       {renderColumnSelector()}
       {renderDetailModal()}
       <Card
@@ -807,7 +807,7 @@ const ErrorLogsTable = () => {
           }}
         />
       </Card>
-    </>
+    </div>
   );
 };
 

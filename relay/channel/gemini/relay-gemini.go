@@ -15,6 +15,7 @@ import (
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
+	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -375,7 +376,8 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				})
 			} else if part.Type == dto.ContentTypeAudioUrl {
 				// https://aice.seedsnote.com/google
-				if !strings.Contains(info.BaseUrl, "seedsnote") {
+				bukect := os.Getenv("GOOGLE_FILE_BUCKET")
+				if bukect == "" {
 					continue
 				}
 				audioFileUrl := ""
@@ -384,9 +386,9 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
 					audioFileUrl = audioMap.Url
 				}
-				uploadedFile, err := UploadFileToGemini(context.Background(), audioFileUrl, info.ApiKey, info.BaseUrl)
+				uploadedFile, err := UploadFileToGoogle(context.Background(), audioFileUrl, bukect)
 				if err != nil {
-					return nil, fmt.Errorf("upload audio file to gemini failed: %s", err.Error())
+					return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
 				}
 				parts = append(parts, GeminiPart{
 					FileData: &GeminiFileData{
@@ -397,7 +399,8 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 
 			} else if part.Type == dto.ContentTypeVideoUrl {
 				// https://aice.seedsnote.com/google
-				if !strings.Contains(info.BaseUrl, "seedsnote") {
+				bukect := os.Getenv("GOOGLE_FILE_BUCKET")
+				if bukect == "" {
 					continue
 				}
 				videoFileUrl := ""
@@ -406,9 +409,9 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
 					videoFileUrl = videoMap.Url
 				}
-				uploadedFile, err := UploadFileToGemini(context.Background(), videoFileUrl, info.ApiKey, info.BaseUrl)
+				uploadedFile, err := UploadFileToGoogle(context.Background(), videoFileUrl, bukect)
 				if err != nil {
-					return nil, fmt.Errorf("upload vidoe file to gemini failed: %s", err.Error())
+					return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
 				}
 				parts = append(parts, GeminiPart{
 					FileData: &GeminiFileData{

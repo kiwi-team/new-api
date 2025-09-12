@@ -212,6 +212,9 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 
 func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 	filterConfig := common.OptionMap["ModelParamsFilter"]
+	if filterConfig == "" {
+		return
+	}
 	filterConfigMap := &model.ModelParamsFilterMap{}
 	err := json.Unmarshal([]byte(filterConfig), filterConfigMap)
 	if err != nil {

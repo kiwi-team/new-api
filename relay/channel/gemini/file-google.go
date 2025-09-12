@@ -6,25 +6,15 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"one-api/common"
 	"path/filepath"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/genai"
 )
 
-func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, baseUrl string) (*genai.File, error) {
+func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string) (*genai.File, error) {
 	client, err := storage.NewClient(ctx)
-	/*
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{
-			//APIKey:  apiKey,
-			//Backend: genai.BackendVertexAI,
-			Backend: genai.BackendGeminiAPI,
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL:    baseUrl,
-				APIVersion: "v1",
-			},
-		})
-	*/
 	if err != nil {
 		return nil, err
 	}
@@ -33,35 +23,20 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 	//file, err := client.Files.UploadFromPath(ctx, fileUri, uploadConfig)
 	response, err := http.Get(fileUri)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download image from URL: %w", err)
+		return nil, fmt.Errorf("failed to download file from URL: %w", err)
 	}
 	defer response.Body.Close()
 
 	// get mime type from response
 	statusCode := response.StatusCode
 	if statusCode != 200 {
-		return nil, fmt.Errorf("failed to get image type from URL")
+		return nil, fmt.Errorf("failed to get file type from URL")
 	}
 	mimeType := response.Header.Get("Content-Type")
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = mime.TypeByExtension(filepath.Ext(fileUri))
 	}
-
-	// The BaseURL is already set by default in the genai client
-	// timeout := 10 * time.Minute
-	// uploadConfig := &genai.UploadFileConfig{
-	// 	MIMEType: mimeType,
-	// 	HTTPOptions: &genai.HTTPOptions{
-	// 		BaseURL: baseUrl,
-	// 		Timeout: &timeout,
-	// 	},
-	// }
-
-	// get image data from response
-	///imageData, err := io.ReadAll(response.Body)
-	//file, err := client.Files.Upload(ctx, response.Body, uploadConfig)
-	bucket := "toiotech"
-	object := "vidoes/20250911/view.jpeg"
+	object := common.GetRandomString(32) + filepath.Ext(fileUri)
 	obj := client.Bucket(bucket).Object(object)
 
 	// 获取对象的写入器
