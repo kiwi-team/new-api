@@ -106,6 +106,9 @@ func InitEnv() {
 	ErrorWarningThreshold = GetEnvOrDefault("ERROR_WARNING_THRESHOLD", 100)
 	ErrorWarningInterval = GetEnvOrDefault("ERROR_WARNING_INTERVAL", 30)
 	ErrorWarningUserIds = GetEnvOrDefaultString("ERROR_WARNING_USER_IDS", "")
+
+	DeleteErrorLogsEnabled = GetEnvOrDefaultBool("DELETE_ERROR_LOGS_ENABLED", false)
+
 	initConstantEnv()
 }
 

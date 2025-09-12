@@ -126,3 +126,30 @@ func getErrorLogStatisticsContent(statistics []model.ErrorLogStatistics) string 
 	}
 	return content.String()
 }
+
+func DeleteErrorLogs() {
+	keepDaysStr := common.OptionMap["error_log_keep_days"]
+	if keepDaysStr == "" {
+		keepDaysStr = "15"
+	}
+	keepDaysInt, _ := strconv.Atoi(keepDaysStr)
+	deleteSizeStr := common.OptionMap["error_log_delete_size"]
+	if deleteSizeStr == "" {
+		deleteSizeStr = "10000"
+	}
+	deleteSizeInt, _ := strconv.Atoi(deleteSizeStr)
+	deleteErrorLogInterval := common.OptionMap["error_log_delete_interval"]
+	if deleteErrorLogInterval == "" {
+		deleteErrorLogInterval = "10"
+	}
+	deleteErrorLogIntervalInt, _ := strconv.Atoi(deleteErrorLogInterval)
+	for {
+		err := model.DeleteErrorLog(time.Now().Unix()-int64(keepDaysInt)*24*60*60, deleteSizeInt)
+		if err != nil {
+			common.LogError(context.Background(), "error deleting error log: "+err.Error())
+		} else {
+			common.SysLog("delete error log success,num:" + deleteSizeStr)
+		}
+		time.Sleep(time.Duration(deleteErrorLogIntervalInt) * time.Minute)
+	}
+}

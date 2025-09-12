@@ -38,6 +38,8 @@ var ErrorWarningThreshold = 100 // unit: count, 超过100条错误日志就发�
 var ErrorWarningInterval = 30   // unit: minute, 每30分钟检查一次
 var ErrorWarningUserIds = ""
 
+var DeleteErrorLogsEnabled = false
+
 // Any options with "Secret", "Token" in its key won't be return by GetOptions
 
 var SessionSecret = uuid.New().String()

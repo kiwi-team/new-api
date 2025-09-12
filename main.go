@@ -118,6 +118,11 @@ func main() {
 			controller.WarningErrorLog()
 		})
 	}
+	if common.DeleteErrorLogsEnabled {
+		gopool.Go(func() {
+			controller.DeleteErrorLogs()
+		})
+	}
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")

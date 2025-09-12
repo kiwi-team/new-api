@@ -112,3 +112,18 @@ func StatisticsErrorLog(start int64, end int64) []ErrorLogStatistics {
 	DB.Model(&ErrorLog{}).Select("channel_id,max(channel_name) as channel_name,model_name,count(*) as total,max(message) as message,max(status_code) as status_code,code").Where("created_at > ? and created_at < ?", start, end).Group("model_name,channel_id,code").Order("total desc").Scan(&errorLogStatistics)
 	return errorLogStatistics
 }
+
+func DeleteErrorLog(createTime int64, limit int) error {
+	if limit == 0 {
+		limit = 100
+	}
+	var ids []int
+	err := DB.Model(&ErrorLog{}).Where("created_at < ?", createTime).Order("id asc").Limit(limit).Pluck("id", &ids).Error
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return DB.Where("id IN ?", ids).Delete(&ErrorLog{}).Error
+}

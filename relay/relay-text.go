@@ -184,6 +184,13 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				info.UpstreamModelName = textRequest.Model
 			}
 		}
+		// claude-opus-4-1-20250805 开启thinking后，对于nuwa来说，要append一个空的message item
+		if strings.Contains(textRequest.Model, "claude-opus-4-1") {
+			textRequest.Messages = append(textRequest.Messages, dto.Message{
+				Role:    "user",
+				Content: "",
+			})
+		}
 	} else if isYunwu && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
