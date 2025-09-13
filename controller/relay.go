@@ -140,10 +140,17 @@ func Relay(c *gin.Context) {
 
 		go processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		body, _ := common.GetRequestBody(c)
-
+		body := "{}"
 		openaiError := newAPIError.ToOpenAIError()
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, string(body), requestId, c.ClientIP())
+		if newAPIError.StatusCode == 413 || newAPIError.StatusCode == 429 ||
+			strings.Contains(strings.ToLower(openaiError.Message), "too many") {
+			body = "{}"
+		} else {
+			bodyBytes, _ := common.GetRequestBody(c)
+			body = string(bodyBytes)
+		}
+
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP())
 
 		//if !shouldRetry(c, openaiErr, retryTimes-i) {
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
@@ -259,9 +266,16 @@ func RelayClaude(c *gin.Context) {
 
 		go processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		body, _ := common.GetRequestBody(c)
+		body := "{}"
 		openaiError := newAPIError.ToOpenAIError()
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, string(body), requestId, c.ClientIP())
+		if newAPIError.StatusCode == 413 || newAPIError.StatusCode == 429 ||
+			strings.Contains(strings.ToLower(openaiError.Message), "too many") {
+			body = "{}"
+		} else {
+			bodyBytes, _ := common.GetRequestBody(c)
+			body = string(bodyBytes)
+		}
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP())
 
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
