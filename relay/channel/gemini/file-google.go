@@ -53,7 +53,9 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string) (*ge
 	fmt.Printf("File %s uploaded to gs://%s/%s\n", fileUri, bucket, object)
 
 	return &genai.File{
-		URI:      fmt.Sprintf("gs://%s/%s", bucket, object),
+		URI: fmt.Sprintf("gs://%s/%s", bucket, object),
+		// https://storage.googleapis.com/toiotech2/2AQMKEtKkChtBGQk1ytkd0MT5fWS4q0c.mp3
+		//URI:      fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, object),
 		MIMEType: mimeType,
 	}, nil
 }

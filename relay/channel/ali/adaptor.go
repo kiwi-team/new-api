@@ -65,6 +65,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if !info.IsStream {
 		request.EnableThinking = false
 	}
+	// 这个模型，必须要开启思考模式
+	if request.Model == "qwen3-235b-a22b-thinking-2507" {
+		request.EnableThinking = true
+	}
 
 	switch info.RelayMode {
 	default:
