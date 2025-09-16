@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"one-api/common"
 	"path/filepath"
+	"time"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/option"
 	"google.golang.org/genai"
 )
 
-func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string) (*genai.File, error) {
-	client, err := storage.NewClient(ctx)
+func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string) (*genai.File, error) {
+	bytes := []byte(credentials)
+	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(bytes))
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +39,7 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string) (*ge
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = mime.TypeByExtension(filepath.Ext(fileUri))
 	}
-	object := common.GetRandomString(32) + filepath.Ext(fileUri)
+	object := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), common.GetRandomString(10), filepath.Ext(fileUri))
 	obj := client.Bucket(bucket).Object(object)
 
 	// 获取对象的写入器

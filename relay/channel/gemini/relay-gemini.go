@@ -10,12 +10,12 @@ import (
 	"one-api/common"
 	"one-api/constant"
 	"one-api/dto"
+	"one-api/model"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/helper"
 	"one-api/service"
 	"one-api/setting/model_setting"
 	"one-api/types"
-	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -229,6 +229,11 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 	tool_call_ids := make(map[string]string)
 	var system_content []string
 	//shouldAddDummyModelMessage := false
+	channel, err := model.GetChannelById(info.ChannelId, true)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, message := range textRequest.Messages {
 		if message.Role == "system" {
 			system_content = append(system_content, message.StringContent())
@@ -316,6 +321,22 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				}
 				// 判断是否是url
 				if strings.HasPrefix(part.GetImageMedia().Url, "http") {
+					fmt.Printf("type:%d \n", channel.Type)
+					if channel.Type == constant.ChannelTypeVertexAi {
+						channelConfig := channel.GetSetting()
+						bukect := channelConfig.GoogleFileBucket
+						uploadedFile, err := UploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, channel.Key)
+						if err != nil {
+							return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
+						}
+						parts = append(parts, GeminiPart{
+							FileData: &GeminiFileData{
+								MimeType: uploadedFile.MIMEType,
+								FileUri:  uploadedFile.URI,
+							},
+						})
+						continue
+					}
 					// 是url，获取文件的类型和base64编码的数据
 					fileData, err := service.GetFileBase64FromUrl(part.GetImageMedia().Url)
 					if err != nil {
@@ -375,50 +396,49 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					},
 				})
 			} else if part.Type == dto.ContentTypeAudioUrl {
-				// https://aice.seedsnote.com/google
-				bukect := os.Getenv("GOOGLE_FILE_BUCKET")
-				if bukect == "" {
-					continue
+				if channel.Type == constant.ChannelTypeVertexAi {
+					audioFileUrl := ""
+					if audioUrl, ok := part.AudioUrl.(string); ok {
+						audioFileUrl = audioUrl
+					} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
+						audioFileUrl = audioMap.Url
+					}
+					channelConfig := channel.GetSetting()
+					bukect := channelConfig.GoogleFileBucket
+					uploadedFile, err := UploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key)
+					if err != nil {
+						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
+					}
+					parts = append(parts, GeminiPart{
+						FileData: &GeminiFileData{
+							MimeType: uploadedFile.MIMEType,
+							FileUri:  uploadedFile.URI,
+						},
+					})
 				}
-				audioFileUrl := ""
-				if audioUrl, ok := part.AudioUrl.(string); ok {
-					audioFileUrl = audioUrl
-				} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
-					audioFileUrl = audioMap.Url
-				}
-				uploadedFile, err := UploadFileToGoogle(context.Background(), audioFileUrl, bukect)
-				if err != nil {
-					return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
-				}
-				parts = append(parts, GeminiPart{
-					FileData: &GeminiFileData{
-						MimeType: uploadedFile.MIMEType,
-						FileUri:  uploadedFile.URI,
-					},
-				})
 
 			} else if part.Type == dto.ContentTypeVideoUrl {
 				// https://aice.seedsnote.com/google
-				bukect := os.Getenv("GOOGLE_FILE_BUCKET")
-				if bukect == "" {
-					continue
+				if channel.Type == constant.ChannelTypeVertexAi {
+					videoFileUrl := ""
+					if videoUrl, ok := part.VideoUrl.(string); ok {
+						videoFileUrl = videoUrl
+					} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
+						videoFileUrl = videoMap.Url
+					}
+					channelConfig := channel.GetSetting()
+					bukect := channelConfig.GoogleFileBucket
+					uploadedFile, err := UploadFileToGoogle(context.Background(), videoFileUrl, bukect, channel.Key)
+					if err != nil {
+						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
+					}
+					parts = append(parts, GeminiPart{
+						FileData: &GeminiFileData{
+							MimeType: uploadedFile.MIMEType,
+							FileUri:  uploadedFile.URI,
+						},
+					})
 				}
-				videoFileUrl := ""
-				if videoUrl, ok := part.VideoUrl.(string); ok {
-					videoFileUrl = videoUrl
-				} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
-					videoFileUrl = videoMap.Url
-				}
-				uploadedFile, err := UploadFileToGoogle(context.Background(), videoFileUrl, bukect)
-				if err != nil {
-					return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
-				}
-				parts = append(parts, GeminiPart{
-					FileData: &GeminiFileData{
-						MimeType: uploadedFile.MIMEType,
-						FileUri:  uploadedFile.URI,
-					},
-				})
 			}
 		}
 

@@ -5,4 +5,5 @@ type ChannelSettings struct {
 	ThinkingToContent bool   `json:"thinking_to_content,omitempty"`
 	Proxy             string `json:"proxy"`
 	SetRole           string `json:"set_role,omitempty"`
+	GoogleFileBucket  string `json:"google_file_bucket,omitempty"`
 }
