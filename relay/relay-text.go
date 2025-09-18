@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/shopspring/decimal"
 
@@ -286,6 +290,71 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 	}
 }
 
+func uploadFileToS3(textRequest *dto.GeneralOpenAIRequest) {
+	modelName := strings.ToLower(textRequest.Model)
+	// kimi的模型，不支持image_url的图片。只支持base64的图片
+	if strings.Contains(modelName, "kimi") || strings.Contains(modelName, "moonshot") {
+		return
+	}
+	ctx := context.Background()
+	bucket := common.OptionMap["S3Bucket"]
+	endpoint := common.OptionMap["S3Endpoint"]
+	s3AK := common.OptionMap["S3AK"]
+	s3SK := common.OptionMap["S3SK"]
+	s3Region := common.OptionMap["S3Region"]
+	if bucket == "" || endpoint == "" || s3AK == "" || s3SK == "" || s3Region == "" {
+		return
+	}
+	s3Client := s3.New(s3.Options{
+		Region:      s3Region,
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(s3AK, s3SK, "")),
+	})
+	for i, message := range textRequest.Messages {
+		contentArr := message.ParseContent()
+		for j, item := range contentArr {
+			switch item.Type {
+			case dto.ContentTypeImageURL:
+				// 上传图片到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetImageMedia().Url)
+				if err != nil {
+					common.LogError(ctx, fmt.Sprintf("upload image to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].ImageUrl = dto.MessageImageUrl{
+						Url:      fileURL,
+						Detail:   item.GetImageMedia().Detail,
+						MimeType: item.GetImageMedia().MimeType,
+					}
+				}
+			case dto.ContentTypeAudioUrl:
+				// 上传音频到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetAudioMedia().Url)
+				if err != nil {
+					common.LogError(ctx, fmt.Sprintf("upload audio to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].AudioUrl = dto.MessageAudioUrl{
+						Url:    fileURL,
+						Detail: item.GetAudioMedia().Detail,
+					}
+				}
+			case dto.ContentTypeVideoUrl:
+				// 上传视频到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetVideoMedia().Url)
+				if err != nil {
+					common.LogError(ctx, fmt.Sprintf("upload video to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].VideoUrl = dto.MessageVideoUrl{
+						Url: fileURL,
+					}
+				}
+			}
+		}
+		textRequest.Messages[i].Content = contentArr
+	}
+}
+
 // func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 func TextHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 
@@ -293,6 +362,8 @@ func TextHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 
 	// get & validate textRequest 获取并验证文本请求
 	textRequest, err := getAndValidateTextRequest(c, relayInfo)
+	// 替换附件地址为s3的地址
+	uploadFileToS3(textRequest)
 
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeInvalidRequest)

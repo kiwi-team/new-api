@@ -34,7 +34,6 @@ func getAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 		return nil, errors.New("input is required")
 	}
 	return request, nil
-
 }
 
 func checkInputSensitive(textRequest *dto.OpenAIResponsesRequest, info *relaycommon.RelayInfo) ([]string, error) {

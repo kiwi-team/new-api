@@ -165,6 +165,24 @@ type MediaContent struct {
 	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
 
+func (m *MediaContent) GetAudioMedia() *MessageAudioUrl {
+	if m.AudioUrl != nil {
+		if _, ok := m.AudioUrl.(*MessageAudioUrl); ok {
+			return m.AudioUrl.(*MessageAudioUrl)
+		}
+	}
+	return nil
+}
+
+func (m *MediaContent) GetVideoMedia() *MessageVideoUrl {
+	if m.VideoUrl != nil {
+		if _, ok := m.VideoUrl.(*MessageVideoUrl); ok {
+			return m.VideoUrl.(*MessageVideoUrl)
+		}
+	}
+	return nil
+}
+
 func (m *MediaContent) GetImageMedia() *MessageImageUrl {
 	if m.ImageUrl != nil {
 		if _, ok := m.ImageUrl.(*MessageImageUrl); ok {

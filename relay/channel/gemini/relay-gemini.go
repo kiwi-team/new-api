@@ -236,7 +236,10 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 
 	for _, message := range textRequest.Messages {
 		if message.Role == "system" {
-			system_content = append(system_content, message.StringContent())
+			msg := strings.TrimSpace(message.StringContent())
+			if msg != "" {
+				system_content = append(system_content, msg)
+			}
 			continue
 		} else if message.Role == "tool" || message.Role == "function" {
 			if len(geminiRequest.Contents) == 0 || geminiRequest.Contents[len(geminiRequest.Contents)-1].Role == "model" {
