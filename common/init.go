@@ -123,6 +123,7 @@ func initConstantEnv() {
 	constant.UpdateTask = GetEnvOrDefaultBool("UPDATE_TASK", true)
 	constant.AzureDefaultAPIVersion = GetEnvOrDefaultString("AZURE_DEFAULT_API_VERSION", "2025-04-01-preview")
 	constant.GeminiVisionMaxImageNum = GetEnvOrDefault("GEMINI_VISION_MAX_IMAGE_NUM", 16)
+	constant.GeminiUploadFileRetryTimes = GetEnvOrDefault("GEMINI_UPLOAD_FILE_RETRY_TIMES", 3)
 	constant.NotifyLimitCount = GetEnvOrDefault("NOTIFY_LIMIT_COUNT", 2)
 	constant.NotificationLimitDurationMinute = GetEnvOrDefault("NOTIFICATION_LIMIT_DURATION_MINUTE", 10)
 	// GenerateDefaultToken 是否生成初始令牌，默认关闭。

@@ -428,10 +428,10 @@ func TextHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		}
 	}()
-	includeUsage := false
+	includeUsage := true
 	// 判断用户是否需要返回使用情况
-	if textRequest.StreamOptions != nil && textRequest.StreamOptions.IncludeUsage {
-		includeUsage = true
+	if textRequest.StreamOptions != nil && !textRequest.StreamOptions.IncludeUsage {
+		includeUsage = false
 	}
 
 	// 如果不支持StreamOptions，将StreamOptions设置为nil

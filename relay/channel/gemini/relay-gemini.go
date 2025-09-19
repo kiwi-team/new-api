@@ -324,13 +324,12 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				}
 				// 判断是否是url
 				if strings.HasPrefix(part.GetImageMedia().Url, "http") {
-					fmt.Printf("type:%d \n", channel.Type)
 					if channel.Type == constant.ChannelTypeVertexAi {
 						channelConfig := channel.GetSetting()
 						bukect := channelConfig.GoogleFileBucket
-						uploadedFile, err := UploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, channel.Key)
+						uploadedFile, err := RetryUploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 						if err != nil {
-							return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
+							return nil, fmt.Errorf("upload image file to google failed: %s", err.Error())
 						}
 						parts = append(parts, GeminiPart{
 							FileData: &GeminiFileData{
@@ -406,9 +405,12 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
 						audioFileUrl = audioMap.Url
 					}
+					if audioFileUrl == "" {
+						continue
+					}
 					channelConfig := channel.GetSetting()
 					bukect := channelConfig.GoogleFileBucket
-					uploadedFile, err := UploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key)
+					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
 					}
@@ -429,9 +431,12 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
 						videoFileUrl = videoMap.Url
 					}
+					if videoFileUrl == "" {
+						continue
+					}
 					channelConfig := channel.GetSetting()
 					bukect := channelConfig.GoogleFileBucket
-					uploadedFile, err := UploadFileToGoogle(context.Background(), videoFileUrl, bukect, channel.Key)
+					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
 					}
