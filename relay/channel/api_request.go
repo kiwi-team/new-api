@@ -239,7 +239,6 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	resp, err := client.Do(req)
-
 	if err != nil {
 		return nil, err
 	}

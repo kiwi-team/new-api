@@ -14,6 +14,7 @@ type ErrorLog struct {
 	CreatedAt   int64  `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
 	ChannelId   int    `json:"channel_id" gorm:"index"`
 	ChannelName string `json:"channel_name" gorm:"default:''"`
+	TokenId     int    `json:"token_id" gorm:"index"`
 	ModelName   string `json:"model_name" gorm:"default:''"`
 	Message     string `json:"message" gorm:"default:''"`
 	Type        string `json:"type" gorm:"default:''"`
@@ -66,7 +67,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	return errorLogs, total, err
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -83,8 +84,8 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		StatusCode:  err.StatusCode,
 		Body:        body,
 		Ip:          ip,
-
-		RequestId: requestId,
+		TokenId:     tokenId,
+		RequestId:   requestId,
 	}
 	err1 := DB.Create(log).Error
 	if err1 != nil {

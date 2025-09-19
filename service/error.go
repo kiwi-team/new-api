@@ -128,12 +128,23 @@ func RelayErrorHandler(resp *http.Response, showBodyWhenFail bool) (newApiErr *t
 		}
 		return
 	}
+	detailMessage := ""
+	if errResponse.Error.Metadata != nil {
+		meta, err := json.Marshal(errResponse.Error.Metadata)
+		if err == nil {
+			detailMessage = errResponse.Error.Message + ", metadata: " + string(meta)
+		}
+	}
 	if errResponse.Error.Message != "" {
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
 		newApiErr = types.WithOpenAIError(errResponse.Error, resp.StatusCode)
 	} else {
 		newApiErr = types.NewErrorWithStatusCode(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 		newApiErr.ErrorType = types.ErrorTypeOpenAIError
+	}
+
+	if detailMessage != "" {
+		newApiErr.SetMessage(detailMessage)
 	}
 	return
 }

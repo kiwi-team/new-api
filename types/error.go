@@ -8,11 +8,12 @@ import (
 )
 
 type OpenAIError struct {
-	Message    string `json:"message"`
-	Type       string `json:"type"`
-	Param      string `json:"param"`
-	Code       any    `json:"code"`
-	StatusCode int    `json:"status_code,omitempty"`
+	Message    string            `json:"message"`
+	Type       string            `json:"type"`
+	Param      string            `json:"param"`
+	Code       any               `json:"code"`
+	StatusCode int               `json:"status_code,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 type ClaudeError struct {
@@ -115,6 +116,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 				openAIError.Message = e.Error()
 				openAIError.Type = "toio_api_error"
 				openAIError.StatusCode = e.StatusCode
+				openAIError.Metadata = nil
 				return openAIError
 			}
 		}

@@ -150,7 +150,8 @@ func Relay(c *gin.Context) {
 			body = string(bodyBytes)
 		}
 
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP())
+		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId)
 
 		//if !shouldRetry(c, openaiErr, retryTimes-i) {
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
@@ -275,7 +276,8 @@ func RelayClaude(c *gin.Context) {
 			bodyBytes, _ := common.GetRequestBody(c)
 			body = string(bodyBytes)
 		}
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP())
+		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId)
 
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
