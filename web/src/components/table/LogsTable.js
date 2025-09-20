@@ -249,6 +249,7 @@ const LogsTable = () => {
 
   // Define column keys for selection
   const COLUMN_KEYS = {
+    ID :'id',
     TIME: 'time',
     CHANNEL: 'channel',
     USERNAME: 'username',
@@ -291,6 +292,7 @@ const LogsTable = () => {
   // Get default column visibility based on user role
   const getDefaultColumnVisibility = () => {
     return {
+      [COLUMN_KEYS.ID]: true,
       [COLUMN_KEYS.TIME]: true,
       [COLUMN_KEYS.CHANNEL]: isAdminUser,
       [COLUMN_KEYS.USERNAME]: isAdminUser,
@@ -345,6 +347,11 @@ const LogsTable = () => {
 
   // Define all columns
   const allColumns = [
+    {
+      key: COLUMN_KEYS.ID,
+      title: t('ID'),
+      dataIndex: 'id',
+    },
     {
       key: COLUMN_KEYS.TIME,
       title: t('时间'),

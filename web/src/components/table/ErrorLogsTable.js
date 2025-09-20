@@ -42,6 +42,7 @@ const ErrorLogsTable = () => {
   // Define column keys for selection
   const COLUMN_KEYS = {
     ID: 'id',
+    TOKEN_ID:'token_id',
     USERID: 'user_id',
     CREATEDAT: 'created_at',
     CHANNELID: 'channel_id',
@@ -86,6 +87,7 @@ const ErrorLogsTable = () => {
   const getDefaultColumnVisibility = () => {
     return {
       [COLUMN_KEYS.ID]: true,
+      [COLUMN_KEYS.TOKEN_ID]: true,
       [COLUMN_KEYS.USERID]: true,
       [COLUMN_KEYS.CHANNELID]: isAdminUser,
       [COLUMN_KEYS.CHANNELNAME]: true,
@@ -139,6 +141,16 @@ const ErrorLogsTable = () => {
 
   // Define all columns
   const allColumns = [
+    {
+      key: COLUMN_KEYS.ID,
+      title: t('ID'),
+      dataIndex: 'id',
+    },
+    {
+        key: COLUMN_KEYS.TOKEN_ID,
+        title: t('Token ID'),
+        dataIndex: 'token_id',
+    },
     {
       key: COLUMN_KEYS.CREATEDAT,
       title: t('时间'),
