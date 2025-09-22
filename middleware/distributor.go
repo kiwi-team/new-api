@@ -298,6 +298,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 	}
+
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/serper") {
+		modelRequest.Model = "serper"
+	}
 	return &modelRequest, shouldSelectChannel, nil
 }
 

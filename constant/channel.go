@@ -51,6 +51,7 @@ const (
 	ChannelTypeSensenova        = 51
 	ChannelTypeVisualVolcEngine = 52
 	ChannelTypeJimeng           = 53
+	ChannelTypeSerper           = 54
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -110,4 +111,5 @@ var ChannelBaseURLs = []string{
 	"https://api.sensenova.cn",                  //51
 	"https://visual.volcengineapi.com",          //52
 	"",                                          //53
+	"https://google.serper.dev",                 //54
 }

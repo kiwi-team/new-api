@@ -142,6 +142,10 @@ export const CHANNEL_OPTIONS = [
     value: 53,
     color: 'red',
     label: '即梦',
+  },{
+    value: 54,
+    color: 'blue',
+    label: 'serper',
   },
 ];
 

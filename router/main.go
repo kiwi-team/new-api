@@ -3,11 +3,12 @@ package router
 import (
 	"embed"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"one-api/common"
 	"os"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 func SetRouter(router *gin.Engine, buildFS embed.FS, indexPage []byte) {
@@ -15,6 +16,7 @@ func SetRouter(router *gin.Engine, buildFS embed.FS, indexPage []byte) {
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
 	SetVideoRouter(router)
+	SetSearchRouter(router)
 	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
 	if common.IsMasterNode && frontendBaseUrl != "" {
 		frontendBaseUrl = ""

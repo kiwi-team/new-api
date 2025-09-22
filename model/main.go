@@ -252,6 +252,7 @@ func migrateDB() error {
 		&Task{},
 		&Setup{},
 		&ErrorLog{},
+		&AiSearchLog{},
 	)
 	if err != nil {
 		return err
