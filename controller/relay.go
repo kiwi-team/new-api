@@ -250,9 +250,29 @@ func RelayClaude(c *gin.Context) {
 		retryTimes = c.GetInt("new_retry_times")
 	}
 	var newAPIError *types.NewAPIError
+	tokenChannelIdsAny, ok := c.Get("token_channel_ids")
+	var tokenChannelIds []int
+	if ok {
+		tokenChannelIds = tokenChannelIdsAny.([]int)
+	}
+	var channel *model.Channel
+	var err *types.NewAPIError
+	var err1 error
 
 	for i := 0; i <= retryTimes; i++ {
-		channel, err := getChannel(c, group, originalModel, i)
+		if len(tokenChannelIds) > 0 {
+			if i >= len(tokenChannelIds) {
+				break
+			}
+			channel, err1 = model.GetChannelById(tokenChannelIds[i], true)
+			if err1 != nil {
+				err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			}
+			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+			middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+		} else {
+			channel, err = getChannel(c, group, originalModel, i)
+		}
 		if err != nil {
 			common.LogError(c, err.Error())
 			newAPIError = err
