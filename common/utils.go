@@ -210,9 +210,11 @@ func Max(a int, b int) int {
 func MessageWithRequestId(message string, id string) string {
 	rewrite := OptionMap["RewriteMessage"]
 	var ruleArr []string
-	err := json.Unmarshal([]byte(rewrite), &ruleArr)
-	if err != nil {
-		SysError("rewrite Unmarshal failed: " + err.Error())
+	if rewrite != "" {
+		err := json.Unmarshal([]byte(rewrite), &ruleArr)
+		if err != nil {
+			SysError("rewrite Unmarshal failed: " + err.Error())
+		}
 	}
 	if len(ruleArr) > 0 {
 		for _, rule := range ruleArr {
