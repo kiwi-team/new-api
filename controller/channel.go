@@ -898,7 +898,16 @@ func GetChannelsByModelNameNewAPI(c *gin.Context) {
 		modelArr := strings.Split(defaultModels, ",")
 		for _, item := range modelArr {
 			temp, _ := model.GetChannelsByModelName(item)
-			modelChannelMap[item] = temp
+			// 通过ID去重复
+			idMap := make(map[int]bool)
+			var uniqueChannels []*model.Channel
+			for _, channel := range temp {
+				if _, exists := idMap[channel.Id]; !exists {
+					idMap[channel.Id] = true
+					uniqueChannels = append(uniqueChannels, channel)
+				}
+			}
+			modelChannelMap[item] = uniqueChannels
 		}
 	} else {
 		channels, err = model.GetChannelsByModelName(modelName)

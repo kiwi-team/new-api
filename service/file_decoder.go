@@ -77,6 +77,9 @@ func GetFileBase64FromUrl(url string) (*dto.LocalFileData, error) {
 			}
 		}
 	}
+	if mimeType == "audio/x-wav" {
+		mimeType = "audio/wav"
+	}
 
 	return &dto.LocalFileData{
 		Base64Data: base64Data,
