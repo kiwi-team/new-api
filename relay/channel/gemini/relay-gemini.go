@@ -398,16 +398,16 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					},
 				})
 			} else if part.Type == dto.ContentTypeAudioUrl {
+				audioFileUrl := ""
+				if audioUrl, ok := part.AudioUrl.(string); ok {
+					audioFileUrl = audioUrl
+				} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
+					audioFileUrl = audioMap.Url
+				}
+				if audioFileUrl == "" {
+					continue
+				}
 				if channel.Type == constant.ChannelTypeVertexAi {
-					audioFileUrl := ""
-					if audioUrl, ok := part.AudioUrl.(string); ok {
-						audioFileUrl = audioUrl
-					} else if audioMap, ok := part.AudioUrl.(*dto.MessageAudioUrl); ok {
-						audioFileUrl = audioMap.Url
-					}
-					if audioFileUrl == "" {
-						continue
-					}
 					channelConfig := channel.GetSetting()
 					bukect := channelConfig.GoogleFileBucket
 					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
@@ -420,10 +420,21 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 							FileUri:  uploadedFile.URI,
 						},
 					})
+				} else {
+					// 是url，获取文件的类型和base64编码的数据
+					fileData, err := service.GetFileBase64FromUrl(audioFileUrl)
+					if err != nil {
+						return nil, fmt.Errorf("get file base64 from url '%s' failed: %w", audioFileUrl, err)
+					}
+					parts = append(parts, GeminiPart{
+						InlineData: &GeminiInlineData{
+							MimeType: fileData.MimeType,
+							Data:     fileData.Base64Data,
+						},
+					})
 				}
 
 			} else if part.Type == dto.ContentTypeVideoUrl {
-				// https://aice.seedsnote.com/google
 				if channel.Type == constant.ChannelTypeVertexAi {
 					videoFileUrl := ""
 					if videoUrl, ok := part.VideoUrl.(string); ok {
@@ -468,6 +479,19 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 					Text: strings.Join(system_content, "\n"),
 				},
 			},
+		}
+	}
+	var thinking dto.AnthropicThinking
+	if textRequest.THINKING != nil {
+		err := json.Unmarshal(textRequest.THINKING, &thinking)
+		if err != nil {
+			return nil, err
+		}
+		if thinking.Type == "enabled" {
+			geminiRequest.GenerationConfig.ThinkingConfig = &GeminiThinkingConfig{
+				IncludeThoughts: true,
+				ThinkingBudget:  &thinking.BudgetTokens,
+			}
 		}
 	}
 

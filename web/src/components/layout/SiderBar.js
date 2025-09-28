@@ -19,6 +19,7 @@ import {
 const routerMap = {
   home: '/',
   channel: '/console/channel',
+  channelByModel: '/console/channel/model',
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
@@ -118,6 +119,12 @@ const SiderBar = ({ onNavigate = () => { } }) => {
         text: t('渠道'),
         itemKey: 'channel',
         to: '/channel',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('模型-渠道'),
+        itemKey: 'channelByModel',
+        to: '/channel-by-model',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

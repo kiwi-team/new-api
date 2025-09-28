@@ -27,6 +27,7 @@ import OAuth2Callback from './components/auth/OAuth2Callback.js';
 import PersonalSetting from './components/settings/PersonalSetting.js';
 import Setup from './pages/Setup/index.js';
 import SetupCheck from './components/layout/SetupCheck.js';
+import ChannelByModel from './pages/Channel/ChannelByModel.js';
 
 const Home = lazy(() => import('./pages/Home'));
 const Detail = lazy(() => import('./pages/Detail'));
@@ -59,6 +60,14 @@ function App() {
           element={
             <PrivateRoute>
               <Channel />
+            </PrivateRoute>
+          }
+        />
+         <Route
+          path='/console/channel/model'
+          element={
+            <PrivateRoute>
+              <ChannelByModel />
             </PrivateRoute>
           }
         />

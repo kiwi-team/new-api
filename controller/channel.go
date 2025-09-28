@@ -867,13 +867,27 @@ func GetTagModels(c *gin.Context) {
 
 func GetChannelsByModelName(c *gin.Context) {
 	modelName := c.Query("model")
-	channels, err := model.GetChannelsByModelName(modelName)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
+	var channels []*model.Channel
+	var err error
+	if modelName == "" {
+		defaultModels := common.OptionMap["default_models"]
+		if defaultModels == "" {
+			defaultModels = "gemini-2.5-pro,gemini-2.5-flash,gemini-2.0-flash,claude-3-5-sonnet-20240620,qwen3-max,qwen3-max-preview"
+		}
+		modelArr := strings.Split(defaultModels, ",")
+		for _, item := range modelArr {
+			temp, _ := model.GetChannelsByModelName(item)
+			channels = append(channels, temp...)
+		}
+	} else {
+		channels, err = model.GetChannelsByModelName(modelName)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

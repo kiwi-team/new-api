@@ -99,12 +99,14 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.IsStream {
 		action = "streamGenerateContent?alt=sse"
 	}
+	info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-thinking")
 	return fmt.Sprintf("%s/%s/models/%s:%s", info.BaseUrl, version, info.UpstreamModelName, action), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("x-goog-api-key", info.ApiKey)
+	req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
 	return nil
 }
 
