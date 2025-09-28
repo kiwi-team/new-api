@@ -72,8 +72,5 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 		return file, nil
 	}
 	fmt.Printf("upload file to google failed after %d retries, fileUri: %s\n", retryTimes, fileUri)
-	return &genai.File{
-		MIMEType: mime.TypeByExtension(filepath.Ext(fileUri)),
-		URI:      fileUri,
-	}, nil
+	return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s", retryTimes, fileUri)
 }

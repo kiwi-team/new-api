@@ -42,7 +42,8 @@ import {
   IconTreeTriangleDown,
   IconSearch,
   IconMore,
-  IconDescend2
+  IconDescend2,
+  IconCopy,
 } from '@douyinfe/semi-icons';
 import { loadChannelModels, copy } from '../../helpers/index.js';
 import { useIsMobile } from '../../hooks/useIsMobile.js';
@@ -216,9 +217,11 @@ const ChannelsTable = () => {
 
   // Define column keys for selection
   const COLUMN_KEYS = {
+    MODEL: 'model',
     ID: 'id',
     NAME: 'name',
     GROUP: 'group',
+    KEY: 'key',
     TYPE: 'type',
     STATUS: 'status',
     RESPONSE_TIME: 'response_time',
@@ -272,8 +275,10 @@ const ChannelsTable = () => {
   // Get default column visibility
   const getDefaultColumnVisibility = () => {
     return {
+      [COLUMN_KEYS.MODEL]: true,
       [COLUMN_KEYS.ID]: true,
       [COLUMN_KEYS.TAG]: true,
+      [COLUMN_KEYS.KEY]: true,
       [COLUMN_KEYS.RATIO]: true,
       [COLUMN_KEYS.NAME]: true,
       [COLUMN_KEYS.GROUP]: true,
@@ -314,6 +319,25 @@ const ChannelsTable = () => {
   // Define all columns with keys
   const allColumns = [
     {
+      key: COLUMN_KEYS.MODEL,
+      title: t('模型'),
+      dataIndex: 'model',
+      render: (text, record, index) => {
+        const obj = {
+          children: text,
+          props: {},
+        };
+        
+        if (record.rowSpan) {
+          obj.props.rowSpan = record.rowSpan;
+        } else {
+          obj.props.rowSpan = 0;
+        }
+        
+        return obj;
+      },
+    },
+    {
       key: COLUMN_KEYS.ID,
       title: t('ID'),
       dataIndex: 'id',
@@ -322,6 +346,32 @@ const ChannelsTable = () => {
         key:COLUMN_KEYS.TAG,
         title:t('TAG'),
         dataIndex:'tag',
+    },
+        {
+        key:COLUMN_KEYS.KEY,
+        title:t('KEY'),
+        dataIndex:'key',
+        render:(text,record,index)=>{
+            return (
+                <div className='max-w-[200px] flex items-center gap-2'>
+                    <span className='truncate'>{text}</span>
+                    <Button
+                        theme='borderless'
+                        type='tertiary'
+                        size='small'
+                        icon={<IconCopy />}
+                        onClick={async () => {
+                            const success = await copy(text);
+                            if (success) {
+                                showSuccess('KEY 已复制到剪贴板');
+                            } else {
+                                showError('复制失败');
+                            }
+                        }}
+                    />
+                </div>
+            );
+        }
     },
     {
         key:COLUMN_KEYS.RATIO,
@@ -548,70 +598,15 @@ const ChannelsTable = () => {
 
   const setChannelFormat = (channels, enableTagMode) => {
     let channelDates = [];
-    let channelTags = {};
-    for (let i = 0; i < channels.length; i++) {
-      channels[i].key = '' + channels[i].id;
-      if (!enableTagMode) {
-        channelDates.push(channels[i]);
-      } else {
-        let tag = channels[i].tag ? channels[i].tag : '';
-        // find from channelTags
-        let tagIndex = channelTags[tag];
-        let tagChannelDates = undefined;
-        if (tagIndex === undefined) {
-          // not found, create a new tag
-          channelTags[tag] = 1;
-          tagChannelDates = {
-            key: tag,
-            id: tag,
-            tag: tag,
-            name: '标签：' + tag,
-            group: '',
-            used_quota: 0,
-            response_time: 0,
-            priority: -1,
-            weight: -1,
-          };
-          tagChannelDates.children = [];
-          channelDates.push(tagChannelDates);
-        } else {
-          // found, add to the tag
-          tagChannelDates = channelDates.find((item) => item.key === tag);
-        }
-        if (tagChannelDates.priority === -1) {
-          tagChannelDates.priority = channels[i].priority;
-        } else {
-          if (tagChannelDates.priority !== channels[i].priority) {
-            tagChannelDates.priority = '';
-          }
-        }
-        if (tagChannelDates.weight === -1) {
-          tagChannelDates.weight = channels[i].weight;
-        } else {
-          if (tagChannelDates.weight !== channels[i].weight) {
-            tagChannelDates.weight = '';
-          }
-        }
-
-        if (tagChannelDates.group === '') {
-          tagChannelDates.group = channels[i].group;
-        } else {
-          let channelGroupsStr = channels[i].group;
-          channelGroupsStr.split(',').forEach((item, index) => {
-            if (tagChannelDates.group.indexOf(item) === -1) {
-              // join
-              tagChannelDates.group += ',' + item;
-            }
+    for (const model in channels) {
+      if (channels[model]) {
+        channels[model].forEach((channel, index) => {
+          channelDates.push({
+            ...channel,
+            model: model,
+            rowSpan: index === 0 ? channels[model].length : 0,
           });
-        }
-
-        tagChannelDates.children.push(channels[i]);
-        if (channels[i].status === 1) {
-          tagChannelDates.status = 1;
-        }
-        tagChannelDates.used_quota += channels[i].used_quota;
-        tagChannelDates.response_time += channels[i].response_time;
-        tagChannelDates.response_time = tagChannelDates.response_time / 2;
+        });
       }
     }
     setChannels(channelDates);
@@ -641,7 +636,7 @@ const ChannelsTable = () => {
     const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
     let model = "";
     const res = await API.get(
-      `/api/channel/channel-list-by-model?model=${model}`,
+      `/api/channel/channel-list-by-model-newapi?model=${model}`,
     );
     console.log({res});
     if (res === undefined || reqId !== requestCounter.current) {
@@ -718,12 +713,12 @@ const ChannelsTable = () => {
       const typeParam = (typeKey !== 'all') ? `&type=${typeKey}` : '';
       const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
       const res = await API.get(
-        `/api/channel/channel-list-by-model?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
+        `/api/channel/channel-list-by-model-newapi?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
       );
       const { success, message, data } = res.data;
       if (success) {
         let total = data.length;
-        setChannelFormat([], true);
+        setChannelFormat([]);
         setChannelFormat(data, true);
         setChannelCount(total);
         //setActivePage(page);
