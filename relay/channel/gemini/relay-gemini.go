@@ -492,6 +492,15 @@ func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon
 				IncludeThoughts: true,
 				ThinkingBudget:  &thinking.BudgetTokens,
 			}
+		} else {
+			if strings.Contains(textRequest.Model, "gemini-2.5-flash") {
+				zero := 0
+				geminiRequest.GenerationConfig.ThinkingConfig = &GeminiThinkingConfig{
+					IncludeThoughts: false,
+					ThinkingBudget:  &zero,
+				}
+			}
+
 		}
 	}
 

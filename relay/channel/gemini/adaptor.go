@@ -100,6 +100,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		action = "streamGenerateContent?alt=sse"
 	}
 	info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-thinking")
+	info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-nothinking")
 	return fmt.Sprintf("%s/%s/models/%s:%s", info.BaseUrl, version, info.UpstreamModelName, action), nil
 }
 
