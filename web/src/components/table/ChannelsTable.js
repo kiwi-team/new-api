@@ -226,6 +226,7 @@ const ChannelsTable = () => {
     PRIORITY: 'priority',
     WEIGHT: 'weight',
     OPERATE: 'operate',
+    REMARK:"remark",
     TAG:'tag',
     RATIO:'ratio',
   };
@@ -283,6 +284,7 @@ const ChannelsTable = () => {
       [COLUMN_KEYS.BALANCE]: true,
       [COLUMN_KEYS.PRIORITY]: true,
       [COLUMN_KEYS.WEIGHT]: true,
+      [COLUMN_KEYS.REMARK]: true,
       [COLUMN_KEYS.OPERATE]: true,
     };
   };
@@ -544,6 +546,11 @@ const ChannelsTable = () => {
           );
         }
       },
+    },
+    {
+      key: COLUMN_KEYS.REMARK,
+      title: t('渠道备注'),
+      dataIndex: 'remark',
     },
     {
       key: COLUMN_KEYS.OPERATE,

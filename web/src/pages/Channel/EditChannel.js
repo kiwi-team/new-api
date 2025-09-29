@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { renderMatches, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -103,7 +103,8 @@ const EditChannel = (props) => {
     priority: 0,
     weight: 0,
     tag: '',
-    ratio:0.0,
+    remark: '',
+    ratio:1,
     multi_key_mode: 'random',
   };
   const [batch, setBatch] = useState(false);
@@ -1435,8 +1436,18 @@ const EditChannel = (props) => {
                   </div>
                 )}
 
+                  <div>
+                  <Form.Input
+                    name='remark'
+                    field='remark'
+                    label={t('渠道备注')}
+                    placeholder={t('渠道备注')}
+                    showClear
+                    onChange={(value) => handleInputChange('remark', value)}
+                  />
+                </div>
+
                  <div>
-                  <Text strong className="block mb-2">{t('渠道倍率')}</Text>
                    <Form.Input
                     name='ratio'
                     type='number'

@@ -231,6 +231,7 @@ const ChannelsTable = () => {
     OPERATE: 'operate',
     TAG:'tag',
     RATIO:'ratio',
+    REMARK:'remark',
   };
 
   // State for column visibility
@@ -278,6 +279,7 @@ const ChannelsTable = () => {
       [COLUMN_KEYS.MODEL]: true,
       [COLUMN_KEYS.ID]: true,
       [COLUMN_KEYS.TAG]: true,
+      [COLUMN_KEYS.REMARK]: true,
       [COLUMN_KEYS.KEY]: true,
       [COLUMN_KEYS.RATIO]: true,
       [COLUMN_KEYS.NAME]: true,
@@ -482,6 +484,11 @@ const ChannelsTable = () => {
           );
         }
       },
+    },
+    {
+      key: COLUMN_KEYS.REMARK,
+      title: t('渠道备注'),
+      dataIndex: 'remark',
     },
   ];
 
