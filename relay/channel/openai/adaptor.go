@@ -391,8 +391,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 
 	if strings.HasPrefix(request.Model, "gemini") {
 		//把给chat的gemini请求  audio_url, video_url 转换为 image_url
-		if strings.Contains(info.BaseUrl, "chataiapi") ||
-			strings.Contains(info.BaseUrl, "guoguo") {
+		isGuoguo := strings.Contains(info.BaseUrl, "guoguo")
+		isChataiapi := strings.Contains(info.BaseUrl, "chataiapi")
+		if isChataiapi || isGuoguo {
 			newMessages := make([]dto.Message, 0, len(request.Messages))
 			for _, message := range request.Messages {
 				newContentArr := make([]dto.MediaContent, 0)
@@ -429,6 +430,16 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 		// gemini 模型去掉max_tokens参数
 		request.MaxTokens = 0
+		if isGuoguo {
+			var thinking dto.AnthropicThinking
+			if request.THINKING != nil {
+				err := json.Unmarshal(request.THINKING, &thinking)
+				if err != nil {
+					return nil, fmt.Errorf("error unmarshalling thinking: %w", err)
+				}
+				request.THINKING = json.RawMessage(fmt.Sprintf(`{"type":"%s","thinking_budget":%d}`, thinking.Type, thinking.BudgetTokens))
+			}
+		}
 	}
 	dealFunctionCall(request)
 	return request, nil
