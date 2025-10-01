@@ -25,7 +25,7 @@ func getAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if err != nil {
 		return nil, err
 	}
-	if textRequest.Messages == nil || len(textRequest.Messages) == 0 {
+	if len(textRequest.Messages) == 0 {
 		return nil, errors.New("field messages is required")
 	}
 	if textRequest.Model == "" {

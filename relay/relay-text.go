@@ -146,7 +146,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
 			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
-				textRequest.Model = textRequest.Model + "-thinking"
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
 		}
@@ -154,7 +154,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
 			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
-				textRequest.Model = textRequest.Model + "-thinking"
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
 			if thinking.BudgetTokens > 0 {
@@ -199,7 +199,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
 			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
-				textRequest.Model = textRequest.Model + "-thinking"
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
 		} else {

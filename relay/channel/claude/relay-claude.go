@@ -226,6 +226,29 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*dto.Cla
 		}
 	}
 
+	// thinking
+	if textRequest.THINKING != nil {
+		var thinking dto.AnthropicThinking
+		if err := json.Unmarshal(textRequest.THINKING, &thinking); err != nil {
+			return nil, err
+		}
+		switch thinking.Type {
+		case "enabled":
+			budget := thinking.BudgetTokens
+			if budget > int(textRequest.MaxTokens) {
+				budget = int(textRequest.MaxTokens) - 1
+			}
+			claudeRequest.Thinking = &dto.Thinking{
+				Type:         "enabled",
+				BudgetTokens: &budget,
+			}
+		case "disabled":
+			claudeRequest.Thinking = &dto.Thinking{
+				Type: "disabled",
+			}
+		}
+	}
+
 	if textRequest.Stop != nil {
 		// stop maybe string/array string, convert to array string
 		switch textRequest.Stop.(type) {
@@ -345,6 +368,9 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*dto.Cla
 					}
 					if mediaMessage.Type == "text" {
 						claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
+					} else if mediaMessage.Type == "thinking" {
+						claudeMediaMessage.Thinking = mediaMessage.Thinking
+						claudeMediaMessage.Signature = mediaMessage.Signature
 					} else {
 						imageUrl := mediaMessage.GetImageMedia()
 						claudeMediaMessage.Type = "image"
@@ -396,6 +422,8 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*dto.Cla
 	}
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+	//jsonStr := common.JsonStringify(claudeRequest)
+	//fmt.Printf(" %s\n", jsonStr)
 	return &claudeRequest, nil
 }
 
@@ -456,9 +484,7 @@ func StreamResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse
 						},
 					})
 				case "signature_delta":
-					// 加密的不处理
-					signatureContent := "\n"
-					choice.Delta.ReasoningContent = &signatureContent
+					choice.Delta.Signature = &claudeResponse.Delta.Signature
 				case "thinking_delta":
 					thinkingContent := claudeResponse.Delta.Thinking
 					choice.Delta.ReasoningContent = &thinkingContent
@@ -500,6 +526,7 @@ func ResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse) *dto
 	}
 	tools := make([]dto.ToolCallResponse, 0)
 	thinkingContent := ""
+	signature := ""
 
 	if reqMode == RequestModeCompletion {
 		choice := dto.OpenAITextResponseChoice{
@@ -529,6 +556,7 @@ func ResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse) *dto
 			case "thinking":
 				// 加密的不管， 只输出明文的推理过程
 				thinkingContent = message.Thinking
+				signature = message.Signature
 			case "text":
 				responseText = message.GetText()
 			}
@@ -549,6 +577,7 @@ func ResponseClaude2OpenAI(reqMode int, claudeResponse *dto.ClaudeResponse) *dto
 		choice.Message.SetToolCalls(tools)
 	}
 	choice.Message.ReasoningContent = thinkingContent
+	choice.Message.Signature = signature
 	fullTextResponse.Model = claudeResponse.Model
 	choices = append(choices, choice)
 	fullTextResponse.Choices = choices

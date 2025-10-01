@@ -1,4 +1,4 @@
 #!/bin/zsh
 
-bun install
+rm -rf dist/
 bun run build

@@ -145,6 +145,7 @@ type Message struct {
 	Name             *string         `json:"name,omitempty"`
 	Prefix           *bool           `json:"prefix,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Signature        string          `json:"signature,omitempty"`
 	Reasoning        string          `json:"reasoning,omitempty"`
 	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
 	ToolCallId       string          `json:"tool_call_id,omitempty"`
@@ -161,6 +162,8 @@ type MediaContent struct {
 	VideoUrl   any    `json:"video_url,omitempty"`
 	AudioUrl   any    `json:"audio_url,omitempty"`
 	InputVideo any    `json:"input_video,omitempty"`
+	Thinking   string `json:"thinking,omitempty"`
+	Signature  string `json:"signature,omitempty"`
 	// OpenRouter Params
 	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
@@ -265,6 +268,7 @@ type MessageAudioUrl struct {
 
 const (
 	ContentTypeText       = "text"
+	ContentTypeThinking   = "thinking"
 	ContentTypeImageURL   = "image_url"
 	ContentTypeInputAudio = "input_audio"
 	ContentTypeFile       = "file"
@@ -395,6 +399,14 @@ func (m *Message) ParseContent() []MediaContent {
 				contentList = append(contentList, MediaContent{
 					Type: ContentTypeText,
 					Text: text,
+				})
+			}
+		case ContentTypeThinking:
+			if thinking, ok := contentItem["thinking"].(string); ok {
+				contentList = append(contentList, MediaContent{
+					Type:      ContentTypeThinking,
+					Thinking:  thinking,
+					Signature: common.Interface2String(contentItem["signature"]),
 				})
 			}
 
