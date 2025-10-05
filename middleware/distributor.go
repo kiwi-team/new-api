@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -55,20 +56,54 @@ func Distribute() func(c *gin.Context) {
 		// 这个key，相关的渠道配置信息
 		var channelRules *dto.ChannelRulesItem
 		for key, val := range channelRulesMap {
-			if key == modelName || common.RegMatch(key, modelName) {
+			if key == modelName {
 				channelRules = &val
+				break
 			}
 		}
+		if channelRules == nil {
+			for key, val := range channelRulesMap {
+				if common.RegMatch(key, modelName) {
+					channelRules = &val
+					break
+				}
+			}
+		}
+
 		var channelIds []int
 		tags := make([]string, 0)
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
 			tags = tagsAny.([]string)
 		}
+		onlyTextChannelsConfigStr := common.OptionMap["OnlyTextChannels"]
+		onlyTextChannels := []dto.OnlyTextChannels{}
+		err = json.Unmarshal([]byte(onlyTextChannelsConfigStr), &onlyTextChannels)
+		onlyTextChannelIds := make([]int, 0)
+		if err == nil {
+			for _, item := range onlyTextChannels {
+				if item.ModelName == modelName {
+					onlyTextChannelIds = item.ChannelIds
+					break
+				}
+			}
+			if len(onlyTextChannelIds) == 0 {
+				for _, item := range onlyTextChannels {
+					if common.RegMatch(item.ModelName, modelName) {
+						onlyTextChannelIds = item.ChannelIds
+						break
+					}
+				}
+			}
+		}
 		if channelRules != nil {
 			c.Set("new_retry_times", channelRules.Retry)
 			channelIds = model.GetChannelIdsByRule(channelRules, tags)
-			c.Set("token_channel_ids", channelIds)
 		}
+		// 如果是存文本，且设置了全局的文本渠道，那么就使用全局的文本渠道
+		if len(tags) == 0 && len(onlyTextChannelIds) > 0 {
+			channelIds = onlyTextChannelIds
+		}
+		c.Set("token_channel_ids", channelIds)
 
 		//userGroup := c.GetString(constant.ContextKeyUserGroup)
 		//tokenGroup := c.GetString("token_group")

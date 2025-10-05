@@ -14,3 +14,9 @@ type ChannelItem struct {
 	Id         int                `json:"id,omitempty"`
 	Weight     int32              `json:"weight,omitempty"`
 }
+
+type OnlyTextChannels struct {
+	ModelName  string `json:"model_name,omitempty"`
+	ChannelIds []int  `json:"channel_ids,omitempty"`
+	RandomType string `json:"random_type,omitempty"` // random,order
+}

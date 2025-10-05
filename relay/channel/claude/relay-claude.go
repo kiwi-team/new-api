@@ -423,7 +423,7 @@ func RequestOpenAI2ClaudeMessage(textRequest dto.GeneralOpenAIRequest) (*dto.Cla
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	//jsonStr := common.JsonStringify(claudeRequest)
-	//fmt.Printf(" %s\n", jsonStr)
+	//fmt.Printf("claude %s\n", jsonStr)
 	return &claudeRequest, nil
 }
 
