@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -47,11 +47,12 @@ import {
 } from '@douyinfe/semi-illustrations';
 import { ITEMS_PER_PAGE } from '../../constants';
 import Paragraph from '@douyinfe/semi-ui/lib/es/typography/paragraph';
-import { IconSearch, IconHelpCircle } from '@douyinfe/semi-icons';
+import { IconSearch, IconHelpCircle, IconEyeOpened,IconCopy } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
 import { useTableCompactMode } from '../../hooks/useTableCompactMode';
 
 const { Text } = Typography;
+
 
 const colors = [
   'amber',
@@ -73,6 +74,86 @@ const colors = [
 
 const LogsTable = () => {
   const { t } = useTranslation();
+
+
+    // 渲染详情弹框
+  const renderDetailModal = () => {
+    return (
+      <Modal
+        title={t('详情')}
+        visible={showDetailModal}
+        onCancel={() => setShowDetailModal(false)}
+        width={800}
+        footer={
+          <div className='flex justify-end gap-2'>
+            <Button
+              theme='light'
+              onClick={async (e) => {
+                await copyText(e, detailContent);
+              }}
+              className='!rounded-full'
+            >
+              {t('复制')}
+            </Button>
+            <Button
+              type='primary'
+              onClick={() => setShowDetailModal(false)}
+              className='!rounded-full'
+            >
+              {t('关闭')}
+            </Button>
+          </div>
+        }
+      >
+        <div className='bg-gray-50 p-4 rounded-lg max-h-96 overflow-auto'>
+          <pre className='whitespace-pre-wrap text-sm font-mono'>
+            {detailContent}
+          </pre>
+        </div>
+      </Modal>
+    );
+  };
+
+  // 显示详情弹框
+  const showDetailDialog = (content, isJson = true) => {
+    setDetailContent(isJson ? formatJsonContent(content) : content);
+    setShowDetailModal(true);
+  };
+
+  // 格式化JSON内容
+  const formatJsonContent = (content) => {
+    try {
+      const parsed = JSON.parse(content);
+      return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      return content;
+    }
+  };
+
+  function renderMultiModel(request) {
+    try {
+        request = JSON.parse(request);
+        let models = [];
+        if (request.tools && request.tools.length > 0) {
+            models.push("tools")
+        }
+        for (let message of request.messages ) {
+            for(let item of message.content) {
+                if(item.type == "image_url") {
+                    models.push("image")
+                }else if (item.type == "audio_url") {
+                    models.push("audio")
+                }else if (item.type == "video_url") {
+                    models.push("video")
+                }
+            }
+        }
+        models = [...new Set(models)];
+        return models.join(",");
+    }catch(err) {
+        return "";
+    }
+  }
 
   function renderType(type) {
     switch (type) {
@@ -264,11 +345,16 @@ const LogsTable = () => {
     RETRY: 'retry',
     IP: 'ip',
     DETAILS: 'details',
+    MULTI_MODEL: 'multi_model',
+    REQUEST: 'request',
+    RESPONSE: 'response',
   };
 
   // State for column visibility
   const [visibleColumns, setVisibleColumns] = useState({});
   const [showColumnSelector, setShowColumnSelector] = useState(false);
+const [showDetailModal, setShowDetailModal] = useState(false);
+const [detailContent, setDetailContent] = useState('');
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -300,6 +386,7 @@ const LogsTable = () => {
       [COLUMN_KEYS.GROUP]: true,
       [COLUMN_KEYS.TYPE]: true,
       [COLUMN_KEYS.MODEL]: true,
+      [COLUMN_KEYS.MULTI_MODEL]: true,
       [COLUMN_KEYS.USE_TIME]: true,
       [COLUMN_KEYS.PROMPT]: true,
       [COLUMN_KEYS.COMPLETION]: true,
@@ -307,6 +394,8 @@ const LogsTable = () => {
       [COLUMN_KEYS.RETRY]: isAdminUser,
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.DETAILS]: true,
+      [COLUMN_KEYS.REQUEST]: true,
+      [COLUMN_KEYS.RESPONSE]: true,
     };
   };
 
@@ -496,6 +585,16 @@ const LogsTable = () => {
       },
     },
     {
+        key: COLUMN_KEYS.MULTI_MODEL,
+        title: t('多模态'),
+        dataIndex: 'multi_model',
+        render: (text, record, index) => {
+          return (
+            <>{renderMultiModel(record.request)}</>
+          );
+        },
+    },
+    {
       key: COLUMN_KEYS.USE_TIME,
       title: t('用时/首字'),
       dataIndex: 'use_time',
@@ -621,6 +720,69 @@ const LogsTable = () => {
           }
         }
         return isAdminUser ? <div>{content}</div> : <></>;
+      },
+    },
+    
+     {
+      key: COLUMN_KEYS.REQUEST,
+      title: t('请求'),
+      dataIndex: 'request',
+      render: (text, record, index) => {
+          return (
+            <div className="flex items-center gap-2">
+              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="flex gap-1">
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconEyeOpened />}
+                  onClick={(e) => {
+                     e.stopPropagation();
+                     showDetailDialog(text, true);
+                   }}
+                />
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconCopy />}
+                  onClick={(e) => copyText(e, text)}
+                />
+              </div>
+            </div>
+          );
+      },
+    },
+      {
+      key: COLUMN_KEYS.RESPONSE,
+      title: t('响应'),
+      dataIndex: 'response',
+      render: (text, record, index) => {
+          return (
+            <div className="flex items-center gap-2">
+              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="flex gap-1">
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconEyeOpened />}
+                  onClick={(e) => {
+                     e.stopPropagation();
+                     showDetailDialog(text, true);
+                   }}
+                />
+                <Button
+                  theme="borderless"
+                  type="tertiary"
+                  size="small"
+                  icon={<IconCopy />}
+                  onClick={(e) => copyText(e, text)}
+                />
+              </div>
+            </div>
+          );
       },
     },
     {
@@ -1209,7 +1371,7 @@ const LogsTable = () => {
   const copyText = async (e, text) => {
     e.stopPropagation();
     if (await copy(text)) {
-      showSuccess('已复制：' + text);
+      showSuccess('已复制');
     } else {
       Modal.error({ title: t('无法复制到剪贴板，请手动复制'), content: text });
     }
@@ -1249,6 +1411,7 @@ const LogsTable = () => {
   return (
     <>
       {renderColumnSelector()}
+       {renderDetailModal()}
       <Card
         className='!rounded-2xl mb-4'
         title={

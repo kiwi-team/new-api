@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import  { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -20,8 +20,6 @@ import {
   Tooltip,
   Checkbox,
   Card,
-  Typography,
-  Divider,
   Form,
 } from '@douyinfe/semi-ui';
 import {
@@ -567,7 +565,7 @@ const ErrorLogsTable = () => {
   const copyText = async (e, text) => {
     e.stopPropagation();
     if (await copy(text)) {
-      showSuccess('已复制：' + text);
+      showSuccess('已复制');
     } else {
       Modal.error({ title: t('无法复制到剪贴板，请手动复制'), content: text });
     }
