@@ -138,6 +138,9 @@ const LogsTable = () => {
             models.push("tools")
         }
         for (let message of request.messages ) {
+            if (!Array.isArray(message.content)) {
+                continue;
+            }
             for(let item of message.content) {
                 if(item.type == "image_url") {
                     models.push("image")
@@ -151,6 +154,7 @@ const LogsTable = () => {
         models = [...new Set(models)];
         return models.join(",");
     }catch(err) {
+        console.log("renderMultiModel err:", err);
         return "";
     }
   }
