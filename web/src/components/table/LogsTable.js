@@ -130,7 +130,30 @@ const LogsTable = () => {
     }
   };
 
-  function renderMultiModel(request) {
+   function renderMultiModel(request) {
+    try {
+        let models = [];
+        if (request.includes('"tools":')) {
+            models.push("tools")
+        }
+        if (request.includes('"image_url":')) {
+            models.push("image")
+        }
+        if (request.includes('"audio_url":')) {
+            models.push("audio")
+        }
+        if (request.includes('"video_url":')) {
+            models.push("video")
+        }
+        return models.join(",");
+    }catch(err) {
+        console.log("renderMultiModel err:", err);
+        return "";
+    }
+  }
+
+
+  function renderMultiModelByObject(request) {
     try {
         request = JSON.parse(request);
         let models = [];
@@ -528,7 +551,7 @@ const [detailContent, setDetailContent] = useState('');
               }}
             >
               {' '}
-              {t(text)}{' '}
+              {text}{' '}
             </Tag>
           </div>
         ) : (
@@ -734,7 +757,7 @@ const [detailContent, setDetailContent] = useState('');
       render: (text, record, index) => {
           return (
             <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
               <div className="flex gap-1">
                 <Button
                   theme="borderless"
@@ -765,7 +788,7 @@ const [detailContent, setDetailContent] = useState('');
       render: (text, record, index) => {
           return (
             <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
+              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
               <div className="flex gap-1">
                 <Button
                   theme="borderless"
