@@ -108,6 +108,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isYunwu := strings.Contains(info.BaseUrl, "yunwu")
 	isSiliconflow := strings.Contains(info.BaseUrl, "siliconflow")
 	isVolcengine := strings.Contains(info.BaseUrl, "volces")
+	isDeepseek := strings.Contains(info.BaseUrl, "deepseek")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
 	//var extraBody dto.ExtraBody
@@ -215,6 +216,17 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			textRequest.EnableThinking = true
 		} else if isVolcengine {
 			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
+		}
+	}
+	// 对于deepseek官方的api，assistant 的content只能是字符串
+	if isDeepseek {
+		for i, msg := range textRequest.Messages {
+			if msg.Role == "assistant" {
+				cnt := msg.ParseContent()
+				if len(cnt) == 1 && cnt[0].Type == "text" {
+					textRequest.Messages[i].Content = cnt[0].Text
+				}
+			}
 		}
 	}
 
