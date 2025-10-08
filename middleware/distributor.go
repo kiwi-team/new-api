@@ -83,6 +83,9 @@ func Distribute() func(c *gin.Context) {
 			for _, item := range onlyTextChannels {
 				if item.ModelName == modelName {
 					onlyTextChannelIds = item.ChannelIds
+					if item.RandomType == "random" {
+						common.ShuffleSlice(onlyTextChannelIds)
+					}
 					break
 				}
 			}
@@ -90,6 +93,9 @@ func Distribute() func(c *gin.Context) {
 				for _, item := range onlyTextChannels {
 					if common.RegMatch(item.ModelName, modelName) {
 						onlyTextChannelIds = item.ChannelIds
+						if item.RandomType == "random" {
+							common.ShuffleSlice(onlyTextChannelIds)
+						}
 						break
 					}
 				}
@@ -111,7 +117,7 @@ func Distribute() func(c *gin.Context) {
 		tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
-			if _, ok := setting.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+			if _, ok1 := setting.GetUserUsableGroups(userGroup)[tokenGroup]; !ok1 {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("令牌分组 %s 已被禁用", tokenGroup))
 				return
 			}
@@ -151,15 +157,15 @@ func Distribute() func(c *gin.Context) {
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+				s, ok2 := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				var tokenModelLimit map[string]bool
-				if ok {
+				if ok2 {
 					tokenModelLimit = s.(map[string]bool)
 				} else {
 					tokenModelLimit = map[string]bool{}
 				}
 				if tokenModelLimit != nil {
-					if _, ok := tokenModelLimit[modelRequest.Model]; !ok {
+					if _, ok3 := tokenModelLimit[modelRequest.Model]; !ok3 {
 						abortWithOpenAiMessage(c, http.StatusForbidden, "该令牌无权访问模型 "+modelRequest.Model)
 						return
 					}
@@ -171,10 +177,16 @@ func Distribute() func(c *gin.Context) {
 			}
 
 			if channelRules != nil {
-				tmpChannel, errTmp := model.GetChannelByRule(*channelRules, tags)
-				if errTmp == nil && tmpChannel != nil {
-					channel = tmpChannel
+				if len(channelIds) > 0 {
+					tmpChannel, tempErr := model.GetChannelById(channelIds[0], true)
+					if tempErr == nil {
+						channel = tmpChannel
+					}
 				}
+				//tmpChannel, errTmp := model.GetChannelByRule(*channelRules, tags)
+				//if errTmp == nil && tmpChannel != nil {
+				//channel = tmpChannel
+				//}
 			} else if shouldSelectChannel {
 				var selectGroup string
 				channel, selectGroup, err = model.CacheGetRandomSatisfiedChannel(c, userGroup, modelRequest.Model, 0, tags)

@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -338,6 +337,11 @@ func GetChannelByRule(channelRules dto.ChannelRulesItem, tags []string) (*Channe
 			continue
 		}
 		channel, err := GetChannelById(item.Id, true)
+		if err != nil {
+			fmt.Printf("failed to get channel by id: %d ", item.Id)
+			common.SysError("failed to get channel by id: " + err.Error())
+			continue
+		}
 		if !CheckMultiTags(tags, channel.GetTag()) {
 			continue
 		}
@@ -366,25 +370,44 @@ func CheckMultiTags(tags []string, channelTags string) bool {
 func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (channelIds []int) {
 	disabledChannels := channelRules.DisableChannels
 	for _, item := range channelRules.Channels {
-		if slices.Contains(disabledChannels, item.Id) {
-			continue
-		}
-		channel, err := GetChannelById(item.Id, true)
-		if err == nil && channel.Status == common.ChannelStatusEnabled {
-			channelTag := channel.GetTag()
-			allIn := CheckMultiTags(tags, channelTag)
-			if !allIn {
-				continue // 如果这个渠道不能处理这个请求的所有模态，就跳过这个渠道，继续寻找满足条件的。
+		if item.Id > 0 {
+			if slices.Contains(disabledChannels, item.Id) {
+				continue
 			}
-			channelIds = append(channelIds, channel.Id)
+			channel, err := GetChannelById(item.Id, true)
+			if err == nil && channel.Status == common.ChannelStatusEnabled {
+				channelTag := channel.GetTag()
+				allIn := CheckMultiTags(tags, channelTag)
+				if !allIn {
+					continue // 如果这个渠道不能处理这个请求的所有模态，就跳过这个渠道，继续寻找满足条件的。
+				}
+				channelIds = append(channelIds, channel.Id)
+			}
+		} else if len(item.Ids) > 0 {
+			sameWeightIds := []int{}
+			for _, id := range item.Ids {
+				if slices.Contains(disabledChannels, id) {
+					continue
+				}
+				channel, err := GetChannelById(id, true)
+				if err == nil && channel.Status == common.ChannelStatusEnabled {
+					channelTag := channel.GetTag()
+					allIn := CheckMultiTags(tags, channelTag)
+					if !allIn {
+						continue // 如果这个渠道不能处理这个请求的所有模态，就跳过这个渠道，继续寻找满足条件的。
+					}
+					sameWeightIds = append(sameWeightIds, channel.Id)
+				}
+			}
+			if len(sameWeightIds) > 0 {
+				common.ShuffleSlice(sameWeightIds)
+				channelIds = append(channelIds, sameWeightIds...)
+			}
 		}
 	}
 	if channelRules.RandomType == "random" {
 		// 打乱channelIds顺序
-		r := rand.New(rand.NewSource(time.Now().UnixNano()))
-		r.Shuffle(len(channelIds), func(i, j int) {
-			channelIds[i], channelIds[j] = channelIds[j], channelIds[i]
-		})
+		common.ShuffleSlice(channelIds)
 		return channelIds
 	}
 	return channelIds

@@ -336,5 +336,15 @@ func RegMatch(reg, content string) bool {
 		return false
 	}
 	return matched
+}
 
+// ShuffleSlice 打乱任意类型切片的顺序，使用泛型支持所有类型
+func ShuffleSlice[T any](slice []T) {
+	if len(slice) <= 1 {
+		return
+	}
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(slice), func(i, j int) {
+		slice[i], slice[j] = slice[j], slice[i]
+	})
 }

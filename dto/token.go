@@ -12,6 +12,7 @@ type ChannelItem struct {
 	GroupRatio map[string]float64 `json:"group_ratio,omitempty"`
 	Name       string             `json:"name,omitempty"` // 名称可以是正则表达式，减少配置成本
 	Id         int                `json:"id,omitempty"`
+	Ids        []int              `json:"ids,omitempty"` // 同一个级别的多个渠道，这些渠道的权重是相等的
 	Weight     int32              `json:"weight,omitempty"`
 }
 
