@@ -221,7 +221,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	// 对于deepseek官方的api，assistant 的content只能是字符串
 	if isDeepseek {
 		for i, msg := range textRequest.Messages {
-			if msg.Role == "assistant" {
+			if msg.Role != "user" {
 				cnt := msg.ParseContent()
 				if len(cnt) == 1 && cnt[0].Type == "text" {
 					textRequest.Messages[i].Content = cnt[0].Text
