@@ -311,6 +311,15 @@ func ParseTextAndImageURL(input string) (text string, imageURL string, err error
 		return text, imageURL, nil
 	}
 
+	// 匹配Markdown格式中的base64图片: ![alt](data:image/type;base64,data)
+	base64MarkdownPattern := `^(.*?)!\[.*?\]\((data:image/[^;]+;base64,[A-Za-z0-9+/=]+)\)\s*$`
+	base64MarkdownRe := regexp.MustCompile(`(?s)` + base64MarkdownPattern)
+	if matches := base64MarkdownRe.FindStringSubmatch(input); len(matches) == 3 {
+		text = strings.TrimSpace(matches[1])
+		imageData := matches[2]
+		return text, imageData, nil
+	}
+
 	// 再尝试匹配base64格式: data:image/type;base64,data
 	base64Pattern := `^(.*?)\s*(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)\s*$`
 	base64Re := regexp.MustCompile(`(?s)` + base64Pattern)
@@ -338,8 +347,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
-
-	if strings.Contains(info.BaseUrl, "aiguoguo") && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+	isGuoguo := strings.Contains(info.BaseUrl, "aiguoguo")
+	isChat := strings.Contains(info.BaseUrl, "chataiapi")
+	if (isGuoguo || isChat) && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
 		// "content": "没问题，这是添加了哆啦A梦的图片：\n![Image_1](https://img.aiguoguo199.com/file/BQACAgUAAyEGAASaOQ3XAALZo2jnt2LJXF_Do-uv5TWSIXZ6wAT0AAJIHQACAs44V_l87WpYb56INgQ.png)"
 		// 处理图片地址，改成toiotech的地址
 		for i, choice := range simpleResponse.Choices {

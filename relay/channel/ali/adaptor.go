@@ -47,6 +47,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", "Bearer "+info.ApiKey)
+	//req.Set("X-DashScope-DataInspection", "{\"input\":\"disable\",\"output\":\"disable\"}")
 	if info.IsStream {
 		req.Set("X-DashScope-SSE", "enable")
 	}
