@@ -12,17 +12,43 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gabriel-vasile/mimetype"
 )
 
+func SimpleUploadToS3(ctx context.Context, file string) (string, error) {
+	bucket := common.OptionMap["S3Bucket"]
+	endpoint := common.OptionMap["S3Endpoint"]
+	s3AK := common.OptionMap["S3AK"]
+	s3SK := common.OptionMap["S3SK"]
+	s3Region := common.OptionMap["S3Region"]
+	if bucket == "" || endpoint == "" || s3AK == "" || s3SK == "" || s3Region == "" {
+		return "", fmt.Errorf("S3 configuration is incomplete")
+	}
+	s3Client := s3.New(s3.Options{
+		Region:      s3Region,
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(s3AK, s3SK, "")),
+	})
+	return UploadFileToS3(ctx, s3Client, bucket, endpoint, file)
+}
+
 func UploadFileToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint, file string) (string, error) {
 	// Generate a unique filename
-	if strings.HasPrefix(file, "http") {
-		return UploadeFromUrlToS3(ctx, s3Client, bucket, endpoint, file)
-	} else {
-		return UploadBase64ToS3(ctx, s3Client, bucket, endpoint, file)
+	for i := 0; i < 3; i++ {
+		if strings.HasPrefix(file, "http") {
+			url, err := UploadeFromUrlToS3(ctx, s3Client, bucket, endpoint, file)
+			if err == nil {
+				return url, nil
+			}
+		} else {
+			url, err := UploadBase64ToS3(ctx, s3Client, bucket, endpoint, file)
+			if err == nil {
+				return url, nil
+			}
+		}
 	}
+	return "", fmt.Errorf("failed to upload file to S3")
 }
 
 // UploadBase64ImageToS3 uploads a base64 encoded image to S3 and returns the URL
@@ -38,6 +64,8 @@ func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint
 					break
 				}
 			}
+		} else if strings.HasPrefix(base64Data, "data:audio/") {
+			// 处理音频
 		}
 	}
 

@@ -375,7 +375,7 @@ func TextHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 	// get & validate textRequest 获取并验证文本请求
 	textRequest, err := getAndValidateTextRequest(c, relayInfo)
 	// 替换附件地址为s3的地址
-	uploadFileToS3(textRequest)
+	//uploadFileToS3(textRequest)
 
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeInvalidRequest)

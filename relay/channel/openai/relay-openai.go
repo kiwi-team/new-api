@@ -16,6 +16,7 @@ import (
 	"one-api/service"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"one-api/types"
@@ -293,6 +294,38 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	return usage, nil
 }
 
+// ParseTextAndImageURL 解析包含文本和图片URL的字符串
+func ParseTextAndImageURL(input string) (text string, imageURL string, err error) {
+	// 正则表达式：匹配Markdown图片格式
+	// (.*?) - 非贪婪匹配文本内容
+	// !\[.*?\]\((https?://[^)]+)\) - 匹配 ![alt](URL) 格式
+	pattern := `^(.*?)!\[.*?\]\((https?://[^)]+)\)\s*$`
+
+	// 使用DOTALL标志处理多行文本
+	re := regexp.MustCompile(`(?s)` + pattern)
+
+	matches := re.FindStringSubmatch(input)
+	if len(matches) == 3 {
+		text = strings.TrimSpace(matches[1])
+		imageURL = matches[2]
+		return text, imageURL, nil
+	}
+
+	// 再尝试匹配base64格式: data:image/type;base64,data
+	base64Pattern := `^(.*?)\s*(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)\s*$`
+	base64Re := regexp.MustCompile(`(?s)` + base64Pattern)
+
+	if matches := base64Re.FindStringSubmatch(input); len(matches) == 3 {
+		text = strings.TrimSpace(matches[1])
+		imageData := matches[2]
+		return text, imageData, nil
+	}
+
+	// 如果都不匹配，返回错误
+	return "", "", fmt.Errorf("字符串格式不匹配，既不是Markdown格式也不是base64格式")
+
+}
+
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer common.CloseResponseBodyGracefully(resp)
 
@@ -304,6 +337,41 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+	}
+
+	if strings.Contains(info.BaseUrl, "aiguoguo") && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+		// "content": "没问题，这是添加了哆啦A梦的图片：\n![Image_1](https://img.aiguoguo199.com/file/BQACAgUAAyEGAASaOQ3XAALZo2jnt2LJXF_Do-uv5TWSIXZ6wAT0AAJIHQACAs44V_l87WpYb56INgQ.png)"
+		// 处理图片地址，改成toiotech的地址
+		for i, choice := range simpleResponse.Choices {
+			if choice.Message.Content != nil {
+				// 解析出图片地址
+				text, imgUrl, err1 := ParseTextAndImageURL(choice.Message.Content.(string))
+				if err1 != nil {
+					continue
+				}
+				imgUrl, err1 = service.SimpleUploadToS3(c.Request.Context(), imgUrl)
+				if err1 != nil {
+					continue
+				}
+				simpleResponse.Choices[i].Message.SetMediaContent([]dto.MediaContent{
+					{
+						Type: "text",
+						Text: text,
+					},
+					{
+						Type: "image_url",
+						ImageUrl: &dto.MessageImageUrl{
+							Url: imgUrl,
+						},
+					},
+				})
+			}
+		}
+
+		responseBody, err = common.Marshal(simpleResponse)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 	if simpleResponse.Error != nil && simpleResponse.Error.Type != "" {
 		return nil, types.WithOpenAIError(*simpleResponse.Error, resp.StatusCode)

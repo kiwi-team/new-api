@@ -140,7 +140,6 @@ func ThinkingAdaptor(geminiRequest *GeminiChatRequest, info *relaycommon.RelayIn
 
 // Setting safety to the lowest possible values since Gemini is already powerless enough
 func CovertGemini2OpenAI(textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*GeminiChatRequest, error) {
-
 	geminiRequest := GeminiChatRequest{
 		Contents: make([]GeminiChatContent, 0, len(textRequest.Messages)),
 		GenerationConfig: GeminiChatGenerationConfig{
@@ -779,6 +778,7 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *GeminiChatResponse) *dt
 			},
 			FinishReason: constant.FinishReasonStop,
 		}
+		var image *dto.MessageImageUrl
 		if len(candidate.Content.Parts) > 0 {
 			var texts []string
 			var toolCalls []dto.ToolCallResponse
@@ -790,6 +790,22 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *GeminiChatResponse) *dt
 					}
 				} else if part.Thought {
 					choice.Message.ReasoningContent = part.Text
+				} else if part.InlineData != nil {
+					if strings.HasPrefix(part.InlineData.MimeType, "image") {
+						url, err := service.SimpleUploadToS3(c.Request.Context(), part.InlineData.Data)
+						if err != nil {
+							fmt.Printf("upload image to s3 failed url: %s, err: %v\n", url, err)
+							image = &dto.MessageImageUrl{
+								MimeType: part.InlineData.MimeType,
+								Url:      part.InlineData.Data,
+							}
+						} else {
+							image = &dto.MessageImageUrl{
+								MimeType: part.InlineData.MimeType,
+								Url:      url,
+							}
+						}
+					}
 				} else {
 					if part.ExecutableCode != nil {
 						texts = append(texts, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```")
@@ -807,7 +823,20 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *GeminiChatResponse) *dt
 				choice.Message.SetToolCalls(toolCalls)
 				isToolCall = true
 			}
-			choice.Message.SetStringContent(strings.Join(texts, "\n"))
+			if image == nil {
+				choice.Message.SetStringContent(strings.Join(texts, "\n"))
+			} else {
+				choice.Message.SetMediaContent([]dto.MediaContent{
+					{
+						Type: "text",
+						Text: strings.Join(texts, "\n"),
+					},
+					{
+						Type:     "image_url",
+						ImageUrl: image,
+					},
+				})
+			}
 
 		}
 		if candidate.FinishReason != nil {
