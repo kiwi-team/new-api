@@ -46,10 +46,10 @@ import {
   IconCopy,
 } from '@douyinfe/semi-icons';
 import { loadChannelModels, copy } from '../../helpers/index.js';
-import { useIsMobile } from '../../hooks/useIsMobile.js';
+import { useIsMobile } from '../../hooks/common/useIsMobile.js';
 import EditTagModal from '../../pages/Channel/EditTagModal.js';
 import { useTranslation } from 'react-i18next';
-import { useTableCompactMode } from '../../hooks/useTableCompactMode.js';
+import { useTableCompactMode } from '../../hooks/common/useTableCompactMode.js';
 import { FaRandom } from 'react-icons/fa';
 
 const ChannelsTable = () => {

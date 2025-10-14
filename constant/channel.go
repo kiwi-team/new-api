@@ -52,6 +52,10 @@ const (
 	ChannelTypeVisualVolcEngine = 52
 	ChannelTypeJimeng           = 53
 	ChannelTypeSerper           = 54
+	ChannelTypeVidu             = 55
+	ChannelTypeSubmodel         = 56
+	ChannelTypeDoubaoVideo      = 57
+	ChannelTypeSora             = 58
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -112,4 +116,71 @@ var ChannelBaseURLs = []string{
 	"https://visual.volcengineapi.com",          //52
 	"",                                          //53
 	"https://google.serper.dev",                 //54
+	"https://visual.volcengineapi.com",          //55
+	"https://api.vidu.cn",                       //56
+	"https://llm.submodel.ai",                   //57
+	"https://ark.cn-beijing.volces.com",         //58
+	"https://api.openai.com",                    //59
+}
+
+var ChannelTypeNames = map[int]string{
+	ChannelTypeUnknown:        "Unknown",
+	ChannelTypeOpenAI:         "OpenAI",
+	ChannelTypeMidjourney:     "Midjourney",
+	ChannelTypeAzure:          "Azure",
+	ChannelTypeOllama:         "Ollama",
+	ChannelTypeMidjourneyPlus: "MidjourneyPlus",
+	ChannelTypeOpenAIMax:      "OpenAIMax",
+	ChannelTypeOhMyGPT:        "OhMyGPT",
+	ChannelTypeCustom:         "Custom",
+	ChannelTypeAILS:           "AILS",
+	ChannelTypeAIProxy:        "AIProxy",
+	ChannelTypePaLM:           "PaLM",
+	ChannelTypeAPI2GPT:        "API2GPT",
+	ChannelTypeAIGC2D:         "AIGC2D",
+	ChannelTypeAnthropic:      "Anthropic",
+	ChannelTypeBaidu:          "Baidu",
+	ChannelTypeZhipu:          "Zhipu",
+	ChannelTypeAli:            "Ali",
+	ChannelTypeXunfei:         "Xunfei",
+	ChannelType360:            "360",
+	ChannelTypeOpenRouter:     "OpenRouter",
+	ChannelTypeAIProxyLibrary: "AIProxyLibrary",
+	ChannelTypeFastGPT:        "FastGPT",
+	ChannelTypeTencent:        "Tencent",
+	ChannelTypeGemini:         "Gemini",
+	ChannelTypeMoonshot:       "Moonshot",
+	ChannelTypeZhipu_v4:       "ZhipuV4",
+	ChannelTypePerplexity:     "Perplexity",
+	ChannelTypeLingYiWanWu:    "LingYiWanWu",
+	ChannelTypeAws:            "AWS",
+	ChannelTypeCohere:         "Cohere",
+	ChannelTypeMiniMax:        "MiniMax",
+	ChannelTypeSunoAPI:        "SunoAPI",
+	ChannelTypeDify:           "Dify",
+	ChannelTypeJina:           "Jina",
+	ChannelCloudflare:         "Cloudflare",
+	ChannelTypeSiliconFlow:    "SiliconFlow",
+	ChannelTypeVertexAi:       "VertexAI",
+	ChannelTypeMistral:        "Mistral",
+	ChannelTypeDeepSeek:       "DeepSeek",
+	ChannelTypeMokaAI:         "MokaAI",
+	ChannelTypeVolcEngine:     "VolcEngine",
+	ChannelTypeBaiduV2:        "BaiduV2",
+	ChannelTypeXinference:     "Xinference",
+	ChannelTypeXai:            "xAI",
+	ChannelTypeCoze:           "Coze",
+	ChannelTypeKling:          "Kling",
+	ChannelTypeJimeng:         "Jimeng",
+	ChannelTypeVidu:           "Vidu",
+	ChannelTypeSubmodel:       "Submodel",
+	ChannelTypeDoubaoVideo:    "DoubaoVideo",
+	ChannelTypeSora:           "Sora",
+}
+
+func GetChannelTypeName(channelType int) string {
+	if name, ok := ChannelTypeNames[channelType]; ok {
+		return name
+	}
+	return "Unknown"
 }

@@ -15,6 +15,7 @@ type ErrorLog struct {
 	ChannelId   int    `json:"channel_id" gorm:"index"`
 	ChannelName string `json:"channel_name" gorm:"default:''"`
 	TokenId     int    `json:"token_id" gorm:"index"`
+	TokenName   string `json:"token_name"`
 	ModelName   string `json:"model_name" gorm:"default:''"`
 	Message     string `json:"message" gorm:"default:''"`
 	Type        string `json:"type" gorm:"default:''"`
@@ -40,7 +41,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	num := pageSize
 	startIdx := (page - 1) * num
-	query := DB.Model(&ErrorLog{})
+	query := DB.Model(&ErrorLog{}).Joins("left join tokens on error_logs.token_id = tokens.id").Select("error_logs.*, tokens.name as token_name")
 	if channelId > 0 {
 		query = query.Where("channel_id = ? ", channelId)
 	}

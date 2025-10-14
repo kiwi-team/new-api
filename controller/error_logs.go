@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/dto"
+	"one-api/logger"
 	"one-api/model"
 	"one-api/service"
 	"os"
@@ -79,12 +80,12 @@ func WarningErrorLog() {
 			// 从fileName中读取上次预警时间
 			data, err1 := os.ReadFile(fileName)
 			if err1 != nil {
-				common.LogError(ctx, "error reading file: "+err1.Error())
+				logger.LogError(ctx, "error reading file: "+err1.Error())
 				continue
 			}
 			prevWarningTime, err1 = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 			if err1 != nil {
-				common.LogError(ctx, "error parsing file data: "+err1.Error())
+				logger.LogError(ctx, "error parsing file data: "+err1.Error())
 				continue
 			}
 		}
@@ -104,7 +105,7 @@ func WarningErrorLog() {
 				},
 			})
 			if err != nil {
-				common.LogError(ctx, "error sending webhook notify: "+err.Error())
+				logger.LogError(ctx, "error sending webhook notify: "+err.Error())
 				continue
 			}
 		}
@@ -112,7 +113,7 @@ func WarningErrorLog() {
 		// 将 now 的值写入文件
 		err := os.WriteFile(fileName, []byte(strconv.FormatInt(now, 10)), 0644)
 		if err != nil {
-			common.LogError(ctx, "error writing now to file: "+err.Error())
+			logger.LogError(ctx, "error writing now to file: "+err.Error())
 		}
 		common.SysLog("[" + startTimeStr + "~" + endTimeStr + "]" + ":" + ":errorlog预警轮询结束")
 	}
@@ -122,7 +123,7 @@ func getErrorLogStatisticsContent(statistics []model.ErrorLogStatistics) string 
 	var content strings.Builder
 	content.WriteString("错误日志统计分析：\n")
 	for _, item := range statistics {
-		content.WriteString(fmt.Sprintf("渠道：%s，模型：%s，错误次数：%d, StatusCode：%d, 错误码：%s，错误信息：%s\n", item.ChannelName, item.ModelName, item.Total, item.StatusCode, item.Code, item.Message))
+		content.WriteString(fmt.Sprintf("渠道(%d)：%s，模型：%s，错误次数：%d, StatusCode：%d, 错误码：%s，错误信息：%s\n", item.ChannelId, item.ChannelName, item.ModelName, item.Total, item.StatusCode, item.Code, item.Message))
 	}
 	return content.String()
 }
@@ -146,7 +147,7 @@ func DeleteErrorLogs() {
 	for {
 		err := model.DeleteErrorLog(time.Now().Unix()-int64(keepDaysInt)*24*60*60, deleteSizeInt)
 		if err != nil {
-			common.LogError(context.Background(), "error deleting error log: "+err.Error())
+			logger.LogError(context.Background(), "error deleting error log: "+err.Error())
 		} else {
 			common.SysLog("delete error log success,num:" + deleteSizeStr)
 		}

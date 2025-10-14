@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/logger"
 	"strings"
 	"time"
 
@@ -55,8 +56,8 @@ func UploadFileToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint, 
 func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint, base64Data string) (string, error) {
 	// Remove data URL prefix if present
 	if len(base64Data) > 0 && base64Data[0] == 'd' {
-		// Check if it starts with "data:image/"
-		if len(base64Data) > 11 && base64Data[:11] == "data:image/" {
+		// Check if it starts with "data:image/" or "data:audio/"
+		if len(base64Data) > 11 && (base64Data[:11] == "data:image/" || strings.HasPrefix(base64Data, "data:audio/")) {
 			// Find the comma that separates the metadata from the base64 data
 			for i := 11; i < len(base64Data); i++ {
 				if base64Data[i] == ',' {
@@ -64,8 +65,6 @@ func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint
 					break
 				}
 			}
-		} else if strings.HasPrefix(base64Data, "data:audio/") {
-			// 处理音频
 		}
 	}
 
@@ -92,7 +91,7 @@ func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint
 
 	// Generate the URL
 	url := fmt.Sprintf("https://%s.%s/%s", bucket, endpoint, filename)
-	common.LogInfo(ctx, fmt.Sprintf("Successfully uploaded file to S3: %s", url))
+	logger.LogInfo(ctx, fmt.Sprintf("Successfully uploaded file to S3: %s", url))
 	return url, nil
 }
 
@@ -131,6 +130,6 @@ func UploadeFromUrlToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoi
 
 	// generate the url
 	imageUrl := fmt.Sprintf("https://%s.%s/%s", bucket, endpoint, filename)
-	common.LogInfo(ctx, fmt.Sprintf("Successfully uploaded file to S3: %s", url))
+	logger.LogInfo(ctx, fmt.Sprintf("Successfully uploaded file to S3: %s", url))
 	return imageUrl, nil
 }

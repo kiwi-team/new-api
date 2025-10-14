@@ -2,27 +2,32 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"one-api/common"
 	"one-api/constant"
+	"one-api/dto"
+	"one-api/logger"
 	"one-api/model"
 	"one-api/relay"
 	"one-api/relay/channel"
+	relaycommon "one-api/relay/common"
+	"one-api/setting/ratio_setting"
 	"time"
 )
 
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
 		if err := updateVideoTaskAll(ctx, platform, channelId, taskIds, taskM); err != nil {
-			common.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
+			logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
 		}
 	}
 	return nil
 }
 
 func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
-	common.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
+	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
 	if len(taskIds) == 0 {
 		return nil
 	}
@@ -34,7 +39,7 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 			"progress":    "100%",
 		})
 		if errUpdate != nil {
-			common.SysError(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -42,9 +47,14 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
 	}
+	info := &relaycommon.RelayInfo{}
+	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
+	}
+	adaptor.Init(info)
 	for _, taskId := range taskIds {
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
-			common.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
+			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
 		}
 	}
 	return nil
@@ -58,7 +68,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 
 	task := taskM[taskId]
 	if task == nil {
-		common.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
+		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
 	resp, err := adaptor.FetchTask(baseURL, channel.Key, map[string]any{
@@ -77,13 +87,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	taskResult, err := adaptor.ParseTaskResult(responseBody)
-	if err != nil {
+	taskResult := &relaycommon.TaskInfo{}
+	// try parse as New API response format
+	var responseItems dto.TaskResponse[model.Task]
+	if err = json.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
+		t := responseItems.Data
+		taskResult.TaskID = t.TaskID
+		taskResult.Status = string(t.Status)
+		taskResult.Url = t.FailReason
+		taskResult.Progress = t.Progress
+		taskResult.Reason = t.FailReason
+	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+	} else {
+		task.Data = redactVideoResponseBody(responseBody)
 	}
-	//if taskResult.Code != 0 {
-	//	return fmt.Errorf("video task fetch failed for task %s", taskId)
-	//}
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
@@ -105,7 +123,94 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		task.FailReason = taskResult.Url
+		if !(len(taskResult.Url) > 5 && taskResult.Url[:5] == "data:") {
+			task.FailReason = taskResult.Url
+		}
+
+		// 如果返回了 total_tokens 并且配置了模型倍率(非固定价格),则重新计费
+		if taskResult.TotalTokens > 0 {
+			// 获取模型名称
+			var taskData map[string]interface{}
+			if err := json.Unmarshal(task.Data, &taskData); err == nil {
+				if modelName, ok := taskData["model"].(string); ok && modelName != "" {
+					// 获取模型价格和倍率
+					modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+
+					// 只有配置了倍率(非固定价格)时才按 token 重新计费
+					if hasRatioSetting && modelRatio > 0 {
+						// 获取用户和组的倍率信息
+						user, err := model.GetUserById(task.UserId, false)
+						if err == nil {
+							groupRatio := ratio_setting.GetGroupRatio(user.Group)
+							userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(user.Group, user.Group)
+
+							var finalGroupRatio float64
+							if hasUserGroupRatio {
+								finalGroupRatio = userGroupRatio
+							} else {
+								finalGroupRatio = groupRatio
+							}
+
+							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio
+							actualQuota := int(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
+
+							// 计算差额
+							preConsumedQuota := task.Quota
+							quotaDelta := actualQuota - preConsumedQuota
+
+							if quotaDelta > 0 {
+								// 需要补扣费
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后补扣费：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
+									task.TaskID,
+									logger.LogQuota(quotaDelta),
+									logger.LogQuota(actualQuota),
+									logger.LogQuota(preConsumedQuota),
+									taskResult.TotalTokens,
+								))
+								if err := model.DecreaseUserQuota(task.UserId, quotaDelta); err != nil {
+									logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
+								} else {
+									model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+									model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+									task.Quota = actualQuota // 更新任务记录的实际扣费额度
+
+									// 记录消费日志
+									logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
+										modelRatio, finalGroupRatio, taskResult.TotalTokens,
+										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(quotaDelta))
+									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
+								}
+							} else if quotaDelta < 0 {
+								// 需要退还多扣的费用
+								refundQuota := -quotaDelta
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后返还：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
+									task.TaskID,
+									logger.LogQuota(refundQuota),
+									logger.LogQuota(actualQuota),
+									logger.LogQuota(preConsumedQuota),
+									taskResult.TotalTokens,
+								))
+								if err := model.IncreaseUserQuota(task.UserId, refundQuota, false); err != nil {
+									logger.LogError(ctx, fmt.Sprintf("退还预扣费失败: %s", err.Error()))
+								} else {
+									task.Quota = actualQuota // 更新任务记录的实际扣费额度
+
+									// 记录退款日志
+									logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
+										modelRatio, finalGroupRatio, taskResult.TotalTokens,
+										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(refundQuota))
+									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
+								}
+							} else {
+								// quotaDelta == 0, 预扣费刚好准确
+								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费准确（%s，tokens：%d）",
+									task.TaskID, logger.LogQuota(actualQuota), taskResult.TotalTokens))
+							}
+						}
+					}
+				}
+			}
+		}
 	case model.TaskStatusFailure:
 		task.Status = model.TaskStatusFailure
 		task.Progress = "100%"
@@ -113,13 +218,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			task.FinishTime = now
 		}
 		task.FailReason = taskResult.Reason
-		common.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
+		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
 		quota := task.Quota
 		if quota != 0 {
 			if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
-				common.LogError(ctx, "Failed to increase user quota: "+err.Error())
+				logger.LogError(ctx, "Failed to increase user quota: "+err.Error())
 			}
-			logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, common.LogQuota(quota))
+			logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
 			model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
 		}
 	default:
@@ -128,11 +233,43 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
 	}
-
-	task.Data = responseBody
 	if err := task.Update(); err != nil {
-		common.SysError("UpdateVideoTask task error: " + err.Error())
+		common.SysLog("UpdateVideoTask task error: " + err.Error())
 	}
 
 	return nil
+}
+
+func redactVideoResponseBody(body []byte) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	resp, _ := m["response"].(map[string]any)
+	if resp != nil {
+		delete(resp, "bytesBase64Encoded")
+		if v, ok := resp["video"].(string); ok {
+			resp["video"] = truncateBase64(v)
+		}
+		if vs, ok := resp["videos"].([]any); ok {
+			for i := range vs {
+				if vm, ok := vs[i].(map[string]any); ok {
+					delete(vm, "bytesBase64Encoded")
+				}
+			}
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return b
+}
+
+func truncateBase64(s string) string {
+	const maxKeep = 256
+	if len(s) <= maxKeep {
+		return s
+	}
+	return s[:maxKeep] + "..."
 }

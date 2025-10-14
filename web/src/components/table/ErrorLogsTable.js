@@ -148,6 +148,9 @@ const ErrorLogsTable = () => {
         key: COLUMN_KEYS.TOKEN_ID,
         title: t('Token ID'),
         dataIndex: 'token_id',
+        render: (text, record, index) => {
+          return <>{t(record.token_name)}({text})</>
+        },
     },
     {
       key: COLUMN_KEYS.CREATEDAT,

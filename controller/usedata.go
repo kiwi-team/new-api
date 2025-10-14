@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/dto"
+	"one-api/logger"
 	"one-api/model"
 	"one-api/service"
 	"os"
@@ -84,7 +85,7 @@ func WarningUserQuota() {
 			userId, err := strconv.Atoi(userIdStr)
 			fileName := fmt.Sprintf("quota_warning_%d.txt", userId)
 			if err != nil {
-				common.LogError(ctx, "error parsing user id: "+err.Error())
+				logger.LogError(ctx, "error parsing user id: "+err.Error())
 				continue
 			}
 			prevWarningTime, ok := prevWarningTimeMap[userId]
@@ -93,12 +94,12 @@ func WarningUserQuota() {
 				// 从fileName中读取上次预警时间
 				data, err1 := os.ReadFile(fileName)
 				if err1 != nil {
-					common.LogError(ctx, "error reading file: "+err1.Error())
+					logger.LogError(ctx, "error reading file: "+err1.Error())
 					continue
 				}
 				prevWarningTime, err = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 				if err != nil {
-					common.LogError(ctx, "error parsing file data: "+err.Error())
+					logger.LogError(ctx, "error parsing file data: "+err.Error())
 					continue
 				}
 				prevWarningTimeMap[userId] = prevWarningTime
@@ -110,7 +111,7 @@ func WarningUserQuota() {
 
 			quota, err := model.GetQuotaByTime(userId, prevWarningTime, now)
 			if err != nil {
-				common.LogError(ctx, "error getting quota: "+err.Error())
+				logger.LogError(ctx, "error getting quota: "+err.Error())
 				continue
 			}
 			dollerQuota := int(float64(quota) / common.QuotaPerUnit)
@@ -123,7 +124,7 @@ func WarningUserQuota() {
 					},
 				})
 				if err != nil {
-					common.LogError(ctx, "error sending webhook notify: "+err.Error())
+					logger.LogError(ctx, "error sending webhook notify: "+err.Error())
 					continue
 				}
 				common.SysLog("消耗预警:" + content)
@@ -132,7 +133,7 @@ func WarningUserQuota() {
 				// 将 now 的值写入文件
 				err = os.WriteFile(fileName, []byte(strconv.FormatInt(now, 10)), 0644)
 				if err != nil {
-					common.LogError(ctx, "error writing now to file: "+err.Error())
+					logger.LogError(ctx, "error writing now to file: "+err.Error())
 				}
 			} else {
 				common.SysLog("[" + startTimeStr + "~" + endTimeStr + "]" + ":" + strconv.Itoa(dollerQuota) + ":未超过阈值")

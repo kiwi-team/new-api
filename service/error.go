@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"one-api/common"
 	"one-api/dto"
+	"one-api/logger"
 	"one-api/types"
 	"strconv"
 	"strings"
@@ -90,7 +92,7 @@ func ClaudeErrorWrapper(err error, code string, statusCode int) *dto.ClaudeError
 			text = "请求上游地址失败"
 		}
 	}
-	claudeError := dto.ClaudeError{
+	claudeError := types.ClaudeError{
 		Message: text,
 		Type:    "toio_api_error",
 	}
@@ -106,17 +108,14 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 	return claudeErr
 }
 
-func RelayErrorHandler(resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
-	newApiErr = &types.NewAPIError{
-		StatusCode: resp.StatusCode,
-		ErrorType:  types.ErrorTypeOpenAIError,
-	}
+func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
+	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
-	common.CloseResponseBodyGracefully(resp)
+	CloseResponseBodyGracefully(resp)
 	var errResponse dto.GeneralErrorResponse
 
 	err = common.Unmarshal(responseBody, &errResponse)
@@ -124,6 +123,9 @@ func RelayErrorHandler(resp *http.Response, showBodyWhenFail bool) (newApiErr *t
 		if showBodyWhenFail {
 			newApiErr.Err = fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody))
 		} else {
+			if common.DebugEnabled {
+				logger.LogInfo(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
+			}
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
 		return
@@ -139,8 +141,7 @@ func RelayErrorHandler(resp *http.Response, showBodyWhenFail bool) (newApiErr *t
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
 		newApiErr = types.WithOpenAIError(errResponse.Error, resp.StatusCode)
 	} else {
-		newApiErr = types.NewErrorWithStatusCode(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
-		newApiErr.ErrorType = types.ErrorTypeOpenAIError
+		newApiErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 	}
 
 	if detailMessage != "" {
@@ -154,7 +155,7 @@ func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) 
 		return
 	}
 	statusCodeMapping := make(map[string]string)
-	err := json.Unmarshal([]byte(statusCodeMappingStr), &statusCodeMapping)
+	err := common.Unmarshal([]byte(statusCodeMappingStr), &statusCodeMapping)
 	if err != nil {
 		return
 	}

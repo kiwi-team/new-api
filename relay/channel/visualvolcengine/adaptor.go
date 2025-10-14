@@ -26,6 +26,11 @@ import (
 type Adaptor struct {
 }
 
+func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
+	//TODO implement me
+	return nil, errors.New("not implemented")
+}
+
 func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
 	//TODO implement me
 	panic("implement me")
@@ -185,7 +190,7 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesEdits:
-		return fmt.Sprintf("%s/?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", info.BaseUrl), nil
+		return fmt.Sprintf("%s/?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", info.ChannelMeta.ChannelBaseUrl), nil
 	default:
 	}
 	return "", fmt.Errorf("unsupported relay mode: %d", info.RelayMode)
@@ -248,22 +253,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		secret := apiKey[1]
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			//return nil, service.OpenAIErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
-			return nil, &types.NewAPIError{
-				StatusCode: http.StatusInternalServerError,
-				ErrorType:  "read_response_body_failed",
-			}
+			return nil, types.NewError(err, types.ErrorCodeReadResponseBodyFailed)
 		}
 		var respData service.SubmitTaskResponse
 		err = json.Unmarshal(body, &respData)
 		if err != nil {
-			//return nil, openapi.ErrorWithStatusCode(err, resp.StatusCode)
-			//return nil, service.OpenAIErrorWrapper(err, "unmarshal_response_body_failed", http.StatusInternalServerError)
-			return nil, &types.NewAPIError{
-				StatusCode: http.StatusInternalServerError,
-				ErrorType:  "unmarshal_response_body_failed",
-			}
-			//return nil, err
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			//return nil, &types.NewAPIError{ StatusCode: http.StatusInternalServerError, ErrorType:  "unmarshal_response_body_failed", }
 		}
 		taskId := respData.Data.TaskID
 		i := 0
@@ -274,11 +270,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				ReqJson: "{\"return_url\":true}",
 			}, key, secret)
 			if err != nil {
-				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed", http.StatusInternalServerError)
-				return nil, &types.NewAPIError{
-					StatusCode: http.StatusInternalServerError,
-					ErrorType:  "get_task_result_failed",
-				}
+				//return nil, &types.NewAPIError{ StatusCode: http.StatusInternalServerError, ErrorType:  "get_task_result_failed", }
+				return nil, types.NewError(err, types.ErrorCodeGetTaskResultFailed)
 			}
 			switch result.Status {
 			case "in_queue", "generating":
@@ -294,12 +287,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 				})
 				jsonResponse, jsonErr := json.Marshal(openAIResponse)
 				if jsonErr != nil {
-					//return nil, service.OpenAIErrorWrapper(jsonErr, "marshal_response_failed", http.StatusInternalServerError)
-					return nil, &types.NewAPIError{
-						Err:        jsonErr,
-						StatusCode: http.StatusInternalServerError,
-						ErrorType:  "marshal_response_failed",
-					}
+					return nil, types.NewError(jsonErr, types.ErrorCodeBadResponseBody)
+					//return nil, &types.NewAPIError{ Err:        jsonErr, StatusCode: http.StatusInternalServerError, ErrorType:  "marshal_response_failed", }
 
 				}
 				c.Writer.Header().Set("Content-Type", "application/json")
@@ -309,28 +298,20 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 					TotalTokens: 0,
 				}, nil
 			default:
-				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:"+result.Status, http.StatusInternalServerError)
-				return nil, &types.NewAPIError{
-					StatusCode: http.StatusInternalServerError,
-					ErrorType:  "get_task_result_failed",
-				}
+				//return nil, &types.NewAPIError{ StatusCode: http.StatusInternalServerError, ErrorType:  "get_task_result_failed", }
+				return nil, types.NewError(err, types.ErrorCodeGetTaskResultFailed)
 			}
 			time.Sleep(time.Second * 5)
 			if i > max {
-				//return nil, service.OpenAIErrorWrapper(err, "get_task_result_failed:timeout", http.StatusInternalServerError)
-				return nil, &types.NewAPIError{
-					StatusCode: http.StatusInternalServerError,
-					ErrorType:  "get_task_result_failed:timeout",
-				}
+				//return nil, &types.NewAPIError{ StatusCode: http.StatusInternalServerError, ErrorType:  "get_task_result_failed:timeout", }
+				return nil, types.NewError(err, types.ErrorCodeGetTaskResultTimeout)
+
 			}
 			i++
 		}
 	default:
-		//return nil, service.OpenAIErrorWrapper(errors.New("not supported"), "not_suported", http.StatusInternalServerError)
-		return nil, &types.NewAPIError{
-			StatusCode: http.StatusInternalServerError,
-			ErrorType:  "not_suported",
-		}
+		//return nil, &types.NewAPIError{ StatusCode: http.StatusInternalServerError, ErrorType:  "not_suported", }
+		return nil, types.NewError(errors.New("not supported"), types.ErrorCodeNotSupported)
 	}
 }
 

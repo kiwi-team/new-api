@@ -2,11 +2,11 @@ package relay
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/constant"
 	"one-api/dto"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/helper"
@@ -19,132 +19,192 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func getAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {
-	textRequest = &dto.ClaudeRequest{}
-	err = c.ShouldBindJSON(textRequest)
+func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+
+	info.InitChannelMeta(c)
+
+	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
+
+	if !ok {
+		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.ClaudeRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	request, err := common.DeepCopy(claudeReq)
 	if err != nil {
-		return nil, err
+		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
-	if len(textRequest.Messages) == 0 {
-		return nil, errors.New("field messages is required")
-	}
-	if textRequest.Model == "" {
-		return nil, errors.New("field model is required")
-	}
-	return textRequest, nil
-}
+	//old	if len(textRequest.Messages) == 0 {
+	//		return nil, errors.New("field messages is required")
+	//	}
+	//	if textRequest.Model == "" {
+	//		return nil, errors.New("field model is required")
+	//	}
+	//	return textRequest, nil
+	//}
 
-func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
-
-	relayInfo := relaycommon.GenRelayInfoClaude(c)
-
-	// get & validate textRequest 获取并验证文本请求
-	textRequest, err := getAndValidateClaudeRequest(c)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeInvalidRequest)
-	}
-
-	if textRequest.Stream {
-		relayInfo.IsStream = true
-	}
+	// old
+	//	err = helper.ModelMappedHelper(c, info, request)
+	//	if err != nil {
+	//		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	//	}
+	//
+	//	if textRequest.Stream {
+	//		relayInfo.IsStream = true
+	//	}
+	//
+	//	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+	//	requestStr := ""
+	//	responseStr := ""
+	//
+	//	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
+	//	if err != nil {
+	//		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
+	//	}
+	//
+	//	promptTokens, err := getClaudePromptTokens(textRequest, relayInfo)
+	//	// count messages token error 计算promptTokens错误
+	//	if err != nil {
+	//		return types.NewError(err, types.ErrorCodeCountTokenFailed)
+	//	}
+	//
+	//	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(textRequest.MaxTokens))
+	//	if err != nil {
+	//		return types.NewError(err, types.ErrorCodeModelPriceError)
+	//	}
+	//
+	//	// pre-consume quota 预消耗配额
+	//	preConsumedQuota, userQuota, newAPIError := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
+	//
+	//	if newAPIError != nil {
+	//		return newAPIError
+	//	}
+	//	defer func() {
+	//		if newAPIError != nil {
+	//			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+	//		}
+	//	}()
+	//
 
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
-
 	requestStr := ""
 	responseStr := ""
-
-	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
-	}
-
-	promptTokens, err := getClaudePromptTokens(textRequest, relayInfo)
-	// count messages token error 计算promptTokens错误
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeCountTokenFailed)
-	}
-
-	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(textRequest.MaxTokens))
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeModelPriceError)
-	}
-
-	// pre-consume quota 预消耗配额
-	preConsumedQuota, userQuota, newAPIError := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
-
-	if newAPIError != nil {
-		return newAPIError
-	}
-	defer func() {
-		if newAPIError != nil {
-			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-		}
-	}()
-
-	adaptor := GetAdaptor(relayInfo.ApiType)
+	// old
+	//adaptor := GetAdaptor(relayInfo.ApiType)
+	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
-		return types.NewError(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), types.ErrorCodeInvalidApiType)
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
-	adaptor.Init(relayInfo)
-	var requestBody io.Reader
+	adaptor.Init(info)
 
-	if textRequest.MaxTokens == 0 {
-		textRequest.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(textRequest.Model))
+	if request.MaxTokens == 0 {
+		request.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 	}
 
 	if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
-		strings.HasSuffix(textRequest.Model, "-thinking") {
-		if textRequest.Thinking == nil {
+		strings.HasSuffix(request.Model, "-thinking") {
+		if request.Thinking == nil {
 			// 因为BudgetTokens 必须大于1024
-			if textRequest.MaxTokens < 1280 {
-				textRequest.MaxTokens = 1280
+			if request.MaxTokens < 1280 {
+				request.MaxTokens = 1280
 			}
 
 			// BudgetTokens 为 max_tokens 的 80%
-			textRequest.Thinking = &dto.Thinking{
+			request.Thinking = &dto.Thinking{
 				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](int(float64(textRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+				BudgetTokens: common.GetPointer[int](int(float64(request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
 			}
 			// TODO: 临时处理
 			// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
-			textRequest.TopP = 0
-			textRequest.Temperature = common.GetPointer[float64](1.0)
+			request.TopP = 0
+			request.Temperature = common.GetPointer[float64](1.0)
 		}
-		textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking")
-		relayInfo.UpstreamModelName = textRequest.Model
+		request.Model = strings.TrimSuffix(request.Model, "-thinking")
+		info.UpstreamModelName = request.Model
 	}
 
-	convertedRequest, err := adaptor.ConvertClaudeRequest(c, relayInfo, textRequest)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeConvertRequestFailed)
-	}
-	jsonData, err := common.Marshal(convertedRequest)
-	if common.DebugEnabled {
-		println("requestBody: ", string(jsonData))
-	}
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeConvertRequestFailed)
+	if info.ChannelSetting.SystemPrompt != "" {
+		if request.System == nil {
+			request.SetStringSystem(info.ChannelSetting.SystemPrompt)
+		} else if info.ChannelSetting.SystemPromptOverride {
+			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+			if request.IsStringSystem() {
+				existing := strings.TrimSpace(request.GetStringSystem())
+				if existing == "" {
+					request.SetStringSystem(info.ChannelSetting.SystemPrompt)
+				} else {
+					request.SetStringSystem(info.ChannelSetting.SystemPrompt + "\n" + existing)
+				}
+			} else {
+				systemContents := request.ParseSystem()
+				newSystem := dto.ClaudeMediaMessage{Type: dto.ContentTypeText}
+				newSystem.SetText(info.ChannelSetting.SystemPrompt)
+				if len(systemContents) == 0 {
+					request.System = []dto.ClaudeMediaMessage{newSystem}
+				} else {
+					request.System = append([]dto.ClaudeMediaMessage{newSystem}, systemContents...)
+				}
+			}
+		}
 	}
 
-	// 序列化 textRequest 为 JSON 字符串
-	if saveRequestResponse {
-		requestStr = string(jsonData)
-	}
+	var requestBody io.Reader
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		body, err := common.GetRequestBody(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		requestBody = bytes.NewBuffer(body)
+		// 序列化 textRequest 为 JSON 字符串
+		if saveRequestResponse {
+			requestStr = string(body)
+		}
+	} else {
+		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData, err := common.Marshal(convertedRequest)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 
-	requestBody = bytes.NewBuffer(jsonData)
+		// remove disabled fields for Claude API
+		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+
+		// apply param override
+		if len(info.ParamOverride) > 0 {
+			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+			}
+		}
+
+		if common.DebugEnabled {
+			println("requestBody: ", string(jsonData))
+		}
+		requestBody = bytes.NewBuffer(jsonData)
+
+		// 序列化 textRequest 为 JSON 字符串
+		if saveRequestResponse {
+			requestStr = string(jsonData)
+		}
+	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, relayInfo, requestBody)
+	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
 	if resp != nil {
 		httpResp = resp.(*http.Response)
-		relayInfo.IsStream = relayInfo.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
-			newAPIError = service.RelayErrorHandler(httpResp, false)
+			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 			return newAPIError
@@ -158,7 +218,8 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		httpResp.Body = streamRecorder
 	}
 
-	usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
+	//usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
+	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	//log.Printf("usage: %v", usage)
 	if newAPIError != nil {
 		// reset status code 重置状态码
@@ -171,17 +232,7 @@ func ClaudeHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 		responseStr = streamRecorder.GetRecordedString()
 	}
 
-	service.PostClaudeConsumeQuota(c, relayInfo, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
+	service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage), requestStr, responseStr)
+	//service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage))
 	return nil
-}
-
-func getClaudePromptTokens(textRequest *dto.ClaudeRequest, info *relaycommon.RelayInfo) (int, error) {
-	var promptTokens int
-	var err error
-	switch info.RelayMode {
-	default:
-		promptTokens, err = service.CountTokenClaudeRequest(*textRequest, info.UpstreamModelName)
-	}
-	info.PromptTokens = promptTokens
-	return promptTokens, err
 }

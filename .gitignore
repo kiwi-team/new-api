@@ -9,6 +9,7 @@ logs
 web/dist
 .env
 one-api
+new-api
 .DS_Store
 tiktoken_cache
 tmp/
@@ -17,3 +18,7 @@ quota_warning_1.txt
 error_warning.txt
 pprof/
 py/
+.eslintcache
+
+electron/node_modules
+electron/dist

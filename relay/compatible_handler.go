@@ -1,0 +1,1250 @@
+package relay
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"one-api/common"
+	"one-api/constant"
+	"one-api/dto"
+	"one-api/logger"
+	"one-api/model"
+	"one-api/relay/channel/openrouter"
+	relaycommon "one-api/relay/common"
+	relayconstant "one-api/relay/constant"
+	"one-api/relay/helper"
+	"one-api/service"
+	"one-api/setting/model_setting"
+	"one-api/setting/operation_setting"
+	"one-api/types"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/shopspring/decimal"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	info.InitChannelMeta(c)
+
+	textReq, ok := info.Request.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected dto.GeneralOpenAIRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	request, err := common.DeepCopy(textReq)
+	if err != nil {
+		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	if request.WebSearchOptions != nil {
+		c.Set("chat_completion_web_search_context_size", request.WebSearchOptions.SearchContextSize)
+	}
+
+	err = helper.ModelMappedHelper(c, info, request)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	filterParmas(request)
+	transParmas(request, info)
+
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+	requestStr := ""
+	responseStr := ""
+	// 序列化 textRequest 为 JSON 字符串
+	if saveRequestResponse {
+		requestBytes, marshalErr := json.Marshal(request)
+		if marshalErr != nil {
+			logger.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
+		} else {
+			requestStr = string(requestBytes)
+		}
+	}
+
+	includeUsage := true
+	// 判断用户是否需要返回使用情况
+	if request.StreamOptions != nil {
+		includeUsage = request.StreamOptions.IncludeUsage
+	}
+
+	// 如果不支持StreamOptions，将StreamOptions设置为nil
+	if !info.SupportStreamOptions || !request.Stream {
+		request.StreamOptions = nil
+	} else {
+		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件设置StreamOptions
+		if constant.ForceStreamOption {
+			request.StreamOptions = &dto.StreamOptions{
+				IncludeUsage: true,
+			}
+		}
+	}
+
+	info.ShouldIncludeUsage = includeUsage
+
+	adaptor := GetAdaptor(info.ApiType)
+	if adaptor == nil {
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+	}
+	adaptor.Init(info)
+	var requestBody io.Reader
+
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		body, err := common.GetRequestBody(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if common.DebugEnabled {
+			println("requestBody: ", string(body))
+		}
+		requestBody = bytes.NewBuffer(body)
+	} else {
+		convertedRequest, err1 := adaptor.ConvertOpenAIRequest(c, info, request)
+		if err1 != nil {
+			return types.NewError(err1, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+
+		if info.ChannelSetting.SystemPrompt != "" {
+			// 如果有系统提示，则将其添加到请求中
+			request, ok := convertedRequest.(*dto.GeneralOpenAIRequest)
+			if ok {
+				containSystemPrompt := false
+				for _, message := range request.Messages {
+					if message.Role == request.GetSystemRoleName() {
+						containSystemPrompt = true
+						break
+					}
+				}
+				if !containSystemPrompt {
+					// 如果没有系统提示，则添加系统提示
+					systemMessage := dto.Message{
+						Role:    request.GetSystemRoleName(),
+						Content: info.ChannelSetting.SystemPrompt,
+					}
+					request.Messages = append([]dto.Message{systemMessage}, request.Messages...)
+				} else if info.ChannelSetting.SystemPromptOverride {
+					common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+					// 如果有系统提示，且允许覆盖，则拼接到前面
+					for i, message := range request.Messages {
+						if message.Role == request.GetSystemRoleName() {
+							if message.IsStringContent() {
+								request.Messages[i].SetStringContent(info.ChannelSetting.SystemPrompt + "\n" + message.StringContent())
+							} else {
+								contents := message.ParseContent()
+								contents = append([]dto.MediaContent{
+									{
+										Type: dto.ContentTypeText,
+										Text: info.ChannelSetting.SystemPrompt,
+									},
+								}, contents...)
+								request.Messages[i].Content = contents
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
+		jsonData, err2 := common.Marshal(convertedRequest)
+		if err2 != nil {
+			return types.NewError(err2, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+		}
+
+		// remove disabled fields for OpenAI API
+		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+
+		// apply param override
+		if len(info.ParamOverride) > 0 {
+			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+			}
+		}
+
+		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
+
+		requestBody = bytes.NewBuffer(jsonData)
+	}
+
+	var httpResp *http.Response
+	resp, err := adaptor.DoRequest(c, info, requestBody)
+	if err != nil {
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	}
+
+	statusCodeMappingStr := c.GetString("status_code_mapping")
+
+	if resp != nil {
+		httpResp = resp.(*http.Response)
+		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+		if httpResp.StatusCode != http.StatusOK {
+			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			// reset status code 重置状态码
+			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+			return newApiErr
+		}
+	}
+
+	// 创建流式响应记录器（如果需要记录响应）
+	var streamRecorder *helper.StreamResponseRecorder
+	if saveRequestResponse {
+		// 使用流式记录器包装原始响应体，不影响实时传输
+		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+		httpResp.Body = streamRecorder
+	}
+
+	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
+	if newApiErr != nil {
+		// reset status code 重置状态码
+		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+		return newApiErr
+	}
+	// 在流式传输完成后，从记录器中获取完整的响应数据
+	if saveRequestResponse && streamRecorder != nil {
+		responseStr = streamRecorder.GetRecordedString()
+	}
+
+	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "")
+	} else {
+		postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	}
+	return nil
+}
+
+func TextHelper111(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	info.InitChannelMeta(c)
+
+	textReq, ok := info.Request.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected dto.GeneralOpenAIRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	textRequest, err := common.DeepCopy(textReq)
+	if err != nil {
+		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	if textRequest.WebSearchOptions != nil {
+		c.Set("chat_completion_web_search_context_size", textRequest.WebSearchOptions.SearchContextSize)
+	}
+	if textRequest.Model == "" {
+		//return nil, errors.New("model is required")
+		return types.NewErrorWithStatusCode(errors.New("model is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if textRequest.WebSearchOptions != nil {
+		if textRequest.WebSearchOptions.SearchContextSize != "" {
+			validSizes := map[string]bool{
+				"high":   true,
+				"medium": true,
+				"low":    true,
+			}
+			if !validSizes[textRequest.WebSearchOptions.SearchContextSize] {
+				//return nil, errors.New("invalid search_context_size, must be one of: high, medium, low")
+				return types.NewErrorWithStatusCode(errors.New("invalid search_context_size, must be one of: high, medium, low"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+		} else {
+			textRequest.WebSearchOptions.SearchContextSize = "medium"
+		}
+	}
+	switch info.RelayMode {
+	case relayconstant.RelayModeCompletions:
+		if textRequest.Prompt == "" {
+			//return nil, errors.New("field prompt is required")
+			return types.NewErrorWithStatusCode(errors.New("field prompt is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	case relayconstant.RelayModeChatCompletions:
+		if len(textRequest.Messages) == 0 {
+			return types.NewErrorWithStatusCode(errors.New("field messages is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	case relayconstant.RelayModeEmbeddings:
+	case relayconstant.RelayModeModerations:
+		if textRequest.Input == nil || textRequest.Input == "" {
+			//return nil, errors.New("field input is required")
+			return types.NewErrorWithStatusCode(errors.New("field input is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+
+		}
+	case relayconstant.RelayModeEdits:
+		if textRequest.Instruction == "" {
+			//return nil, errors.New("field instruction is required")
+			return types.NewErrorWithStatusCode(errors.New("field instruction is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	}
+	filterParmas(textRequest)
+	transParmas(textRequest, info)
+	// 判断字符串是否以"o3"开头
+	if strings.HasPrefix(textRequest.Model, "o3") ||
+		strings.HasPrefix(textRequest.Model, "o1") {
+		// 处理以o3开头的模型
+		textRequest.TopK = 0
+	}
+	// 处理不同渠道的参数，很多渠道用openai的格式来提供claude的服务，但是开启thinking的方法不一样
+
+	info.IsStream = textRequest.Stream
+	return nil
+}
+
+func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) error {
+	isOpenRouter := info.ChannelType == common.ChannelTypeOpenRouter || strings.Contains(info.ChannelBaseUrl, "openrouter")
+	isChat := strings.Contains(info.ChannelBaseUrl, "chataiapi")
+	isNuwa := strings.Contains(info.ChannelBaseUrl, "nuwaapi")
+	isYunwu := strings.Contains(info.ChannelBaseUrl, "yunwu")
+	isSiliconflow := strings.Contains(info.ChannelBaseUrl, "siliconflow")
+	isVolcengine := strings.Contains(info.ChannelBaseUrl, "volces")
+	isDeepseek := strings.Contains(info.ChannelBaseUrl, "deepseek")
+	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
+	var thinking dto.AnthropicThinking
+	//var extraBody dto.ExtraBody
+	if textRequest.THINKING != nil {
+		err := json.Unmarshal(textRequest.THINKING, &thinking)
+		if err != nil {
+			return err
+		}
+	}
+	if isOpenRouter && textRequest.THINKING != nil {
+		if textRequest.THINKING != nil && thinking.Type == "enabled" {
+			if thinking.BudgetTokens > 0 {
+				reasoning := openrouter.RequestReasoning{
+					MaxTokens: thinking.BudgetTokens,
+				}
+				reasoningJSON, err := json.Marshal(reasoning)
+				if err != nil {
+					return fmt.Errorf("failed to marshal reasoning: %w", err)
+				}
+				textRequest.Reasoning = reasoningJSON
+			} else {
+				reasoning := openrouter.RequestReasoning{
+					Effort: "medium",
+				}
+				if textRequest.ReasoningEffort != "" {
+					reasoning.Effort = textRequest.ReasoningEffort
+				}
+				reasoningJSON, err := json.Marshal(reasoning)
+				if err != nil {
+					return fmt.Errorf("failed to marshal reasoning: %w", err)
+				}
+				textRequest.Reasoning = reasoningJSON
+			}
+		}
+	} else if isChat && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		}
+	} else if isNuwa && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+			if thinking.BudgetTokens > 0 {
+				// extraBody.Google.ThinkingConfig.IncludeThoughts = true
+				// extraBody.Google.ThinkingConfig.ThinkingBudget = thinking.BudgetTokens
+				// extraBodyJSON, err := json.Marshal(struct {
+				// 	ExtraBody dto.ExtraBody `json:"extra_body"`
+				// }{ExtraBody: extraBody})
+				// if err != nil {
+				// 	return fmt.Errorf("failed to marshal reasoning: %w", err)
+				// }
+				// textRequest.ExtraBody = extraBodyJSON
+				//OpenAI API 提供三种思考控制级别："low"、"medium" 和 "high"，分别对应于 1,024、8,192 和 24,576 个令牌
+				if thinking.BudgetTokens >= 24576 {
+					textRequest.ReasoningEffort = "high"
+				} else if thinking.BudgetTokens >= 8000 {
+					textRequest.ReasoningEffort = "medium"
+				} else {
+					textRequest.ReasoningEffort = "low"
+				}
+
+			} else {
+				if textRequest.ReasoningEffort == "" {
+					textRequest.ReasoningEffort = "medium"
+				}
+			}
+		} else {
+			//if strings.Contains(strings.ToLower(textRequest.Model), "gemini") {
+			if textRequest.Model == "gemini-2.5-flash" {
+				textRequest.Model = textRequest.Model + "-nothinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		}
+		// claude-opus-4-1-20250805 开启thinking后，对于nuwa来说，要append一个空的message item
+		if strings.Contains(textRequest.Model, "claude-opus-4-1") {
+			textRequest.Messages = append(textRequest.Messages, dto.Message{
+				Role:    "user",
+				Content: "",
+			})
+		}
+	} else if isYunwu && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		} else {
+			if textRequest.Model == "gemini-2.5-flash" {
+				textRequest.Model = textRequest.Model + "-nothinking"
+				info.UpstreamModelName = textRequest.Model
+			}
+		}
+	} else if isSiliconflow && textRequest.THINKING != nil {
+		if thinking.Type == "enabled" {
+			textRequest.EnableThinking = true
+			if thinking.BudgetTokens > 0 {
+				textRequest.ThinkingBudget = thinking.BudgetTokens
+			}
+		}
+	}
+	//硅基的step3 不支持enable_thinking
+	if isSiliconflow && strings.Contains(textRequest.Model, "step") {
+		textRequest.EnableThinking = nil
+	}
+
+	if textRequest.Model == "deepseek-reasoner" {
+		if isSiliconflow {
+			textRequest.EnableThinking = true
+		} else if isVolcengine {
+			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
+		}
+	}
+	// 对于deepseek官方的api，assistant 的content只能是字符串
+	if isDeepseek {
+		for i, msg := range textRequest.Messages {
+			if msg.Role != "user" {
+				cnt := msg.ParseContent()
+				if len(cnt) == 1 && cnt[0].Type == "text" {
+					textRequest.Messages[i].Content = cnt[0].Text
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
+	filterConfig := common.OptionMap["ModelParamsFilter"]
+	if filterConfig == "" {
+		return
+	}
+	filterConfigMap := &model.ModelParamsFilterMap{}
+	err := json.Unmarshal([]byte(filterConfig), filterConfigMap)
+	if err != nil {
+		common.SysError("filterParmas Unmarshal failed: " + err.Error())
+		return
+	}
+	if filterConfigMap.SetTopKZero != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetTopKZero, textRequest.Model)
+		if hasSet {
+			textRequest.TopK = 0
+		} else {
+			for _, model := range *filterConfigMap.SetTopKZero {
+				if common.RegMatch(model, textRequest.Model) {
+					textRequest.TopK = 0
+					hasSet = true
+					break
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetTopPZero != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetTopPZero, textRequest.Model)
+		if hasSet {
+			textRequest.TopP = 0
+			hasSet = true
+		} else {
+			for _, model := range *filterConfigMap.SetTopPZero {
+				if common.RegMatch(model, textRequest.Model) {
+					textRequest.TopP = 0
+					hasSet = true
+					break
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetMaxTokensZero != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetMaxTokensZero, textRequest.Model)
+		if hasSet {
+			textRequest.MaxTokens = 0
+		} else {
+			for _, model := range *filterConfigMap.SetMaxTokensZero {
+				if common.RegMatch(model, textRequest.Model) {
+					textRequest.MaxTokens = 0
+					break
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetTemperatureZero != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetTemperatureZero, textRequest.Model)
+		if hasSet {
+			textRequest.Temperature = nil
+		} else {
+			for _, model := range *filterConfigMap.SetTemperatureZero {
+				if common.RegMatch(model, textRequest.Model) {
+					textRequest.Temperature = nil
+					break
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetTemperatureOne != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetTemperatureOne, textRequest.Model)
+		if hasSet {
+			temp := 1.0
+			textRequest.Temperature = &temp
+		} else {
+			for _, model := range *filterConfigMap.SetTemperatureOne {
+				if common.RegMatch(model, textRequest.Model) {
+					temp := 1.0
+					textRequest.Temperature = &temp
+					break
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetMaxTokens != nil {
+		for _, item := range *filterConfigMap.SetMaxTokens {
+			// get key from item
+			for key, val := range item {
+				if key == textRequest.Model {
+					if int(textRequest.MaxTokens) > val && val > 0 {
+						textRequest.MaxTokens = uint(val)
+						break
+					}
+				}
+			}
+			for key, val := range item {
+				if common.RegMatch(key, textRequest.Model) {
+					if int(textRequest.MaxTokens) > val && val > 0 {
+						textRequest.MaxTokens = uint(val)
+						break
+					}
+				}
+			}
+		}
+	}
+	if filterConfigMap.SetStopNil != nil {
+		hasSet := slices.Contains(*filterConfigMap.SetStopNil, textRequest.Model)
+		if hasSet {
+			textRequest.Stop = nil
+		} else {
+			for _, item := range *filterConfigMap.SetStopNil {
+				if common.RegMatch(item, textRequest.Model) {
+					textRequest.Stop = nil
+					break
+				}
+			}
+		}
+	}
+}
+
+func uploadFileToS3(textRequest *dto.GeneralOpenAIRequest) {
+	modelName := strings.ToLower(textRequest.Model)
+	// kimi的模型，不支持image_url的图片。只支持base64的图片
+	if strings.Contains(modelName, "kimi") || strings.Contains(modelName, "moonshot") {
+		return
+	}
+	ctx := context.Background()
+	bucket := common.OptionMap["S3Bucket"]
+	endpoint := common.OptionMap["S3Endpoint"]
+	s3AK := common.OptionMap["S3AK"]
+	s3SK := common.OptionMap["S3SK"]
+	s3Region := common.OptionMap["S3Region"]
+	if bucket == "" || endpoint == "" || s3AK == "" || s3SK == "" || s3Region == "" {
+		return
+	}
+	s3Client := s3.New(s3.Options{
+		Region:      s3Region,
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(s3AK, s3SK, "")),
+	})
+	for i, message := range textRequest.Messages {
+		contentArr := message.ParseContent()
+		for j, item := range contentArr {
+			switch item.Type {
+			case dto.ContentTypeImageURL:
+				// 上传图片到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetImageMedia().Url)
+				if err != nil {
+					logger.LogError(ctx, fmt.Sprintf("upload image to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].ImageUrl = dto.MessageImageUrl{
+						Url:      fileURL,
+						Detail:   item.GetImageMedia().Detail,
+						MimeType: item.GetImageMedia().MimeType,
+					}
+				}
+			case dto.ContentTypeAudioUrl:
+				// 上传音频到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetAudioMedia().Url)
+				if err != nil {
+					logger.LogError(ctx, fmt.Sprintf("upload audio to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].AudioUrl = dto.MessageAudioUrl{
+						Url:    fileURL,
+						Detail: item.GetAudioMedia().Detail,
+					}
+				}
+			case dto.ContentTypeVideoUrl:
+				// 上传视频到 S3
+				fileURL, err := service.UploadFileToS3(ctx, s3Client, bucket, endpoint, item.GetVideoMedia().Url)
+				if err != nil {
+					logger.LogError(ctx, fmt.Sprintf("upload video to s3 failed: %s", err.Error()))
+				} else {
+					// 替换 content 中的 url 为 s3 url
+					contentArr[j].VideoUrl = dto.MessageVideoUrl{
+						Url: fileURL,
+					}
+				}
+			}
+		}
+		textRequest.Messages[i].Content = contentArr
+	}
+}
+
+// func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
+// func TextHelperOld(c *gin.Context) (newAPIError *types.NewAPIError) {
+
+// 	relayInfo := relaycommon.GenRelayInfo(c)
+
+// 	// get & validate textRequest 获取并验证文本请求
+// 	textRequest, err := getAndValidateTextRequest(c, relayInfo)
+// 	// 替换附件地址为s3的地址
+// 	//uploadFileToS3(textRequest)
+
+// 	err = helper.ModelMappedHelper(c, info, request)
+// 	if err != nil {
+// 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+// 	}
+// 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+
+// 	requestStr := ""
+// 	responseStr := ""
+// 	// 序列化 textRequest 为 JSON 字符串
+// 	if saveRequestResponse {
+// 		requestBytes, marshalErr := json.Marshal(textRequest)
+// 		if marshalErr != nil {
+// 			common.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
+// 		} else {
+// 			requestStr = string(requestBytes)
+// 		}
+// 	}
+
+// 	// old
+// 	//	if textRequest.WebSearchOptions != nil {
+// 	//		c.Set("chat_completion_web_search_context_size", textRequest.WebSearchOptions.SearchContextSize)
+// 	//	}
+// 	//
+// 	//	if setting.ShouldCheckPromptSensitive() {
+// 	//		words, err := checkRequestSensitive(textRequest, relayInfo)
+// 	//		if err != nil {
+// 	//			common.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
+// 	//			return types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
+// 	//		}
+// 	//	}
+// 	//
+// 	//	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
+// 	//	if err != nil {
+// 	//		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
+// 	//	}
+// 	//
+// 	//	// 获取 promptTokens，如果上下文中已经存在，则直接使用
+// 	//	var promptTokens int
+// 	//	if value, exists := c.Get("prompt_tokens"); exists {
+// 	//		promptTokens = value.(int)
+// 	//		relayInfo.PromptTokens = promptTokens
+// 	//	} else {
+// 	//		promptTokens, err = getPromptTokens(textRequest, relayInfo)
+// 	//		// count messages token error 计算promptTokens错误
+// 	//		if err != nil {
+// 	//			return types.NewError(err, types.ErrorCodeCountTokenFailed)
+// 	//		}
+// 	//		c.Set("prompt_tokens", promptTokens)
+// 	//	}
+// 	//
+// 	//	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(math.Max(float64(textRequest.MaxTokens), float64(textRequest.MaxCompletionTokens))))
+// 	//	if err != nil {
+// 	//		return types.NewError(err, types.ErrorCodeModelPriceError)
+// 	//	}
+// 	//
+// 	//	// pre-consume quota 预消耗配额
+// 	//	preConsumedQuota, userQuota, newApiErr := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
+// 	//	if newApiErr != nil {
+// 	//		return newApiErr
+// 	//	}
+// 	//	defer func() {
+// 	//		if newApiErr != nil {
+// 	//			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
+// 	//		}
+// 	//	}()
+// 	//	includeUsage := true
+// 	// 判断用户是否需要返回使用情况
+// 	//	if textRequest.StreamOptions != nil && !textRequest.StreamOptions.IncludeUsage {
+// 	//		includeUsage = false
+// 	includeUsage := true
+// 	// 判断用户是否需要返回使用情况
+// 	if request.StreamOptions != nil {
+// 		includeUsage = request.StreamOptions.IncludeUsage
+// 	}
+
+// 	// 如果不支持StreamOptions，将StreamOptions设置为nil
+// 	if !info.SupportStreamOptions || !request.Stream {
+// 		request.StreamOptions = nil
+// 	} else {
+// 		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件设置StreamOptions
+// 		if constant.ForceStreamOption {
+// 			request.StreamOptions = &dto.StreamOptions{
+// 				IncludeUsage: true,
+// 			}
+// 		}
+// 	}
+
+// 	info.ShouldIncludeUsage = includeUsage
+
+// 	adaptor := GetAdaptor(info.ApiType)
+// 	if adaptor == nil {
+// 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+// 	}
+// 	adaptor.Init(info)
+// 	var requestBody io.Reader
+
+// 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+// 		body, err := common.GetRequestBody(c)
+// 		if err != nil {
+// 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+// 		}
+// 		if common.DebugEnabled {
+// 			println("requestBody: ", string(body))
+// 		}
+// 		requestBody = bytes.NewBuffer(body)
+// 	} else {
+// 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
+// 		if err != nil {
+// 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+// 		}
+
+// 		if info.ChannelSetting.SystemPrompt != "" {
+// 			// 如果有系统提示，则将其添加到请求中
+// 			request, ok := convertedRequest.(*dto.GeneralOpenAIRequest)
+// 			if ok {
+// 				containSystemPrompt := false
+// 				for _, message := range request.Messages {
+// 					if message.Role == request.GetSystemRoleName() {
+// 						containSystemPrompt = true
+// 						break
+// 					}
+// 				}
+// 				if !containSystemPrompt {
+// 					// 如果没有系统提示，则添加系统提示
+// 					systemMessage := dto.Message{
+// 						Role:    request.GetSystemRoleName(),
+// 						Content: info.ChannelSetting.SystemPrompt,
+// 					}
+// 					request.Messages = append([]dto.Message{systemMessage}, request.Messages...)
+// 				} else if info.ChannelSetting.SystemPromptOverride {
+// 					common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+// 					// 如果有系统提示，且允许覆盖，则拼接到前面
+// 					for i, message := range request.Messages {
+// 						if message.Role == request.GetSystemRoleName() {
+// 							if message.IsStringContent() {
+// 								request.Messages[i].SetStringContent(info.ChannelSetting.SystemPrompt + "\n" + message.StringContent())
+// 							} else {
+// 								contents := message.ParseContent()
+// 								contents = append([]dto.MediaContent{
+// 									{
+// 										Type: dto.ContentTypeText,
+// 										Text: info.ChannelSetting.SystemPrompt,
+// 									},
+// 								}, contents...)
+// 								request.Messages[i].Content = contents
+// 							}
+// 							break
+// 						}
+// 					}
+// 				}
+// 			}
+// 		}
+
+// 		jsonData, err := common.Marshal(convertedRequest)
+// 		if err != nil {
+// 			return types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+// 		}
+
+// 		// remove disabled fields for OpenAI API
+// 		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+// 		if err != nil {
+// 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+// 		}
+
+// 		// apply param override
+// 		if len(info.ParamOverride) > 0 {
+// 			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride)
+// 			if err != nil {
+// 				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+// 			}
+// 		}
+
+// 		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
+
+// 		requestBody = bytes.NewBuffer(jsonData)
+// 	}
+
+// 	var httpResp *http.Response
+// 	resp, err := adaptor.DoRequest(c, info, requestBody)
+// 	if err != nil {
+// 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+// 	}
+
+// 	statusCodeMappingStr := c.GetString("status_code_mapping")
+
+// 	if resp != nil {
+// 		httpResp = resp.(*http.Response)
+// 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+// 		if httpResp.StatusCode != http.StatusOK {
+// 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+// 			// reset status code 重置状态码
+// 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+// 			return newApiErr
+// 		}
+// 	}
+
+// 	// 创建流式响应记录器（如果需要记录响应）
+// 	var streamRecorder *helper.StreamResponseRecorder
+// 	if saveRequestResponse {
+// 		// 使用流式记录器包装原始响应体，不影响实时传输
+// 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+// 		httpResp.Body = streamRecorder
+// 	}
+
+// 	//usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
+// 	//if openaiErr != nil {
+// 	//usage, newApiErr := adaptor.DoResponse(c, httpResp, relayInfo)
+// 	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
+// 	if newApiErr != nil {
+// 		// reset status code 重置状态码
+// 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+// 		return newApiErr
+// 	}
+
+// 	// 在流式传输完成后，从记录器中获取完整的响应数据
+// 	if saveRequestResponse && streamRecorder != nil {
+// 		responseStr = streamRecorder.GetRecordedString()
+// 	}
+
+// 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+// 		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "")
+// 	} else {
+// 		postConsumeQuota(c, info, usage.(*dto.Usage), preConsumedQuota, userQuota, priceData, "", requestStr, responseStr)
+// 	}
+// 	/*
+// 		if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+// 			service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "")
+// 		} else {
+// 			postConsumeQuota(c, info, usage.(*dto.Usage), "")
+// 		}
+// 	*/
+// 	return nil
+// }
+
+func getPromptTokens(c *gin.Context, textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (int, error) {
+	var promptTokens int
+	var err error
+	switch info.RelayMode {
+	case relayconstant.RelayModeChatCompletions:
+		meta := textRequest.GetTokenCountMeta()
+		promptTokens, err = service.CountRequestToken(c, meta, info)
+	case relayconstant.RelayModeCompletions:
+		promptTokens = service.CountTokenInput(textRequest.Prompt, textRequest.Model)
+	case relayconstant.RelayModeModerations:
+		promptTokens = service.CountTokenInput(textRequest.Input, textRequest.Model)
+	case relayconstant.RelayModeEmbeddings:
+		promptTokens = service.CountTokenInput(textRequest.Input, textRequest.Model)
+	default:
+		err = errors.New("unknown relay mode")
+		promptTokens = 0
+	}
+	info.PromptTokens = promptTokens
+	return promptTokens, err
+}
+
+func checkRequestSensitive(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) ([]string, error) {
+	var err error
+	var words []string
+	switch info.RelayMode {
+	case relayconstant.RelayModeChatCompletions:
+		words, err = service.CheckSensitiveMessages(textRequest.Messages)
+	case relayconstant.RelayModeCompletions:
+		//words, err = service.CheckSensitiveInput(textRequest.Prompt)
+	case relayconstant.RelayModeModerations:
+		//words, err = service.CheckSensitiveInput(textRequest.Input)
+	case relayconstant.RelayModeEmbeddings:
+		//words, err = service.CheckSensitiveInput(textRequest.Input)
+	}
+	return words, err
+}
+
+// 预扣费并返回用户剩余配额
+func preConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) (int, int, *types.NewAPIError) {
+	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	if err != nil {
+		return 0, 0, types.NewError(err, types.ErrorCodeQueryDataError)
+	}
+	if userQuota <= 0 {
+		return 0, 0, types.NewErrorWithStatusCode(errors.New("user quota is not enough"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
+	}
+	if userQuota-preConsumedQuota < 0 {
+		return 0, 0, types.NewErrorWithStatusCode(fmt.Errorf("pre-consume quota failed, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
+	}
+	relayInfo.UserQuota = userQuota
+	if userQuota > 100*preConsumedQuota {
+		// 用户额度充足，判断令牌额度是否充足
+		if !relayInfo.TokenUnlimited {
+			// 非无限令牌，判断令牌额度是否充足
+			tokenQuota := c.GetInt("token_quota")
+			if tokenQuota > 100*preConsumedQuota {
+				// 令牌额度充足，信任令牌
+				preConsumedQuota = 0
+				logger.LogInfo(c, fmt.Sprintf("user %d quota %s and token %d quota %d are enough, trusted and no need to pre-consume", relayInfo.UserId, logger.FormatQuota(userQuota), relayInfo.TokenId, tokenQuota))
+			}
+		} else {
+			// in this case, we do not pre-consume quota
+			// because the user has enough quota
+			preConsumedQuota = 0
+			logger.LogInfo(c, fmt.Sprintf("user %d with unlimited token has enough quota %s, trusted and no need to pre-consume", relayInfo.UserId, logger.FormatQuota(userQuota)))
+		}
+	}
+
+	if preConsumedQuota > 0 {
+		err := service.PreConsumeTokenQuota(relayInfo, preConsumedQuota)
+		if err != nil {
+			return 0, 0, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden)
+		}
+		err = model.DecreaseUserQuota(relayInfo.UserId, preConsumedQuota)
+		if err != nil {
+			return 0, 0, types.NewError(err, types.ErrorCodeUpdateDataError)
+		}
+	}
+	return preConsumedQuota, userQuota, nil
+}
+
+func returnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo, userQuota int, preConsumedQuota int) {
+	if preConsumedQuota != 0 {
+		gopool.Go(func() {
+			relayInfoCopy := *relayInfo
+
+			err := service.PostConsumeQuota(&relayInfoCopy, -preConsumedQuota, 0, false)
+			if err != nil {
+				common.SysError("error return pre-consumed quota: " + err.Error())
+			}
+		})
+	}
+}
+
+// old
+// func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, preConsumedQuota int, userQuota int, priceData helper.PriceData, extraContent string, requestStr string, responseStr string) {
+func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string, requestStr string, responseStr string) {
+	if usage == nil {
+		usage = &dto.Usage{
+			PromptTokens:     relayInfo.PromptTokens,
+			CompletionTokens: 0,
+			TotalTokens:      relayInfo.PromptTokens,
+		}
+		extraContent += "（可能是请求出错）"
+	}
+	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
+	promptTokens := usage.PromptTokens
+	cacheTokens := usage.PromptTokensDetails.CachedTokens
+	imageTokens := usage.PromptTokensDetails.ImageTokens
+	audioTokens := usage.PromptTokensDetails.AudioTokens
+	completionTokens := usage.CompletionTokens
+	cachedCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
+
+	modelName := relayInfo.OriginModelName
+
+	tokenName := ctx.GetString("token_name")
+	completionRatio := relayInfo.PriceData.CompletionRatio
+	cacheRatio := relayInfo.PriceData.CacheRatio
+	imageRatio := relayInfo.PriceData.ImageRatio
+	modelRatio := relayInfo.PriceData.ModelRatio
+	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	modelPrice := relayInfo.PriceData.ModelPrice
+	cachedCreationRatio := relayInfo.PriceData.CacheCreationRatio
+
+	// Convert values to decimal for precise calculation
+	dPromptTokens := decimal.NewFromInt(int64(promptTokens))
+	dCacheTokens := decimal.NewFromInt(int64(cacheTokens))
+	dImageTokens := decimal.NewFromInt(int64(imageTokens))
+	dAudioTokens := decimal.NewFromInt(int64(audioTokens))
+	dCompletionTokens := decimal.NewFromInt(int64(completionTokens))
+	dCachedCreationTokens := decimal.NewFromInt(int64(cachedCreationTokens))
+	dCompletionRatio := decimal.NewFromFloat(completionRatio)
+	dCacheRatio := decimal.NewFromFloat(cacheRatio)
+	dImageRatio := decimal.NewFromFloat(imageRatio)
+	dModelRatio := decimal.NewFromFloat(modelRatio)
+	dGroupRatio := decimal.NewFromFloat(groupRatio)
+	dModelPrice := decimal.NewFromFloat(modelPrice)
+	dCachedCreationRatio := decimal.NewFromFloat(cachedCreationRatio)
+	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+
+	ratio := dModelRatio.Mul(dGroupRatio)
+
+	// openai web search 工具计费
+	var dWebSearchQuota decimal.Decimal
+	var webSearchPrice float64
+	// response api 格式工具计费
+	if relayInfo.ResponsesUsageInfo != nil {
+		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
+			// 计算 web search 调用的配额 (配额 = 价格 * 调用次数 / 1000 * 分组倍率)
+			webSearchPrice = operation_setting.GetWebSearchPricePerThousand(modelName, webSearchTool.SearchContextSize)
+			dWebSearchQuota = decimal.NewFromFloat(webSearchPrice).
+				Mul(decimal.NewFromInt(int64(webSearchTool.CallCount))).
+				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+			extraContent += fmt.Sprintf("Web Search 调用 %d 次，上下文大小 %s，调用花费 %s",
+				webSearchTool.CallCount, webSearchTool.SearchContextSize, dWebSearchQuota.String())
+		}
+	} else if strings.HasSuffix(modelName, "search-preview") {
+		// search-preview 模型不支持 response api
+		searchContextSize := ctx.GetString("chat_completion_web_search_context_size")
+		if searchContextSize == "" {
+			searchContextSize = "medium"
+		}
+		webSearchPrice = operation_setting.GetWebSearchPricePerThousand(modelName, searchContextSize)
+		dWebSearchQuota = decimal.NewFromFloat(webSearchPrice).
+			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+		extraContent += fmt.Sprintf("Web Search 调用 1 次，上下文大小 %s，调用花费 %s",
+			searchContextSize, dWebSearchQuota.String())
+	}
+	// claude web search tool 计费
+	var dClaudeWebSearchQuota decimal.Decimal
+	var claudeWebSearchPrice float64
+	claudeWebSearchCallCount := ctx.GetInt("claude_web_search_requests")
+	if claudeWebSearchCallCount > 0 {
+		claudeWebSearchPrice = operation_setting.GetClaudeWebSearchPricePerThousand()
+		dClaudeWebSearchQuota = decimal.NewFromFloat(claudeWebSearchPrice).
+			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit).Mul(decimal.NewFromInt(int64(claudeWebSearchCallCount)))
+		extraContent += fmt.Sprintf("Claude Web Search 调用 %d 次，调用花费 %s",
+			claudeWebSearchCallCount, dClaudeWebSearchQuota.String())
+	}
+	// file search tool 计费
+	var dFileSearchQuota decimal.Decimal
+	var fileSearchPrice float64
+	if relayInfo.ResponsesUsageInfo != nil {
+		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists && fileSearchTool.CallCount > 0 {
+			fileSearchPrice = operation_setting.GetFileSearchPricePerThousand()
+			dFileSearchQuota = decimal.NewFromFloat(fileSearchPrice).
+				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
+				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+			extraContent += fmt.Sprintf("File Search 调用 %d 次，调用花费 %s",
+				fileSearchTool.CallCount, dFileSearchQuota.String())
+		}
+	}
+	var dImageGenerationCallQuota decimal.Decimal
+	var imageGenerationCallPrice float64
+	if ctx.GetBool("image_generation_call") {
+		imageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
+		dImageGenerationCallQuota = decimal.NewFromFloat(imageGenerationCallPrice).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+		extraContent += fmt.Sprintf("Image Generation Call 花费 %s", dImageGenerationCallQuota.String())
+	}
+
+	var quotaCalculateDecimal decimal.Decimal
+
+	var audioInputQuota decimal.Decimal
+	var audioInputPrice float64
+	if !relayInfo.PriceData.UsePrice {
+		baseTokens := dPromptTokens
+		// 减去 cached tokens
+		var cachedTokensWithRatio decimal.Decimal
+		if !dCacheTokens.IsZero() {
+			baseTokens = baseTokens.Sub(dCacheTokens)
+			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
+		}
+		var dCachedCreationTokensWithRatio decimal.Decimal
+		if !dCachedCreationTokens.IsZero() {
+			baseTokens = baseTokens.Sub(dCachedCreationTokens)
+			dCachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCachedCreationRatio)
+		}
+
+		// 减去 image tokens
+		var imageTokensWithRatio decimal.Decimal
+		if !dImageTokens.IsZero() {
+			baseTokens = baseTokens.Sub(dImageTokens)
+			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
+		}
+
+		// 减去 Gemini audio tokens
+		if !dAudioTokens.IsZero() {
+			audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
+			if audioInputPrice > 0 {
+				// 重新计算 base tokens
+				baseTokens = baseTokens.Sub(dAudioTokens)
+				audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+				extraContent += fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String())
+			}
+		}
+		promptQuota := baseTokens.Add(cachedTokensWithRatio).
+			Add(imageTokensWithRatio).
+			Add(dCachedCreationTokensWithRatio)
+
+		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
+
+		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
+
+		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
+			quotaCalculateDecimal = decimal.NewFromInt(1)
+		}
+	} else {
+		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
+	}
+	// 添加 responses tools call 调用的配额
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(dFileSearchQuota)
+	// 添加 audio input 独立计费
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
+	// 添加 image generation call 计费
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(dImageGenerationCallQuota)
+
+	quota := int(quotaCalculateDecimal.Round(0).IntPart())
+	totalTokens := promptTokens + completionTokens
+
+	var logContent string
+
+	// record all the consume log even if quota is 0
+	if totalTokens == 0 {
+		// in this case, must be some error happened
+		// we cannot just return, because we may have to return the pre-consumed quota
+		quota = 0
+		logContent += "（可能是上游超时）"
+		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
+			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
+	} else {
+		if !ratio.IsZero() && quota == 0 {
+			quota = 1
+		}
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+	}
+
+	quotaDelta := quota - relayInfo.FinalPreConsumedQuota
+
+	//logger.LogInfo(ctx, fmt.Sprintf("request quota delta: %s", logger.FormatQuota(quotaDelta)))
+
+	if quotaDelta > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("预扣费后补扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.FormatQuota(quotaDelta),
+			logger.FormatQuota(quota),
+			logger.FormatQuota(relayInfo.FinalPreConsumedQuota),
+		))
+	} else if quotaDelta < 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("预扣费后返还扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.FormatQuota(-quotaDelta),
+			logger.FormatQuota(quota),
+			logger.FormatQuota(relayInfo.FinalPreConsumedQuota),
+		))
+	}
+
+	if quotaDelta != 0 {
+		err := service.PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+		if err != nil {
+			logger.LogError(ctx, "error consuming token remain quota: "+err.Error())
+		}
+	}
+
+	logModel := modelName
+	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
+		logModel = "gpt-4-gizmo-*"
+		logContent += fmt.Sprintf("，模型 %s", modelName)
+	}
+	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
+		logModel = "gpt-4o-gizmo-*"
+		logContent += fmt.Sprintf("，模型 %s", modelName)
+	}
+	if extraContent != "" {
+		logContent += ", " + extraContent
+	}
+	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	if imageTokens != 0 {
+		other["image"] = true
+		other["image_ratio"] = imageRatio
+		other["image_output"] = imageTokens
+	}
+	if cachedCreationTokens != 0 {
+		other["cache_creation_tokens"] = cachedCreationTokens
+		other["cache_creation_ratio"] = cachedCreationRatio
+	}
+	if !dWebSearchQuota.IsZero() {
+		if relayInfo.ResponsesUsageInfo != nil {
+			if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists {
+				other["web_search"] = true
+				other["web_search_call_count"] = webSearchTool.CallCount
+				other["web_search_price"] = webSearchPrice
+			}
+		} else if strings.HasSuffix(modelName, "search-preview") {
+			other["web_search"] = true
+			other["web_search_call_count"] = 1
+			other["web_search_price"] = webSearchPrice
+		}
+	} else if !dClaudeWebSearchQuota.IsZero() {
+		other["web_search"] = true
+		other["web_search_call_count"] = claudeWebSearchCallCount
+		other["web_search_price"] = claudeWebSearchPrice
+	}
+	if !dFileSearchQuota.IsZero() && relayInfo.ResponsesUsageInfo != nil {
+		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists {
+			other["file_search"] = true
+			other["file_search_call_count"] = fileSearchTool.CallCount
+			other["file_search_price"] = fileSearchPrice
+		}
+	}
+	if !audioInputQuota.IsZero() {
+		other["audio_input_seperate_price"] = true
+		other["audio_input_token_count"] = audioTokens
+		other["audio_input_price"] = audioInputPrice
+	}
+	/*
+		model.RecordConsumeLog(ctx, relayInfo.UserId, relayInfo.ChannelId, promptTokens, completionTokens, logModel,
+			tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other, requestStr, responseStr)
+	*/
+	if !dImageGenerationCallQuota.IsZero() {
+		other["image_generation_call"] = true
+		other["image_generation_call_price"] = imageGenerationCallPrice
+	}
+	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
+	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		ChannelId:        relayInfo.ChannelId,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		ModelName:        logModel,
+		TokenName:        tokenName,
+		Quota:            quota,
+		Content:          logContent,
+		TokenId:          relayInfo.TokenId,
+		UseTimeSeconds:   int(useTimeSeconds),
+		IsStream:         relayInfo.IsStream,
+		Group:            relayInfo.UsingGroup,
+		Other:            other,
+		Request:          requestStr,
+		Response:         responseStr,
+		ClientUserId:     clientUserId,
+	})
+}

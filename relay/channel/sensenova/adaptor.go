@@ -39,7 +39,7 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.RelayMode == relayconstant.RelayModeChatCompletions {
-		return fmt.Sprintf("%s/v1/llm/chat-completions", info.BaseUrl), nil
+		return fmt.Sprintf("%s/v1/llm/chat-completions", info.ChannelMeta.ChannelBaseUrl), nil
 	}
 	return "", fmt.Errorf("unsupported relay mode %d for sensenova", info.RelayMode)
 
@@ -73,6 +73,10 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	// TODO implement me
 	return nil, errors.New("not implemented")
+}
+
+func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
+	return nil, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

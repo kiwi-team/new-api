@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"one-api/constant"
 	"strings"
@@ -32,6 +33,9 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
 	if err != nil {
 		return err
 	}
+	//if DebugEnabled {
+	//	println("UnmarshalBodyReusable request body:", string(requestBody))
+	//}
 	contentType := c.Request.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "application/json") {
 		err = Unmarshal(requestBody, &v)
@@ -109,4 +113,27 @@ func ApiSuccess(c *gin.Context, data any) {
 		"message": "",
 		"data":    data,
 	})
+}
+
+func ParseMultipartFormReusable(c *gin.Context) (*multipart.Form, error) {
+	requestBody, err := GetRequestBody(c)
+	if err != nil {
+		return nil, err
+	}
+
+	contentType := c.Request.Header.Get("Content-Type")
+	boundary := ""
+	if idx := strings.Index(contentType, "boundary="); idx != -1 {
+		boundary = contentType[idx+9:]
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(requestBody), boundary)
+	form, err := reader.ReadForm(32 << 20) // 32 MB max memory
+	if err != nil {
+		return nil, err
+	}
+
+	// Reset request body
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+	return form, nil
 }
