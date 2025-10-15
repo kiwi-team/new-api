@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"one-api/common"
 	"one-api/logger"
@@ -14,24 +15,85 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gabriel-vasile/mimetype"
 )
 
-func SimpleUploadToS3(ctx context.Context, file string) (string, error) {
+func getS3Client() (*s3.Client, string, string, error) {
 	bucket := common.OptionMap["S3Bucket"]
 	endpoint := common.OptionMap["S3Endpoint"]
 	s3AK := common.OptionMap["S3AK"]
 	s3SK := common.OptionMap["S3SK"]
 	s3Region := common.OptionMap["S3Region"]
 	if bucket == "" || endpoint == "" || s3AK == "" || s3SK == "" || s3Region == "" {
-		return "", fmt.Errorf("S3 configuration is incomplete")
+		return nil, bucket, endpoint, fmt.Errorf("S3 configuration is incomplete")
 	}
 	s3Client := s3.New(s3.Options{
 		Region:      s3Region,
 		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(s3AK, s3SK, "")),
 	})
+	return s3Client, bucket, endpoint, nil
+}
+
+func SimpleUploadToS3(ctx context.Context, file string) (string, error) {
+	// bucket := common.OptionMap["S3Bucket"]
+	// endpoint := common.OptionMap["S3Endpoint"]
+	// s3AK := common.OptionMap["S3AK"]
+	// s3SK := common.OptionMap["S3SK"]
+	// s3Region := common.OptionMap["S3Region"]
+	// if bucket == "" || endpoint == "" || s3AK == "" || s3SK == "" || s3Region == "" {
+	// 	return "", fmt.Errorf("S3 configuration is incomplete")
+	// }
+	// s3Client := s3.New(s3.Options{
+	// 	Region:      s3Region,
+	// 	Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(s3AK, s3SK, "")),
+	// })
+	s3Client, bucket, endpoint, err := getS3Client()
+	if err != nil {
+		return "", err
+	}
 	return UploadFileToS3(ctx, s3Client, bucket, endpoint, file)
+}
+
+func UploadIOReaderToS3(ctx context.Context, req *http.Response) (string, error) {
+
+	mimeType := req.Header.Get("Content-Type")
+	// mimeType, err := mimetype.DetectReader(req.Body)
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to detect mime type: %w", err)
+	// }
+	//ext := mimeType.Extension()
+	//ext := ".mp4"
+	ext := mime.TypeByExtension(mimeType)
+	fileType := strings.Split(mimeType, "/")[0]
+	key := fmt.Sprintf("%ss/%d-%s%s", fileType, time.Now().UnixNano(), common.GetRandomString(10), ext)
+	s3Client, bucket, endpoint, err := getS3Client()
+	if err != nil {
+		return "", err
+	}
+
+	uploader := manager.NewUploader(s3Client)
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          req.Body,
+		ContentType:   aws.String(mimeType),
+		ContentLength: aws.Int64(int64(req.ContentLength)),
+	})
+
+	// _, err = s3Client.PutObject(ctx, &s3.PutObjectInput{
+	// 	Bucket:      aws.String(bucket),
+	// 	Key:         aws.String(key),
+	// 	Body:        req.Body,
+	// 	ContentType:   aws.String(mimeType),
+	// 	ContentLength: aws.Int64(int64(req.ContentLength)),
+	// })
+
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+	return fmt.Sprintf("https://%s.%s/%s", bucket, endpoint, key), nil
 }
 
 func UploadFileToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint, file string) (string, error) {

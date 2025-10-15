@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"one-api/logger"
 	"one-api/model"
+	"one-api/service"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -109,6 +110,25 @@ func VideoProxy(c *gin.Context) {
 			"error": gin.H{
 				"message": fmt.Sprintf("Upstream service returned status %d", resp.StatusCode),
 				"type":    "server_error",
+			},
+		})
+		return
+	}
+
+	url, err := service.UploadIOReaderToS3(c.Request.Context(), resp)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to upload video to S3: %s", err.Error()))
+	} else {
+		fmt.Println(url)
+		err = model.TaskUpdateVideoUrl(task.ID, url)
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to update task %s video url: %s", taskID, err.Error()))
+		}
+
+		// todo 更新任务里的视频url
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"url": url,
 			},
 		})
 		return

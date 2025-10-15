@@ -37,6 +37,7 @@ type Task struct {
 	FinishTime int64                 `json:"finish_time" gorm:"index"`
 	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
 	Properties Properties            `json:"properties" gorm:"type:json"`
+	VideoUrl   string                `json:"video_url" gorm:"type:varchar(1024)"`
 
 	Data json.RawMessage `json:"data" gorm:"type:json"`
 }
@@ -226,6 +227,10 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 
 func TaskUpdateProgress(id int64, progress string) error {
 	return DB.Model(&Task{}).Where("id = ?", id).Update("progress", progress).Error
+}
+
+func TaskUpdateVideoUrl(id int64, videoUrl string) error {
+	return DB.Model(&Task{}).Where("id = ?", id).Update("video_url", videoUrl).Error
 }
 
 func (Task *Task) Insert() error {

@@ -1,5 +1,6 @@
 #!/bin/zsh
 
+onlyone=$1
 deploy_to_host() {
   local host=$1
   local instance_name=$2
@@ -20,6 +21,10 @@ eeooff
   echo "${instance_name}_done!"
 }
 
-deploy_to_host 161.189.239.3 "newapi-1"
-deploy_to_host 68.79.61.248 "newapi-2"
+if [ "$onlyone" = "1" ]; then
+  deploy_to_host 161.189.239.3 "newapi-1"
+else
+  deploy_to_host 161.189.239.3 "newapi-1"
+  deploy_to_host 68.79.61.248 "newapi-2"
+fi
 
