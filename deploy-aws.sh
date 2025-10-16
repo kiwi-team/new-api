@@ -8,6 +8,8 @@ deploy_to_host() {
   echo "Deploying to $host ($instance_name)"
 
   ssh www@$host << eeooff
+rm -f /data/www/one-api/oneapi-bak
+cp /data/www/one-api/oneapi /data/www/one-api/oneapi-bak
 rm /data/www/one-api/oneapi
 eeooff
   echo "delete_oneapi on $instance_name"
@@ -23,8 +25,9 @@ eeooff
 
 if [ "$onlyone" = "1" ]; then
   deploy_to_host 161.189.239.3 "newapi-1"
+elif [ "$onlyone" = "2" ]; then
+  deploy_to_host 68.79.61.248 "newapi-2"
 else
   deploy_to_host 161.189.239.3 "newapi-1"
   deploy_to_host 68.79.61.248 "newapi-2"
 fi
-

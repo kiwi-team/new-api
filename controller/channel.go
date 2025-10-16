@@ -67,6 +67,7 @@ func GetAllChannels(c *gin.Context) {
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
 	statusParam := c.Query("status")
+	scope := c.Query("scope")
 	// statusFilter: -1 all, 1 enabled, 0 disabled (include auto & manual)
 	statusFilter := parseStatusFilter(statusParam)
 	// type filter
@@ -115,7 +116,7 @@ func GetAllChannels(c *gin.Context) {
 		if typeFilter >= 0 {
 			baseQuery = baseQuery.Where("type = ?", typeFilter)
 		}
-		if statusFilter == common.ChannelStatusEnabled {
+		if statusFilter == common.ChannelStatusEnabled || scope == "all" {
 			baseQuery = baseQuery.Where("status = ?", common.ChannelStatusEnabled)
 		} else if statusFilter == 0 {
 			baseQuery = baseQuery.Where("status != ?", common.ChannelStatusEnabled)
@@ -123,12 +124,16 @@ func GetAllChannels(c *gin.Context) {
 
 		baseQuery.Count(&total)
 
-		order := "priority desc"
+		order := "id asc"
 		if idSort {
 			order = "id desc"
 		}
-
-		err := baseQuery.Order(order).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&channelData).Error
+		var err error
+		if scope == "all" {
+			err = baseQuery.Order(order).Omit("key").Find(&channelData).Error
+		} else {
+			err = baseQuery.Order(order).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&channelData).Error
+		}
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 			return
