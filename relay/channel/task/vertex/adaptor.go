@@ -2,6 +2,7 @@ package vertex
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -140,6 +141,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Instances:  []map[string]any{{"prompt": req.Prompt}},
 		Parameters: map[string]any{},
 	}
+	if req.Seconds > 0 {
+		body.Instances[0]["duration"] = req.Seconds
+	}
+	if req.Duration > 0 {
+		body.Instances[0]["duration"] = req.Duration
+	}
 	if req.Metadata != nil {
 		if v, ok := req.Metadata["storageUri"]; ok {
 			body.Parameters["storageUri"] = v
@@ -271,6 +278,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 				}
 			}
 			ti.Url = "data:" + mime + ";base64," + v0.BytesBase64Encoded
+			file, err := service.SimpleUploadToS3(context.Background(), ti.Url)
+			if err == nil {
+				ti.Url = file
+			}
 			return ti, nil
 		}
 	}
@@ -284,6 +295,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			mime = "video/" + enc
 		}
 		ti.Url = "data:" + mime + ";base64," + op.Response.BytesBase64Encoded
+		file, err := service.SimpleUploadToS3(context.Background(), ti.Url)
+		if err == nil {
+			ti.Url = file
+		}
 		return ti, nil
 	}
 	if op.Response.Video != "" { // some variants use `video` as base64
@@ -296,6 +311,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			mime = "video/" + enc
 		}
 		ti.Url = "data:" + mime + ";base64," + op.Response.Video
+		if file, err := service.SimpleUploadToS3(context.Background(), ti.Url); err == nil {
+			ti.Url = file
+		}
 		return ti, nil
 	}
 	return ti, nil

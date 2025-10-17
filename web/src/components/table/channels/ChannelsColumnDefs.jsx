@@ -258,7 +258,7 @@ export const getChannelsColumns = ({
     },
     {
         key:COLUMN_KEYS.KEY,
-        title: t('密钥'),
+        title: t('密钥') + '1',
         dataIndex: 'key',
         render:(text,record,index)=>{
             return (

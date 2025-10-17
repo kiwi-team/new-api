@@ -62,6 +62,7 @@ const ChannelsTable = (channelsData) => {
     setCurrentMultiKeyChannel,
   } = channelsData;
 
+
   // Get all columns
   const allColumns = useMemo(() => {
     return getChannelsColumns({
@@ -126,6 +127,7 @@ const ChannelsTable = (channelsData) => {
     <CardTable
       columns={tableColumns}
       dataSource={channels}
+      rowKey='id'
       scroll={compactMode ? undefined : { x: 'max-content' }}
       pagination={{
         currentPage: activePage,

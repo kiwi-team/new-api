@@ -495,6 +495,7 @@ type TaskSubmitReq struct {
 	Images   []string               `json:"images,omitempty"`
 	Size     string                 `json:"size,omitempty"`
 	Duration int                    `json:"duration,omitempty"`
+	Seconds  int                    `json:"seconds,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 

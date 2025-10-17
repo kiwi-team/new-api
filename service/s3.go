@@ -119,7 +119,10 @@ func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint
 	// Remove data URL prefix if present
 	if len(base64Data) > 0 && base64Data[0] == 'd' {
 		// Check if it starts with "data:image/" or "data:audio/"
-		if len(base64Data) > 11 && (base64Data[:11] == "data:image/" || strings.HasPrefix(base64Data, "data:audio/")) {
+		isImage := strings.HasPrefix(base64Data, "data:image/")
+		isAudio := strings.HasPrefix(base64Data, "data:audio/")
+		isVideo := strings.HasPrefix(base64Data, "data:video/")
+		if len(base64Data) > 11 && (isImage || isAudio || isVideo) {
 			// Find the comma that separates the metadata from the base64 data
 			for i := 11; i < len(base64Data); i++ {
 				if base64Data[i] == ',' {
@@ -137,15 +140,17 @@ func UploadBase64ToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint
 	}
 	// get mime type from base64 data
 	mimeType := mimetype.Detect(imageData)
+	mimeTypeStr := mimeType.String()
+	fileType := strings.Split(mimeTypeStr, "/")[0]
 	// Generate a unique filename
-	filename := fmt.Sprintf("images/%d-%s%s", time.Now().UnixNano(), common.GetRandomString(10), mimeType.Extension())
+	filename := fmt.Sprintf("%ss/%d-%s%s", fileType, time.Now().UnixNano(), common.GetRandomString(10), mimeType.Extension())
 
 	// Upload to S3
 	_, err = s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(filename),
 		Body:        bytes.NewReader(imageData),
-		ContentType: aws.String(mimeType.String()),
+		ContentType: aws.String(mimeTypeStr),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload to S3: %w", err)

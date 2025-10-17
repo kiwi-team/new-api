@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"one-api/constant"
 	"one-api/logger"
 	"one-api/model"
 	"one-api/service"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -63,6 +65,15 @@ func VideoProxy(c *gin.Context) {
 			"error": gin.H{
 				"message": "Failed to retrieve channel information",
 				"type":    "server_error",
+			},
+		})
+		return
+	}
+	if channel.Type == constant.ChannelTypeVertexAi && strings.HasPrefix(task.FailReason, "https://") {
+		model.TaskUpdateVideoUrl(task.ID, task.FailReason)
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"url": task.FailReason,
 			},
 		})
 		return
