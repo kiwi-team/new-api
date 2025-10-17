@@ -246,7 +246,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId)
+		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
 
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
 			break
@@ -392,7 +393,8 @@ func RelayClaude(c *gin.Context) {
 			body = string(bodyBytes)
 		}
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId)
+		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
 
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 

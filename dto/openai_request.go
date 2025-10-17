@@ -402,6 +402,9 @@ func (m *MediaContent) GetVideoUrl() *MessageVideoUrl {
 		if itemMap, ok := m.VideoUrl.(map[string]any); ok {
 			out := &MessageVideoUrl{
 				Url: common.Interface2String(itemMap["url"]),
+				//Detail:    common.Interface2String(itemMap["detail"]),
+				//MaxFrames: itemMap["max_frames"].(int),
+				//FPS:       itemMap["fps"].(int),
 			}
 			return out
 		}
@@ -432,6 +435,9 @@ type MessageFile struct {
 
 type MessageVideoUrl struct {
 	Url string `json:"url"`
+	//Detail    string `json:"detail,omitempty"`
+	//MaxFrames int    `json:"max_frames,omitempty"`
+	//FPS       int    `json:"fps,omitempty"`
 }
 
 type MessageAudioUrl struct {
@@ -658,6 +664,9 @@ func (m *Message) ParseContent() []MediaContent {
 					Type: ContentTypeVideoUrl,
 					VideoUrl: &MessageVideoUrl{
 						Url: videoMap["url"].(string),
+						//Detail:    common.Interface2String(videoMap["detail"]),
+						//MaxFrames: 16, //videoMap["max_frames"].(int),
+						//FPS:       1,  //videoMap["fps"].(int),
 					},
 				})
 			}

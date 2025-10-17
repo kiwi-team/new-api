@@ -119,7 +119,6 @@ func VideoProxy(c *gin.Context) {
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to upload video to S3: %s", err.Error()))
 	} else {
-		fmt.Println(url)
 		err = model.TaskUpdateVideoUrl(task.ID, url)
 		if err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to update task %s video url: %s", taskID, err.Error()))

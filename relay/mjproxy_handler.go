@@ -218,15 +218,17 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
 			other := service.GenerateMjOtherInfo(priceData)
+			clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-				ChannelId: info.ChannelId,
-				ModelName: modelName,
-				TokenName: tokenName,
-				Quota:     priceData.Quota,
-				Content:   logContent,
-				TokenId:   info.TokenId,
-				Group:     info.UsingGroup,
-				Other:     other,
+				ChannelId:    info.ChannelId,
+				ModelName:    modelName,
+				TokenName:    tokenName,
+				Quota:        priceData.Quota,
+				Content:      logContent,
+				TokenId:      info.TokenId,
+				Group:        info.UsingGroup,
+				Other:        other,
+				ClientUserId: clientUserId,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(info.ChannelId, priceData.Quota)

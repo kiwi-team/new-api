@@ -200,9 +200,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			}
 			return ""
 		}(),
-		Other:    otherStr,
-		Request:  strings.TrimSpace(params.Request),
-		Response: strings.TrimSpace(params.Response),
+		Other:        otherStr,
+		Request:      strings.TrimSpace(params.Request),
+		Response:     strings.TrimSpace(params.Response),
+		ClientUserId: params.ClientUserId,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {

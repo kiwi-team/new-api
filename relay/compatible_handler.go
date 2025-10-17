@@ -219,7 +219,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "")
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	} else {
 		postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	}
@@ -1221,10 +1221,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		other["audio_input_token_count"] = audioTokens
 		other["audio_input_price"] = audioInputPrice
 	}
-	/*
-		model.RecordConsumeLog(ctx, relayInfo.UserId, relayInfo.ChannelId, promptTokens, completionTokens, logModel,
-			tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other, requestStr, responseStr)
-	*/
 	if !dImageGenerationCallQuota.IsZero() {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = imageGenerationCallPrice
