@@ -6,6 +6,7 @@ type ChannelSettings struct {
 	Proxy                  string `json:"proxy"`
 	SetRole                string `json:"set_role,omitempty"`
 	GoogleFileBucket       string `json:"google_file_bucket,omitempty"`
+	GoogleFileUpload       string `json:"google_file_upload,omitempty"`
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`

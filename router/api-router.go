@@ -254,5 +254,11 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.PUT("/", controller.UpdateModelMeta)
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
 		}
+
+		fileRoute := apiRouter.Group("/file")
+		fileRoute.Use(middleware.AdminAuth())
+		{
+			fileRoute.POST("/upload", controller.UploadFile)
+		}
 	}
 }

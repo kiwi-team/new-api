@@ -412,9 +412,13 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 				// 判断是否是url
 				if strings.HasPrefix(part.GetImageMedia().Url, "http") {
-					if channel.Type == constant.ChannelTypeVertexAi {
-						channelConfig := channel.GetSetting()
-						bukect := channelConfig.GoogleFileBucket
+					channelConfig := channel.GetSetting()
+					bukect := channelConfig.GoogleFileBucket
+					isGenai := channel.Type == constant.ChannelTypeGemini
+					if channel.Type == constant.ChannelTypeVertexAi || isGenai {
+						if isGenai {
+							bukect = ""
+						}
 						uploadedFile, err := RetryUploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 						if err != nil {
 							return nil, fmt.Errorf("upload image file to google failed: %s", err.Error())
@@ -495,9 +499,13 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				if audioFileUrl == "" {
 					continue
 				}
-				if channel.Type == constant.ChannelTypeVertexAi {
-					channelConfig := channel.GetSetting()
-					bukect := channelConfig.GoogleFileBucket
+				channelConfig := channel.GetSetting()
+				bukect := channelConfig.GoogleFileBucket
+				isGenai := channel.Type == constant.ChannelTypeGemini
+				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
+					if isGenai {
+						bukect = ""
+					}
 					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
@@ -523,7 +531,13 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 
 			} else if part.Type == dto.ContentTypeVideoUrl {
-				if channel.Type == constant.ChannelTypeVertexAi {
+				channelConfig := channel.GetSetting()
+				bukect := channelConfig.GoogleFileBucket
+				isGenai := channel.Type == constant.ChannelTypeGemini
+				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
+					if isGenai {
+						bukect = ""
+					}
 					videoFileUrl := ""
 					if videoUrl, ok := part.VideoUrl.(string); ok {
 						videoFileUrl = videoUrl
@@ -533,8 +547,6 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if videoFileUrl == "" {
 						continue
 					}
-					channelConfig := channel.GetSetting()
-					bukect := channelConfig.GoogleFileBucket
 					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())

@@ -6,20 +6,29 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"google.golang.org/genai"
 )
 
 func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, baseUrl string) (*genai.File, error) {
-	//client, err := storage.NewClient(ctx)
+	if strings.HasPrefix(fileUri, "https://storage.googleapis.com/") {
+		mimeType, err := GetFileMimeType(fileUri)
+		if err != nil {
+			return nil, err
+		}
+		return &genai.File{
+			URI:      fileUri,
+			MIMEType: mimeType,
+		}, nil
+	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
-		HTTPOptions: genai.HTTPOptions{
-			BaseURL:    baseUrl,
-			APIVersion: "v1",
-		},
+		//HTTPOptions: genai.HTTPOptions{
+		//	BaseURL:    baseUrl,
+		//	APIVersion: "v1",
+		//},
 	})
 	if err != nil {
 		return nil, err
@@ -43,13 +52,13 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 	}
 
 	// The BaseURL is already set by default in the genai client
-	timeout := 10 * time.Minute
+	//timeout := 10 * time.Minute
 	uploadConfig := &genai.UploadFileConfig{
 		MIMEType: mimeType,
-		HTTPOptions: &genai.HTTPOptions{
-			BaseURL: baseUrl,
-			Timeout: &timeout,
-		},
+		//HTTPOptions: &genai.HTTPOptions{
+		//	BaseURL: baseUrl,
+		//	Timeout: &timeout,
+		//},
 	}
 	file, err := client.Files.Upload(ctx, response.Body, uploadConfig)
 	if err != nil {

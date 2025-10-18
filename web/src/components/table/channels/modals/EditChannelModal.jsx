@@ -309,6 +309,8 @@ const EditChannelModal = (props) => {
     proxy: '',
     pass_through_body_enabled: false,
     system_prompt: '',
+    google_file_upload: '',
+    google_file_bucket: '',
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
@@ -490,6 +492,8 @@ const EditChannelModal = (props) => {
           data.system_prompt = parsedSettings.system_prompt || '';
           data.system_prompt_override =
             parsedSettings.system_prompt_override || false;
+          data.google_file_bucket = parsedSettings.google_file_bucket || '';
+          data.google_file_upload = parsedSettings.google_file_upload || '';
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -506,6 +510,8 @@ const EditChannelModal = (props) => {
         data.pass_through_body_enabled = false;
         data.system_prompt = '';
         data.system_prompt_override = false;
+        data.google_file_bucket = '';
+        data.google_file_upload = '';
       }
 
       if (data.settings) {
@@ -570,6 +576,8 @@ const EditChannelModal = (props) => {
         pass_through_body_enabled: data.pass_through_body_enabled,
         system_prompt: data.system_prompt,
         system_prompt_override: data.system_prompt_override || false,
+        google_file_bucket: data.google_file_bucket || '',
+        google_file_upload: data.google_file_upload || '',
       });
       // console.log(data);
     } else {
@@ -978,6 +986,8 @@ const EditChannelModal = (props) => {
       pass_through_body_enabled: localInputs.pass_through_body_enabled || false,
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
+      google_file_bucket: localInputs.google_file_bucket || '',
+      google_file_upload: localInputs.google_file_upload || '',
     };
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
@@ -2750,6 +2760,30 @@ const EditChannelModal = (props) => {
                       showClear
                       extraText={t('用于配置网络代理，支持 socks5 协议')}
                     />
+
+                    {inputs.type == 41 && (<Form.Input
+                      field='google_file_bucket'
+                      label={t('Google 文件存储桶')}
+                      placeholder={t('例如: my-bucket')}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('google_file_bucket', value)
+                      }
+                      showClear
+                      extraText={t('用于配置 Google 文件存储桶 vertex服务开启多模态是需要配置该参数')}
+                    />)}
+
+                    // Google Gemini
+                    {inputs.type === 24 && (<Form.Input
+                      field='google_file_upload'
+                      label={t('generativelanguage文件上传')}
+                      placeholder={t('例如: enabled是开启，disabled是关闭')}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('google_file_upload', value)
+                      }
+                      showClear
+                      extraText={t('enabled是开启，disabled是关闭,开启后,可以把附件上传到google')}
+                    />)
+                    }
 
                     <Form.TextArea
                       field='system_prompt'

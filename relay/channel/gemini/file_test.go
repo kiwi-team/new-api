@@ -9,8 +9,9 @@ import (
 // TestUploadFileToGemini_Integration 是一个集成测试，它会真实地上传文件到 Gemini API。
 func TestUploadFileToGemini_Integration(t *testing.T) {
 	// 1. 从环境变量中获取 API 密钥
-	apiKey := "AIzaSyAp4eSJmA6BSuS0SLIadwJnmBjzsabjtI0"
-	baseUrl := "https://aice.seedsnote.com/google"
+	//apiKey := "AIzaSyAp4eSJmA6BSuS0SLIadwJnmBjzsabjtI0"
+	apiKey := "AIzaSyA2NxmXGDE4GbjoT1giCcvK-DnKCRCUpCE"
+	baseUrl := ""
 	//fileUri := "1.mp4"
 	//fileUri := "17519768096356221.mp3"
 	fileUri := "https://ark-project.tos-cn-beijing.volces.com/images/view.jpeg"
@@ -28,9 +29,19 @@ func TestUploadFileToGemini_Integration(t *testing.T) {
 	if uploadedFile == nil {
 		t.Fatal("Expected a file from Gemini, but got nil")
 	}
-	if uploadedFile.Name == "" {
+	if uploadedFile.URI == "" {
 		t.Error("Expected uploaded file to have a name, but it was empty")
 	}
 
-	t.Logf("Successfully uploaded file to Gemini. Remote name: %s", uploadedFile.Name)
+	t.Logf("Successfully uploaded file to Gemini. uri: %s", uploadedFile.URI)
+}
+
+func TestGetFileMimeType(t *testing.T) {
+	//fileUri := "https://ark-project.tos-cn-beijing.volces.com/images/view.jpeg"
+	fileUri := "https://storage.googleapis.com/toiotech2/20250930031649_pAmVLBJ5D0.jpg"
+	mimeType, err := GetFileMimeType(fileUri)
+	if err != nil {
+		t.Fatalf("GetFileMimeType failed: %v", err)
+	}
+	fmt.Printf("mimeType: %s\n", mimeType)
 }

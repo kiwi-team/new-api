@@ -258,6 +258,19 @@ func (channel *Channel) SaveWithoutKey() error {
 	return DB.Omit("key").Save(channel).Error
 }
 
+func GetAllVertexChannels() ([]*Channel, error) {
+	var channels []*Channel
+	var ret []*Channel
+	err := DB.Where("type = ? and status = ?", constant.ChannelTypeVertexAi, common.ChannelStatusEnabled).Find(&channels).Error
+	for _, channel := range channels {
+		setting := channel.GetSetting()
+		if setting.GoogleFileBucket != "" {
+			ret = append(ret, channel)
+		}
+	}
+	return ret, err
+}
+
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
