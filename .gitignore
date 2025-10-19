@@ -19,6 +19,7 @@ error_warning.txt
 pprof/
 py/
 .eslintcache
+.gocache
 
 electron/node_modules
 electron/dist

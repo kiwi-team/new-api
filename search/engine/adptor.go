@@ -3,7 +3,8 @@ package engine
 import (
 	"io"
 	"net/http"
-	searchcommon "one-api/search/common"
+
+	searchcommon "github.com/QuantumNous/new-api/search/common"
 
 	"github.com/gin-gonic/gin"
 )

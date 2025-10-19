@@ -3,9 +3,10 @@ package model
 import (
 	"errors"
 	"fmt"
-	"one-api/common"
-	"one-api/dto"
-	"one-api/types"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/types"
 )
 
 type ErrorLog struct {

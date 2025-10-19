@@ -3,13 +3,15 @@ package search
 import (
 	"errors"
 	"net/http"
-	"one-api/common"
-	"one-api/constant"
-	"one-api/model"
-	searchCommon "one-api/search/common"
-	"one-api/search/engine"
-	"one-api/search/engine/serper"
 	"time"
+
+	"github.com/QuantumNous/new-api/search/engine"
+	"github.com/QuantumNous/new-api/search/engine/serper"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	searchCommon "github.com/QuantumNous/new-api/search/common"
 
 	"github.com/gin-gonic/gin"
 )

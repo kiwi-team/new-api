@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"one-api/common"
-	"one-api/model"
-	"one-api/relay/channel/gemini"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/gemini"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/genai"

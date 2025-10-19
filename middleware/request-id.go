@@ -2,8 +2,8 @@ package middleware
 
 import (
 	"context"
-	"one-api/common"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 )
 

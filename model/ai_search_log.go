@@ -1,8 +1,9 @@
 package model
 
 import (
-	"one-api/common"
-	searchCommon "one-api/search/common"
+	"github.com/QuantumNous/new-api/common"
+
+	searchCommon "github.com/QuantumNous/new-api/search/common"
 )
 
 type AiSearchLog struct {

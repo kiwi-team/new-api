@@ -3,12 +3,13 @@ package model
 import (
 	"context"
 	"fmt"
-	"one-api/common"
-	"one-api/logger"
-	"one-api/types"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 
@@ -41,13 +42,15 @@ type Log struct {
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 }
 
+// don't use iota, avoid change log type value
 const (
-	LogTypeUnknown = iota
-	LogTypeTopup
-	LogTypeConsume
-	LogTypeManage
-	LogTypeSystem
-	LogTypeError
+	LogTypeUnknown = 0
+	LogTypeTopup   = 1
+	LogTypeConsume = 2
+	LogTypeManage  = 3
+	LogTypeSystem  = 4
+	LogTypeError   = 5
+	LogTypeRefund  = 6
 )
 
 func formatUserLogs(logs []*Log) {

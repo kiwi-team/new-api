@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"one-api/search"
+	"github.com/QuantumNous/new-api/search"
 
 	"github.com/gin-gonic/gin"
 )

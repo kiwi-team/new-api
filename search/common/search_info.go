@@ -1,8 +1,9 @@
 package common
 
 import (
-	"one-api/common"
-	"one-api/constant"
+	"github.com/QuantumNous/new-api/constant"
+
+	"github.com/QuantumNous/new-api/common"
 
 	"github.com/gin-gonic/gin"
 )

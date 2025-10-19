@@ -8,10 +8,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"one-api/common"
-	"one-api/logger"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"

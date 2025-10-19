@@ -2,10 +2,10 @@ package model
 
 import (
 	"fmt"
-	"one-api/common"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
 

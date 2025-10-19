@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"one-api/model"
-	searchcommon "one-api/search/common"
-	"one-api/service"
+
+	"github.com/QuantumNous/new-api/model"
+	searchcommon "github.com/QuantumNous/new-api/search/common"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )

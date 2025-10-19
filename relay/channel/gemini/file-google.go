@@ -7,10 +7,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"one-api/common"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"

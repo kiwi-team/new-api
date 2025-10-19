@@ -3,12 +3,13 @@ package controller
 import (
 	"fmt"
 	"net/http"
-	"one-api/common"
-	"one-api/model"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 )
