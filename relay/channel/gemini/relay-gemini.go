@@ -414,7 +414,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				if strings.HasPrefix(part.GetImageMedia().Url, "http") {
 					channelConfig := channel.GetSetting()
 					bukect := channelConfig.GoogleFileBucket
-					isGenai := channel.Type == constant.ChannelTypeGemini
+					isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 					if channel.Type == constant.ChannelTypeVertexAi || isGenai {
 						if isGenai {
 							bukect = ""
@@ -501,7 +501,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 				channelConfig := channel.GetSetting()
 				bukect := channelConfig.GoogleFileBucket
-				isGenai := channel.Type == constant.ChannelTypeGemini
+				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
 					if isGenai {
 						bukect = ""
@@ -533,7 +533,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			} else if part.Type == dto.ContentTypeVideoUrl {
 				channelConfig := channel.GetSetting()
 				bukect := channelConfig.GoogleFileBucket
-				isGenai := channel.Type == constant.ChannelTypeGemini
+				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
 					if isGenai {
 						bukect = ""
@@ -603,7 +603,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 
 		}
 	}
-
+	//fmt.Printf("geminiRequest: %v\n", common.JsonStringify(geminiRequest))
 	return &geminiRequest, nil
 }
 

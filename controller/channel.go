@@ -49,6 +49,8 @@ func parseStatusFilter(statusParam string) int {
 		return common.ChannelStatusEnabled
 	case "disabled", "0":
 		return 0
+	case "auto_disabled":
+		return common.ChannelStatusAutoDisabled
 	default:
 		return -1
 	}
@@ -118,6 +120,8 @@ func GetAllChannels(c *gin.Context) {
 		}
 		if statusFilter == common.ChannelStatusEnabled || scope == "all" {
 			baseQuery = baseQuery.Where("status = ?", common.ChannelStatusEnabled)
+		} else if statusFilter == common.ChannelStatusAutoDisabled {
+			baseQuery = baseQuery.Where("status = ?", common.ChannelStatusAutoDisabled)
 		} else if statusFilter == 0 {
 			baseQuery = baseQuery.Where("status != ?", common.ChannelStatusEnabled)
 		}

@@ -110,7 +110,7 @@ func UploadByConfigAPI(ctx context.Context, fileUri string) (*genai.File, error)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", authToken)
+	req.Header.Set("Authorization", "Bearer "+authToken)
 	req.Header.Set("New-Api-User", userId)
 	req.Header.Set("Content-Type", "application/json")
 

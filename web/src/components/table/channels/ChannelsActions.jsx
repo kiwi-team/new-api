@@ -272,6 +272,7 @@ const ChannelsActions = ({
               <Select.Option value='all'>{t('全部')}</Select.Option>
               <Select.Option value='enabled'>{t('已启用')}</Select.Option>
               <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
+              <Select.Option value='auto_disabled'>{t('自动禁用')}</Select.Option>
             </Select>
           </div>
         </div>
