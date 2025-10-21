@@ -362,7 +362,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 	isGuoguo := strings.Contains(info.ChannelBaseUrl, "aiguoguo")
 	isChat := strings.Contains(info.ChannelBaseUrl, "chataiapi")
-	if (isGuoguo || isChat) && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+	isNuwa := strings.Contains(info.ChannelBaseUrl, "nuwa")
+	if (isGuoguo || isChat || isNuwa) && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
 		// "content": "没问题，这是添加了哆啦A梦的图片：\n![Image_1](https://img.aiguoguo199.com/file/BQACAgUAAyEGAASaOQ3XAALZo2jnt2LJXF_Do-uv5TWSIXZ6wAT0AAJIHQACAs44V_l87WpYb56INgQ.png)"
 		// 处理图片地址，改成toiotech的地址
 		for i, choice := range simpleResponse.Choices {

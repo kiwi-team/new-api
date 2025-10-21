@@ -70,6 +70,8 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	return errorLogs, total, err
 }
 
+var LogList []*ErrorLog
+
 func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
@@ -91,11 +93,18 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		RequestId:    requestId,
 		ClientUserId: clientUserId,
 	}
-	err1 := DB.Create(log).Error
-	if err1 != nil {
-		common.SysError("failed to record error_log: " + err1.Error())
+	LogList = append(LogList, log)
+	size := len(LogList)
+	if size >= common.ErrorLogBatchSize {
+		err1 := DB.CreateInBatches(LogList, size).Error
+		if err1 != nil {
+			common.SysError("failed to record error_log: " + err1.Error())
+		} else {
+			LogList = make([]*ErrorLog, 0)
+		}
+		return err1
 	}
-	return err1
+	return nil
 }
 
 type ErrorLogStatistics struct {

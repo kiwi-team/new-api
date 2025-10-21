@@ -110,6 +110,7 @@ func InitEnv() {
 	ErrorWarningUserIds = GetEnvOrDefaultString("ERROR_WARNING_USER_IDS", "")
 
 	DeleteErrorLogsEnabled = GetEnvOrDefaultBool("DELETE_ERROR_LOGS_ENABLED", false)
+	ErrorLogBatchSize = GetEnvOrDefault("ERROR_LOG_BATCH_SIZE", 1)
 
 	initConstantEnv()
 }

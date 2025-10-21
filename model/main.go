@@ -219,8 +219,9 @@ func InitDB() (err error) {
 			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
 		}
 		common.SysLog("database migration started")
-		err = migrateDB()
-		return err
+		//err = migrateDB()
+		//return err
+		return nil
 	} else {
 		common.FatalLog(err)
 	}
