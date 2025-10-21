@@ -613,7 +613,6 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 
 		}
 	}
-	//fmt.Printf("geminiRequest: %v\n", common.JsonStringify(geminiRequest))
 	return &geminiRequest, nil
 }
 

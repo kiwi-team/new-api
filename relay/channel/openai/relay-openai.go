@@ -316,6 +316,14 @@ func ParseTextAndImageURL(input string) (text string, imageURL string, err error
 		return text, imageData, nil
 	}
 
+	index := strings.Index(input, "data:image/")
+	if index != -1 {
+		imageData := input[index:]
+		imageData = strings.Trim(imageData, ")")
+		text := strings.TrimSpace(input[:index])
+		return text, imageData, nil
+	}
+
 	// 如果都不匹配，返回错误
 	return "", "", fmt.Errorf("字符串格式不匹配，既不是Markdown格式也不是base64格式")
 

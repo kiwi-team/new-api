@@ -27,6 +27,8 @@ if [ "$onlyone" = "1" ]; then
   deploy_to_host 161.189.239.3 "newapi-1"
 elif [ "$onlyone" = "2" ]; then
   deploy_to_host 68.79.61.248 "newapi-2"
+elif [ "$onlyone" = "3" ]; then
+  deploy_to_host 68.79.61.248 "newapi-3"
 else
   deploy_to_host 161.189.239.3 "newapi-1"
   deploy_to_host 68.79.61.248 "newapi-2"

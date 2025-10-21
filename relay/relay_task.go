@@ -23,6 +23,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 走了我
+type OverSeaTaskResp struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Error    interface{} `json:"error"`
+		Format   string      `json:"format"`
+		Metadata interface{} `json:"metadata"`
+		Status   string      `json:"status"`
+		TaskID   string      `json:"task_id"`
+		URL      string      `json:"url"`
+	} `json:"data"`
+}
+
 /*
 Task 任务通过平台、Action 区分任务
 */
@@ -309,6 +323,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	userId := c.GetInt("id")
 
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
+	//fmt.Printf("videoFetchByIDRespBodyBuilder originTask: %#v\n", originTask)
 	if err != nil {
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
@@ -320,6 +335,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	func() {
 		channelModel, err2 := model.GetChannelById(originTask.ChannelId, true)
+		//fmt.Printf("videoFetchByIDRespBodyBuilder channelModel: %#v\n", channelModel)
 		if err2 != nil {
 			return
 		}
@@ -328,8 +344,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			//return
 		}
 		baseURL := constant.ChannelBaseURLs[channelModel.Type]
+		//fmt.Printf("videoFetchByIDRespBodyBuilder baseURL: %s\n", baseURL)
 		if channelModel.GetBaseURL() != "" {
 			baseURL = channelModel.GetBaseURL()
+			//fmt.Printf("videoFetchByIDRespBodyBuilder baseURL2: %s\n", baseURL)
 		}
 		adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
 		if adaptor == nil {
@@ -347,6 +365,25 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		if err2 != nil {
 			return
 		}
+		// osTask, errr1 := parseOverSeaTaskResult(body)
+		// if errr1 == nil && osTask != nil {
+		// 	if osTask.Code == "success" {
+		// 		out := map[string]any{
+		// 			"error":    osTask.Data.Error,
+		// 			"format":   osTask.Data.Format,
+		// 			"metadata": osTask.Data.Metadata,
+		// 			"status":   osTask.Data.Status,
+		// 			"task_id":  originTask.TaskID,
+		// 			"url":      osTask.Data.URL,
+		// 		}
+		// 		respBody, _ = json.Marshal(dto.TaskResponse[any]{
+		// 			Code: "success",
+		// 			Data: out,
+		// 		})
+		// 	}
+		// 	return
+		// }
+
 		ti, err2 := adaptor.ParseTaskResult(body)
 		if err2 == nil && ti != nil {
 			if ti.Status != "" {
@@ -429,6 +466,18 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+/*
+{"code":"success","message":"","data":{"error":null,"format":"mp4","metadata":null,"status":"succeeded","task_id":"cHJvamVjdHMvdXF6dWp6LWF2ZXJ5LTU0L2xvY2F0aW9ucy9nbG9iYWwvcHVibGlzaGVycy9nb29nbGUvbW9kZWxzL3Zlby0zLjEtZmFzdC1nZW5lcmF0ZS1wcmV2aWV3L29wZXJhdGlvbnMvZWViZjNjNTgtN2JhMi00N2ZmLTkwZjAtNTZkZjhjNWI0OTg0","url":"https://toiotech.s3.cn-northwest-1.amazonaws.com.cn/videos/1760956445212461013-vVEnvfu3P3.mp4"}}
+*/
+func parseOverSeaTaskResult(respBody []byte) (*OverSeaTaskResp, error) {
+	var ti OverSeaTaskResp
+	err := json.Unmarshal(respBody, &ti)
+	if err != nil {
+		return nil, err
+	}
+	return &ti, nil
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {

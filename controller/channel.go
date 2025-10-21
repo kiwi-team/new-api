@@ -297,13 +297,16 @@ func SearchChannels(c *gin.Context) {
 		channelData = channels
 	}
 
-	if statusFilter == common.ChannelStatusEnabled || statusFilter == 0 {
+	if statusFilter == common.ChannelStatusEnabled || statusFilter == 0 || statusFilter == common.ChannelStatusAutoDisabled {
 		filtered := make([]*model.Channel, 0, len(channelData))
 		for _, ch := range channelData {
 			if statusFilter == common.ChannelStatusEnabled && ch.Status != common.ChannelStatusEnabled {
 				continue
 			}
 			if statusFilter == 0 && ch.Status == common.ChannelStatusEnabled {
+				continue
+			}
+			if statusFilter == common.ChannelStatusAutoDisabled && ch.Status == common.ChannelStatusAutoDisabled {
 				continue
 			}
 			filtered = append(filtered, ch)

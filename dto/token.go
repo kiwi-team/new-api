@@ -21,3 +21,10 @@ type OnlyTextChannels struct {
 	ChannelIds []int  `json:"channel_ids,omitempty"`
 	RandomType string `json:"random_type,omitempty"` // random,order
 }
+
+// SpecialChannels 特殊渠道，比如不包含视频的渠道，和包含视频的渠道
+type SpecailChannels struct {
+	ModelName  string `json:"model_name,omitempty"`
+	ChannelIds []int  `json:"channel_ids,omitempty"`
+	RandomType string `json:"random_type,omitempty"` // random,order
+}

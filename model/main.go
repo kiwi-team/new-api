@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"gorm.io/gorm/logger"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -129,11 +130,27 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 			} else {
 				common.LogSqlType = common.DatabaseTypePostgreSQL
 			}
+			// === 2️⃣ 创建 GORM Logger（只打印错误，不打印慢SQL）===
+			// === 1️⃣ 单独创建一个 GORM 日志文件 ===
+			gormLogFile, err := os.OpenFile("./logs/gorm-error.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				panic("failed to open gorm log file: " + err.Error())
+			}
+			gormLogger := logger.New(
+				log.New(gormLogFile, "\r\n", log.LstdFlags), // 日志输出位置
+				logger.Config{
+					//SlowThreshold:             time.Second, // 慢SQL阈值（无效，因为 LogLevel=Error）
+					LogLevel:                  logger.Error, // ✅ 只打印错误日志
+					IgnoreRecordNotFoundError: true,         // 忽略 RecordNotFound 错误
+					Colorful:                  false,
+				},
+			)
 			return gorm.Open(postgres.New(postgres.Config{
 				DSN:                  dsn,
 				PreferSimpleProtocol: true, // disables implicit prepared statement usage
 			}), &gorm.Config{
 				PrepareStmt: true, // precompile SQL
+				Logger:      gormLogger,
 			})
 		}
 		if strings.HasPrefix(dsn, "local") {
@@ -217,7 +234,9 @@ func InitLogDB() (err error) {
 	}
 	db, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
-		if common.DebugEnabled {
+		// Use separate environment variable for log DB debug mode to avoid slow SQL logs
+		// Set LOG_DB_DEBUG=true to enable debug mode for log database
+		if common.GetEnvOrDefaultBool("LOG_DB_DEBUG", false) {
 			db = db.Debug()
 		}
 		LOG_DB = db

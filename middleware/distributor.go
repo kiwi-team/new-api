@@ -110,6 +110,22 @@ func Distribute() func(c *gin.Context) {
 		if len(tags) == 0 && len(onlyTextChannelIds) > 0 {
 			channelIds = onlyTextChannelIds
 		}
+		specialVideoChannelIds := make([]int, 0)
+		if len(tags) > 0 {
+			if slices.Contains(tags, "video") {
+				specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "VideoChannels")
+			} else {
+				if len(tags) == 1 && tags[0] == "image" {
+					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "OnlyImageChannels")
+				} else {
+					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "NoVideoChannels")
+				}
+			}
+
+		}
+		if len(specialVideoChannelIds) > 0 {
+			channelIds = specialVideoChannelIds
+		}
 		c.Set("token_channel_ids", channelIds)
 
 		//userGroup := c.GetString(constant.ContextKeyUserGroup)
@@ -250,6 +266,39 @@ func Distribute() func(c *gin.Context) {
 		}
 		c.Next()
 	}
+}
+
+func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, error) {
+	specialChannelsConfigStr := common.OptionMap[key]
+	ids := make([]int, 0)
+	if len(specialChannelsConfigStr) == 0 {
+		return ids, nil
+	}
+	specialChannels := []dto.SpecailChannels{}
+	err := json.Unmarshal([]byte(specialChannelsConfigStr), &specialChannels)
+	if err == nil {
+		for _, item := range specialChannels {
+			if item.ModelName == modelName {
+				ids = item.ChannelIds
+				if item.RandomType == "random" {
+					common.ShuffleSlice(ids)
+				}
+				break
+			}
+		}
+		if len(ids) == 0 {
+			for _, item := range specialChannels {
+				if common.RegMatch(item.ModelName, modelName) {
+					ids = item.ChannelIds
+					if item.RandomType == "random" {
+						common.ShuffleSlice(ids)
+					}
+					break
+				}
+			}
+		}
+	}
+	return ids, nil
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {

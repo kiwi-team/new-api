@@ -307,7 +307,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			if message.IsStringContent() {
 				systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
 					Type: "text",
-					Text: common.GetPointer[string](message.StringContent()),
+					Text: common.GetPointer(message.StringContent()),
 				})
 			} else {
 				// 支持复合内容的system消息（虽然不常见，但需要考虑完整性）
@@ -315,7 +315,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					if ctx.Type == "text" {
 						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
 							Type: "text",
-							Text: common.GetPointer[string](ctx.Text),
+							Text: common.GetPointer(ctx.Text),
 						})
 					}
 					// 未来可以在这里扩展对图片等其他类型的支持

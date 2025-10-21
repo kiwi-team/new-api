@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -31,6 +32,7 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 		//},
 	})
 	if err != nil {
+		fmt.Printf("failed to create genai client, err: %v\n", err)
 		return nil, err
 	}
 
@@ -64,8 +66,26 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 	if err != nil {
 		return nil, err
 	}
+
+	// check file state
+	file, err = CheckFileState(ctx, client, file)
+	if err != nil {
+		fmt.Printf("failed to check file state, err: %v\n", err)
+		return nil, err
+	}
 	return &genai.File{
 		URI:      file.URI,
 		MIMEType: mimeType,
 	}, nil
+}
+
+func CheckFileState(ctx context.Context, client *genai.Client, file *genai.File) (*genai.File, error) {
+	max := 0
+	for file.State != genai.FileStateActive && max < 10 {
+		fmt.Printf("file state is processing, wait for 10 * %d seconds\n", max+1)
+		time.Sleep(10 * time.Second)
+		file, _ = client.Files.Get(ctx, file.Name, nil)
+		max = max + 1
+	}
+	return file, nil
 }

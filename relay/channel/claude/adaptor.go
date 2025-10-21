@@ -91,7 +91,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	if strings.HasPrefix(request.Model, "claude-") {
+	if strings.HasPrefix(request.Model, "claude-") && request.THINKING != nil {
 		var thinking dto.AnthropicThinking
 		err := json.Unmarshal(request.THINKING, &thinking)
 		if err != nil {

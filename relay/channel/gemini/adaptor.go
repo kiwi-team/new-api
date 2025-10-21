@@ -170,8 +170,13 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	req.Set("x-goog-api-key", info.ApiKey)
-	req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
+	if strings.HasPrefix(info.ChannelBaseUrl, "https://generativelanguage.googleapis.com") {
+		req.Set("x-goog-api-key", info.ApiKey)
+	} else {
+		// 第三方渠道
+		req.Set("x-goog-api-key", info.ApiKey) // 是否需要，根据实际情况判断
+		req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
+	}
 	return nil
 }
 
