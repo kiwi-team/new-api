@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -255,7 +256,22 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 			}
 		}
 	}
-
+	setModelMap(c, info, &req)
 	storeTaskRequest(c, info, action, req)
 	return nil
+}
+
+func setModelMap(c *gin.Context, info *RelayInfo, req *TaskSubmitReq) {
+	// map model name
+	modelMapping := c.GetString("model_mapping")
+	if modelMapping != "" && modelMapping != "{}" {
+		modelMap := make(map[string]string)
+		err := json.Unmarshal([]byte(modelMapping), &modelMap)
+		if err != nil {
+			fmt.Printf("unmarshal_model_mapping_failed, err: %v", err)
+		}
+		if mappedModel, exists := modelMap[req.Model]; exists && mappedModel != "" {
+			req.Model = mappedModel
+		}
+	}
 }

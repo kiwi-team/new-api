@@ -117,6 +117,7 @@ func Distribute() func(c *gin.Context) {
 			} else {
 				if len(tags) == 1 && tags[0] == "image" {
 					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "OnlyImageChannels")
+					fmt.Printf("OnlyImageChannels: %v\n", specialVideoChannelIds)
 				} else {
 					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "NoVideoChannels")
 				}
@@ -400,6 +401,21 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = modelName
 		}
 		c.Set("relay_mode", relayMode)
+	} else if strings.Contains(c.Request.URL.Path, "/v1/async/image/generations") {
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodGet {
+			relayMode = relayconstant.RelayModeVideoFetchByID
+			shouldSelectChannel = false
+		} else if c.Request.Method == http.MethodPost {
+			relayMode = relayconstant.RelayModeVideoSubmit
+			err = common.UnmarshalBodyReusable(c, &modelRequest)
+			if err != nil {
+				return nil, false, errors.New("无效的image generations请求, " + err.Error())
+			}
+		}
+		if _, ok := c.Get("relay_mode"); !ok {
+			c.Set("relay_mode", relayMode)
+		}
 	} else if !strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions") && !strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
 		err = common.UnmarshalBodyReusable(c, &modelRequest)
 	}

@@ -15,6 +15,8 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -51,8 +53,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		platform = GetTaskPlatform(c)
 	}
 
-	info.InitChannelMeta(c)
-	adaptor := GetTaskAdaptor(platform)
+	var adaptor channel.TaskAdaptor
+	if strings.Contains(info.ChannelBaseUrl, "yunwu") {
+		platform = constant.TaskPlatformYunwuVeo
+		adaptor = &yunwu.TaskAdaptor{}
+	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
+		adaptor = &ppio.TaskAdaptor{}
+		platform = constant.TaskPlatformPPioHunyuanImage
+	} else {
+		adaptor = GetTaskAdaptor(platform)
+	}
 	if adaptor == nil {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
@@ -142,6 +152,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		taskErr = service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 		return
 	}
+
 	// do request
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
@@ -240,7 +251,8 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
 }
 
-func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
+func RelayTaskFetch(c *gin.Context, relayInfo *relaycommon.RelayInfo) (taskResp *dto.TaskError) {
+	relayMode := relayInfo.RelayMode
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
@@ -335,7 +347,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	func() {
 		channelModel, err2 := model.GetChannelById(originTask.ChannelId, true)
-		//fmt.Printf("videoFetchByIDRespBodyBuilder channelModel: %#v\n", channelModel)
 		if err2 != nil {
 			return
 		}
@@ -347,9 +358,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		//fmt.Printf("videoFetchByIDRespBodyBuilder baseURL: %s\n", baseURL)
 		if channelModel.GetBaseURL() != "" {
 			baseURL = channelModel.GetBaseURL()
-			//fmt.Printf("videoFetchByIDRespBodyBuilder baseURL2: %s\n", baseURL)
 		}
 		adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
+		if strings.Contains(baseURL, "yunwu") {
+			adaptor = &yunwu.TaskAdaptor{}
+		} else if strings.Contains(baseURL, "ppinfra") {
+			adaptor = &ppio.TaskAdaptor{}
+		}
 		if adaptor == nil {
 			return
 		}
@@ -365,24 +380,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		if err2 != nil {
 			return
 		}
-		// osTask, errr1 := parseOverSeaTaskResult(body)
-		// if errr1 == nil && osTask != nil {
-		// 	if osTask.Code == "success" {
-		// 		out := map[string]any{
-		// 			"error":    osTask.Data.Error,
-		// 			"format":   osTask.Data.Format,
-		// 			"metadata": osTask.Data.Metadata,
-		// 			"status":   osTask.Data.Status,
-		// 			"task_id":  originTask.TaskID,
-		// 			"url":      osTask.Data.URL,
-		// 		}
-		// 		respBody, _ = json.Marshal(dto.TaskResponse[any]{
-		// 			Code: "success",
-		// 			Data: out,
-		// 		})
-		// 	}
-		// 	return
-		// }
 
 		ti, err2 := adaptor.ParseTaskResult(body)
 		if err2 == nil && ti != nil {
@@ -420,6 +417,12 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				status = "failed"
 			case model.TaskStatusQueued, model.TaskStatusSubmitted:
 				status = "queued"
+			}
+			if strings.HasPrefix(originTask.FailReason, "https://") {
+				arr := strings.Split(originTask.FailReason, ".")
+				if len(arr) > 0 {
+					format = arr[len(arr)-1]
+				}
 			}
 			out := map[string]any{
 				"error":    nil,

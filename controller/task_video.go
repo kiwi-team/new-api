@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +15,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
@@ -45,6 +48,11 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
 	adaptor := relay.GetTaskAdaptor(platform)
+	if strings.Contains(cacheGetChannel.GetBaseURL(), "yunwu") {
+		adaptor = &yunwu.TaskAdaptor{}
+	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "ppinfra") {
+		adaptor = &ppio.TaskAdaptor{}
+	}
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
 	}

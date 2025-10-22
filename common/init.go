@@ -111,6 +111,7 @@ func InitEnv() {
 
 	DeleteErrorLogsEnabled = GetEnvOrDefaultBool("DELETE_ERROR_LOGS_ENABLED", false)
 	ErrorLogBatchSize = GetEnvOrDefault("ERROR_LOG_BATCH_SIZE", 1)
+	SaveErrorLog = GetEnvOrDefaultBool("SAVE_ERROR_LOG", false)
 
 	initConstantEnv()
 }

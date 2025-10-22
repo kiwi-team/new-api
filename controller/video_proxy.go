@@ -79,6 +79,24 @@ func VideoProxy(c *gin.Context) {
 		})
 		return
 	}
+	if strings.Contains(channel.GetBaseURL(), "yunwu") {
+		model.TaskUpdateVideoUrl(task.ID, task.FailReason)
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"url": task.FailReason,
+			},
+		})
+		return
+	}
+	if strings.Contains(channel.GetBaseURL(), "ppinfra") {
+		model.TaskUpdateVideoUrl(task.ID, task.FailReason)
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"url": task.FailReason,
+			},
+		})
+		return
+	}
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"

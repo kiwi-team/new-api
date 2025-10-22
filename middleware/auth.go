@@ -3,6 +3,7 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -318,6 +319,8 @@ func setMultiModelTags(c *gin.Context) []string {
 			}
 		}
 	}
+	// tags 去掉重复元素
+	tags = slices.Compact(tags)
 	c.Set("multi_model_tags", tags)
 	return tags
 }

@@ -22,6 +22,13 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.GET("/videos/:task_id", controller.RelayTask)
 	}
 
+	imageTaskRouter := router.Group("/v1/async")
+	imageTaskRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		imageTaskRouter.POST("/image/generations", controller.RelayTask)
+		imageTaskRouter.GET("/image/generations/:task_id", controller.RelayTask)
+	}
+
 	klingV1Router := router.Group("/kling/v1")
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
 	{
@@ -38,4 +45,5 @@ func SetVideoRouter(router *gin.Engine) {
 		// Maps to: /?Action=CVSync2AsyncSubmitTask&Version=2022-08-31 and /?Action=CVSync2AsyncGetResult&Version=2022-08-31
 		jimengOfficialGroup.POST("/", controller.RelayTask)
 	}
+
 }

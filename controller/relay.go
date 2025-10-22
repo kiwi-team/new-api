@@ -248,7 +248,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+		if common.SaveErrorLog {
+			go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+		}
 
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
 			break
@@ -395,7 +397,9 @@ func RelayClaude(c *gin.Context) {
 		}
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
-		go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+		if common.SaveErrorLog {
+			go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+		}
 
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)
 
@@ -737,7 +741,7 @@ func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.Tas
 	var err *dto.TaskError
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeSunoFetch, relayconstant.RelayModeSunoFetchByID, relayconstant.RelayModeVideoFetchByID:
-		err = relay.RelayTaskFetch(c, relayInfo.RelayMode)
+		err = relay.RelayTaskFetch(c, relayInfo)
 	default:
 		err = relay.RelayTaskSubmit(c, relayInfo)
 	}

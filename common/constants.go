@@ -29,6 +29,7 @@ var DataExportInterval = 1         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar
 var ErrorLogBatchSize = 1
+var SaveErrorLog = false
 
 var QuotaWarningEnabled = false
 var QuotaWarningThreshold = 1000 // unit: dollar
