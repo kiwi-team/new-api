@@ -43,7 +43,7 @@ type YunwuSoraTaskSubmitRequest struct {
 	Size string `json:"size"`
 	// 默认为： true  会优先无水印，如果出错，会兜底到有水印
 	// 传递 false 的话 会强制让视频无水印，遇到去水印错误的会一直自动重试
-	Watermark string `json:"watermark"`
+	Watermark bool `json:"watermark,omitempty"`
 }
 
 type YunwuSoraTaskSubmitResponse struct {
@@ -131,6 +131,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Size:        req.Size,
 		Orientation: getOrientation(&req),
 		Images:      req.Images,
+		Watermark:   true,
 	}
 
 	data, err := json.Marshal(body)
@@ -207,35 +208,35 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	ti.Status = model.TaskStatusInProgress
 	ti.Progress = "50%"
-	pendingStatus := []string{"pending", "image_downloading", "video_generating", "video_generation_completed", "video_upsampling", "video_upsampling_completed"}
+	pendingStatus := []string{"pending", "running", "image_downloading", "video_generating", "video_generation_completed", "video_upsampling", "video_upsampling_completed"}
 	if slices.Contains(pendingStatus, op.Status) {
 		return ti, nil
 	}
 	if op.Status == "completed" {
 		ti.Status = model.TaskStatusSuccess
 		ti.Progress = "100%"
-	}
-	if op.VideoURL != "" { // some variants use `video` as base64
-		if _, ok := FinishedTaskMap[op.ID]; ok {
-			ti.Url = FinishedTaskMap[op.ID]
+		if op.VideoURL != "" { // some variants use `video` as base64
+			if _, ok := FinishedTaskMap[op.ID]; ok {
+				ti.Url = FinishedTaskMap[op.ID]
+				return ti, nil
+			}
+			if file, err := service.SimpleUploadToS3(context.Background(), op.VideoURL); err == nil {
+				ti.Url = file
+				FinishedTaskMap[op.ID] = file
+			}
 			return ti, nil
 		}
-		if file, err := service.SimpleUploadToS3(context.Background(), op.VideoURL); err == nil {
-			ti.Url = file
-			FinishedTaskMap[op.ID] = file
+		if op.Detail != nil {
+			detail, ok := op.Detail.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid detail type")
+			}
+			if file, err := service.SimpleUploadToS3(context.Background(), detail["url"].(string)); err == nil {
+				ti.Url = file
+				FinishedTaskMap[op.ID] = file
+			}
+			return ti, nil
 		}
-		return ti, nil
-	}
-	if op.Detail != nil {
-		detail, ok := op.Detail.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("invalid detail type")
-		}
-		if file, err := service.SimpleUploadToS3(context.Background(), detail["url"].(string)); err == nil {
-			ti.Url = file
-			FinishedTaskMap[op.ID] = file
-		}
-		return ti, nil
 	}
 	return ti, nil
 }
