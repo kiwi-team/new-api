@@ -76,56 +76,28 @@ func Distribute() func(c *gin.Context) {
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
 			tags = tagsAny.([]string)
 		}
-		onlyTextChannelsConfigStr := common.OptionMap["OnlyTextChannels"]
-		onlyTextChannels := []dto.OnlyTextChannels{}
-		err = json.Unmarshal([]byte(onlyTextChannelsConfigStr), &onlyTextChannels)
-		onlyTextChannelIds := make([]int, 0)
-		if err == nil {
-			for _, item := range onlyTextChannels {
-				if item.ModelName == modelName {
-					onlyTextChannelIds = item.ChannelIds
-					if item.RandomType == "random" {
-						common.ShuffleSlice(onlyTextChannelIds)
-					}
-					break
-				}
-			}
-			if len(onlyTextChannelIds) == 0 {
-				for _, item := range onlyTextChannels {
-					if common.RegMatch(item.ModelName, modelName) {
-						onlyTextChannelIds = item.ChannelIds
-						if item.RandomType == "random" {
-							common.ShuffleSlice(onlyTextChannelIds)
-						}
-						break
-					}
-				}
-			}
-		}
 		if channelRules != nil {
 			c.Set("new_retry_times", channelRules.Retry)
 			channelIds = model.GetChannelIdsByRule(channelRules, tags)
 		}
-		// 如果是存文本，且设置了全局的文本渠道，那么就使用全局的文本渠道
-		if len(tags) == 0 && len(onlyTextChannelIds) > 0 {
-			channelIds = onlyTextChannelIds
-		}
-		specialVideoChannelIds := make([]int, 0)
+		var specialChannelIds = make([]int, 0)
 		if len(tags) > 0 {
 			if slices.Contains(tags, "video") {
-				specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "VideoChannels")
+				specialChannelIds, _ = getSpecialChannels(c, modelName, "VideoChannels")
 			} else {
 				if len(tags) == 1 && tags[0] == "image" {
-					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "OnlyImageChannels")
-					fmt.Printf("OnlyImageChannels: %v\n", specialVideoChannelIds)
+					specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyImageChannels")
 				} else {
-					specialVideoChannelIds, _ = getSpecialChannels(c, modelName, "NoVideoChannels")
+					specialChannelIds, _ = getSpecialChannels(c, modelName, "NoVideoChannels")
 				}
 			}
-
+		} else {
+			// 如果是存文本，且设置了全局的文本渠道，那么就使用全局的文本渠道
+			specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyTextChannels")
 		}
-		if len(specialVideoChannelIds) > 0 {
-			channelIds = specialVideoChannelIds
+		if len(specialChannelIds) > 0 {
+			channelIds = specialChannelIds
+			c.Set("new_retry_times", len(specialChannelIds))
 		}
 		c.Set("token_channel_ids", channelIds)
 

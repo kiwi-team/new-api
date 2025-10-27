@@ -93,18 +93,19 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		RequestId:    requestId,
 		ClientUserId: clientUserId,
 	}
-	LogList = append(LogList, log)
-	size := len(LogList)
-	if size >= common.ErrorLogBatchSize {
-		err1 := DB.CreateInBatches(LogList, size).Error
-		if err1 != nil {
-			common.SysError("failed to record error_log: " + err1.Error())
-		} else {
-			LogList = make([]*ErrorLog, 0)
-		}
-		return err1
-	}
-	return nil
+	return DB.Create(log).Error
+	// LogList = append(LogList, log)
+	// size := len(LogList)
+	// if size >= common.ErrorLogBatchSize {
+	// 	err1 := DB.CreateInBatches(LogList, size).Error
+	// 	if err1 != nil {
+	// 		common.SysError("failed to record error_log: " + err1.Error())
+	// 	} else {
+	// 		LogList = make([]*ErrorLog, 0)
+	// 	}
+	// 	return err1
+	// }
+	//return nil
 }
 
 type ErrorLogStatistics struct {

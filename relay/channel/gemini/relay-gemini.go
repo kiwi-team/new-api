@@ -426,10 +426,14 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					bukect := channelConfig.GoogleFileBucket
 					isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 					if channel.Type == constant.ChannelTypeVertexAi || isGenai {
+						key, exists := common.GetContextKey(c, constant.ContextKeyChannelKey)
+						if !exists {
+							return nil, fmt.Errorf("channel key not found in context")
+						}
 						if isGenai {
 							bukect = ""
 						}
-						uploadedFile, err := RetryUploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
+						uploadedFile, err := RetryUploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 						if err != nil {
 							return nil, fmt.Errorf("upload image file to google failed: %s", err.Error())
 						}
@@ -516,7 +520,11 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if isGenai {
 						bukect = ""
 					}
-					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
+					key, exists := common.GetContextKey(c, constant.ContextKeyChannelKey)
+					if !exists {
+						return nil, fmt.Errorf("channel key not found in context")
+					}
+					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
 					}
@@ -545,6 +553,10 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				bukect := channelConfig.GoogleFileBucket
 				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
+					key, exists := common.GetContextKey(c, constant.ContextKeyChannelKey)
+					if !exists {
+						return nil, fmt.Errorf("channel key not found in context")
+					}
 					if isGenai {
 						bukect = ""
 					}
@@ -557,7 +569,7 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if videoFileUrl == "" {
 						continue
 					}
-					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, channel.Key, constant.GeminiUploadFileRetryTimes)
+					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
 					}

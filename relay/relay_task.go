@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	yunwu_sora "github.com/QuantumNous/new-api/relay/channel/task/sora/yunwu"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -55,8 +56,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 
 	var adaptor channel.TaskAdaptor
 	if strings.Contains(info.ChannelBaseUrl, "yunwu") {
-		platform = constant.TaskPlatformYunwuVeo
-		adaptor = &yunwu.TaskAdaptor{}
+		if strings.Contains(info.UpstreamModelName, "veo") {
+			platform = constant.TaskPlatformYunwuVeo
+			adaptor = &yunwu.TaskAdaptor{}
+		} else {
+			platform = constant.TaskPlatformYunwuSora
+			adaptor = &yunwu_sora.TaskAdaptor{}
+		}
 	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
 		adaptor = &ppio.TaskAdaptor{}
 		platform = constant.TaskPlatformPPioHunyuanImage
@@ -361,7 +367,12 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		}
 		adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
 		if strings.Contains(baseURL, "yunwu") {
-			adaptor = &yunwu.TaskAdaptor{}
+			switch originTask.Platform {
+			case constant.TaskPlatformYunwuVeo:
+				adaptor = &yunwu.TaskAdaptor{}
+			case constant.TaskPlatformYunwuSora:
+				adaptor = &yunwu_sora.TaskAdaptor{}
+			}
 		} else if strings.Contains(baseURL, "ppinfra") {
 			adaptor = &ppio.TaskAdaptor{}
 		}

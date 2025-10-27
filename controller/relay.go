@@ -117,7 +117,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			//c.Set(constant.ContextKeyRequestStartTime, time.Now())
 			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-			middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+			if i > 0 {
+				middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+			}
 		} else {
 			channel, err = getChannel(c, group, originalModel, i)
 		}
@@ -249,7 +251,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 		if common.SaveErrorLog {
-			go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+			model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
 		}
 
 		if !shouldRetry(c, newAPIError, retryTimes-i) {
@@ -368,7 +370,9 @@ func RelayClaude(c *gin.Context) {
 				err = types.NewError(err1, types.ErrorCodeChannelGetError)
 			}
 			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-			middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+			if i > 0 {
+				middleware.SetupContextForSelectedChannel(c, channel, c.GetString("original_model"))
+			}
 		} else {
 			channel, err = getChannel(c, group, originalModel, i)
 		}
@@ -398,7 +402,7 @@ func RelayClaude(c *gin.Context) {
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 		if common.SaveErrorLog {
-			go model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+			model.SaveErrorLog(c.GetInt("id"), channel.Id, channel.Name, originalModel, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
 		}
 
 		//go processChannelError(c, channel.Id, channel.Type, channel.Name, channel.GetAutoBan(), openaiErr)

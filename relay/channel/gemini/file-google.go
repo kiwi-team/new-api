@@ -154,6 +154,9 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 		if bucket == "" {
 			//file, err = UploadByConfigAPI(ctx, fileUri)
 			file, err = UploadFileToGemini(ctx, fileUri, credentials, "")
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			file, err = UploadFileToGoogle(ctx, fileUri, bucket, credentials)
 		}
