@@ -408,16 +408,37 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			}
 		}
 	} else if isSiliconflow && textRequest.THINKING != nil {
-		if thinking.Type == "enabled" {
+		// https://docs.siliconflow.cn/cn/api-reference/chat-completions/chat-completions#body-enable-thinking
+		// 硅基当前只有部分模型支持 enable_thinking
+		/*
+			- zai-org/GLM-4.6
+			- Qwen/Qwen3-8B
+			- Qwen/Qwen3-14B
+			- Qwen/Qwen3-32B
+			- wen/Qwen3-30B-A3B
+			- Qwen/Qwen3-235B-A22B
+			- tencent/Hunyuan-A13B-Instruct
+			- zai-org/GLM-4.5V
+			- deepseek-ai/DeepSeek-V3.1
+			- Pro/deepseek-ai/DeepSeek-V3.1
+		*/
+		supportedModels := []string{
+			"glm-4.6",
+			"qwen3-8b",
+			"qwen3-14b",
+			"qwen3-32b",
+			"qwen3-30b-a3b",
+			"qwen3-235b-a22b",
+			"hunyuan-a13b-instruct",
+			"glm-4.5v",
+			"deepseek-v3.1",
+		}
+		if thinking.Type == "enabled" && slices.Contains(supportedModels, textRequest.Model) {
 			textRequest.EnableThinking = true
 			if thinking.BudgetTokens > 0 {
 				textRequest.ThinkingBudget = thinking.BudgetTokens
 			}
 		}
-	}
-	//硅基的step3 不支持enable_thinking
-	if isSiliconflow && strings.Contains(textRequest.Model, "step") {
-		textRequest.EnableThinking = nil
 	}
 
 	if textRequest.Model == "deepseek-reasoner" {

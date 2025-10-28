@@ -159,6 +159,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		Stream:        textRequest.Stream,
 		Tools:         claudeTools,
 	}
+	if *textRequest.Temperature == 0 {
+		claudeRequest.Temperature = nil
+	}
 
 	// 处理 tool_choice 和 parallel_tool_calls
 	if textRequest.ToolChoice != nil || textRequest.ParallelTooCalls != nil {

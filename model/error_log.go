@@ -3,10 +3,13 @@ package model
 import (
 	"errors"
 	"fmt"
+	"os"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/types"
+	"gorm.io/gorm"
 )
 
 type ErrorLog struct {
@@ -43,7 +46,12 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	num := pageSize
 	startIdx := (page - 1) * num
-	query := DB.Model(&ErrorLog{}).Joins("left join tokens on error_logs.token_id = tokens.id").Select("error_logs.*, tokens.name as token_name")
+	var query *gorm.DB
+	if os.Getenv("LOG_SQL_DSN") != "" {
+		query = LOG_DB.Model(&ErrorLog{})
+	} else {
+		query = LOG_DB.Model(&ErrorLog{}).Joins("left join tokens on error_logs.token_id = tokens.id").Select("error_logs.*, tokens.name as token_name")
+	}
 	if channelId > 0 {
 		query = query.Where("channel_id = ? ", channelId)
 	}
@@ -67,6 +75,31 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	var total int64
 	_ = query.Count(&total)
 	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
+	tokenIds := make([]int, 0)
+	for _, log := range errorLogs {
+		if slices.Contains(tokenIds, log.TokenId) {
+			continue
+		}
+		tokenIds = append(tokenIds, log.TokenId)
+	}
+	if len(tokenIds) > 0 && os.Getenv("LOG_SQL_DSN") != "" {
+		var tokens []struct {
+			Id   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err1 := DB.Model(&Token{}).
+			Select("id, name").
+			Where("id IN ?", tokenIds).
+			Find(&tokens).Error; err1 == nil {
+			tokenNames := make(map[int]string, len(tokens))
+			for _, t := range tokens {
+				tokenNames[t.Id] = t.Name
+			}
+			for i := range errorLogs {
+				errorLogs[i].TokenName = tokenNames[errorLogs[i].TokenId]
+			}
+		}
+	}
 	return errorLogs, total, err
 }
 
@@ -93,11 +126,11 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		RequestId:    requestId,
 		ClientUserId: clientUserId,
 	}
-	return DB.Create(log).Error
+	return LOG_DB.Create(log).Error
 	// LogList = append(LogList, log)
 	// size := len(LogList)
 	// if size >= common.ErrorLogBatchSize {
-	// 	err1 := DB.CreateInBatches(LogList, size).Error
+	// 	err1 := LOG_DB.CreateInBatches(LogList, size).Error
 	// 	if err1 != nil {
 	// 		common.SysError("failed to record error_log: " + err1.Error())
 	// 	} else {
@@ -124,7 +157,7 @@ type ErrorLogStatistics struct {
 // 安装渠道-模型统计分析
 func StatisticsErrorLog(start int64, end int64) []ErrorLogStatistics {
 	var errorLogStatistics []ErrorLogStatistics
-	DB.Model(&ErrorLog{}).Select("channel_id,max(channel_name) as channel_name,model_name,count(*) as total,max(message) as message,max(status_code) as status_code,code").Where("created_at > ? and created_at < ?", start, end).Group("model_name,channel_id,code").Order("total desc").Scan(&errorLogStatistics)
+	LOG_DB.Model(&ErrorLog{}).Select("channel_id,max(channel_name) as channel_name,model_name,count(*) as total,max(message) as message,max(status_code) as status_code,code").Where("created_at > ? and created_at < ?", start, end).Group("model_name,channel_id,code").Order("total desc").Scan(&errorLogStatistics)
 	return errorLogStatistics
 }
 
@@ -133,12 +166,12 @@ func DeleteErrorLog(createTime int64, limit int) error {
 		limit = 100
 	}
 	var ids []int
-	err := DB.Model(&ErrorLog{}).Where("created_at < ?", createTime).Order("id asc").Limit(limit).Pluck("id", &ids).Error
+	err := LOG_DB.Model(&ErrorLog{}).Where("created_at < ?", createTime).Order("id asc").Limit(limit).Pluck("id", &ids).Error
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	return DB.Where("id IN ?", ids).Delete(&ErrorLog{}).Error
+	return LOG_DB.Where("id IN ?", ids).Delete(&ErrorLog{}).Error
 }

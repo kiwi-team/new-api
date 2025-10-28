@@ -97,23 +97,27 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	return nil
 }
 
-func getOrientation(req *relaycommon.TaskSubmitReq) string {
+func getOrientationAndSize(req *relaycommon.TaskSubmitReq) (string, string) {
 	size := req.Size
 	if len(size) == 0 {
-		size = "portrait"
+		return "portrait", "large"
 	}
 	size = strings.ToLower(size)
+	yunwuSize := "large"
 	if strings.Contains(size, "x") {
 		arr := strings.Split(size, "x")
 		width := common.String2Int(arr[0])
 		height := common.String2Int(arr[1])
+		if width >= 1080 || height >= 1080 {
+			yunwuSize = "large"
+		}
 		if width > height {
-			return "landscape"
+			return "landscape", yunwuSize
 		} else {
-			return "portrait"
+			return "portrait", yunwuSize
 		}
 	}
-	return "portrait"
+	return "portrait", yunwuSize
 }
 
 // BuildRequestBody converts request into Vertex specific format.
@@ -123,13 +127,17 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("request not found in context")
 	}
 	req := v.(relaycommon.TaskSubmitReq)
-
+	orientation, size := getOrientationAndSize(&req)
+	seconds := req.Seconds
+	if seconds == 0 {
+		seconds = 10
+	}
 	body := YunwuSoraTaskSubmitRequest{
 		Model:       req.Model,
 		Prompt:      req.Prompt,
-		Duration:    req.Seconds,
-		Size:        req.Size,
-		Orientation: getOrientation(&req),
+		Duration:    seconds,
+		Size:        size,
+		Orientation: orientation,
 		Images:      req.Images,
 		Watermark:   true,
 	}

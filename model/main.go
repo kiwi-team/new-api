@@ -259,8 +259,9 @@ func InitLogDB() (err error) {
 		if !common.IsMasterNode {
 			return nil
 		}
-		common.SysLog("database migration started")
+		common.SysLog("log database migration started")
 		err = migrateLOGDB()
+		common.SysLog("log database migration finished")
 		return err
 	} else {
 		common.FatalLog(err)
@@ -353,7 +354,10 @@ func migrateDBFast() error {
 
 func migrateLOGDB() error {
 	var err error
-	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
+	if err = LOG_DB.AutoMigrate(
+		&Log{},
+		&ErrorLog{},
+		&AiSearchLog{}); err != nil {
 		return err
 	}
 	return nil
