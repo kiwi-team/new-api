@@ -108,6 +108,7 @@ type RelayInfo struct {
 	SendResponseCount      int
 	FinalPreConsumedQuota  int  // 最终预消耗的配额
 	IsClaudeBetaQuery      bool // /v1/messages?beta=true
+	VoideId                string
 
 	PriceData types.PriceData
 
@@ -252,6 +253,7 @@ func (info *RelayInfo) ToString() string {
 // 定义支持流式选项的通道类型
 var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeSensenova:   true,
+	constant.ChannelTypeSiliconFlow: true,
 	constant.ChannelTypeOpenAI:      true,
 	constant.ChannelTypeAnthropic:   true,
 	constant.ChannelTypeAws:         true,
@@ -265,7 +267,7 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeBaiduV2:     true,
 	constant.ChannelTypeZhipu_v4:    true,
 	constant.ChannelTypeAli:         true,
-	constant.ChannelTypeSiliconFlow: true,
+	constant.ChannelTypeSubmodel:    true,
 }
 
 func GenRelayInfoWs(c *gin.Context, ws *websocket.Conn) *RelayInfo {

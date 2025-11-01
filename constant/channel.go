@@ -56,6 +56,7 @@ const (
 	ChannelTypeSubmodel         = 56
 	ChannelTypeDoubaoVideo      = 57
 	ChannelTypeSora             = 58
+	ChannelTypeElevenLabs       = 59
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -176,6 +177,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSubmodel:       "Submodel",
 	ChannelTypeDoubaoVideo:    "DoubaoVideo",
 	ChannelTypeSora:           "Sora",
+	ChannelTypeElevenLabs:     "ElevenLabs",
 }
 
 func GetChannelTypeName(channelType int) string {

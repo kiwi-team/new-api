@@ -50,4 +50,8 @@ const (
 	ContextKeyClientUserId ContextKey = "client_user_id"
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
+
+	/*response related keys*/
+	ContextKeyAudioUrl ContextKey = "audio_url"
+	ContextKeyTTSCount ContextKey = "tts_word_count"
 )

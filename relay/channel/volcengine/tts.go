@@ -1,19 +1,45 @@
 package volcengine
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
+
+// https://www.volcengine.com/docs/6561/1329505
+// 双向流式websocket-V3
+type VolcengineBidirectionalTTSRequest struct {
+	User      VolcengineTTSUser                   `json:"user"`
+	Namespace string                              `json:"namespace"`
+	ReqParams VolcengineBidirectionalTTSReqParams `json:"req_params"`
+}
+type VolcengineBidirectionalTTSReqParams struct {
+	Text        string      `json:"text"`
+	Speaker     string      `json:"speaker"`
+	AudioParams AudioParams `json:"audio_params"`
+	Addtions    string      `json:"addtions,omitempty"`
+}
+type AudioParams struct {
+	Format          string `json:"format"`
+	SampleRate      int    `json:"sample_rate"`
+	EnableTimestamp bool   `json:"enable_timestamp,omitempty"`
+}
 
 type VolcengineTTSRequest struct {
 	App     VolcengineTTSApp     `json:"app"`
@@ -176,9 +202,15 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 		)
 	}
 
-	contentType := getContentTypeByEncoding(encoding)
-	c.Header("Content-Type", contentType)
-	c.Data(http.StatusOK, contentType, audioData)
+	//contentType := getContentTypeByEncoding(encoding)
+	//c.Header("Content-Type", contentType)
+	//c.Data(http.StatusOK, contentType, audioData)
+	audioStr := base64.StdEncoding.EncodeToString(audioData)
+	audioUrl, err1 := service.SimpleUploadToS3(c, audioStr)
+	if err1 != nil {
+		audioUrl = audioStr
+	}
+	common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
 
 	usage = &dto.Usage{
 		PromptTokens:     info.PromptTokens,
@@ -191,4 +223,321 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 
 func generateRequestID() string {
 	return uuid.New().String()
+}
+
+func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest VolcengineTTSRequest, info *relaycommon.RelayInfo, encoding string) (usage any, err *types.NewAPIError) {
+	_, token, parseErr := parseVolcengineAuth(info.ApiKey)
+	if parseErr != nil {
+		return nil, types.NewErrorWithStatusCode(
+			parseErr,
+			types.ErrorCodeChannelInvalidKey,
+			http.StatusUnauthorized,
+		)
+	}
+
+	header := http.Header{}
+	header.Set("Authorization", fmt.Sprintf("Bearer;%s", token))
+
+	conn, resp, dialErr := websocket.DefaultDialer.DialContext(context.Background(), requestURL, header)
+	if dialErr != nil {
+		if resp != nil {
+			return nil, types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to connect to websocket: %w, status: %d", dialErr, resp.StatusCode),
+				types.ErrorCodeBadResponseStatusCode,
+				http.StatusBadGateway,
+			)
+		}
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket: %w", dialErr),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+	defer conn.Close()
+
+	payload, marshalErr := json.Marshal(volcRequest)
+	if marshalErr != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to marshal request: %w", marshalErr),
+			types.ErrorCodeBadRequestBody,
+			http.StatusInternalServerError,
+		)
+	}
+
+	if sendErr := FullClientRequest(conn, payload); sendErr != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to send request: %w", sendErr),
+			types.ErrorCodeBadRequestBody,
+			http.StatusInternalServerError,
+		)
+	}
+
+	contentType := getContentTypeByEncoding(encoding)
+	c.Header("Content-Type", contentType)
+	c.Header("Transfer-Encoding", "chunked")
+	var audio []byte
+	for {
+		msg, recvErr := ReceiveMessage(conn)
+		if recvErr != nil {
+			if websocket.IsCloseError(recvErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				break
+			}
+			return nil, types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to receive message: %w", recvErr),
+				types.ErrorCodeBadResponse,
+				http.StatusInternalServerError,
+			)
+		}
+
+		switch msg.MsgType {
+		case MsgTypeError:
+			return nil, types.NewErrorWithStatusCode(
+				fmt.Errorf("received error from server: code=%d, %s", msg.ErrorCode, string(msg.Payload)),
+				types.ErrorCodeBadResponse,
+				http.StatusBadRequest,
+			)
+		case MsgTypeFrontEndResultServer:
+			continue
+		case MsgTypeAudioOnlyServer:
+			if len(msg.Payload) > 0 {
+				audio = append(audio, msg.Payload...)
+				// if _, writeErr := c.Writer.Write(msg.Payload); writeErr != nil {
+				// 	return nil, types.NewErrorWithStatusCode(
+				// 		fmt.Errorf("failed to write audio data: %w", writeErr),
+				// 		types.ErrorCodeBadResponse,
+				// 		http.StatusInternalServerError,
+				// 	)
+				// }
+				// c.Writer.Flush()
+			}
+
+			if msg.Sequence < 0 {
+				if len(audio) == 0 {
+					return nil, types.NewErrorWithStatusCode(
+						errors.New("empty audio data"),
+						types.ErrorCodeBadResponse,
+						http.StatusInternalServerError,
+					)
+				}
+				base64Audio := base64.StdEncoding.EncodeToString(audio)
+				audioUrl, err1 := service.SimpleUploadToS3(c, base64Audio)
+				if err1 != nil {
+					audioUrl = base64Audio
+				}
+				common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
+				common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
+				usage = &dto.Usage{
+					PromptTokens:     info.PromptTokens,
+					CompletionTokens: 0,
+					TotalTokens:      info.PromptTokens,
+				}
+				return usage, nil
+			}
+		default:
+			continue
+		}
+	}
+	if len(audio) == 0 {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("empty audio data"),
+			types.ErrorCodeBadResponse,
+			http.StatusInternalServerError,
+		)
+	}
+	base64Audio := base64.StdEncoding.EncodeToString(audio)
+	audioUrl, err1 := service.SimpleUploadToS3(c, base64Audio)
+	if err1 != nil {
+		audioUrl = base64Audio
+	}
+	common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
+	common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
+	//c.Status(http.StatusOK)
+	usage = &dto.Usage{
+		PromptTokens:     info.PromptTokens,
+		CompletionTokens: 0,
+		TotalTokens:      info.PromptTokens,
+	}
+	return usage, nil
+}
+
+func VoiceToResourceId(voice string) string {
+	if strings.HasPrefix(voice, "S_") {
+		return "volc.megatts.default"
+	}
+	return "volc.service_type.10029"
+}
+
+// seed-tts-2.0
+func handleTTSWebSocketResponse2(c *gin.Context, requestURL string, volcRequest *VolcengineBidirectionalTTSRequest, info *relaycommon.RelayInfo, encoding string) (usage any, err *types.NewAPIError) {
+	modelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	appId, token, parseErr := parseVolcengineAuth(info.ApiKey)
+	if parseErr != nil {
+		return nil, types.NewErrorWithStatusCode(
+			parseErr,
+			types.ErrorCodeChannelInvalidKey,
+			http.StatusUnauthorized,
+		)
+	}
+
+	header := http.Header{}
+	header.Set("X-Api-App-Key", appId)
+	header.Set("X-Api-Access-Key", token)
+	header.Set("X-Api-Resource-Id", modelName)
+	requestURL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+
+	conn, resp, dialErr := websocket.DefaultDialer.DialContext(context.Background(), requestURL, header)
+	if dialErr != nil {
+		if resp != nil {
+			return nil, types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to connect to websocket: %w, status: %d", dialErr, resp.StatusCode),
+				types.ErrorCodeBadResponseStatusCode,
+				http.StatusBadGateway,
+			)
+		}
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket: %w", dialErr),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+	defer conn.Close()
+
+	// ----------------start connection----------------
+	if err := StartConnection(conn); err != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket: %w", dialErr),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+	// ----------------wait connection----------------
+	msg, err1 := WaitForEvent(conn, MsgTypeFullServerResponse, EventType_ConnectionStarted)
+	if err1 != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket: %w, msg: %s", err1, msg),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+	defer func() {
+		// ----------------finish connection----------------
+		if err := FinishConnection(conn); err != nil {
+			fmt.Printf("failed to finish connection: %v", err)
+		}
+		// ----------------wait connection finished----------------
+		msg, err := WaitForEvent(conn, MsgTypeFullServerResponse, EventType_ConnectionFinished)
+		if err != nil {
+			fmt.Printf(" wait connection finished failed: %v, msg: %s", err, msg)
+		}
+	}()
+
+	// payload, marshalErr := json.Marshal(volcRequest)
+	// if marshalErr != nil {
+	// 	return nil, types.NewErrorWithStatusCode(
+	// 		fmt.Errorf("failed to marshal request: %w", marshalErr),
+	// 		types.ErrorCodeBadRequestBody,
+	// 		http.StatusInternalServerError,
+	// 	)
+	// }
+
+	sessionID := uuid.New().String()
+	startReq := map[string]any{
+		"user":       volcRequest.User,
+		"event":      int(EventType_StartSession),
+		"namespace":  volcRequest.Namespace,
+		"req_params": volcRequest.ReqParams,
+	}
+	startPayload, err1 := json.Marshal(startReq)
+	if err1 != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to marshal start request: %w", err1),
+			types.ErrorCodeBadRequestBody,
+			http.StatusInternalServerError,
+		)
+	}
+	// ----------------start session----------------
+	if err := StartSession(conn, startPayload, sessionID); err != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket sart: %w", err),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+	// ----------------wait session started----------------
+	msg, err1 = WaitForEvent(conn, MsgTypeFullServerResponse, EventType_SessionStarted)
+	if err1 != nil {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("failed to connect to websocket wait session started: %w msg: %s", err1, msg),
+			types.ErrorCodeBadResponseStatusCode,
+			http.StatusBadGateway,
+		)
+	}
+
+	go func() {
+		t := time.NewTicker(5 * time.Millisecond)
+		defer t.Stop()
+
+		ttsReq := map[string]any{
+			"user":       volcRequest.User,
+			"event":      int(EventType_TaskRequest),
+			"namespace":  volcRequest.Namespace,
+			"req_params": volcRequest.ReqParams,
+		}
+		payload, _ := json.Marshal(&ttsReq)
+		// ----------------send task request----------------
+		if err := TaskRequest(conn, payload, sessionID); err != nil {
+			fmt.Printf("failed to send task request: %v", err)
+		}
+		<-t.C
+
+		// ----------------finish session----------------
+		if err := FinishSession(conn, sessionID); err != nil {
+		}
+	}()
+
+	var audio []byte
+	for {
+		msg, err := ReceiveMessage(conn)
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(
+				fmt.Errorf("failed to get message from ws : %w msg: %s", err, msg),
+				types.ErrorCodeBadResponseStatusCode,
+				http.StatusBadGateway,
+			)
+		}
+		switch msg.MsgType {
+		case MsgTypeFullServerResponse:
+		case MsgTypeAudioOnlyServer:
+			if msg.Payload != nil && len(msg.Payload) > 0 {
+				audio = append(audio, msg.Payload...)
+			}
+		default:
+			fmt.Printf("unknown msg type: %d", msg.MsgType)
+			continue
+		}
+		if msg.EventType == EventType_SessionFinished {
+			break
+		}
+	}
+	if len(audio) == 0 {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("empty audio data"),
+			types.ErrorCodeBadResponse,
+			http.StatusInternalServerError,
+		)
+	}
+	base64Audio := base64.StdEncoding.EncodeToString(audio)
+	audioUrl, err1 := service.SimpleUploadToS3(c, base64Audio)
+	if err1 != nil {
+		audioUrl = base64Audio
+	}
+	common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
+	common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
+	//c.Status(http.StatusOK)
+	usage = &dto.Usage{
+		PromptTokens:     info.PromptTokens,
+		CompletionTokens: 0,
+		TotalTokens:      info.PromptTokens,
+	}
+	return usage, nil
 }

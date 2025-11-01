@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -1264,6 +1265,13 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	if !dImageGenerationCallQuota.IsZero() {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = imageGenerationCallPrice
+	}
+
+	ttsCount := common.GetContextKeyInt(ctx, constant.ContextKeyTTSCount)
+	if ttsCount > 0 {
+		ttsRatio := ratio_setting.GetTTSRatio(relayInfo.UpstreamModelName)
+		quota = int(float64(ttsCount) / 1000 * ttsRatio)
+		logContent = fmt.Sprintf("ttsRatio:%.2f，TTS 输入字符数:%d，TTS语音计费: %s", ttsRatio, ttsCount, logger.FormatQuota(quota))
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

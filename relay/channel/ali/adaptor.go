@@ -1,6 +1,8 @@
 package ali
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +48,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/rerank/text-rerank/text-rerank", info.ChannelBaseUrl)
 		case constant.RelayModeImagesGenerations:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
-		case constant.RelayModeImagesEdits:
+		case constant.RelayModeImagesEdits, constant.RelayModeAudioSpeech:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 		case constant.RelayModeCompletions:
 			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/completions", info.ChannelBaseUrl)
@@ -139,8 +141,34 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	return request, nil
 }
 
+func getLanguageType(request dto.AudioRequest) string {
+	if request.Instructions != "" {
+		var instructions TTSInstructions
+		err := json.Unmarshal([]byte(request.Instructions), &instructions)
+		if err != nil {
+			return "Auto"
+		}
+		return instructions.LanguageType
+	}
+	return "Auto"
+}
+
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	//TODO implement me
+	if info.RelayMode == constant.RelayModeAudioSpeech {
+		aliRequest := QwenTTSReqeust{
+			Model: request.Model,
+			Input: QwenTTSInput{
+				Text:         request.Input,
+				Voice:        request.Voice,
+				LanguageType: getLanguageType(request),
+			},
+		}
+		jsonData, err := json.Marshal(aliRequest)
+		if err != nil {
+			return nil, fmt.Errorf("marshal qwen tts request failed: %w", err)
+		}
+		return bytes.NewReader(jsonData), nil
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -169,6 +197,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			err, usage = aliImageEditHandler(c, resp, info)
 		case constant.RelayModeRerank:
 			err, usage = RerankHandler(c, resp, info)
+		case constant.RelayModeAudioSpeech:
+			err, usage = aliAudioHandler(c, resp, info)
 		default:
 			adaptor := openai.Adaptor{}
 			usage, err = adaptor.DoResponse(c, resp, info)

@@ -191,7 +191,7 @@ func Distribute() func(c *gin.Context) {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, "无效的请求, "+err.Error())
+						abortWithOpenAiMessage(c, http.StatusBadRequest, "无效的playground请求, "+err.Error())
 						return
 					}
 					if playgroundRequest.Group != "" {
@@ -275,6 +275,20 @@ func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, er
 	return ids, nil
 }
 
+// getModelFromRequest 从请求中读取模型信息
+// 根据 Content-Type 自动处理：
+// - application/json
+// - application/x-www-form-urlencoded
+// - multipart/form-data
+func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
+	var modelRequest ModelRequest
+	err := common.UnmarshalBodyReusable(c, &modelRequest)
+	if err != nil {
+		return nil, errors.New("无效的请求, " + err.Error())
+	}
+	return &modelRequest, nil
+}
+
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	var modelRequest ModelRequest
 	shouldSelectChannel := true
@@ -290,7 +304,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			midjourneyRequest := dto.MidjourneyRequest{}
 			err = common.UnmarshalBodyReusable(c, &midjourneyRequest)
 			if err != nil {
-				return nil, false, err
+				return nil, false, errors.New("无效的midjourney请求, " + err.Error())
 			}
 			midjourneyModel, mjErr, success := service.GetMjRequestModel(relayMode, &midjourneyRequest)
 			if mjErr != nil {
@@ -327,23 +341,12 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost {
 			relayMode = relayconstant.RelayModeVideoSubmit
-			contentType := c.Request.Header.Get("Content-Type")
-			if strings.HasPrefix(contentType, "multipart/form-data") {
-				form, err := common.ParseMultipartFormReusable(c)
-				if err != nil {
-					return nil, false, errors.New("无效的video请求, " + err.Error())
-				}
-				defer form.RemoveAll()
-				if form != nil {
-					if values, ok := form.Value["model"]; ok && len(values) > 0 {
-						modelRequest.Model = values[0]
-					}
-				}
-			} else if strings.HasPrefix(contentType, "application/json") {
-				err = common.UnmarshalBodyReusable(c, &modelRequest)
-				if err != nil {
-					return nil, false, errors.New("无效的video请求, " + err.Error())
-				}
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			if req != nil {
+				modelRequest.Model = req.Model
 			}
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
@@ -353,10 +356,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost {
-			err = common.UnmarshalBodyReusable(c, &modelRequest)
+			req, err := getModelFromRequest(c)
 			if err != nil {
-				return nil, false, errors.New("video无效的请求, " + err.Error())
+				return nil, false, err
 			}
+			modelRequest.Model = req.Model
 			relayMode = relayconstant.RelayModeVideoSubmit
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
@@ -389,10 +393,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			c.Set("relay_mode", relayMode)
 		}
 	} else if !strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions") && !strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-		err = common.UnmarshalBodyReusable(c, &modelRequest)
-	}
-	if err != nil {
-		return nil, false, errors.New("无效的请求, " + err.Error())
+		req, err := getModelFromRequest(c)
+		if err != nil {
+			return nil, false, err
+		}
+		modelRequest.Model = req.Model
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/realtime") {
 		//wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01
@@ -412,20 +417,31 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
-		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-			modelRequest.Model = c.PostForm("model")
+		contentType := c.ContentType()
+		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
+			req, err := getModelFromRequest(c)
+			if err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
 		}
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
 		relayMode := relayconstant.RelayModeAudioSpeech
 		if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech") {
+
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "tts-1")
 		} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/translations") {
-			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, c.PostForm("model"))
+			// 先尝试从请求读取
+			if req, err := getModelFromRequest(c); err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "whisper-1")
 			relayMode = relayconstant.RelayModeAudioTranslation
 		} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions") {
-			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, c.PostForm("model"))
+			// 先尝试从请求读取
+			if req, err := getModelFromRequest(c); err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "whisper-1")
 			relayMode = relayconstant.RelayModeAudioTranscription
 		}
@@ -433,10 +449,12 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 		// playground chat completions
-		err = common.UnmarshalBodyReusable(c, &modelRequest)
+		req, err := getModelFromRequest(c)
 		if err != nil {
-			return nil, false, errors.New("无效的请求, " + err.Error())
+			return nil, false, err
 		}
+		modelRequest.Model = req.Model
+		modelRequest.Group = req.Group
 		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 	}
 

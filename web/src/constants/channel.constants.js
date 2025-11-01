@@ -191,6 +191,11 @@ export const CHANNEL_OPTIONS = [
     color: 'green',
     label: 'Sora',
   },
+  {
+    value: 59,
+    color: 'blue',
+    label: 'ElevenLabs',
+  }
 ];
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

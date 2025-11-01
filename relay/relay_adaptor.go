@@ -15,9 +15,11 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/coze"
 	"github.com/QuantumNous/new-api/relay/channel/deepseek"
 	"github.com/QuantumNous/new-api/relay/channel/dify"
+	"github.com/QuantumNous/new-api/relay/channel/elevenlabs"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/jina"
+	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/mistral"
 	"github.com/QuantumNous/new-api/relay/channel/mokaai"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
@@ -114,6 +116,10 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &moonshot.Adaptor{} // Moonshot uses Claude API
 	case constant.APITypeSubmodel:
 		return &submodel.Adaptor{}
+	case constant.APITypeMiniMax:
+		return &minimax.Adaptor{}
+	case constant.APITypeElevenLabs:
+		return &elevenlabs.Adaptor{}
 	}
 	return nil
 }
