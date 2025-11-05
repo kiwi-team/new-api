@@ -82,7 +82,7 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		Mode:     formData.Get("mode"),
 		Image:    formData.Get("image"),
 		Size:     formData.Get("size"),
-		Seconds:  seconds,
+		Seconds:  fmt.Sprintf("%d", seconds),
 		Duration: seconds,
 		Metadata: make(map[string]interface{}),
 	}
@@ -112,62 +112,34 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 }
 
 func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
-	contentType := c.GetHeader("Content-Type")
 	var prompt string
 	var model string
 	var seconds int
 	var size string
 	var hasInputReference bool
 
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		form, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return createTaskError(err, "invalid_multipart_form", http.StatusBadRequest, true)
-		}
-		defer form.RemoveAll()
+	var req TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return createTaskError(err, "invalid_json", http.StatusBadRequest, true)
+	}
 
-		prompts, ok := form.Value["prompt"]
-		if !ok || len(prompts) == 0 {
-			return createTaskError(fmt.Errorf("prompt field is required"), "missing_prompt", http.StatusBadRequest, true)
-		}
-		prompt = prompts[0]
-
-		if _, ok := form.Value["model"]; !ok {
-			return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
-		}
-		model = form.Value["model"][0]
-
-		if _, ok := form.File["input_reference"]; ok {
-			hasInputReference = true
-		}
-
-		if ss, ok := form.Value["seconds"]; ok {
-			sInt := common.String2Int(ss[0])
-			if sInt > seconds {
-				seconds = common.String2Int(ss[0])
-			}
-		}
-
-		if sz, ok := form.Value["size"]; ok {
-			size = sz[0]
-		}
-	} else {
-		var req TaskSubmitReq
-		if err := common.UnmarshalBodyReusable(c, &req); err != nil {
-			return createTaskError(err, "invalid_json", http.StatusBadRequest, true)
-		}
-
-		prompt = req.Prompt
-		model = req.Model
+	prompt = req.Prompt
+	model = req.Model
+	size = req.Size
+	seconds, _ = strconv.Atoi(req.Seconds)
+	if seconds == 0 {
 		seconds = req.Duration
+	}
+	if req.InputReference != "" {
+		req.Images = []string{req.InputReference}
+	}
 
-		if strings.TrimSpace(req.Model) == "" {
-			return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
-		}
+	if strings.TrimSpace(req.Model) == "" {
+		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
+	}
 
-		if req.HasImage() {
-			hasInputReference = true
-		}
+	if req.HasImage() {
+		hasInputReference = true
 	}
 
 	if taskErr := validatePrompt(prompt); taskErr != nil {

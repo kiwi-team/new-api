@@ -143,8 +143,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Instances:  []map[string]any{{"prompt": req.Prompt}},
 		Parameters: map[string]any{},
 	}
-	if req.Seconds > 0 {
-		body.Instances[0]["duration"] = req.Seconds
+	seconds := common.String2Int(req.Seconds)
+	if seconds > 0 {
+		body.Instances[0]["duration"] = seconds
 	}
 	if req.Duration > 0 {
 		body.Instances[0]["duration"] = req.Duration

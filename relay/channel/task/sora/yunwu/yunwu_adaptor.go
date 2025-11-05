@@ -128,7 +128,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	req := v.(relaycommon.TaskSubmitReq)
 	orientation, size := getOrientationAndSize(&req)
-	seconds := req.Seconds
+	seconds := common.String2Int(req.Seconds)
 	if seconds == 0 {
 		seconds = 10
 	}

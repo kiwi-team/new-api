@@ -125,7 +125,8 @@ func getChannelQuery(group string, model string, retry int, tags []string) (*gor
 	return channelQuery, nil
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
+// func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
+func GetChannel(group string, model string, retry int, tags []string) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil

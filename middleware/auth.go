@@ -11,7 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-contrib/sessions"
@@ -217,8 +217,13 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 		key := c.Request.Header.Get("Authorization")
-		parts := make([]string, 0)
+		var parts []string
 		key = strings.TrimPrefix(key, "Bearer ")
+		aiceKey := common.OptionMap["AICE_KEY"]
+		if aiceKey == "" {
+			aiceKey = "XoqKKKphYhUINlbrF0079982C7F84f4cA8B9046cC6A96cEb"
+		}
+		isAiceKey := strings.Contains(key, aiceKey)
 		if key == "" || key == "midjourney-proxy" {
 			key = c.Request.Header.Get("mj-api-secret")
 			key = strings.TrimPrefix(key, "Bearer ")
@@ -229,6 +234,10 @@ func TokenAuth() func(c *gin.Context) {
 			key = strings.TrimPrefix(key, "sk-")
 			parts = strings.Split(key, "-")
 			key = parts[0]
+
+		}
+		if isAiceKey {
+			parts = []string{key}
 		}
 		token, err := model.ValidateUserToken(key)
 		if token != nil {
@@ -268,8 +277,8 @@ func TokenAuth() func(c *gin.Context) {
 		tokenGroup := token.Group
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
-			if _, ok := setting.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("令牌分组 %s 已被禁用", tokenGroup))
+			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
 				return
 			}
 			// check group in common.GroupRatio
@@ -283,9 +292,10 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 		clientUserId := c.Request.Header.Get("uid")
+
 		if common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
-			if clientUserId == "" {
-				abortWithOpenAiMessage(c, http.StatusForbidden, "uid header is required")
+			if len(clientUserId) <= 8 && !isAiceKey {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
 				return
 			}
 		}

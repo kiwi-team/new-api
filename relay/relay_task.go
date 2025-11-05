@@ -357,7 +357,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			return
 		}
 		//bug fix 这个为啥要return？
-		if channelModel.Type != constant.ChannelTypeVertexAi {
+		if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
 			//return
 		}
 		baseURL := constant.ChannelBaseURLs[channelModel.Type]
@@ -392,8 +392,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			return
 		}
 
-		ti, err2 := adaptor.ParseTaskResult(body)
-		if err2 == nil && ti != nil {
+		ti, err3 := adaptor.ParseTaskResult(body)
+		if err3 == nil && ti != nil {
 			if ti.Status != "" {
 				originTask.Status = model.TaskStatus(ti.Status)
 			}
@@ -497,18 +497,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
-}
-
-/*
-{"code":"success","message":"","data":{"error":null,"format":"mp4","metadata":null,"status":"succeeded","task_id":"cHJvamVjdHMvdXF6dWp6LWF2ZXJ5LTU0L2xvY2F0aW9ucy9nbG9iYWwvcHVibGlzaGVycy9nb29nbGUvbW9kZWxzL3Zlby0zLjEtZmFzdC1nZW5lcmF0ZS1wcmV2aWV3L29wZXJhdGlvbnMvZWViZjNjNTgtN2JhMi00N2ZmLTkwZjAtNTZkZjhjNWI0OTg0","url":"https://toiotech.s3.cn-northwest-1.amazonaws.com.cn/videos/1760956445212461013-vVEnvfu3P3.mp4"}}
-*/
-func parseOverSeaTaskResult(respBody []byte) (*OverSeaTaskResp, error) {
-	var ti OverSeaTaskResp
-	err := json.Unmarshal(respBody, &ti)
-	if err != nil {
-		return nil, err
-	}
-	return &ti, nil
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
