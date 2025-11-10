@@ -227,6 +227,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 				CompletionTokens: params.CompletionTokens,
 				ChannelId:        params.ChannelId,
 				TokenId:          params.TokenId,
+				ClientUserId:     params.ClientUserId,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
