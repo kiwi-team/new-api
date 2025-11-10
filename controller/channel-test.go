@@ -768,11 +768,11 @@ func AutoEnableAutoDisabledChannels() {
 				frequencyStr := common.OptionMap["AUTO_ENABLE_AUTO_DISABLED_CHANNELS_FREQUENCY"]
 				frequency := common.String2Int(frequencyStr)
 				if frequency < 1 {
-					frequency = 30
+					frequency = 300
 				}
 				time.Sleep(time.Duration(frequency) * time.Second)
 				//common.SysLog(fmt.Sprintf("automatically enable auto disabeled channels or multi key in channel with interval %d seconds", frequency))
-				//common.SysLog("automatically testing all auto disabled channels")
+				common.SysLog("automatically testing all auto disabled channels")
 				err := testAllAutoDisabledChannels(false)
 				if err != nil {
 					common.SysLog(fmt.Sprintf("automatically test all auto disabled channels failed, err=%s", err.Error()))

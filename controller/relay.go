@@ -106,6 +106,28 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	var channel *model.Channel
 	var err *types.NewAPIError
 	var err1 error
+	var (
+		newAPIError *types.NewAPIError
+		ws          *websocket.Conn
+	)
+	defer func() {
+		if newAPIError != nil {
+			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				helper.WssError(c, ws, newAPIError.ToOpenAIError())
+			case types.RelayFormatClaude:
+				c.JSON(newAPIError.StatusCode, gin.H{
+					"type":  "error",
+					"error": newAPIError.ToClaudeError(),
+				})
+			default:
+				c.JSON(newAPIError.StatusCode, gin.H{
+					"error": newAPIError.ToOpenAIError(),
+				})
+			}
+		}
+	}()
 	for i := 0; i <= retryTimes; i++ {
 		if len(tokenChannelIds) > 0 {
 			if i >= len(tokenChannelIds) {
@@ -130,11 +152,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		//newAPIError = types.NewError(err, types.ErrorCodeGetChannelFailed)
 
-		var (
-			newAPIError *types.NewAPIError
-			ws          *websocket.Conn
-		)
-
 		if relayFormat == types.RelayFormatOpenAIRealtime {
 			var err error
 			ws, err = upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -144,25 +161,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			defer ws.Close()
 		}
-
-		defer func() {
-			if newAPIError != nil {
-				newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
-				switch relayFormat {
-				case types.RelayFormatOpenAIRealtime:
-					helper.WssError(c, ws, newAPIError.ToOpenAIError())
-				case types.RelayFormatClaude:
-					c.JSON(newAPIError.StatusCode, gin.H{
-						"type":  "error",
-						"error": newAPIError.ToClaudeError(),
-					})
-				default:
-					c.JSON(newAPIError.StatusCode, gin.H{
-						"error": newAPIError.ToOpenAIError(),
-					})
-				}
-			}
-		}()
 
 		request, err := helper.GetAndValidateRequest(c, relayFormat)
 		if err != nil {
