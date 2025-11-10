@@ -238,13 +238,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		body := "{}"
 		openaiError := newAPIError.ToOpenAIError()
-		if newAPIError.StatusCode == 413 || newAPIError.StatusCode == 429 ||
-			strings.Contains(strings.ToLower(openaiError.Message), "too many") {
-			body = "{}"
-		} else {
-			bodyBytes, _ := common.GetRequestBody(c)
-			body = string(bodyBytes)
-		}
+		// if newAPIError.StatusCode == 413 || newAPIError.StatusCode == 429 ||
+		// 	strings.Contains(strings.ToLower(openaiError.Message), "too many") {
+		// 	body = "{}"
+		// } else {
+		// 	bodyBytes, _ := common.GetRequestBody(c)
+		// 	body = string(bodyBytes)
+		// }
+		bodyBytes, _ := common.GetRequestBody(c)
+		body = string(bodyBytes)
 
 		tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 		clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
