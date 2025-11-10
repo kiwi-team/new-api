@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -108,5 +109,18 @@ func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
 	if status != common.ChannelStatusAutoDisabled {
 		return false
 	}
+	return true
+}
+
+func ShouldEnableAutoDisabledChannel(newAPIError *types.NewAPIError, status int) bool {
+	if os.Getenv("AUTO_ENABLE_AUTO_DISABLED_CHANNELS") != "true" {
+		return false
+	}
+	if newAPIError != nil {
+		return false
+	}
+	// if status != common.ChannelStatusAutoDisabled {
+	// 	return false
+	// }
 	return true
 }

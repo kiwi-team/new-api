@@ -100,7 +100,8 @@ func main() {
 		go controller.AutomaticallyUpdateChannels(frequency)
 	}
 
-	go controller.AutomaticallyTestChannels()
+	//go controller.AutomaticallyTestChannels()
+	go controller.AutoEnableAutoDisabledChannels()
 
 	if common.IsMasterNode && constant.UpdateTask {
 		gopool.Go(func() {

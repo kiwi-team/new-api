@@ -106,6 +106,68 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
+// 返回渠道下所有自动禁用的key
+// 兼容单key和多key的渠道
+func (channel *Channel) GetAutoDisabledKey() (string, int, *types.NewAPIError) {
+	// If not in multi-key mode, return the original key string directly.
+	if !channel.ChannelInfo.IsMultiKey {
+		return channel.Key, 0, nil
+		/*
+			if channel.Status == common.ChannelStatusAutoDisabled {
+				return channel.Key, 0, nil
+			}
+			return "", 0, types.NewError(errors.New("channel not auto disabled"), types.ErrorCodeChannelNoAvailableKey)
+		*/
+	}
+
+	// Obtain all keys (split by \n)
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		// No keys available, return error, should disable the channel
+		return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
+	}
+
+	statusList := channel.ChannelInfo.MultiKeyStatusList
+	// helper to get key status, default to enabled when missing
+	getStatus := func(idx int) int {
+		if statusList == nil {
+			return common.ChannelStatusEnabled
+		}
+		if status, ok := statusList[idx]; ok {
+			return status
+		}
+		return common.ChannelStatusEnabled
+	}
+
+	// Collect indexes of auto disabled keys
+	disabledIdx := make([]int, 0, len(keys))
+	for i := range keys {
+		if getStatus(i) == common.ChannelStatusAutoDisabled {
+			disabledIdx = append(disabledIdx, i)
+		}
+	}
+	key := ""
+	index := 0
+	// If no specific status list or none disabled, fall back to first key
+	if len(disabledIdx) == 0 {
+		return "", 0, types.NewError(errors.New("no auto disabled keys available"), types.ErrorCodeChannelNoAvailableKey)
+	} else {
+		idx := rand.Intn(len(disabledIdx))
+		index = disabledIdx[idx]
+		key = keys[index]
+	}
+
+	lock := GetAutoDisableLocks(fmt.Sprintf("%d-%s", channel.Id, key))
+	defer lock.Unlock()
+	// 非阻塞获取锁，若通道正忙则直接返回一个随机 key
+	if !lock.TryLock() {
+		return "", 0, types.NewError(errors.New("get auto disabled key is busy"), types.ErrorCodeChannelNoAvailableKey)
+	} else {
+		lock.Lock()
+		return key, index, nil
+	}
+}
+
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
@@ -629,6 +691,19 @@ var channelStatusLock sync.Mutex
 // channelPollingLocks stores locks for each channel.id to ensure thread-safe polling
 var channelPollingLocks sync.Map
 
+var autoDisableLocks sync.Map
+
+// GetAutoDisableLocks returns or creates a mutex for the given channel ID
+func GetAutoDisableLocks(key string) *sync.Mutex {
+	if lock, exists := autoDisableLocks.Load(key); exists {
+		return lock.(*sync.Mutex)
+	}
+	// Create new lock for this channel
+	newLock := &sync.Mutex{}
+	actual, _ := channelPollingLocks.LoadOrStore(key, newLock)
+	return actual.(*sync.Mutex)
+}
+
 // GetChannelPollingLock returns or creates a mutex for the given channel ID
 func GetChannelPollingLock(channelId int) *sync.Mutex {
 	if lock, exists := channelPollingLocks.Load(channelId); exists {
@@ -676,6 +751,9 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		}
 		if status == common.ChannelStatusEnabled {
+			if channel.Status == common.ChannelStatusAutoDisabled {
+				channel.Status = common.ChannelStatusEnabled
+			}
 			delete(channel.ChannelInfo.MultiKeyStatusList, keyIndex)
 		} else {
 			channel.ChannelInfo.MultiKeyStatusList[keyIndex] = status
@@ -739,7 +817,9 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		return false
 	} else {
 		if channel.Status == status {
-			return false
+			if status != common.ChannelStatusEnabled {
+				return false
+			}
 		}
 
 		if channel.ChannelInfo.IsMultiKey {

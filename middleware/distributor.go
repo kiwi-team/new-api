@@ -484,7 +484,14 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
+	var key string
+	var index int
+	var newAPIError *types.NewAPIError
+	if common.GetContextKeyString(c, constant.ContextKeyChannelEnableAutoDisabledChannels) == "true" {
+		key, index, newAPIError = channel.GetAutoDisabledKey()
+	} else {
+		key, index, newAPIError = channel.GetNextEnabledKey()
+	}
 	if newAPIError != nil {
 		return newAPIError
 	}

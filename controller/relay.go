@@ -571,14 +571,42 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return true
 }
 
+var sendLogMap = map[int]int{}
+
+func sendFeishuQianfeiNotify(channelError types.ChannelError, err *types.NewAPIError) {
+	webhookUrl := common.OptionMap["feishu_qianfei_webhook_url"]
+	secret := common.OptionMap["feishu_qianfei_secret"]
+	service.SendFeishuNotify(webhookUrl, secret, dto.FeishuNotify{
+		MsgType: "text",
+		Content: dto.FeishuContent{
+			Text: fmt.Sprintf("【渠道】%s（%d） 可能欠费了,请及时处理，错误信息：%s", channelError.ChannelName, channelError.ChannelId, err.Error()),
+		},
+	})
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(channelError.ChannelId, err) && channelError.AutoBan {
-		gopool.Go(func() {
-			service.DisableChannel(channelError, err.Error())
-		})
+	//if service.ShouldDisableChannel(channelError.ChannelId, err) && channelError.AutoBan {
+	if service.ShouldDisableChannel(channelError.ChannelId, err) {
+		if channelError.AutoBan {
+			gopool.Go(func() {
+				service.DisableChannel(channelError, err.Error())
+			})
+		}
+		prevSend, exist := sendLogMap[channelError.ChannelId]
+		// 防止频繁发送飞书通知，控制一下，每分钟最多发送一次
+		if exist {
+			if time.Since(time.Unix(int64(prevSend), 0)) > time.Minute {
+				// 发送欠费等通知到飞书
+				sendFeishuQianfeiNotify(channelError, err)
+				sendLogMap[channelError.ChannelId] = int(time.Now().Unix())
+			}
+		} else {
+			sendFeishuQianfeiNotify(channelError, err)
+			sendLogMap[channelError.ChannelId] = int(time.Now().Unix())
+		}
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
