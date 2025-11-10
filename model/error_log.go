@@ -170,8 +170,10 @@ func DeleteErrorLog(createTime int64, limit int) error {
 	if err != nil {
 		return err
 	}
-	if len(ids) == 0 {
+	if len(ids) <= 2 {
 		return nil
 	}
-	return LOG_DB.Where("id IN ?", ids).Delete(&ErrorLog{}).Error
+	maxId := slices.Max(ids)
+	minId := slices.Min(ids)
+	return LOG_DB.Where("id >= ? and id <= ?", minId, maxId).Delete(&ErrorLog{}).Error
 }
