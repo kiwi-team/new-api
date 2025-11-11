@@ -585,7 +585,7 @@ func sendFeishuQianfeiNotify(channelError types.ChannelError, err *types.NewAPIE
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	//logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	//if service.ShouldDisableChannel(channelError.ChannelId, err) && channelError.AutoBan {
@@ -594,6 +594,10 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			gopool.Go(func() {
 				service.DisableChannel(channelError, err.Error())
 			})
+		}
+		// 阿里云的服务很奇葩，429的提示，就像欠费一样。。所以阿里云类型的渠道，不要发送飞书通知
+		if channelError.ChannelType == constant.ChannelTypeAli {
+			return
 		}
 		prevSend, exist := sendLogMap[channelError.ChannelId]
 		// 防止频繁发送飞书通知，控制一下，每分钟最多发送一次
