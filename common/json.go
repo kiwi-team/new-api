@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 )
 
@@ -28,6 +29,10 @@ func JsonStringify(v any) string {
 		return ""
 	}
 	return string(b)
+}
+
+func PrintJson(prefix string, v any) {
+	fmt.Println(prefix + ":" + JsonStringify(v))
 }
 
 func GetJsonType(data json.RawMessage) string {

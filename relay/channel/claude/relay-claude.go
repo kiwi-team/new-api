@@ -287,6 +287,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		if message.Role == "assistant" && message.ToolCalls != nil {
 			fmtMessage.ToolCalls = message.ToolCalls
 		}
+		if message.Role == "assistant" && message.ReasoningContent != "" {
+			fmtMessage.ReasoningContent = message.ReasoningContent
+			fmtMessage.Signature = message.Signature
+		}
 		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
 			if lastMessage.IsStringContent() && message.IsStringContent() {
 				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
@@ -382,11 +386,15 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					claudeMediaMessage := dto.ClaudeMediaMessage{
 						Type: mediaMessage.Type,
 					}
+					if message.ReasoningContent != "" {
+						mediaMessage.Type = "thinking"
+					}
 					if mediaMessage.Type == "text" {
 						claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
 					} else if mediaMessage.Type == "thinking" {
-						claudeMediaMessage.Thinking = &mediaMessage.Thinking
-						claudeMediaMessage.Signature = mediaMessage.Signature
+						claudeMediaMessage.Type = "thinking"
+						claudeMediaMessage.Thinking = &message.ReasoningContent
+						claudeMediaMessage.Signature = message.Signature
 					} else {
 						imageUrl := mediaMessage.GetImageMedia()
 						claudeMediaMessage.Type = "image"
@@ -444,8 +452,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
-	//jsonStr := common.JsonStringify(claudeRequest)
-	//fmt.Printf("claude %s\n", jsonStr)
+	//common.PrintJson("claudeRequest", claudeRequest)
 	return &claudeRequest, nil
 }
 
