@@ -146,6 +146,7 @@ type ChatCompletionsStreamResponse struct {
 	Model             string                                `json:"model"`
 	SystemFingerprint *string                               `json:"system_fingerprint"`
 	Choices           []ChatCompletionsStreamResponseChoice `json:"choices"`
+	ToolInfo          json.RawMessage                       `json:"tool_info,omitempty"`
 	Usage             *Usage                                `json:"usage"`
 }
 

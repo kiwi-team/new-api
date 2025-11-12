@@ -195,6 +195,11 @@ export const CHANNEL_OPTIONS = [
     value: 59,
     color: 'blue',
     label: 'ElevenLabs',
+  },
+   {
+    value: 60,
+    color: 'yellow',
+    label: 'AliDashScope',
   }
 ];
 

@@ -57,6 +57,7 @@ const (
 	ChannelTypeDoubaoVideo      = 57
 	ChannelTypeSora             = 58
 	ChannelTypeElevenLabs       = 59
+	ChannelTypeAliDashScope     = 60
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -122,6 +123,7 @@ var ChannelBaseURLs = []string{
 	"https://llm.submodel.ai",                   //57
 	"https://ark.cn-beijing.volces.com",         //58
 	"https://api.openai.com",                    //59
+	"https://dashscope.aliyuncs.com",            //60
 }
 
 var ChannelTypeNames = map[int]string{

@@ -452,7 +452,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
-	//common.PrintJson("claudeRequest", claudeRequest)
+	//common.PrintJson("\nclaudeRequest", claudeRequest)
 	return &claudeRequest, nil
 }
 

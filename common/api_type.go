@@ -73,6 +73,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeMiniMax
 	case constant.ChannelTypeElevenLabs:
 		apiType = constant.APITypeElevenLabs
+	case constant.ChannelTypeAliDashScope:
+		apiType = constant.APITypeAliDashScope
 	}
 	if apiType == -1 {
 		return constant.APITypeOpenAI, false
