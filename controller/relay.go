@@ -595,14 +595,16 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 				service.DisableChannel(channelError, err.Error())
 			})
 		}
-		// 阿里云的服务很奇葩，429的提示，就像欠费一样。。所以阿里云类型的渠道，不要发送飞书通知
-		if channelError.ChannelType == constant.ChannelTypeAli {
-			return
+		// 阿里云的服务很奇葩，429的提示，就像欠费一样。。所以阿里云类型的渠道， 间隔时间设为1小时
+		// 海外的渠道，因为飞书通知频率限制，所以间隔时间设为1小时
+		gap := time.Minute
+		if channelError.ChannelId == 1436 || channelError.ChannelType == constant.ChannelTypeAli {
+			gap = 60 * time.Minute
 		}
 		prevSend, exist := sendLogMap[channelError.ChannelId]
 		// 防止频繁发送飞书通知，控制一下，每分钟最多发送一次
 		if exist {
-			if time.Since(time.Unix(int64(prevSend), 0)) > time.Minute {
+			if time.Since(time.Unix(int64(prevSend), 0)) > gap {
 				// 发送欠费等通知到飞书
 				sendFeishuQianfeiNotify(channelError, err)
 				sendLogMap[channelError.ChannelId] = int(time.Now().Unix())
