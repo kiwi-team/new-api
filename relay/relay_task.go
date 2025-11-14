@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	"github.com/QuantumNous/new-api/relay/channel/task/novita"
 	yunwu_sora "github.com/QuantumNous/new-api/relay/channel/task/sora/yunwu"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -66,6 +67,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
 		adaptor = &ppio.TaskAdaptor{}
 		platform = constant.TaskPlatformPPioHunyuanImage
+	} else if strings.Contains(info.ChannelBaseUrl, "novita") {
+		platform = constant.TaskPlatformNovitaImage
+		adaptor = &novita.TaskAdaptor{}
 	} else {
 		adaptor = GetTaskAdaptor(platform)
 	}
@@ -375,6 +379,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			}
 		} else if strings.Contains(baseURL, "ppinfra") {
 			adaptor = &ppio.TaskAdaptor{}
+		} else if strings.Contains(baseURL, "novita") {
+			adaptor = &novita.TaskAdaptor{}
 		}
 		if adaptor == nil {
 			return
