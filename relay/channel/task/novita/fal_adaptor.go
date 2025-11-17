@@ -76,6 +76,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		SafetyTolerance: "5",
 	}
 
+	// 同步扩展字段的厂商自定义metadata
+	if req.Metadata != nil {
+		if v, ok := req.Metadata["aspect_ratio"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				body.AspectRatio = s
+			}
+		}
+	}
+
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

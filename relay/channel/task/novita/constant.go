@@ -14,6 +14,7 @@ type NovitaTaskSubmitRequest struct {
 	Size            string   `json:"size,omitempty"`
 	Seed            int      `json:"seed,omitempty"`
 	Images          []string `json:"images,omitempty"`
+	AspectRatio     string   `json:"aspect_ratio,omitempty"` // 1:1 4:3等
 	SafetyTolerance string   `json:"safety_tolerance,omitempty"`
 }
 
