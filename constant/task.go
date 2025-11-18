@@ -9,6 +9,7 @@ const (
 	TaskPlatformYunwuSora                     = "yunwu-sora"
 	TaskPlatformPPioHunyuanImage              = "ppio-hunyuan-image"
 	TaskPlatformNovitaImage                   = "novita-image"
+	TaskPlatformHunyuanImage                  = "hunyuan-image"
 )
 
 const (

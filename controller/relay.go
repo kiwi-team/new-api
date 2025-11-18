@@ -598,7 +598,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		// 阿里云的服务很奇葩，429的提示，就像欠费一样。。所以阿里云类型的渠道， 间隔时间设为1小时
 		// 海外的渠道，因为飞书通知频率限制，所以间隔时间设为1小时
 		gap := time.Minute
-		if channelError.ChannelId == 1436 || channelError.ChannelType == constant.ChannelTypeAli {
+		overSeaChannelIds := []int{1436, 1467, 1468}
+		if slices.Contains(overSeaChannelIds, channelError.ChannelId) || channelError.ChannelType == constant.ChannelTypeAli {
 			gap = 60 * time.Minute
 		}
 		prevSend, exist := sendLogMap[channelError.ChannelId]

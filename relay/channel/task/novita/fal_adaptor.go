@@ -82,6 +82,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			if s, ok := v.(string); ok && s != "" {
 				body.AspectRatio = s
 			}
+		} else {
+			body.AspectRatio = "1:1"
 		}
 	}
 

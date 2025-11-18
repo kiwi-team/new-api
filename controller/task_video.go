@@ -15,7 +15,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	"github.com/QuantumNous/new-api/relay/channel/task/novita"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -52,6 +54,10 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 		adaptor = &yunwu.TaskAdaptor{}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "ppinfra") {
 		adaptor = &ppio.TaskAdaptor{}
+	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "novita") {
+		adaptor = &novita.TaskAdaptor{}
+	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "tencentcloudapi") {
+		adaptor = &hunyuan.TaskAdaptor{}
 	}
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
