@@ -219,6 +219,13 @@ func TokenAuth() func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
 		var parts []string
 		key = strings.TrimPrefix(key, "Bearer ")
+		clientUserId := c.Request.Header.Get("uid")
+		// 从key中提取client_user_id
+		tmpArr := strings.Split(key, "_")
+		if len(tmpArr) >= 2 {
+			key = tmpArr[0]
+			clientUserId = strings.Join(tmpArr[1:], "_")
+		}
 		aiceKey := common.OptionMap["AICE_KEY"]
 		if aiceKey == "" {
 			aiceKey = "XoqKKKphYhUINlbrF0079982C7F84f4cA8B9046cC6A96cEb"
@@ -291,7 +298,6 @@ func TokenAuth() func(c *gin.Context) {
 			userGroup = tokenGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
-		clientUserId := c.Request.Header.Get("uid")
 
 		if common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
 			if len(clientUserId) <= 8 && !isAiceKey {
