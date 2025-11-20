@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/fal"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	"github.com/QuantumNous/new-api/relay/channel/task/novita"
@@ -74,6 +75,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	} else if strings.Contains(info.ChannelBaseUrl, "tencentcloudapi") {
 		platform = constant.TaskPlatformHunyuanImage
 		adaptor = &hunyuan.TaskAdaptor{}
+	} else if strings.Contains(info.ChannelBaseUrl, "fal") {
+		platform = constant.TaskPlatformFALImage
+		adaptor = &fal.TaskAdaptor{}
 	} else {
 		adaptor = GetTaskAdaptor(platform)
 	}
@@ -387,6 +391,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			adaptor = &novita.TaskAdaptor{}
 		} else if strings.Contains(baseURL, "tencentcloudapi") {
 			adaptor = &hunyuan.TaskAdaptor{}
+		} else if strings.Contains(baseURL, "fal") {
+			adaptor = &fal.TaskAdaptor{}
 		}
 		if adaptor == nil {
 			return

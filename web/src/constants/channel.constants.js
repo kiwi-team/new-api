@@ -200,6 +200,10 @@ export const CHANNEL_OPTIONS = [
     value: 60,
     color: 'yellow',
     label: 'AliDashScope',
+  },{
+    value: 61,
+    color: 'red',
+    label: 'Fal',
   }
 ];
 

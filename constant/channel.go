@@ -58,6 +58,7 @@ const (
 	ChannelTypeSora             = 58
 	ChannelTypeElevenLabs       = 59
 	ChannelTypeAliDashScope     = 60
+	ChannelTypeFAL              = 61
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -124,6 +125,7 @@ var ChannelBaseURLs = []string{
 	"https://ark.cn-beijing.volces.com",         //58
 	"https://api.openai.com",                    //59
 	"https://dashscope.aliyuncs.com",            //60
+	"https://queue.fal.run",
 }
 
 var ChannelTypeNames = map[int]string{
@@ -180,6 +182,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeDoubaoVideo:    "DoubaoVideo",
 	ChannelTypeSora:           "Sora",
 	ChannelTypeElevenLabs:     "ElevenLabs",
+	ChannelTypeAliDashScope:   "AliDashScope",
+	ChannelTypeFAL:            "Fal",
 }
 
 func GetChannelTypeName(channelType int) string {

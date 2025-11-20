@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/fal"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	"github.com/QuantumNous/new-api/relay/channel/task/novita"
@@ -58,6 +59,8 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 		adaptor = &novita.TaskAdaptor{}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "tencentcloudapi") {
 		adaptor = &hunyuan.TaskAdaptor{}
+	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "fal") {
+		adaptor = &fal.TaskAdaptor{}
 	}
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")

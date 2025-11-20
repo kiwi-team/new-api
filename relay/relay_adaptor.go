@@ -125,6 +125,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &elevenlabs.Adaptor{}
 	case constant.APITypeAliDashScope:
 		return &ali_dashscope.Adaptor{}
+	case constant.APITypeFAL:
+		return &openai.Adaptor{}
 	}
 	return nil
 }
