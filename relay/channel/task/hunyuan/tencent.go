@@ -25,6 +25,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/common"
 	aiart "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/aiart/v20221229"
 	aiartcommon "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	aiarterrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
@@ -165,7 +166,6 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 
 	// 实例化一个请求对象,每个接口都会对应一个request对象
 	request := aiart.NewSubmitTextToImageJobRequest()
-	common.PrintJson("BuildRequestBody", body)
 	request.Prompt = aiartcommon.StringPtr(body.Prompt)
 	if body.Seed != 0 {
 		request.Seed = aiartcommon.Int64Ptr(int64(body.Seed))
@@ -311,14 +311,11 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	}, nil
 }
 
-var FinishedTaskMap = make(map[string]string)
-
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var op HunyuanTaskResultResponse
 	if err := json.Unmarshal(respBody, &op); err != nil {
 		return nil, fmt.Errorf("unmarshal operation response failed: %w", err)
 	}
-	common.PrintJson("xxx555555", op)
 	ti := &relaycommon.TaskInfo{}
 	//taskId := a.JobId
 	taskId := op.Response.RequestId
@@ -340,8 +337,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		ti.Progress = "100%"
 	}
 	if len(op.Response.ResultImage) > 0 { // some variants use `video` as base64
-		if _, ok := FinishedTaskMap[taskId]; ok {
-			ti.Url = FinishedTaskMap[taskId]
+		if v, ok := taskcommon.FinishedTaskCache.Get(taskId); ok {
+			ti.Url = v
 			return ti, nil
 		}
 		imageUrl := op.Response.ResultImage[0]
@@ -354,7 +351,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 		if file, err := service.SimpleUploadToS3(context.Background(), imageUrl); err == nil {
 			ti.Url = file
-			FinishedTaskMap[taskId] = file
+			taskcommon.FinishedTaskCache.Set(taskId, file)
 		} else {
 			ti.Url = imageUrl
 		}

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -160,8 +161,6 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	return service.GetHttpClient().Do(req)
 }
 
-var FinishedTaskMap = make(map[string]string)
-
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var op YunwuVeoTaskResult
 	if err := json.Unmarshal(respBody, &op); err != nil {
@@ -188,13 +187,13 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		ti.Progress = "100%"
 	}
 	if op.VideoURL != "" { // some variants use `video` as base64
-		if _, ok := FinishedTaskMap[op.ID]; ok {
-			ti.Url = FinishedTaskMap[op.ID]
+		if v, ok := taskcommon.FinishedTaskCache.Get(op.ID); ok {
+			ti.Url = v
 			return ti, nil
 		}
 		if file, err := service.SimpleUploadToS3(context.Background(), op.VideoURL); err == nil {
 			ti.Url = file
-			FinishedTaskMap[op.ID] = file
+			taskcommon.FinishedTaskCache.Set(op.ID, file)
 		}
 		return ti, nil
 	}

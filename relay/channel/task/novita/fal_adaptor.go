@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -142,8 +143,6 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	return service.GetHttpClient().Do(req)
 }
 
-var FinishedTaskMap = make(map[string]string)
-
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var op NovitaTaskResult
 	if err := json.Unmarshal(respBody, &op); err != nil {
@@ -169,8 +168,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		ti.Progress = "100%"
 	}
 	if len(op.Images) > 0 { // some variants use `video` as base64
-		if _, ok := FinishedTaskMap[taskId]; ok {
-			ti.Url = FinishedTaskMap[taskId]
+		if v, ok := taskcommon.FinishedTaskCache.Get(taskId); ok {
+			ti.Url = v
 			return ti, nil
 		}
 		imageUrl := op.Images[0].ImageURL
@@ -183,7 +182,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 		if file, err := service.SimpleUploadToS3(context.Background(), imageUrl); err == nil {
 			ti.Url = file
-			FinishedTaskMap[taskId] = file
+			taskcommon.FinishedTaskCache.Set(taskId, file)
 		} else {
 			ti.Url = imageUrl
 		}
