@@ -720,54 +720,56 @@ func RelayTask(c *gin.Context) {
 	if c.GetInt("new_retry_times") > 0 {
 		retryTimes = c.GetInt("new_retry_times")
 	}
-	channelId := c.GetInt("channel_id")
+
+	tokenChannelIdsAny, ok := c.Get("token_channel_ids")
+	var tokenChannelIds []int
+	if ok {
+		tokenChannelIds = tokenChannelIdsAny.([]int)
+	}
+	var channelId int
+	var channel *model.Channel
+	var taskErr *dto.TaskError
+	var err error
+	var newAPIError *types.NewAPIError
 	group := c.GetString("group")
 	originalModel := c.GetString("original_model")
-	c.Set("use_channel", []string{fmt.Sprintf("%d", channelId)})
-	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
-	if err != nil {
-		return
-	}
-	taskErr := taskRelayHandler(c, relayInfo)
-	if taskErr == nil {
-		retryTimes = 0
-	}
-	tags := make([]string, 0)
-	tagsAny, tagOk := c.Get("multi_model_tags")
-	if tagOk {
-		tags = tagsAny.([]string)
-	}
-	for i := 0; shouldRetryTaskRelay(c, channelId, taskErr, retryTimes) && i < retryTimes; i++ {
-		channel, _, err := service.CacheGetRandomSatisfiedChannel(c, group, originalModel, i, tags)
-		if err != nil {
-			logger.LogError(c, fmt.Sprintf("CacheGetRandomSatisfiedChannel failed: %s", err.Error()))
-			/*
-						channel, newAPIError := getChannel(c, group, originalModel, i)
-						if newAPIError != nil {
-							common.LogError(c, fmt.Sprintf("CacheGetRandomSatisfiedChannel failed: %s", newAPIError.Error()))
-							taskErr = service.TaskErrorWrapperLocal(newAPIError.Err, "get_channel_failed", http.StatusInternalServerError)
-				channel, newAPIError := getChannel(c, group, originalModel, i)
-				if newAPIError != nil {
-					logger.LogError(c, fmt.Sprintf("CacheGetRandomSatisfiedChannel failed: %s", newAPIError.Error()))
-					taskErr = service.TaskErrorWrapperLocal(newAPIError.Err, "get_channel_failed", http.StatusInternalServerError)
-			*/
-			break
+
+	for i := 0; shouldRetryTaskRelay(c, i, taskErr, retryTimes) && i <= retryTimes; i++ {
+		if len(tokenChannelIds) > 0 {
+			if i >= len(tokenChannelIds) {
+				break
+			}
+			channel, err = model.GetChannelById(tokenChannelIds[i], true)
+			if err != nil {
+				logger.LogError(c, fmt.Sprintf("GetChannelById failed: %s", err.Error()))
+				continue
+			}
+			if i > 0 {
+				common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+				middleware.SetupContextForSelectedChannel(c, channel, originalModel)
+			}
+		} else {
+			taskErr = nil
+			channel, newAPIError = getChannel(c, group, originalModel, i)
+			if newAPIError != nil {
+				logger.LogError(c, fmt.Sprintf("getChannel failed: %s", newAPIError.Error()))
+				continue
+			}
 		}
 		channelId = channel.Id
+
 		useChannel := c.GetStringSlice("use_channel")
 		useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 		c.Set("use_channel", useChannel)
 		logger.LogInfo(c, fmt.Sprintf("using channel #%d to retry (remain times %d)", channel.Id, i))
-		//middleware.SetupContextForSelectedChannel(c, channel, originalModel)
-
+		relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
+		if err != nil {
+			logger.LogError(c, fmt.Sprintf("GenRelayInfo failed: %s", err.Error()))
+			return
+		}
 		requestBody, _ := common.GetRequestBody(c)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		taskErr = taskRelayHandler(c, relayInfo)
-	}
-	useChannel := c.GetStringSlice("use_channel")
-	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
-		logger.LogInfo(c, retryLogStr)
 	}
 	if taskErr != nil {
 		if taskErr.StatusCode == http.StatusTooManyRequests {
@@ -788,7 +790,10 @@ func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.Tas
 	return err
 }
 
-func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
+func shouldRetryTaskRelay(c *gin.Context, round int, taskErr *dto.TaskError, retryTimes int) bool {
+	if round == 0 {
+		return true
+	}
 	if taskErr == nil {
 		return false
 	}
@@ -797,6 +802,14 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
+	}
+	tokenChannelIdsAny, ok := c.Get("token_channel_ids")
+	var tokenChannelIds []int
+	if ok {
+		tokenChannelIds = tokenChannelIdsAny.([]int)
+	}
+	if len(tokenChannelIds) > 0 {
+		return true
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true
