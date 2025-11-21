@@ -944,7 +944,22 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 					} else {
 						// 过滤掉空行
 						if part.Text != "\n" {
-							texts = append(texts, part.Text)
+							txt, imgUrl, err := openai.ParseTextAndImageURL(part.Text)
+							if err != nil {
+								texts = append(texts, part.Text)
+							} else {
+								if len(txt) > 0 {
+									texts = append(texts, txt)
+								}
+								imgUrl1, err := service.SimpleUploadToS3(c.Request.Context(), imgUrl)
+								if err == nil {
+									imgUrl = imgUrl1
+								}
+								image = &dto.MessageImageUrl{
+									Url: imgUrl,
+								}
+
+							}
 						}
 					}
 				}

@@ -358,8 +358,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	isChat := strings.Contains(info.ChannelBaseUrl, "chataiapi")
 	isNuwa := strings.Contains(info.ChannelBaseUrl, "nuwa")
 	isYunwu := strings.Contains(info.ChannelBaseUrl, "yunwu")
-	isToio := strings.Contains(info.ChannelBaseUrl, "aice") || strings.Contains(info.ChannelBaseUrl, "seedsnote")
-	if (isGuoguo || isChat || isNuwa || isYunwu || isToio) && strings.Contains(info.UpstreamModelName, "gemini-2.5-flash-image") {
+	isToio := strings.Contains(info.ChannelBaseUrl, "aice") || strings.Contains(info.ChannelBaseUrl, "seedsnote") || strings.Contains(info.ChannelBaseUrl, "deeparena")
+	isGeminiImageModel := strings.Contains(info.UpstreamModelName, "gemini") && strings.Contains(info.UpstreamModelName, "image")
+	if (isGuoguo || isChat || isNuwa || isYunwu || isToio) && isGeminiImageModel {
 		// "content": "没问题，这是添加了哆啦A梦的图片：\n![Image_1](https://img.aiguoguo199.com/file/BQACAgUAAyEGAASaOQ3XAALZo2jnt2LJXF_Do-uv5TWSIXZ6wAT0AAJIHQACAs44V_l87WpYb56INgQ.png)"
 		// 处理图片地址，改成toiotech的地址
 		for i, choice := range simpleResponse.Choices {
@@ -373,18 +374,29 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				if err1 != nil {
 					continue
 				}
-				simpleResponse.Choices[i].Message.SetMediaContent([]dto.MediaContent{
-					{
-						Type: "text",
-						Text: text,
-					},
-					{
-						Type: "image_url",
-						ImageUrl: &dto.MessageImageUrl{
-							Url: imgUrl,
+				if len(text) > 0 {
+					simpleResponse.Choices[i].Message.SetMediaContent([]dto.MediaContent{
+						{
+							Type: "text",
+							Text: text,
 						},
-					},
-				})
+						{
+							Type: "image_url",
+							ImageUrl: &dto.MessageImageUrl{
+								Url: imgUrl,
+							},
+						},
+					})
+				} else {
+					simpleResponse.Choices[i].Message.SetMediaContent([]dto.MediaContent{
+						{
+							Type: "image_url",
+							ImageUrl: &dto.MessageImageUrl{
+								Url: imgUrl,
+							},
+						},
+					})
+				}
 			}
 		}
 

@@ -65,7 +65,6 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
-
 	requestId := c.GetString(common.RequestIdKey)
 	//group := c.GetString("group")
 	//originalModel := c.GetString("original_model")

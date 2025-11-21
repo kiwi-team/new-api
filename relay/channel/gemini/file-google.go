@@ -85,8 +85,6 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 		return nil, fmt.Errorf("Writer.Close: %w", err)
 	}
 
-	fmt.Printf("File %s uploaded to gs://%s/%s\n", fileUri, bucket, object)
-
 	return &genai.File{
 		URI:         fmt.Sprintf("gs://%s/%s", bucket, object),
 		DownloadURI: fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, object),

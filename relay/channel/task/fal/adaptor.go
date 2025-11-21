@@ -182,6 +182,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return ti, nil
 	}
 	if len(op.Images) > 0 { // some variants use `video` as base64
+		ti.Progress = fmt.Sprintf("%d%%", 100)
 		ti.Status = model.TaskStatusSuccess
 		if v, ok := taskcommon.FinishedTaskCache.Get(taskId); ok {
 			ti.Url = v
