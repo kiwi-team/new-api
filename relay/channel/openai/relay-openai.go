@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,14 @@ import (
 func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
 	if data == "" {
 		return nil
+	}
+	if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
+		if strings.Contains(data, "令牌token未开通百灵大模型服务") ||
+			strings.Contains(data, `cn.com.antcloud.common.exception`) ||
+			strings.Contains(data, "RATE_LIMIT") ||
+			strings.Contains(data, `{"code":"500"`) {
+			return errors.New(data)
+		}
 	}
 	data = setDeltaRole(c, info, data)
 	if !forceFormat && !thinkToContent {

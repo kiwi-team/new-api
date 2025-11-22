@@ -251,7 +251,11 @@ func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, er
 	if err == nil {
 		for _, item := range specialChannels {
 			if item.ModelName == modelName {
-				ids = item.ChannelIds
+				//ids = item.ChannelIds
+				for _, arr := range item.ChannelIds {
+					common.ShuffleSlice(arr)
+					ids = append(ids, arr...)
+				}
 				if item.RandomType == "random" {
 					common.ShuffleSlice(ids)
 				}
@@ -262,7 +266,11 @@ func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, er
 			for _, item := range specialChannels {
 				// item.ModelName: ^gemini-(?!2\.5-flash-image).*
 				if common.RegMatch(item.ModelName, modelName) {
-					ids = item.ChannelIds
+					//	ids = item.ChannelIds
+					for _, arr := range item.ChannelIds {
+						common.ShuffleSlice(arr)
+						ids = append(ids, arr...)
+					}
 					if item.RandomType == "random" {
 						common.ShuffleSlice(ids)
 					}
