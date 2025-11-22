@@ -169,6 +169,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 			if err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
+				if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
+					return false
+				}
 			}
 		}
 		if c.GetString(constant.ContextKeyCompletionsResponses) == "yes" {
@@ -252,6 +255,15 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 		return true
 	})
+
+	if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
+		if strings.Contains(lastStreamData, "令牌token未开通百灵大模型服务") ||
+			strings.Contains(lastStreamData, `cn.com.antcloud.common.exception`) ||
+			strings.Contains(lastStreamData, "RATE_LIMIT") ||
+			strings.Contains(lastStreamData, `{"code":"500"`) {
+			return nil, types.NewError(errors.New(lastStreamData), types.ErrorCodeRateLimit)
+		}
+	}
 
 	// 处理最后的响应
 	shouldSendLastResp := true
