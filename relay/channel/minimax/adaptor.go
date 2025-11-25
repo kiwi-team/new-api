@@ -95,6 +95,18 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	var extraBody dto.ExtraBody
+	if request.ExtraBody != nil {
+		err := json.Unmarshal(request.ExtraBody, &extraBody)
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshalling extra body: %w", err)
+		}
+		if extraBody.Minimax != nil {
+			if extraBody.Minimax.ReasoningSplit {
+				request.ReasoningSplit = true
+			}
+		}
+	}
 	return request, nil
 }
 

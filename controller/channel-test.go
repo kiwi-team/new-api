@@ -650,6 +650,7 @@ func testAllAutoDisabledChannels(notify bool) error {
 			testAllAutoDisabledChannelsLock.Unlock()
 		}()
 
+		now := time.Now().Unix()
 		for _, channel := range channels {
 			// 手动禁用的渠道不测试
 			if channel.Status == common.ChannelStatusManuallyDisabled {
@@ -677,40 +678,37 @@ func testAllAutoDisabledChannels(notify bool) error {
 					continue
 				}
 			}
-			// 要启用的，都是自动禁用的单key渠道，或者有自动禁用key的多key渠道
-			tik := time.Now()
-			result := testChannel(channel, "", "", true)
-			tok := time.Now()
-			milliseconds := tok.Sub(tik).Milliseconds()
 
-			shouldBanChannel := false
-			newAPIError := result.newAPIError
-			// request error disables the channel
-			if newAPIError != nil {
-				modelName := channel.TestModel
-				if len(*modelName) == 0 {
-					modelName = &strings.Split(channel.Models, ",")[0]
-				}
-				model.SaveErrorLog(1, channel.Id, channel.Name, *modelName, result.newAPIError.ToOpenAIError(), result.Key, "", "", 0, "")
-				shouldBanChannel = service.ShouldDisableChannel(channel.Type, result.newAPIError)
+			hasAutoEnable := false
+			num := len(channel.ChannelInfo.MultiKeyDisabledReason)
+			indexList := make([]int, num)
+			for i := range channel.ChannelInfo.MultiKeyDisabledReason {
+				indexList = append(indexList, i)
 			}
-
-			// 当错误检查通过，才检查响应时间
-			if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
-				if milliseconds > disableThreshold {
-					//err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-					//newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
-					shouldBanChannel = true
+			for _, keyIndex := range indexList {
+				reason := channel.ChannelInfo.MultiKeyDisabledReason[keyIndex]
+				if strings.HasPrefix(reason, "You exceeded your current quota, please check your plan and billing details.") {
+					t1 := channel.ChannelInfo.MultiKeyDisabledTime[keyIndex]
+					if now-t1 < 60 {
+						continue
+					}
+					// 从状态列表中删除该密钥的记录，使其回到默认启用状态
+					if channel.ChannelInfo.MultiKeyStatusList != nil {
+						delete(channel.ChannelInfo.MultiKeyStatusList, keyIndex)
+					}
+					if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+						delete(channel.ChannelInfo.MultiKeyDisabledTime, keyIndex)
+					}
+					if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+						delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
+					}
+					hasAutoEnable = true
 				}
 			}
-
-			// enable channel
-			if service.ShouldEnableAutoDisabledChannel(newAPIError, channel.Status) {
+			if hasAutoEnable {
 				channel.Status = common.ChannelStatusEnabled
-				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+				channel.Update()
 			}
-
-			channel.UpdateResponseTime(milliseconds)
 			time.Sleep(common.RequestInterval)
 		}
 	})
@@ -776,11 +774,8 @@ func AutoEnableAutoDisabledChannels() {
 				if err != nil {
 					common.SysLog(fmt.Sprintf("automatically test all auto disabled channels failed, err=%s", err.Error()))
 				}
-				//common.SysLog("automatically channel test auto disabled finished")
 				time.Sleep(time.Duration(frequency) * time.Second)
-				if !operation_setting.GetMonitorSetting().AutoTestChannelEnabled {
-					break
-				}
+				common.SysLog("automatically channel test auto disabled finished")
 			}
 		}
 	})

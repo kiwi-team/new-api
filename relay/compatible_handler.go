@@ -346,7 +346,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isMoonshot := strings.Contains(info.ChannelBaseUrl, "moonshot")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
-	//var extraBody dto.ExtraBody
+
 	if textRequest.THINKING != nil {
 		err := json.Unmarshal(textRequest.THINKING, &thinking)
 		if err != nil {

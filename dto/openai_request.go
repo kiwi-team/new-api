@@ -49,6 +49,9 @@ type ExtraBody struct {
 			IncludeThoughts bool `json:"include_thoughts"`
 		} `json:"thinking_config"`
 	} `json:"google"`
+	Minimax *struct {
+		ReasoningSplit bool `json:"reasoning_split,omitempty"`
+	} `json:"minimax"`
 }
 
 type GeneralOpenAIRequest struct {
@@ -123,6 +126,8 @@ type GeneralOpenAIRequest struct {
 	ReturnImages           bool            `json:"return_images,omitempty"`
 	ReturnRelatedQuestions bool            `json:"return_related_questions,omitempty"`
 	SearchMode             string          `json:"search_mode,omitempty"`
+	// minimax
+	ReasoningSplit bool `json:"reasoning_split,omitempty"`
 }
 
 func (r *GeneralOpenAIRequest) GetTokenCountMeta() *types.TokenCountMeta {
