@@ -680,9 +680,9 @@ func testAllAutoDisabledChannels(notify bool) error {
 			}
 
 			hasAutoEnable := false
-			num := len(channel.ChannelInfo.MultiKeyDisabledReason)
+			num := len(channel.ChannelInfo.MultiKeyStatusList)
 			indexList := make([]int, num)
-			for i := range channel.ChannelInfo.MultiKeyDisabledReason {
+			for i := range channel.ChannelInfo.MultiKeyStatusList {
 				indexList = append(indexList, i)
 			}
 			for _, keyIndex := range indexList {
@@ -709,7 +709,6 @@ func testAllAutoDisabledChannels(notify bool) error {
 				channel.Status = common.ChannelStatusEnabled
 				channel.Update()
 			}
-			time.Sleep(common.RequestInterval)
 		}
 	})
 	return nil

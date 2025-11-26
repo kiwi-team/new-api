@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Empty } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
@@ -25,6 +25,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getTokensColumns } from './TokensColumnDefs';
+import { API } from '../../../helpers';
 
 const TokensTable = (tokensData) => {
   const {
@@ -49,6 +50,30 @@ const TokensTable = (tokensData) => {
     t,
   } = tokensData;
 
+  const [channelNameMap, setChannelNameMap] = useState(new Map());
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await API.get(
+          '/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false',
+          { disableDuplicate: true },
+        );
+        const items = res?.data?.data?.items || res?.data?.data || [];
+        const map = new Map();
+        items.forEach((ch) => {
+          const id = Number(ch.id);
+          if (!isNaN(id) && id > 0) map.set(id, String(ch.name || ''));
+        });
+        if (mounted) setChannelNameMap(map);
+      } catch {}
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // Get all columns
   const columns = useMemo(() => {
     return getTokensColumns({
@@ -61,6 +86,7 @@ const TokensTable = (tokensData) => {
       setEditingToken,
       setShowEdit,
       refresh,
+      channelNameMap,
     });
   }, [
     t,
@@ -72,6 +98,7 @@ const TokensTable = (tokensData) => {
     setEditingToken,
     setShowEdit,
     refresh,
+    channelNameMap,
   ]);
 
   // Handle compact mode by removing fixed positioning

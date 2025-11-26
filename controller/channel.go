@@ -636,6 +636,7 @@ func DeleteChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+
 	model.InitChannelCache()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

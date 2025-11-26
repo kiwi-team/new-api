@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/samber/lo"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -68,11 +70,61 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	return tokens, err
 }
 
-func SearchUserTokens(userId int, keyword string, token string) (tokens []*Token, err error) {
+func SearchUserTokens(userId int, keyword string, token string, modelName string, channel string) (tokens []*Token, err error) {
 	if token != "" {
 		token = strings.Trim(token, "sk-")
 	}
 	err = DB.Where("user_id = ?", userId).Where("name LIKE ?", "%"+keyword+"%").Where(commonKeyCol+" LIKE ?", "%"+token+"%").Find(&tokens).Error
+	if len(modelName) > 0 {
+		// 模型限制
+		tokens = lo.Filter(tokens, func(token *Token, _ int) bool {
+			//return strings.Contains(token.ModelLimits, model)
+			var channelRulesMap map[string]dto.ChannelRulesItem
+			rr := token.ChannelRules
+			if rr == "" {
+				return false
+			}
+			err1 := json.Unmarshal([]byte(rr), &channelRulesMap)
+			if err1 != nil {
+				fmt.Printf("err1 = %v\n", err1)
+				return false
+			}
+			for reg := range channelRulesMap {
+				if common.RegMatch(modelName, reg) {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	if len(channel) > 0 {
+		channelId := common.String2Int(channel)
+		tokens = lo.Filter(tokens, func(token *Token, _ int) bool {
+			//return strings.Contains(token.ModelLimits, model)
+			var channelRulesMap map[string]dto.ChannelRulesItem
+			rr := token.ChannelRules
+			if rr == "" {
+				return false
+			}
+			err1 := json.Unmarshal([]byte(rr), &channelRulesMap)
+			if err1 != nil {
+				fmt.Printf("err1 = %v\n", err1)
+				return false
+			}
+			for _, Ruleitem := range channelRulesMap {
+				for _, item := range Ruleitem.Channels {
+					if item.Id == channelId {
+						return true
+					}
+					if slices.Contains(item.Ids, channelId) {
+						return true
+					}
+				}
+
+			}
+			return false
+		})
+	}
 	return tokens, err
 }
 

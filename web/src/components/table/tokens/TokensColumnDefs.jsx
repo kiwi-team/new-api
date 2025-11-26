@@ -252,6 +252,66 @@ const renderAllowIps = (text, t) => {
   return <Space wrap>{ipTags}</Space>;
 };
 
+const renderChannelRules = (text, t, channelNameMap) => {
+  if (!text || String(text).trim() === '' || text === '{}') {
+    return (
+      <Tag color='white' shape='circle'>
+        {t('无限制')}
+      </Tag>
+    );
+  }
+
+  let obj = {};
+  try {
+    obj = typeof text === 'string' ? JSON.parse(text || '{}') : (text || {});
+  } catch (_) {
+    return (
+      <Tag color='white' shape='circle'>
+        {t('无限制')}
+      </Tag>
+    );
+  }
+
+  const lines = Object.entries(obj).map(([modelKey, rule]) => {
+    const retry = Number(rule?.retry || 0);
+    const randomType = String(rule?.random_type || 'order');
+    const channels = Array.isArray(rule?.channels) ? rule.channels : [];
+
+    const groupStrs = channels
+      .map((ch) => {
+        let ids = [];
+        if (Array.isArray(ch?.ids)) {
+          ids = ch.ids
+            .map((v) => Number(v))
+            .filter((v) => !isNaN(v) && v > 0);
+        } else if (!isNaN(Number(ch?.id))) {
+          const nid = Number(ch.id);
+          if (nid > 0) ids = [nid];
+        }
+        if (ids.length === 0) return null;
+        const labels = ids.map((id) => {
+          const name = channelNameMap?.get?.(Number(id));
+          return name ? `${name}(${id})` : `渠道${id}`;
+        });
+        return `[${labels.join(',')}]`;
+      })
+      .filter(Boolean);
+
+    const groupsStr = groupStrs.length > 0 ? groupStrs.join(', ') : '[]';
+
+    const line = `${modelKey}：retry:${retry} ${randomType} ${groupsStr}`;
+    return (
+      <div key={modelKey} className='text-xs'>
+        <Tag color='white' shape='circle'>
+          {line}
+        </Tag>
+      </div>
+    );
+  });
+
+  return <div className='flex flex-col gap-1'>{lines}</div>;
+};
+
 // Render separate quota usage column
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
@@ -434,6 +494,7 @@ export const getTokensColumns = ({
   setEditingToken,
   setShowEdit,
   refresh,
+  channelNameMap,
 }) => {
   return [
     {
@@ -476,6 +537,11 @@ export const getTokensColumns = ({
       title: t('IP限制'),
       dataIndex: 'allow_ips',
       render: (text) => renderAllowIps(text, t),
+    },
+    {
+      title: t('模型'),
+      dataIndex: 'channel_rules',
+      render: (text) => renderChannelRules(text, t, channelNameMap),
     },
     {
       title: t('创建时间'),

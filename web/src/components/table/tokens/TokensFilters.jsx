@@ -67,6 +67,28 @@ const TokensFilters = ({
           />
         </div>
 
+         <div className='relative w-full md:w-56'>
+          <Form.Input
+            field='model'
+            prefix={<IconSearch />}
+            placeholder={t('模型')}
+            showClear
+            pure
+            size='small'
+          />
+        </div>
+
+         <div className='relative w-full md:w-56'>
+          <Form.Input
+            field='channel'
+            prefix={<IconSearch />}
+            placeholder={t('渠道')}
+            showClear
+            pure
+            size='small'
+          />
+        </div>
+
         <div className='relative w-full md:w-56'>
           <Form.Input
             field='searchToken'

@@ -61,6 +61,8 @@ export const useTokensData = (openFluentNotification) => {
     return {
       searchKeyword: formValues.searchKeyword || '',
       searchToken: formValues.searchToken || '',
+      model: formValues.model || '',
+      channel: formValues.channel || '',
     };
   };
 
@@ -183,14 +185,14 @@ export const useTokensData = (openFluentNotification) => {
 
   // Search tokens function
   const searchTokens = async () => {
-    const { searchKeyword, searchToken } = getFormValues();
-    if (searchKeyword === '' && searchToken === '') {
+    const { searchKeyword, searchToken,model,channel } = getFormValues();
+    if (searchKeyword === '' && searchToken === '' && model === '' && channel === '') {
       await loadTokens(1);
       return;
     }
     setSearching(true);
     const res = await API.get(
-      `/api/token/search?keyword=${searchKeyword}&token=${searchToken}`,
+      `/api/token/search?keyword=${searchKeyword}&token=${searchToken}&model=${model}&channel=${channel}`,
     );
     const { success, message, data } = res.data;
     if (success) {

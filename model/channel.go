@@ -678,9 +678,18 @@ func (channel *Channel) UpdateBalance(balance float64) {
 
 func (channel *Channel) Delete() error {
 	var err error
+	info, _ := GetChannelById(channel.Id, true)
 	err = DB.Delete(channel).Error
 	if err != nil {
 		return err
+	}
+	if info != nil {
+		infoStr := common.GetJsonString(info)
+		CreateDeletedData(&DeletedData{
+			Type:      "channel",
+			Data:      infoStr,
+			CreatedAt: common.GetTimestamp(),
+		})
 	}
 	err = channel.DeleteAbilities()
 	return err
@@ -933,11 +942,33 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	var channels []*Channel
+	DB.Where("status = ?", status).Find(&channels)
+	for _, channel := range channels {
+		infoStr := common.GetJsonString(channel)
+		CreateDeletedData(&DeletedData{
+			Type:      "channel",
+			Data:      infoStr,
+			CreatedAt: common.GetTimestamp(),
+		})
+	}
+	//result := DB.Where("status = ?", status).Delete(&Channel{})
+	//return result.RowsAffected, result.Error
+	return 0, nil
 }
 
 func DeleteDisabledChannel() (int64, error) {
+	var channels []*Channel
+	DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Find(&channels)
+	fmt.Printf("disabled channel count: %d\n", len(channels))
+	for _, channel := range channels {
+		infoStr := common.GetJsonString(channel)
+		CreateDeletedData(&DeletedData{
+			Type:      "channel",
+			Data:      infoStr,
+			CreatedAt: common.GetTimestamp(),
+		})
+	}
 	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
 	return result.RowsAffected, result.Error
 }

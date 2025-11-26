@@ -41,6 +41,11 @@ import {
   Form,
   Col,
   Row,
+  TagInput,
+  InputNumber,
+  Select,
+  Input,
+  AutoComplete,
 } from '@douyinfe/semi-ui';
 import {
   IconCreditCard,
@@ -61,8 +66,198 @@ const EditTokenModal = (props) => {
   const isMobile = useIsMobile();
   const formApiRef = useRef(null);
   const [models, setModels] = useState([]);
+  const [modelNameList, setModelNameList] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [channelOptions, setChannelOptions] = useState([]);
+  const [channelOptionMap, setChannelOptionMap] = useState(new Map());
+  const getChannelStatusColor = (status) => {
+    if (status === 1) return 'green';
+    if (status === 2) return 'red';
+    if (status === 3) return 'yellow';
+    return 'grey';
+  };
+  const renderChannelOption = (option) => {
+    const color = getChannelStatusColor(option.__status);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <span>{option.label}</span>
+        <Tag color={color} size='small' />
+      </div>
+    );
+  };
+
+  const dedupeOptions = (list) => {
+    const map = new Map();
+    for (const o of list) {
+      const key = Number(o.value);
+      const prev = map.get(key);
+      if (!prev) map.set(key, o);
+      else {
+        const pUnknown = String(prev.label || '').startsWith('未知(');
+        const cUnknown = String(o.label || '').startsWith('未知(');
+        if (pUnknown && !cUnknown) map.set(key, o);
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const rebuildChannelOptionMap = (opts) => {
+    const m = new Map();
+    for (const o of opts) m.set(Number(o.value), o);
+    setChannelOptionMap(m);
+  };
+
+  const ensureOptionsForIds = (ids) => {
+    const base = [...channelOptions];
+    let changed = false;
+    for (const id of ids) {
+      const nid = Number(id);
+      if (!channelOptionMap.has(nid)) {
+        base.push({ label: `未知(${nid})`, value: nid, __status: 0 });
+        changed = true;
+      }
+    }
+    if (changed) {
+      const deduped = dedupeOptions(base);
+      setChannelOptions(deduped);
+      rebuildChannelOptionMap(deduped);
+    }
+  };
   const isEdit = props.editingToken.id !== undefined;
+
+  const [channelRulesList, setChannelRulesList] = useState([]);
+  const [channelRulesJson, setChannelRulesJson] = useState('');
+
+  const parseChannelRulesToUI = (raw) => {
+    try {
+      let obj = {};
+      if (!raw) obj = {};
+      else if (typeof raw === 'string') obj = JSON.parse(raw || '{}');
+      else if (typeof raw === 'object') obj = raw || {};
+      const list = Object.entries(obj).map(([modelKey, rule]) => {
+        const channels = Array.isArray(rule?.channels) ? rule.channels : [];
+        const mapped = channels.map((ch) => {
+          const ids = Array.isArray(ch?.ids)
+            ? ch.ids.map((v) => Number(v)).filter((v) => !isNaN(v))
+            : (Number(ch?.id || 0) > 0 ? [Number(ch.id)] : []);
+          return { ids };
+        });
+        return {
+          modelKey,
+          retry: Number(rule?.retry || 0),
+          random_type: rule?.random_type || 'order',
+          disable_channels: Array.isArray(rule?.disable_channels)
+            ? rule.disable_channels
+                .map((v) => Number(v))
+                .filter((v) => !isNaN(v))
+            : [],
+          channels: mapped,
+        };
+      });
+      setChannelRulesList(list);
+      updateChannelRulesJsonFromList(list);
+    } catch (e) {
+      setChannelRulesList([]);
+      setChannelRulesJson('');
+      formApiRef.current?.setValue('channel_rules', '');
+    }
+  };
+
+  const updateChannelRulesJsonFromList = (list) => {
+    const obj = {};
+    list.forEach((item) => {
+      const key = String(item.modelKey || '').trim();
+      if (!key) return;
+      const channels = Array.isArray(item.channels) ? item.channels : [];
+      const mapped = channels
+        .map((ch) => {
+          const ids = Array.isArray(ch.ids)
+            ? ch.ids.map((v) => Number(v)).filter((v) => !isNaN(v))
+            : [];
+          if (ids.length === 0) return null;
+          const payload = { ids };
+          if (!isNaN(Number(ch.weight))) payload.weight = Number(ch.weight);
+          return payload;
+        })
+        .filter(Boolean);
+      const disableChannels = Array.isArray(item.disable_channels)
+        ? item.disable_channels.map((v) => Number(v)).filter((v) => !isNaN(v))
+        : [];
+      obj[key] = {
+        retry: Number(item.retry || 0),
+        disable_channels: disableChannels,
+        random_type: item.random_type || 'order',
+        channels: mapped,
+      };
+    });
+    const json = Object.keys(obj).length > 0 ? JSON.stringify(obj) : '';
+    setChannelRulesJson(json);
+    formApiRef.current?.setValue('channel_rules', json);
+  };
+
+  const addRule = () => {
+    const list = [
+      ...channelRulesList,
+      {
+        modelKey: '',
+        retry: 0,
+        random_type: 'order',
+        disable_channels: [],
+        channels: [],
+      },
+    ];
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const removeRule = (idx) => {
+    const list = channelRulesList.filter((_, i) => i !== idx);
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const updateRuleField = (idx, key, value) => {
+    const list = channelRulesList.map((r, i) => (i === idx ? { ...r, [key]: value } : r));
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const addChannelItem = (ruleIdx) => {
+    const list = channelRulesList.map((r, i) =>
+      i === ruleIdx
+        ? {
+            ...r,
+            channels: [
+              ...r.channels,
+              { ids: [] },
+            ],
+          }
+        : r,
+    );
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const removeChannelItem = (ruleIdx, chIdx) => {
+    const list = channelRulesList.map((r, i) =>
+      i === ruleIdx ? { ...r, channels: r.channels.filter((_, j) => j !== chIdx) } : r,
+    );
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const updateChannelItem = (ruleIdx, chIdx, key, value) => {
+    const list = channelRulesList.map((r, i) =>
+      i === ruleIdx
+        ? {
+            ...r,
+            channels: r.channels.map((ch, j) => (j === chIdx ? { ...ch, [key]: value } : ch)),
+          }
+        : r,
+    );
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
 
   const getInitValues = () => ({
     name: '',
@@ -74,8 +269,8 @@ const EditTokenModal = (props) => {
     allow_ips: '',
     group: '',
     tokenCount: 1,
-    channel_rules: {},
-    channel_ratios:{},
+    channel_rules: '',
+    channel_ratios: '',
   });
 
   const handleCancel = () => {
@@ -122,6 +317,10 @@ const EditTokenModal = (props) => {
         };
       });
       setModels(localModelOptions);
+      try {
+        const names = Array.isArray(data) ? data.filter((m) => typeof m === 'string') : [];
+        setModelNameList(names);
+      } catch {}
     } else {
       showError(t(message));
     }
@@ -150,6 +349,30 @@ const EditTokenModal = (props) => {
     }
   };
 
+  const loadAllChannels = async () => {
+    try {
+      const res = await API.get(
+        `/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false`,
+      );
+      const { success, message, data } = res.data;
+      if (success) {
+        const items = data?.items || data || [];
+        const opts = (Array.isArray(items) ? items : []).map((ch) => ({
+          label: `${ch.name}(${ch.id})`,
+          value: ch.id,
+          __status: ch.status,
+        }));
+        const merged = dedupeOptions([ ...channelOptions, ...opts ]);
+        setChannelOptions(merged);
+        rebuildChannelOptionMap(merged);
+      } else {
+        showError(t(message));
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const loadToken = async () => {
     setLoading(true);
     let res = await API.get(`/api/token/${props.editingToken.id}`);
@@ -165,6 +388,19 @@ const EditTokenModal = (props) => {
       }
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
+        try {
+          const raw = data.channel_rules || '';
+          parseChannelRulesToUI(raw);
+        } catch {}
+        try {
+          const ids = [];
+          channelRulesList.forEach((r) =>
+            (r.channels || []).forEach((ch) =>
+              (ch.ids || []).forEach((id) => ids.push(Number(id))),
+            ),
+          );
+          ensureOptionsForIds(ids);
+        } catch {}
       }
     } else {
       showError(message);
@@ -180,7 +416,20 @@ const EditTokenModal = (props) => {
     }
     loadModels();
     loadGroups();
+    loadAllChannels();
   }, [props.editingToken.id]);
+
+  useEffect(() => {
+    try {
+      const ids = [];
+      channelRulesList.forEach((r) =>
+        (r.channels || []).forEach((ch) =>
+          (ch.ids || []).forEach((id) => ids.push(Number(id))),
+        ),
+      );
+      ensureOptionsForIds(ids);
+    } catch {}
+  }, [channelOptions, channelRulesList]);
 
   useEffect(() => {
     if (props.visiable) {
@@ -188,6 +437,7 @@ const EditTokenModal = (props) => {
         loadToken();
       } else {
         formApiRef.current?.setValues(getInitValues());
+        parseChannelRulesToUI('');
       }
     } else {
       formApiRef.current?.reset();
@@ -222,6 +472,7 @@ const EditTokenModal = (props) => {
       }
       localInputs.model_limits = localInputs.model_limits.join(',');
       localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+      localInputs.channel_rules = channelRulesJson || '';
       let res = await API.put(`/api/token/`, {
         ...localInputs,
         id: parseInt(props.editingToken.id),
@@ -250,16 +501,17 @@ const EditTokenModal = (props) => {
 
         if (localInputs.expired_time !== -1) {
           let time = Date.parse(localInputs.expired_time);
-          if (isNaN(time)) {
-            showError(t('过期时间格式错误！'));
-            setLoading(false);
-            break;
-          }
-          localInputs.expired_time = Math.ceil(time / 1000);
+        if (isNaN(time)) {
+          showError(t('过期时间格式错误！'));
+          setLoading(false);
+          break;
         }
-        localInputs.model_limits = localInputs.model_limits.join(',');
-        localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
-        let res = await API.post(`/api/token/`, localInputs);
+        localInputs.expired_time = Math.ceil(time / 1000);
+      }
+      localInputs.model_limits = localInputs.model_limits.join(',');
+      localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+      localInputs.channel_rules = channelRulesJson || '';
+      let res = await API.post(`/api/token/`, localInputs);
         const { success, message } = res.data;
         if (success) {
           successCount++;
@@ -558,15 +810,125 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
-                   <Form.TextArea
-                      field='channel_rules'
-                      label={t('设置渠道规则')}
-                      autosize
-                      rows={10}
-                      extraText={t('请核对配置信息')}
-                      showClear
-                      style={{ width: '100%' }}
-                    />
+                   <Form.Slot label={t('设置渠道规则')}>
+                      <Card className='!rounded-2xl shadow-sm border-0'>
+                        <Row gutter={12}>
+                          <Col span={24}>
+                            <Space>
+                              <Button type='tertiary' onClick={addRule} size='small'>
+                                {t('添加规则')}
+                              </Button>
+                            </Space>
+                          </Col>
+                          {channelRulesList.map((rule, idx) => (
+                            <Col span={24} key={`rule_${idx}`}>
+                              <Card className='!rounded-xl border-0'>
+                                <Row gutter={8}>
+                                  <Col span={12}>
+                                    <Form.Slot label={t('模型关键字')}>
+                                      <AutoComplete
+                                        value={rule.modelKey}
+                                        data={modelNameList.map((m) => ({ value: m, label: m }))}
+                                        onChange={(v) => updateRuleField(idx, 'modelKey', v)}
+                                        onSelect={(item) => updateRuleField(idx, 'modelKey', item?.value || '')}
+                                        placeholder={t('输入以搜索模型名称或前缀')}
+                                        style={{ width: '100%' }}
+                                        showClear
+                                      />
+                                    </Form.Slot>
+                                  </Col>
+                                  <Col span={6}>
+                                    <InputNumber
+                                      value={rule.retry}
+                                      onChange={(v) => updateRuleField(idx, 'retry', Number(v || 0))}
+                                      style={{ width: '100%' }}
+                                    />
+                                  </Col>
+                                  <Col span={6}>
+                                    <Select
+                                      value={rule.random_type}
+                                      optionList={[
+                                        { label: 'order', value: 'order' },
+                                        { label: 'random', value: 'random' },
+                                      ]}
+                                      onChange={(v) => updateRuleField(idx, 'random_type', v)}
+                                      style={{ width: '100%' }}
+                                    />
+                                  </Col>
+                                  <Col span={24}>
+                                    <Form.Slot label={t('禁用渠道')}>
+                                      <TagInput
+                                        value={(rule.disable_channels || []).map((n) => String(n))}
+                                        onChange={(arr) =>
+                                          updateRuleField(
+                                            idx,
+                                            'disable_channels',
+                                            (arr || [])
+                                              .map((v) => Number(v))
+                                              .filter((v) => !isNaN(v)),
+                                          )
+                                        }
+                                        hideCopy
+                                        style={{ width: '100%' }}
+                                      />
+                                    </Form.Slot>
+                                  </Col>
+                                  <Col span={24}>
+                                    <Space>
+                                      <Button type='tertiary' size='small' onClick={() => addChannelItem(idx)}>
+                                        {t('添加渠道组')}
+                                      </Button>
+                                      <Button type='danger' theme='borderless' size='small' onClick={() => removeRule(idx)}>
+                                        {t('删除规则')}
+                                      </Button>
+                                    </Space>
+                                  </Col>
+                                  {rule.channels.map((ch, j) => (
+                                    <Col span={24} key={`ch_${idx}_${j}`}>
+                                      <Card className='!rounded-lg border-0'>
+                                        <Row gutter={8}>
+                                          <Col span={12}>
+                                          <Select
+                                            multiple
+                                            optionList={channelOptions}
+                                            value={(ch.ids || []).map((n) => Number(n))}
+                                            onChange={(vals) =>
+                                              updateChannelItem(
+                                                idx,
+                                                j,
+                                                  'ids',
+                                                  (vals || [])
+                                                    .map((v) => Number(v))
+                                                    .filter((v) => !isNaN(v)),
+                                                )
+                                              }
+                                              filter
+                                              autoClearSearchValue={false}
+                                              searchPosition='dropdown'
+                                              showClear
+                                              style={{ width: '100%' }}
+                                            />
+                                          </Col>
+                                          <Col span={12}>
+                                            <Button type='danger' theme='borderless' onClick={() => removeChannelItem(idx, j)}>
+                                              {t('删除')}
+                                            </Button>
+                                          </Col>
+                                          
+                                        </Row>
+                                      </Card>
+                                    </Col>
+                                  ))}
+                                </Row>
+                              </Card>
+                            </Col>
+                          ))}
+                          <Col span={24}>
+                            <Form.Input field='channel_rules' value={channelRulesJson} style={{ display: 'none' }} />
+                          </Col>
+                        </Row>
+                      </Card>
+                    </Form.Slot>
                   </Col>
                   <Col span={24}>
                    <Form.TextArea

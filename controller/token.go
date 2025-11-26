@@ -56,7 +56,9 @@ func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	keyword := c.Query("keyword")
 	token := c.Query("token")
-	tokens, err := model.SearchUserTokens(userId, keyword, token)
+	modelName := c.Query("model")
+	channel := c.Query("channel")
+	tokens, err := model.SearchUserTokens(userId, keyword, token, modelName, channel)
 	if err != nil {
 		common.ApiError(c, err)
 		return

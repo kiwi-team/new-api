@@ -379,7 +379,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					}
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {
-				claudeMessage.Content = message.StringContent()
+				if len(message.StringContent()) > 0 {
+					claudeMessage.Content = message.StringContent()
+				}
 			} else {
 				claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
 				for _, mediaMessage := range message.ParseContent() {
@@ -390,7 +392,12 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						mediaMessage.Type = "thinking"
 					}
 					if mediaMessage.Type == "text" {
-						claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
+						if len(mediaMessage.Text) > 0 {
+							claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
+						} else {
+							// 防止出现 messages: text content blocks must be non-empty (request id: 20251126095629748807213PavGYnmJ)
+							continue
+						}
 					} else if mediaMessage.Type == "thinking" {
 						claudeMediaMessage.Type = "thinking"
 						claudeMediaMessage.Thinking = &message.ReasoningContent

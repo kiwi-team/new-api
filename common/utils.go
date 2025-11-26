@@ -297,6 +297,10 @@ func MessageWithRequestId(message string, id string) string {
 			}
 		}
 	}
+	// 去掉 message 中所有已出现的 "(request id: xxxxxxx)"（包含或不包含前导空格，支持多个）
+	re := regexp.MustCompile(`\s*\(request id: [^\)]+\)`)
+	message = re.ReplaceAllString(message, "")
+	message = strings.TrimSpace(message)
 	return fmt.Sprintf("%s (request id: %s)", message, id)
 }
 
