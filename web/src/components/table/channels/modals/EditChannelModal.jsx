@@ -108,7 +108,7 @@ function type2secretPrompt(type) {
     case 33:
       return '按照如下格式输入：Ak|Sk|Region';
     case 45:
-        return '请输入渠道对应的鉴权密钥, 豆包语音输入：AppId|AccessToken';
+      return '请输入渠道对应的鉴权密钥, 豆包语音输入：AppId|AccessToken';
     case 50:
       return '按照如下格式输入: AccessKey|SecretKey, 如果上游是New API，则直接输ApiKey';
     case 51:
@@ -1509,7 +1509,10 @@ const EditChannelModal = (props) => {
                           style={{ width: '100%' }}
                           value={inputs.aws_key_type || 'ak_sk'}
                           onChange={(value) => {
-                            handleChannelOtherSettingsChange('aws_key_type', value);
+                            handleChannelOtherSettingsChange(
+                              'aws_key_type',
+                              value,
+                            );
                           }}
                           extraText={t(
                             'AK/SK 模式：使用 AccessKey 和 SecretAccessKey；API Key 模式：使用 API Key',
@@ -1589,7 +1592,9 @@ const EditChannelModal = (props) => {
                           placeholder={
                             inputs.type === 33
                               ? inputs.aws_key_type === 'api_key'
-                                ? t('请输入 API Key，一行一个，格式：APIKey|Region')
+                                ? t(
+                                    '请输入 API Key，一行一个，格式：APIKey|Region',
+                                  )
                                 : t(
                                     '请输入密钥，一行一个，格式：AccessKey|SecretAccessKey|Region',
                                   )
@@ -1792,7 +1797,9 @@ const EditChannelModal = (props) => {
                               inputs.type === 33
                                 ? inputs.aws_key_type === 'api_key'
                                   ? t('请输入 API Key，格式：APIKey|Region')
-                                  : t('按照如下格式输入：AccessKey|SecretAccessKey|Region')
+                                  : t(
+                                      '按照如下格式输入：AccessKey|SecretAccessKey|Region',
+                                    )
                                 : t(type2secretPrompt(inputs.type))
                             }
                             rules={
@@ -2449,27 +2456,27 @@ const EditChannelModal = (props) => {
                       onChange={(value) => handleInputChange('remark', value)}
                     />
 
-                   <div>
-                   <Form.Input
-                    name='ratio'
-                    type='number'
-                    step='0.01'
-                    field='ratio'
-                    defaultValue={1}
-                    placeholder={t('渠道倍率')}
-                    onChange={(value) => {
-                      const number = parseFloat(value);
-                      if (isNaN(number)) {
-                        handleInputChange('ratio', value);
-                      } else {
-                        handleInputChange('ratio', number);
-                      }
-                    }}
-                    // value={inputs.ratio}
-                    size="large"
-                    className="!rounded-lg"
-                  />
-                </div>
+                    <div>
+                      <Form.Input
+                        name='ratio'
+                        type='number'
+                        step='0.01'
+                        field='ratio'
+                        defaultValue={1}
+                        placeholder={t('渠道倍率')}
+                        onChange={(value) => {
+                          const number = parseFloat(value);
+                          if (isNaN(number)) {
+                            handleInputChange('ratio', value);
+                          } else {
+                            handleInputChange('ratio', number);
+                          }
+                        }}
+                        // value={inputs.ratio}
+                        size='large'
+                        className='!rounded-lg'
+                      />
+                    </div>
 
                     <Row gutter={12}>
                       <Col span={12}>
@@ -2758,7 +2765,6 @@ const EditChannelModal = (props) => {
                         </Text>
                       </div>
                     </div>
-
                     {inputs.type === 1 && (
                       <Form.Switch
                         field='force_format'
@@ -2773,7 +2779,6 @@ const EditChannelModal = (props) => {
                         )}
                       />
                     )}
-
                     <Form.Switch
                       field='thinking_to_content'
                       label={t('思考内容转换')}
@@ -2789,7 +2794,6 @@ const EditChannelModal = (props) => {
                         '将 reasoning_content 转换为 <think> 标签拼接到内容中',
                       )}
                     />
-
                     <Form.Switch
                       field='pass_through_body_enabled'
                       label={t('透传请求体')}
@@ -2803,7 +2807,6 @@ const EditChannelModal = (props) => {
                       }
                       extraText={t('启用请求体透传功能')}
                     />
-
                     <Form.Input
                       field='proxy'
                       label={t('代理地址')}
@@ -2814,31 +2817,41 @@ const EditChannelModal = (props) => {
                       showClear
                       extraText={t('用于配置网络代理，支持 socks5 协议')}
                     />
-
-                    {inputs.type == 41 && (<Form.Input
-                      field='google_file_bucket'
-                      label={t('Google 文件存储桶')}
-                      placeholder={t('例如: my-bucket')}
-                      onChange={(value) =>
-                        handleChannelSettingsChange('google_file_bucket', value)
-                      }
-                      showClear
-                      extraText={t('用于配置 Google 文件存储桶 vertex服务开启多模态是需要配置该参数')}
-                    />)}
-
+                    {inputs.type == 41 && (
+                      <Form.Input
+                        field='google_file_bucket'
+                        label={t('Google 文件存储桶')}
+                        placeholder={t('例如: my-bucket')}
+                        onChange={(value) =>
+                          handleChannelSettingsChange(
+                            'google_file_bucket',
+                            value,
+                          )
+                        }
+                        showClear
+                        extraText={t(
+                          '用于配置 Google 文件存储桶 vertex服务开启多模态是需要配置该参数',
+                        )}
+                      />
+                    )}
                     // Google Gemini
-                    {inputs.type === 24 && (<Form.Input
-                      field='google_file_upload'
-                      label={t('generativelanguage文件上传')}
-                      placeholder={t('例如: enabled是开启，disabled是关闭')}
-                      onChange={(value) =>
-                        handleChannelSettingsChange('google_file_upload', value)
-                      }
-                      showClear
-                      extraText={t('enabled是开启，disabled是关闭,开启后,可以把附件上传到google')}
-                    />)
-                    }
-
+                    {inputs.type === 24 && (
+                      <Form.Input
+                        field='google_file_upload'
+                        label={t('generativelanguage文件上传')}
+                        placeholder={t('例如: enabled是开启，disabled是关闭')}
+                        onChange={(value) =>
+                          handleChannelSettingsChange(
+                            'google_file_upload',
+                            value,
+                          )
+                        }
+                        showClear
+                        extraText={t(
+                          'enabled是开启，disabled是关闭,开启后,可以把附件上传到google',
+                        )}
+                      />
+                    )}
                     <Form.TextArea
                       field='system_prompt'
                       label={t('系统提示词')}

@@ -49,6 +49,9 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	switch info.OriginModelName {
 	case "flux-1-kontext-pro":
 		return fmt.Sprintf("%s/fal-ai/flux-pro/kontext", a.baseURL), nil
+	case "imagineart-1.5-preview":
+		//https://queue.fal.run/imagineart/imagineart-1.5-preview/text-to-image
+		return fmt.Sprintf("%s/imagineart/imagineart-1.5-preview/text-to-image", a.baseURL), nil
 	}
 	return "", fmt.Errorf("unsupported model name: %s", info.OriginModelName)
 }
@@ -126,8 +129,10 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return localID, responseBody, nil
 }
 
-func (a *TaskAdaptor) GetModelList() []string { return []string{"flux-1-kontext-pro"} }
-func (a *TaskAdaptor) GetChannelName() string { return "novita" }
+func (a *TaskAdaptor) GetModelList() []string {
+	return []string{"flux-1-kontext-pro", "imagineart-1.5-preview"}
+}
+func (a *TaskAdaptor) GetChannelName() string { return "fal" }
 
 // FetchTask fetch task status
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http.Response, error) {
@@ -135,7 +140,18 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	if !ok {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	url := fmt.Sprintf("https://queue.fal.run/fal-ai/flux-pro/requests/%s", taskID)
+	task, exists, _ := model.GetByOnlyTaskId(taskID)
+	if !exists || task == nil {
+		return nil, fmt.Errorf("task not found")
+	}
+	url := ""
+	if strings.Contains(task.Properties.UpstreamModelName, "imagineart") {
+		//url := fmt.Sprintf("https://queue.fal.run/imagineart/imagineart-1.5-preview/requests/%s", taskID)
+		url = fmt.Sprintf("https://queue.fal.run/imagineart/%s/requests/%s", task.Properties.UpstreamModelName, taskID)
+	} else {
+		url = fmt.Sprintf("https://queue.fal.run/fal-ai/flux-pro/requests/%s", taskID)
+	}
+
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

@@ -263,7 +263,7 @@ const renderChannelRules = (text, t, channelNameMap) => {
 
   let obj = {};
   try {
-    obj = typeof text === 'string' ? JSON.parse(text || '{}') : (text || {});
+    obj = typeof text === 'string' ? JSON.parse(text || '{}') : text || {};
   } catch (_) {
     return (
       <Tag color='white' shape='circle'>
@@ -281,9 +281,7 @@ const renderChannelRules = (text, t, channelNameMap) => {
       .map((ch) => {
         let ids = [];
         if (Array.isArray(ch?.ids)) {
-          ids = ch.ids
-            .map((v) => Number(v))
-            .filter((v) => !isNaN(v) && v > 0);
+          ids = ch.ids.map((v) => Number(v)).filter((v) => !isNaN(v) && v > 0);
         } else if (!isNaN(Number(ch?.id))) {
           const nid = Number(ch.id);
           if (nid > 0) ids = [nid];
@@ -498,8 +496,8 @@ export const getTokensColumns = ({
 }) => {
   return [
     {
-        title: t('ID'),
-        dataIndex: 'id',
+      title: t('ID'),
+      dataIndex: 'id',
     },
     {
       title: t('名称'),

@@ -213,9 +213,9 @@ export const useChannelsData = () => {
     let channelTags = {};
 
     for (let i = 0; i < channels.length; i++) {
-        if (!channels[i].key) {
-          channels[i].key = '' + channels[i].id;
-        }
+      if (!channels[i].key) {
+        channels[i].key = '' + channels[i].id;
+      }
       if (!enableTagMode) {
         channelDates.push(channels[i]);
       } else {

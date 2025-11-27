@@ -1,4 +1,4 @@
-import  { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -27,26 +27,27 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { ITEMS_PER_PAGE } from '../../constants';
-import {IconSetting, IconSearch, IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
-
-
+import {
+  IconSetting,
+  IconSearch,
+  IconHelpCircle,
+  IconEyeOpened,
+  IconCopy,
+} from '@douyinfe/semi-icons';
 
 const ErrorLogsTable = () => {
   const { t } = useTranslation();
 
-
-
-
   // Define column keys for selection
   const COLUMN_KEYS = {
     ID: 'id',
-    TOKEN_ID:'token_id',
+    TOKEN_ID: 'token_id',
     USERID: 'user_id',
     CREATEDAT: 'created_at',
     CHANNELID: 'channel_id',
     CHANNELNAME: 'channel_name',
     MODELNAME: 'model_name',
-    MESSAGE:'message',
+    MESSAGE: 'message',
     TYPE: 'type',
     PARAM: 'param',
     CODE: 'code',
@@ -145,12 +146,16 @@ const ErrorLogsTable = () => {
       dataIndex: 'id',
     },
     {
-        key: COLUMN_KEYS.TOKEN_ID,
-        title: t('Token ID'),
-        dataIndex: 'token_id',
-        render: (text, record, index) => {
-          return <>{t(record.token_name)}({text})</>
-        },
+      key: COLUMN_KEYS.TOKEN_ID,
+      title: t('Token ID'),
+      dataIndex: 'token_id',
+      render: (text, record, index) => {
+        return (
+          <>
+            {t(record.token_name)}({text})
+          </>
+        );
+      },
     },
     {
       key: COLUMN_KEYS.CREATEDAT,
@@ -161,18 +166,22 @@ const ErrorLogsTable = () => {
       key: COLUMN_KEYS.CHANNELNAME,
       title: t('渠道'),
       dataIndex: 'channel_name',
-      className: 'tableShow' ,
+      className: 'tableShow',
       render: (text, record, index) => {
-        return <>{t(text)}({record.channel_id})</>
+        return (
+          <>
+            {t(text)}({record.channel_id})
+          </>
+        );
       },
     },
     {
       key: COLUMN_KEYS.USERID,
       title: t('用户ID'),
       dataIndex: 'user_id',
-      className:  'tableShow',
+      className: 'tableShow',
       render: (text, record, index) => {
-        return <>{t(text)}</>
+        return <>{t(text)}</>;
       },
     },
     {
@@ -180,30 +189,32 @@ const ErrorLogsTable = () => {
       title: t('Message'),
       dataIndex: 'message',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    showDetailDialog(text, false);
-                  }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyBodyContent(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {t(text)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showDetailDialog(text, false);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyBodyContent(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
     {
@@ -211,30 +222,32 @@ const ErrorLogsTable = () => {
       title: t('Body'),
       dataIndex: 'body',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{t(text)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                     e.stopPropagation();
-                     showDetailDialog(text, true);
-                   }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyBodyContent(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {t(text)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showDetailDialog(text, true);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyBodyContent(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
     {
@@ -242,9 +255,7 @@ const ErrorLogsTable = () => {
       title: t('模型'),
       dataIndex: 'model_name',
       render: (text, record, index) => {
-        return (
-          <>{t(text)}</>
-        );
+        return <>{t(text)}</>;
       },
     },
     {
@@ -252,18 +263,20 @@ const ErrorLogsTable = () => {
       title: t('param'),
       dataIndex: 'param',
       render: (text, record, index) => {
-        return (
-          <>{t(text)}</>
-        );
+        return <>{t(text)}</>;
       },
     },
     {
       key: COLUMN_KEYS.IP,
       title: (
-        <div className="flex items-center gap-1">
+        <div className='flex items-center gap-1'>
           {t('IP')}
-          <Tooltip content={t('只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录')}>
-            <IconHelpCircle className="text-gray-400 cursor-help" />
+          <Tooltip
+            content={t(
+              '只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录',
+            )}
+          >
+            <IconHelpCircle className='text-gray-400 cursor-help' />
           </Tooltip>
         </div>
       ),
@@ -291,7 +304,7 @@ const ErrorLogsTable = () => {
       dataIndex: 'request_id',
       className: isAdmin() ? 'tableShow' : 'tableHiddle',
       render: (text, record, index) => {
-        return <>{t(text)}</>
+        return <>{t(text)}</>;
       },
     },
     {
@@ -300,7 +313,7 @@ const ErrorLogsTable = () => {
       dataIndex: 'status_code',
       fixed: 'right',
       render: (text, record, index) => {
-        return <>{t(text)}</>
+        return <>{t(text)}</>;
       },
     },
   ];
@@ -376,7 +389,7 @@ const ErrorLogsTable = () => {
               !isAdminUser &&
               (column.key === COLUMN_KEYS.CHANNELID ||
                 column.key === COLUMN_KEYS.USERID ||
-                column.key === COLUMN_KEYS.REQUESTID )
+                column.key === COLUMN_KEYS.REQUESTID)
             ) {
               return null;
             }
@@ -413,7 +426,7 @@ const ErrorLogsTable = () => {
 
   // Form 初始值
   const formInitValues = {
-    p:1,
+    p: 1,
     page_size: 10,
     channel: 0,
     request_id: '',
@@ -457,16 +470,15 @@ const ErrorLogsTable = () => {
       channel: formValues.channel || 0,
       request_id: formValues.request_id,
       p: formValues.p || 1,
-      page_size : formValues.page_size || 10,
+      page_size: formValues.page_size || 10,
     };
   };
 
-
   const getErrorLogStat = async () => {
     const {
-     request_id,
-     p,
-     page_size,
+      request_id,
+      p,
+      page_size,
       model_name,
       start_timestamp,
       end_timestamp,
@@ -501,7 +513,6 @@ const ErrorLogsTable = () => {
     setLoadingStat(false);
   };
 
-
   const setLogsFormat = (logs) => {
     for (let i = 0; i < logs.length; i++) {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
@@ -510,19 +521,12 @@ const ErrorLogsTable = () => {
     setLogs(logs);
   };
 
-
   const loadLogs = async (startIdx, pageSize, customLogType = null) => {
     setLoading(true);
 
     let url = '';
-    const {
-      model_name,
-      start_timestamp,
-      end_timestamp,
-      channel,
-      request_id,
-    } = getFormValues();
-
+    const { model_name, start_timestamp, end_timestamp, channel, request_id } =
+      getFormValues();
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
@@ -724,8 +728,6 @@ const ErrorLogsTable = () => {
                     showClear
                     pure
                   />
-
-
                 </div>
 
                 {/* 操作按钮区域 */}

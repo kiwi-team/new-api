@@ -42,9 +42,9 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
 } from '../../../helpers';
-import { IconHelpCircle,IconEyeOpened,IconCopy } from '@douyinfe/semi-icons';
+import { IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
-import {  useState } from 'react';
+import { useState } from 'react';
 
 const colors = [
   'amber',
@@ -64,19 +64,15 @@ const colors = [
   'yellow',
 ];
 
-
-
-
-
-  // 格式化JSON内容
-  const formatJsonContent = (content) => {
-    try {
-      const parsed = JSON.parse(content);
-      return JSON.stringify(parsed, null, 2);
-    } catch (e) {
-      return content;
-    }
-  };
+// 格式化JSON内容
+const formatJsonContent = (content) => {
+  try {
+    const parsed = JSON.parse(content);
+    return JSON.stringify(parsed, null, 2);
+  } catch (e) {
+    return content;
+  }
+};
 
 // Render functions
 function renderType(type, t) {
@@ -252,34 +248,34 @@ function renderModelName(record, copyText, t) {
   }
 }
 
- function renderMultiModelByObject(request) {
-    try {
-        request = JSON.parse(request);
-        let models = [];
-        if (request.tools && request.tools.length > 0) {
-            models.push("tools")
-        }
-        for (let message of request.messages ) {
-            if (!Array.isArray(message.content)) {
-                continue;
-            }
-            for(let item of message.content) {
-                if(item.type == "image_url") {
-                    models.push("image")
-                }else if (item.type == "audio_url") {
-                    models.push("audio")
-                }else if (item.type == "video_url") {
-                    models.push("video")
-                }
-            }
-        }
-        models = [...new Set(models)];
-        return models.join(",");
-    }catch(err) {
-        console.log("renderMultiModel err:", err);
-        return "";
+function renderMultiModelByObject(request) {
+  try {
+    request = JSON.parse(request);
+    let models = [];
+    if (request.tools && request.tools.length > 0) {
+      models.push('tools');
     }
+    for (let message of request.messages) {
+      if (!Array.isArray(message.content)) {
+        continue;
+      }
+      for (let item of message.content) {
+        if (item.type == 'image_url') {
+          models.push('image');
+        } else if (item.type == 'audio_url') {
+          models.push('audio');
+        } else if (item.type == 'video_url') {
+          models.push('video');
+        }
+      }
+    }
+    models = [...new Set(models)];
+    return models.join(',');
+  } catch (err) {
+    console.log('renderMultiModel err:', err);
+    return '';
   }
+}
 
 export const getLogsColumns = ({
   t,
@@ -438,13 +434,13 @@ export const getLogsColumns = ({
         );
       },
     },
-      {
-        key: COLUMN_KEYS.MULTI_MODEL,
-        title: t('多模态'),
-        dataIndex: 'multi_model',
-        render: (text, record, index) => {
-          return renderMultiModelByObject(record.request);
-        }
+    {
+      key: COLUMN_KEYS.MULTI_MODEL,
+      title: t('多模态'),
+      dataIndex: 'multi_model',
+      render: (text, record, index) => {
+        return renderMultiModelByObject(record.request);
+      },
     },
     {
       key: COLUMN_KEYS.USE_TIME,
@@ -549,7 +545,7 @@ export const getLogsColumns = ({
         );
       },
     },
-  
+
     {
       key: COLUMN_KEYS.RETRY,
       title: t('重试'),
@@ -579,68 +575,72 @@ export const getLogsColumns = ({
         return isAdminUser ? <div>{content}</div> : <></>;
       },
     },
-      {
+    {
       key: COLUMN_KEYS.REQUEST,
       title: t('请求'),
       dataIndex: 'request',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                     e.stopPropagation();
-                     callback(e, text, 'showDetailModal');
-                    //  showDetailDialog(text, true);
-                   }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyText(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {text.substring(0, 30)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  callback(e, text, 'showDetailModal');
+                  //  showDetailDialog(text, true);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyText(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
-      {
+    {
       key: COLUMN_KEYS.RESPONSE,
       title: t('响应'),
       dataIndex: 'response',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                     e.stopPropagation();
-                     callback(e, text, 'showDetailModal');
-                    //  showDetailDialog(text, true);
-                   }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyText(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {text.substring(0, 30)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  callback(e, text, 'showDetailModal');
+                  //  showDetailDialog(text, true);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyText(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
     {

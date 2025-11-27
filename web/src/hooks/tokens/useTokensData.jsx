@@ -185,8 +185,13 @@ export const useTokensData = (openFluentNotification) => {
 
   // Search tokens function
   const searchTokens = async () => {
-    const { searchKeyword, searchToken,model,channel } = getFormValues();
-    if (searchKeyword === '' && searchToken === '' && model === '' && channel === '') {
+    const { searchKeyword, searchToken, model, channel } = getFormValues();
+    if (
+      searchKeyword === '' &&
+      searchToken === '' &&
+      model === '' &&
+      channel === ''
+    ) {
       await loadTokens(1);
       return;
     }

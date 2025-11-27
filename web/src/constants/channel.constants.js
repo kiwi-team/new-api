@@ -158,15 +158,18 @@ export const CHANNEL_OPTIONS = [
     value: 51,
     color: 'blue',
     label: 'Sensenova',
-  },{
+  },
+  {
     value: 52,
     color: 'red',
     label: 'visual-volcengine',
-  },{
+  },
+  {
     value: 53,
     color: 'red',
     label: '即梦',
-  },{
+  },
+  {
     value: 54,
     color: 'blue',
     label: 'serper',
@@ -196,15 +199,16 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'ElevenLabs',
   },
-   {
+  {
     value: 60,
     color: 'yellow',
     label: 'AliDashScope',
-  },{
+  },
+  {
     value: 61,
     color: 'red',
     label: 'Fal',
-  }
+  },
 ];
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

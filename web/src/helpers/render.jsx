@@ -74,8 +74,6 @@ import {
   Package,
 } from 'lucide-react';
 
-
-
 // 侧边栏图标颜色映射
 export const sidebarIconColors = {
   dashboard: '#10B981', // 绿色
@@ -115,7 +113,7 @@ export function getLucideIcon(key, selected = false) {
     case 'token':
       return <Key {...commonProps} color={iconColor} />;
     case 'log':
-        //return <BarChart3 {...commonProps} color={iconColor} />;
+      //return <BarChart3 {...commonProps} color={iconColor} />;
       return (
         <BarChart3
           {...commonProps}

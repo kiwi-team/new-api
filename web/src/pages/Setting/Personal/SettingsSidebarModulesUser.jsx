@@ -294,7 +294,11 @@ export default function SettingsSidebarModulesUser() {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
-        { key: 'errorlog', title: t('错误日志'), description: t('API使用错误记录') },
+        {
+          key: 'errorlog',
+          title: t('错误日志'),
+          description: t('API使用错误记录'),
+        },
         {
           key: 'midjourney',
           title: t('绘图日志'),
@@ -322,7 +326,11 @@ export default function SettingsSidebarModulesUser() {
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
-        { key: 'channelByModel', title: t('模型-渠道'), description: t('模型-渠道') },
+        {
+          key: 'channelByModel',
+          title: t('模型-渠道'),
+          description: t('模型-渠道'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'redemption',

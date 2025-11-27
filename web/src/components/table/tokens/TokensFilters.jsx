@@ -67,7 +67,7 @@ const TokensFilters = ({
           />
         </div>
 
-         <div className='relative w-full md:w-56'>
+        <div className='relative w-full md:w-56'>
           <Form.Input
             field='model'
             prefix={<IconSearch />}
@@ -78,7 +78,7 @@ const TokensFilters = ({
           />
         </div>
 
-         <div className='relative w-full md:w-56'>
+        <div className='relative w-full md:w-56'>
           <Form.Input
             field='channel'
             prefix={<IconSearch />}

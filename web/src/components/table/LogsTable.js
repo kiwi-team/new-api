@@ -20,7 +20,7 @@ import {
   renderQuota,
   stringToColor,
   getLogOther,
-  renderModelTag
+  renderModelTag,
 } from '../../helpers';
 
 import {
@@ -47,12 +47,16 @@ import {
 } from '@douyinfe/semi-illustrations';
 import { ITEMS_PER_PAGE } from '../../constants';
 import Paragraph from '@douyinfe/semi-ui/lib/es/typography/paragraph';
-import { IconSearch, IconHelpCircle, IconEyeOpened,IconCopy } from '@douyinfe/semi-icons';
+import {
+  IconSearch,
+  IconHelpCircle,
+  IconEyeOpened,
+  IconCopy,
+} from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
 import { useTableCompactMode } from '../../hooks/useTableCompactMode';
 
 const { Text } = Typography;
-
 
 const colors = [
   'amber',
@@ -75,8 +79,7 @@ const colors = [
 const LogsTable = () => {
   const { t } = useTranslation();
 
-
-    // 渲染详情弹框
+  // 渲染详情弹框
   const renderDetailModal = () => {
     return (
       <Modal
@@ -130,55 +133,54 @@ const LogsTable = () => {
     }
   };
 
-   function renderMultiModel(request) {
+  function renderMultiModel(request) {
     try {
-        let models = [];
-        if (request.includes('"tools":')) {
-            models.push("tools")
-        }
-        if (request.includes('"image_url":')) {
-            models.push("image")
-        }
-        if (request.includes('"audio_url":')) {
-            models.push("audio")
-        }
-        if (request.includes('"video_url":')) {
-            models.push("video")
-        }
-        return models.join(",");
-    }catch(err) {
-        console.log("renderMultiModel err:", err);
-        return "";
+      let models = [];
+      if (request.includes('"tools":')) {
+        models.push('tools');
+      }
+      if (request.includes('"image_url":')) {
+        models.push('image');
+      }
+      if (request.includes('"audio_url":')) {
+        models.push('audio');
+      }
+      if (request.includes('"video_url":')) {
+        models.push('video');
+      }
+      return models.join(',');
+    } catch (err) {
+      console.log('renderMultiModel err:', err);
+      return '';
     }
   }
 
-
   function renderMultiModelByObject(request) {
     try {
-        request = JSON.parse(request);
-        let models = [];
-        if (request.tools && request.tools.length > 0) {
-            models.push("tools")
+      request = JSON.parse(request);
+      let models = [];
+      if (request.tools && request.tools.length > 0) {
+        models.push('tools');
+      }
+      for (let message of request.messages) {
+        if (!Array.isArray(message.content)) {
+          continue;
         }
-        for (let message of request.messages ) {
-            if (!Array.isArray(message.content)) {
-                continue;
-            }
-            for(let item of message.content) {
-                if(item.type == "image_url") {
-                    models.push("image")
-                }else if (item.type == "audio_url") {
-                    models.push("audio")
-                }else if (item.type == "video_url") {
-                    models.push("video")
-                }
-            }
+        for (let item of message.content) {
+          if (item.type == 'image_url') {
+            models.push('image');
+          } else if (item.type == 'audio_url') {
+            models.push('audio');
+          } else if (item.type == 'video_url') {
+            models.push('video');
+          }
         }
-        models = [...new Set(models)];
-        return models.join(",");
-    }catch(err) {
-        console.log("renderMultiModel err:", err);
-        return "";
+      }
+      models = [...new Set(models)];
+      return models.join(',');
+    } catch (err) {
+      console.log('renderMultiModel err:', err);
+      return '';
     }
   }
 
@@ -301,7 +303,7 @@ const LogsTable = () => {
     if (!modelMapped) {
       return renderModelTag(record.model_name, {
         onClick: (event) => {
-          copyText(event, record.model_name).then((r) => { });
+          copyText(event, record.model_name).then((r) => {});
         },
       });
     } else {
@@ -318,7 +320,7 @@ const LogsTable = () => {
                       </Text>
                       {renderModelTag(record.model_name, {
                         onClick: (event) => {
-                          copyText(event, record.model_name).then((r) => { });
+                          copyText(event, record.model_name).then((r) => {});
                         },
                       })}
                     </div>
@@ -329,7 +331,7 @@ const LogsTable = () => {
                       {renderModelTag(other.upstream_model_name, {
                         onClick: (event) => {
                           copyText(event, other.upstream_model_name).then(
-                            (r) => { },
+                            (r) => {},
                           );
                         },
                       })}
@@ -340,7 +342,7 @@ const LogsTable = () => {
             >
               {renderModelTag(record.model_name, {
                 onClick: (event) => {
-                  copyText(event, record.model_name).then((r) => { });
+                  copyText(event, record.model_name).then((r) => {});
                 },
                 suffixIcon: (
                   <Route
@@ -357,7 +359,7 @@ const LogsTable = () => {
 
   // Define column keys for selection
   const COLUMN_KEYS = {
-    ID :'id',
+    ID: 'id',
     TIME: 'time',
     CHANNEL: 'channel',
     USERNAME: 'username',
@@ -380,8 +382,8 @@ const LogsTable = () => {
   // State for column visibility
   const [visibleColumns, setVisibleColumns] = useState({});
   const [showColumnSelector, setShowColumnSelector] = useState(false);
-const [showDetailModal, setShowDetailModal] = useState(false);
-const [detailContent, setDetailContent] = useState('');
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailContent, setDetailContent] = useState('');
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -479,7 +481,7 @@ const [detailContent, setDetailContent] = useState('');
       dataIndex: 'channel',
       className: isAdmin() ? 'tableShow' : 'tableHiddle',
       render: (text, record, index) => {
-        let isMultiKey = false
+        let isMultiKey = false;
         let multiKeyIndex = -1;
         let other = getLogOther(record.other);
         if (other?.admin_info) {
@@ -490,7 +492,8 @@ const [detailContent, setDetailContent] = useState('');
           }
         }
 
-        return isAdminUser && (record.type === 0 || record.type === 2 || record.type === 5) ? (
+        return isAdminUser &&
+          (record.type === 0 || record.type === 2 || record.type === 5) ? (
           <Space>
             <Tooltip content={record.channel_name || t('未知渠道')}>
               <Tag
@@ -612,14 +615,12 @@ const [detailContent, setDetailContent] = useState('');
       },
     },
     {
-        key: COLUMN_KEYS.MULTI_MODEL,
-        title: t('多模态'),
-        dataIndex: 'multi_model',
-        render: (text, record, index) => {
-          return (
-            <>{renderMultiModel(record.request)}</>
-          );
-        },
+      key: COLUMN_KEYS.MULTI_MODEL,
+      title: t('多模态'),
+      dataIndex: 'multi_model',
+      render: (text, record, index) => {
+        return <>{renderMultiModel(record.request)}</>;
+      },
     },
     {
       key: COLUMN_KEYS.USE_TIME,
@@ -692,10 +693,14 @@ const [detailContent, setDetailContent] = useState('');
     {
       key: COLUMN_KEYS.IP,
       title: (
-        <div className="flex items-center gap-1">
+        <div className='flex items-center gap-1'>
           {t('IP')}
-          <Tooltip content={t('只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录')}>
-            <IconHelpCircle className="text-gray-400 cursor-help" />
+          <Tooltip
+            content={t(
+              '只有当用户设置开启IP记录时，才会进行请求和错误类型日志的IP记录',
+            )}
+          >
+            <IconHelpCircle className='text-gray-400 cursor-help' />
           </Tooltip>
         </div>
       ),
@@ -749,67 +754,71 @@ const [detailContent, setDetailContent] = useState('');
         return isAdminUser ? <div>{content}</div> : <></>;
       },
     },
-    
-     {
+
+    {
       key: COLUMN_KEYS.REQUEST,
       title: t('请求'),
       dataIndex: 'request',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                     e.stopPropagation();
-                     showDetailDialog(text, true);
-                   }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyText(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {text.substring(0, 30)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showDetailDialog(text, true);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyText(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
-      {
+    {
       key: COLUMN_KEYS.RESPONSE,
       title: t('响应'),
       dataIndex: 'response',
       render: (text, record, index) => {
-          return (
-            <div className="flex items-center gap-2">
-              <div className="max-w-[200px] overflow-auto truncate">{text.substring(0, 30)}</div>
-              <div className="flex gap-1">
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconEyeOpened />}
-                  onClick={(e) => {
-                     e.stopPropagation();
-                     showDetailDialog(text, true);
-                   }}
-                />
-                <Button
-                  theme="borderless"
-                  type="tertiary"
-                  size="small"
-                  icon={<IconCopy />}
-                  onClick={(e) => copyText(e, text)}
-                />
-              </div>
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='max-w-[200px] overflow-auto truncate'>
+              {text.substring(0, 30)}
             </div>
-          );
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showDetailDialog(text, true);
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={(e) => copyText(e, text)}
+              />
+            </div>
+          </div>
+        );
       },
     },
     {
@@ -837,23 +846,23 @@ const [detailContent, setDetailContent] = useState('');
         }
         let content = other?.claude
           ? renderClaudeModelPriceSimple(
-            other.model_ratio,
-            other.model_price,
-            other.group_ratio,
-            other?.user_group_ratio,
-            other.cache_tokens || 0,
-            other.cache_ratio || 1.0,
-            other.cache_creation_tokens || 0,
-            other.cache_creation_ratio || 1.0,
-          )
+              other.model_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_tokens || 0,
+              other.cache_ratio || 1.0,
+              other.cache_creation_tokens || 0,
+              other.cache_creation_ratio || 1.0,
+            )
           : renderModelPriceSimple(
-            other.model_ratio,
-            other.model_price,
-            other.group_ratio,
-            other?.user_group_ratio,
-            other.cache_tokens || 0,
-            other.cache_ratio || 1.0,
-          );
+              other.model_ratio,
+              other.model_price,
+              other.group_ratio,
+              other?.user_group_ratio,
+              other.cache_tokens || 0,
+              other.cache_ratio || 1.0,
+            );
         return (
           <Paragraph
             ellipsis={{
@@ -893,9 +902,7 @@ const [detailContent, setDetailContent] = useState('');
         onCancel={() => setShowColumnSelector(false)}
         footer={
           <div className='flex justify-end'>
-            <Button onClick={() => initDefaultColumns()}>
-              {t('重置')}
-            </Button>
+            <Button onClick={() => initDefaultColumns()}>{t('重置')}</Button>
             <Button onClick={() => setShowColumnSelector(false)}>
               {t('取消')}
             </Button>
@@ -1174,27 +1181,27 @@ const [detailContent, setDetailContent] = useState('');
           key: t('日志详情'),
           value: other?.claude
             ? renderClaudeLogContent(
-              other?.model_ratio,
-              other.completion_ratio,
-              other.model_price,
-              other.group_ratio,
-              other?.user_group_ratio,
-              other.cache_ratio || 1.0,
-              other.cache_creation_ratio || 1.0,
-            )
+                other?.model_ratio,
+                other.completion_ratio,
+                other.model_price,
+                other.group_ratio,
+                other?.user_group_ratio,
+                other.cache_ratio || 1.0,
+                other.cache_creation_ratio || 1.0,
+              )
             : renderLogContent(
-              other?.model_ratio,
-              other.completion_ratio,
-              other.model_price,
-              other.group_ratio,
-              other?.user_group_ratio,
-              false,
-              1.0,
-              other.web_search || false,
-              other.web_search_call_count || 0,
-              other.file_search || false,
-              other.file_search_call_count || 0,
-            ),
+                other?.model_ratio,
+                other.completion_ratio,
+                other.model_price,
+                other.group_ratio,
+                other?.user_group_ratio,
+                false,
+                1.0,
+                other.web_search || false,
+                other.web_search_call_count || 0,
+                other.file_search || false,
+                other.file_search_call_count || 0,
+              ),
         });
       }
       if (logs[i].type === 2) {
@@ -1297,7 +1304,7 @@ const [detailContent, setDetailContent] = useState('');
       channel,
       group,
       logType: formLogType,
-    } = getFormValues(); 
+    } = getFormValues();
 
     // 使用传入的 logType 或者表单中的 logType 或者状态中的 logType
     const currentLogType =
@@ -1318,14 +1325,14 @@ const [detailContent, setDetailContent] = useState('');
     const res = await API.get(url);
     console.log(res.data, res.data?.url);
     if (res.data.data?.url) {
-        // 直接下载URL
-        window.open(res.data.data.url, '_blank');
-        showSuccess('导出成功，文件已生成');
+      // 直接下载URL
+      window.open(res.data.data.url, '_blank');
+      showSuccess('导出成功，文件已生成');
     } else {
-        // 显示错误信息
-        showError(res.data.data?.message || '导出失败，请重试');
+      // 显示错误信息
+      showError(res.data.data?.message || '导出失败，请重试');
     }
-  }
+  };
 
   const loadLogs = async (startIdx, pageSize, customLogType = null) => {
     setLoading(true);
@@ -1375,7 +1382,7 @@ const [detailContent, setDetailContent] = useState('');
 
   const handlePageChange = (page) => {
     setActivePage(page);
-    loadLogs(page, pageSize).then((r) => { }); // 不传入logType，让其从表单获取最新值
+    loadLogs(page, pageSize).then((r) => {}); // 不传入logType，让其从表单获取最新值
   };
 
   const handlePageSizeChange = async (size) => {
@@ -1438,13 +1445,13 @@ const [detailContent, setDetailContent] = useState('');
   return (
     <>
       {renderColumnSelector()}
-       {renderDetailModal()}
+      {renderDetailModal()}
       <Card
         className='!rounded-2xl mb-4'
         title={
           <div className='flex flex-col w-full'>
             <Spin spinning={loadingStat}>
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full">
+              <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
                 <Space>
                   <Tag
                     color='blue'
@@ -1484,9 +1491,9 @@ const [detailContent, setDetailContent] = useState('');
 
                 <Button
                   type='tertiary'
-                  className="w-full md:w-auto"
+                  className='w-full md:w-auto'
                   onClick={() => setCompactMode(!compactMode)}
-                  size="small"
+                  size='small'
                 >
                   {compactMode ? t('自适应列表') : t('紧凑列表')}
                 </Button>
@@ -1517,7 +1524,7 @@ const [detailContent, setDetailContent] = useState('');
                       placeholder={[t('开始时间'), t('结束时间')]}
                       showClear
                       pure
-                      size="small"
+                      size='small'
                     />
                   </div>
 
@@ -1528,7 +1535,7 @@ const [detailContent, setDetailContent] = useState('');
                     placeholder={t('令牌名称')}
                     showClear
                     pure
-                    size="small"
+                    size='small'
                   />
 
                   <Form.Input
@@ -1537,7 +1544,7 @@ const [detailContent, setDetailContent] = useState('');
                     placeholder={t('模型名称')}
                     showClear
                     pure
-                    size="small"
+                    size='small'
                   />
 
                   <Form.Input
@@ -1546,7 +1553,7 @@ const [detailContent, setDetailContent] = useState('');
                     placeholder={t('分组')}
                     showClear
                     pure
-                    size="small"
+                    size='small'
                   />
 
                   {isAdminUser && (
@@ -1557,7 +1564,7 @@ const [detailContent, setDetailContent] = useState('');
                         placeholder={t('渠道 ID')}
                         showClear
                         pure
-                        size="small"
+                        size='small'
                       />
                       <Form.Input
                         field='username'
@@ -1565,7 +1572,7 @@ const [detailContent, setDetailContent] = useState('');
                         placeholder={t('用户名称')}
                         showClear
                         pure
-                        size="small"
+                        size='small'
                       />
                     </>
                   )}
@@ -1587,7 +1594,7 @@ const [detailContent, setDetailContent] = useState('');
                           refresh();
                         }, 0);
                       }}
-                      size="small"
+                      size='small'
                     >
                       <Form.Select.Option value='0'>
                         {t('全部')}
@@ -1615,7 +1622,7 @@ const [detailContent, setDetailContent] = useState('');
                       type='tertiary'
                       htmlType='submit'
                       loading={loading}
-                      size="small"
+                      size='small'
                     >
                       {t('查询')}
                     </Button>
@@ -1630,14 +1637,14 @@ const [detailContent, setDetailContent] = useState('');
                           }, 100);
                         }
                       }}
-                      size="small"
+                      size='small'
                     >
                       {t('重置')}
                     </Button>
                     <Button
                       type='tertiary'
                       onClick={() => setShowColumnSelector(true)}
-                      size="small"
+                      size='small'
                     >
                       {t('列设置')}
                     </Button>
@@ -1661,7 +1668,11 @@ const [detailContent, setDetailContent] = useState('');
         bordered={false}
       >
         <Table
-          columns={compactMode ? getVisibleColumns().map(({ fixed, ...rest }) => rest) : getVisibleColumns()}
+          columns={
+            compactMode
+              ? getVisibleColumns().map(({ fixed, ...rest }) => rest)
+              : getVisibleColumns()
+          }
           {...(hasExpandableRows() && {
             expandedRowRender: expandRowRender,
             expandRowByClick: true,

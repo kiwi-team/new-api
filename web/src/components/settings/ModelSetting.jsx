@@ -42,8 +42,8 @@ const ModelSetting = () => {
     'general_setting.ping_interval_seconds': 60,
     'gemini.thinking_adapter_enabled': false,
     'gemini.thinking_adapter_budget_tokens_percentage': 0.6,
-    'GlobalFirstChannelsSwitch': false,
-    'GlobalFirstChannels': '',
+    GlobalFirstChannelsSwitch: false,
+    GlobalFirstChannels: '',
   });
 
   let [loading, setLoading] = useState(false);

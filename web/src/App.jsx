@@ -119,7 +119,7 @@ function App() {
             </AdminRoute>
           }
         />
-         <Route
+        <Route
           path='/console/channel/model'
           element={
             <PrivateRoute>

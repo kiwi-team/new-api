@@ -40,7 +40,7 @@ import {
   copy,
 } from '../../../helpers';
 import { CHANNEL_OPTIONS } from '../../../constants';
-import { IconTreeTriangleDown, IconMore, IconCopy} from '@douyinfe/semi-icons';
+import { IconTreeTriangleDown, IconMore, IconCopy } from '@douyinfe/semi-icons';
 import { FaRandom } from 'react-icons/fa';
 
 // Render functions
@@ -257,30 +257,30 @@ export const getChannelsColumns = ({
       },
     },
     {
-        key:COLUMN_KEYS.KEY,
-        title: t('密钥') + '1',
-        dataIndex: 'key',
-        render:(text,record,index)=>{
-            return (
-                <div className='max-w-[200px] flex items-center gap-2'>
-                    <span className='truncate'>{text}</span>
-                    <Button
-                        theme='borderless'
-                        type='tertiary'
-                        size='small'
-                        icon={<IconCopy />}
-                        onClick={async () => {
-                            const success = await copy(text);
-                            if (success) {
-                                showSuccess('KEY 已复制到剪贴板');
-                            } else {
-                                showError('复制失败');
-                            }
-                        }}
-                    />
-                </div>
-            );
-        }
+      key: COLUMN_KEYS.KEY,
+      title: t('密钥') + '1',
+      dataIndex: 'key',
+      render: (text, record, index) => {
+        return (
+          <div className='max-w-[200px] flex items-center gap-2'>
+            <span className='truncate'>{text}</span>
+            <Button
+              theme='borderless'
+              type='tertiary'
+              size='small'
+              icon={<IconCopy />}
+              onClick={async () => {
+                const success = await copy(text);
+                if (success) {
+                  showSuccess('KEY 已复制到剪贴板');
+                } else {
+                  showError('复制失败');
+                }
+              }}
+            />
+          </div>
+        );
+      },
     },
     {
       key: COLUMN_KEYS.GROUP,

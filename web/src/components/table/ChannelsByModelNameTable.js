@@ -1,4 +1,4 @@
-import  { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
   API,
   showError,
@@ -8,9 +8,13 @@ import {
   renderGroup,
   renderQuota,
   getChannelIcon,
-  renderQuotaWithAmount
+  renderQuotaWithAmount,
 } from '../../helpers/index.js';
-import { CHANNEL_OPTIONS, ITEMS_PER_PAGE, MODEL_TABLE_PAGE_SIZE } from '../../constants/index.js';
+import {
+  CHANNEL_OPTIONS,
+  ITEMS_PER_PAGE,
+  MODEL_TABLE_PAGE_SIZE,
+} from '../../constants/index.js';
 import {
   Button,
   Divider,
@@ -31,11 +35,11 @@ import {
   Form,
   Tabs,
   TabPane,
-  Select
+  Select,
 } from '@douyinfe/semi-ui';
 import {
   IllustrationNoResult,
-  IllustrationNoResultDark
+  IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import EditChannel from '../../pages/Channel/EditChannel.js';
 import {
@@ -70,27 +74,22 @@ const ChannelsTable = () => {
     let icon = getChannelIcon(type);
 
     if (channelInfo?.is_multi_key) {
-      icon = (
+      icon =
         channelInfo?.multi_key_mode === 'random' ? (
-          <div className="flex items-center gap-1">
-            <FaRandom className="text-blue-500" />
+          <div className='flex items-center gap-1'>
+            <FaRandom className='text-blue-500' />
             {icon}
           </div>
         ) : (
-          <div className="flex items-center gap-1">
-            <IconDescend2 className="text-blue-500" />
+          <div className='flex items-center gap-1'>
+            <IconDescend2 className='text-blue-500' />
             {icon}
           </div>
-        )
-      )
+        );
     }
 
     return (
-      <Tag
-        color={type2label[type]?.color}
-        shape='circle'
-        prefixIcon={icon}
-      >
+      <Tag color={type2label[type]?.color} shape='circle' prefixIcon={icon}>
         {type2label[type]?.label}
       </Tag>
     );
@@ -98,11 +97,7 @@ const ChannelsTable = () => {
 
   const renderTagType = () => {
     return (
-      <Tag
-        color='light-blue'
-        shape='circle'
-        type='light'
-      >
+      <Tag color='light-blue' shape='circle' type='light'>
         {t('标签聚合')}
       </Tag>
     );
@@ -116,7 +111,8 @@ const ChannelsTable = () => {
         if (channelInfo.multi_key_status_list) {
           // multi_key_status_list is a map, key is key, value is status
           // get multi_key_status_list length
-          enabledKeySize = keySize - Object.keys(channelInfo.multi_key_status_list).length;
+          enabledKeySize =
+            keySize - Object.keys(channelInfo.multi_key_status_list).length;
         }
         return renderMultiKeyStatus(status, keySize, enabledKeySize);
       }
@@ -176,8 +172,7 @@ const ChannelsTable = () => {
           </Tag>
         );
     }
-  }
-
+  };
 
   const renderResponseTime = (responseTime) => {
     let time = responseTime / 1000;
@@ -229,9 +224,9 @@ const ChannelsTable = () => {
     PRIORITY: 'priority',
     WEIGHT: 'weight',
     OPERATE: 'operate',
-    TAG:'tag',
-    RATIO:'ratio',
-    REMARK:'remark',
+    TAG: 'tag',
+    RATIO: 'ratio',
+    REMARK: 'remark',
   };
 
   // State for column visibility
@@ -240,7 +235,7 @@ const ChannelsTable = () => {
 
   // 状态筛选 all / enabled / disabled
   const [statusFilter, setStatusFilter] = useState(
-    localStorage.getItem('model-channel-status-filter') || 'all'
+    localStorage.getItem('model-channel-status-filter') || 'all',
   );
 
   // Load saved column preferences from localStorage
@@ -329,13 +324,13 @@ const ChannelsTable = () => {
           children: text,
           props: {},
         };
-        
+
         if (record.rowSpan) {
           obj.props.rowSpan = record.rowSpan;
         } else {
           obj.props.rowSpan = 0;
         }
-        
+
         return obj;
       },
     },
@@ -345,40 +340,40 @@ const ChannelsTable = () => {
       dataIndex: 'id',
     },
     {
-        key:COLUMN_KEYS.TAG,
-        title:t('TAG'),
-        dataIndex:'tag',
-    },
-        {
-        key:COLUMN_KEYS.KEY,
-        title:t('KEY'),
-        dataIndex:'key',
-        render:(text,record,index)=>{
-            return (
-                <div className='max-w-[200px] flex items-center gap-2'>
-                    <span className='truncate'>{text}</span>
-                    <Button
-                        theme='borderless'
-                        type='tertiary'
-                        size='small'
-                        icon={<IconCopy />}
-                        onClick={async () => {
-                            const success = await copy(text);
-                            if (success) {
-                                showSuccess('KEY 已复制到剪贴板');
-                            } else {
-                                showError('复制失败');
-                            }
-                        }}
-                    />
-                </div>
-            );
-        }
+      key: COLUMN_KEYS.TAG,
+      title: t('TAG'),
+      dataIndex: 'tag',
     },
     {
-        key:COLUMN_KEYS.RATIO,
-        title:t('倍率'),
-        dataIndex:'ratio',
+      key: COLUMN_KEYS.KEY,
+      title: t('KEY'),
+      dataIndex: 'key',
+      render: (text, record, index) => {
+        return (
+          <div className='max-w-[200px] flex items-center gap-2'>
+            <span className='truncate'>{text}</span>
+            <Button
+              theme='borderless'
+              type='tertiary'
+              size='small'
+              icon={<IconCopy />}
+              onClick={async () => {
+                const success = await copy(text);
+                if (success) {
+                  showSuccess('KEY 已复制到剪贴板');
+                } else {
+                  showError('复制失败');
+                }
+              }}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.RATIO,
+      title: t('倍率'),
+      dataIndex: 'ratio',
     },
     {
       key: COLUMN_KEYS.NAME,
@@ -436,7 +431,9 @@ const ChannelsTable = () => {
           return (
             <div>
               <Tooltip
-                content={t('原因：') + reason + t('，时间：') + timestamp2string(time)}
+                content={
+                  t('原因：') + reason + t('，时间：') + timestamp2string(time)
+                }
               >
                 {renderStatus(text, record.channel_info)}
               </Tooltip>
@@ -461,7 +458,9 @@ const ChannelsTable = () => {
                     {renderQuota(record.used_quota)}
                   </Tag>
                 </Tooltip>
-                <Tooltip content={t('剩余额度$') + record.balance + t('，点击更新')}>
+                <Tooltip
+                  content={t('剩余额度$') + record.balance + t('，点击更新')}
+                >
                   <Tag
                     color='white'
                     type='ghost'
@@ -546,10 +545,8 @@ const ChannelsTable = () => {
         visible={showColumnSelector}
         onCancel={() => setShowColumnSelector(false)}
         footer={
-          <div className="flex justify-end">
-            <Button onClick={() => initDefaultColumns()}>
-              {t('重置')}
-            </Button>
+          <div className='flex justify-end'>
+            <Button onClick={() => initDefaultColumns()}>{t('重置')}</Button>
             <Button onClick={() => setShowColumnSelector(false)}>
               {t('取消')}
             </Button>
@@ -572,7 +569,7 @@ const ChannelsTable = () => {
           </Checkbox>
         </div>
         <div
-          className="flex flex-wrap max-h-96 overflow-y-auto rounded-lg p-4"
+          className='flex flex-wrap max-h-96 overflow-y-auto rounded-lg p-4'
           style={{ border: '1px solid var(--semi-color-border)' }}
         >
           {allColumns.map((column) => {
@@ -582,10 +579,7 @@ const ChannelsTable = () => {
             }
 
             return (
-              <div
-                key={column.key}
-                className="w-1/2 mb-4 pr-2"
-              >
+              <div key={column.key} className='w-1/2 mb-4 pr-2'>
                 <Checkbox
                   checked={!!visibleColumns[column.key]}
                   onChange={(e) =>
@@ -601,7 +595,6 @@ const ChannelsTable = () => {
       </Modal>
     );
   };
-
 
   const setChannelFormat = (channels, enableTagMode) => {
     let channelDates = [];
@@ -632,20 +625,27 @@ const ChannelsTable = () => {
     const { searchKeyword, searchGroup, searchModel } = getFormValues();
     if (searchKeyword !== '' || searchGroup !== '' || searchModel !== '') {
       setLoading(true);
-      await searchChannels(enableTagMode, typeKey, statusF, page, pageSize, idSort);
+      await searchChannels(
+        enableTagMode,
+        typeKey,
+        statusF,
+        page,
+        pageSize,
+        idSort,
+      );
       setLoading(false);
       return;
     }
 
     const reqId = ++requestCounter.current; // 记录当前请求序号
     setLoading(true);
-    const typeParam = (typeKey !== 'all') ? `&type=${typeKey}` : '';
+    const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
     const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
-    let model = "";
+    let model = '';
     const res = await API.get(
       `/api/channel/channel-list-by-model-newapi?model=${model}`,
     );
-    console.log({res});
+    console.log({ res });
     if (res === undefined || reqId !== requestCounter.current) {
       return;
     }
@@ -660,13 +660,19 @@ const ChannelsTable = () => {
     setLoading(false);
   };
 
-
   const refresh = async (page = activePage) => {
     const { searchKeyword, searchGroup, searchModel } = getFormValues();
     if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
       await loadChannels(page, pageSize, idSort, enableTagMode);
     } else {
-      await searchChannels(enableTagMode, activeTypeKey, statusFilter, page, pageSize, idSort);
+      await searchChannels(
+        enableTagMode,
+        activeTypeKey,
+        statusFilter,
+        page,
+        pageSize,
+        idSort,
+      );
     }
   };
 
@@ -674,8 +680,10 @@ const ChannelsTable = () => {
     const localIdSort = localStorage.getItem('id-sort') === 'true';
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
-    const localEnableTagMode = localStorage.getItem('enable-tag-mode') === 'true';
-    const localEnableBatchDelete = localStorage.getItem('enable-batch-delete') === 'true';
+    const localEnableTagMode =
+      localStorage.getItem('enable-tag-mode') === 'true';
+    const localEnableBatchDelete =
+      localStorage.getItem('enable-batch-delete') === 'true';
     setIdSort(localIdSort);
     setPageSize(localPageSize);
     setEnableTagMode(localEnableTagMode);
@@ -688,8 +696,6 @@ const ChannelsTable = () => {
     fetchGroups().then();
     loadChannelModels().then();
   }, []);
-
-
 
   // 获取表单值的辅助函数
   const getFormValues = () => {
@@ -713,11 +719,18 @@ const ChannelsTable = () => {
     setSearching(true);
     try {
       if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
-        await loadChannels(page, pageSz, sortFlag, enableTagMode, typeKey, statusF);
+        await loadChannels(
+          page,
+          pageSz,
+          sortFlag,
+          enableTagMode,
+          typeKey,
+          statusF,
+        );
         return;
       }
 
-      const typeParam = (typeKey !== 'all') ? `&type=${typeKey}` : '';
+      const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
       const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
       const res = await API.get(
         `/api/channel/channel-list-by-model-newapi?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
@@ -778,21 +791,28 @@ const ChannelsTable = () => {
       } else {
         const filteredModelsList = currentTestChannel.models
           .split(',')
-          .filter((m) => m.toLowerCase().includes(modelSearchKeyword.toLowerCase()));
+          .filter((m) =>
+            m.toLowerCase().includes(modelSearchKeyword.toLowerCase()),
+          );
         const modelIdx = filteredModelsList.indexOf(model);
-        pageNo = modelIdx !== -1 ? Math.floor(modelIdx / MODEL_TABLE_PAGE_SIZE) + 1 : 1;
+        pageNo =
+          modelIdx !== -1
+            ? Math.floor(modelIdx / MODEL_TABLE_PAGE_SIZE) + 1
+            : 1;
       }
       setModelTablePage(pageNo);
     }
 
     try {
-      setTestingModels(prev => new Set([...prev, model]));
-      const res = await API.get(`/api/channel/test/${channel.id}?model=${model}`);
+      setTestingModels((prev) => new Set([...prev, model]));
+      const res = await API.get(
+        `/api/channel/test/${channel.id}?model=${model}`,
+      );
       const { success, message, time } = res.data;
 
-      setModelTestResults(prev => ({
+      setModelTestResults((prev) => ({
         ...prev,
-        [`${channel.id}-${model}`]: { success, time }
+        [`${channel.id}-${model}`]: { success, time },
       }));
 
       if (success) {
@@ -813,7 +833,7 @@ const ChannelsTable = () => {
     } catch (error) {
       showError(error.message);
     } finally {
-      setTestingModels(prev => {
+      setTestingModels((prev) => {
         const newSet = new Set(prev);
         newSet.delete(model);
         return newSet;
@@ -821,7 +841,7 @@ const ChannelsTable = () => {
     }
 
     // 移除已处理的测试
-    setTestQueue(prev => prev.slice(1));
+    setTestQueue((prev) => prev.slice(1));
   };
 
   // 监听队列变化
@@ -835,7 +855,7 @@ const ChannelsTable = () => {
   }, [testQueue, isProcessingQueue]);
 
   const testChannel = async (record, model) => {
-    setTestQueue(prev => [...prev, { channel: record, model }]);
+    setTestQueue((prev) => [...prev, { channel: record, model }]);
     if (!isProcessingQueue) {
       setIsProcessingQueue(true);
     }
@@ -906,16 +926,22 @@ const ChannelsTable = () => {
     return keys;
   }, [channelTypeCounts]);
 
-
   let pageData = channels;
 
   const handlePageChange = (page) => {
     const { searchKeyword, searchGroup, searchModel } = getFormValues();
     setActivePage(page);
     if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
-      loadChannels(page, pageSize, idSort, enableTagMode).then(() => { });
+      loadChannels(page, pageSize, idSort, enableTagMode).then(() => {});
     } else {
-      searchChannels(enableTagMode, activeTypeKey, statusFilter, page, pageSize, idSort);
+      searchChannels(
+        enableTagMode,
+        activeTypeKey,
+        statusFilter,
+        page,
+        pageSize,
+        idSort,
+      );
     }
   };
 
@@ -931,7 +957,14 @@ const ChannelsTable = () => {
           showError(reason);
         });
     } else {
-      searchChannels(enableTagMode, activeTypeKey, statusFilter, 1, size, idSort);
+      searchChannels(
+        enableTagMode,
+        activeTypeKey,
+        statusFilter,
+        1,
+        size,
+        idSort,
+      );
     }
   };
 
@@ -1052,39 +1085,36 @@ const ChannelsTable = () => {
     }
   };
 
-
-
   const renderHeader = () => (
-    <div className="flex flex-col w-full">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4 w-full">
-        <div className="flex gap-2 w-full md:w-auto order-2 md:order-1">
+    <div className='flex flex-col w-full'>
+      <div className='flex flex-col md:flex-row justify-between items-center gap-4 w-full'>
+        <div className='flex gap-2 w-full md:w-auto order-2 md:order-1'>
           <Button
             size='small'
             type='tertiary'
-            className="w-full md:w-auto"
+            className='w-full md:w-auto'
             onClick={refresh}
           >
             {t('刷新')}
           </Button>
-
         </div>
 
-        <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto order-1 md:order-2">
+        <div className='flex flex-col md:flex-row items-center gap-4 w-full md:w-auto order-1 md:order-2'>
           <Form
             initValues={formInitValues}
             getFormApi={(api) => setFormApi(api)}
             onSubmit={() => searchChannels(enableTagMode)}
             allowEmpty={true}
-            autoComplete="off"
-            layout="horizontal"
-            trigger="change"
+            autoComplete='off'
+            layout='horizontal'
+            trigger='change'
             stopValidateWithError={false}
-            className="flex flex-col md:flex-row items-center gap-4 w-full"
+            className='flex flex-col md:flex-row items-center gap-4 w-full'
           >
-            <div className="w-full md:w-48">
+            <div className='w-full md:w-48'>
               <Form.Input
                 size='small'
-                field="searchModel"
+                field='searchModel'
                 prefix={<IconSearch />}
                 placeholder={t('模型名称')}
                 showClear
@@ -1093,10 +1123,10 @@ const ChannelsTable = () => {
             </div>
             <Button
               size='small'
-              type="tertiary"
-              htmlType="submit"
+              type='tertiary'
+              htmlType='submit'
               loading={loading || searching}
-              className="w-full md:w-auto"
+              className='w-full md:w-auto'
             >
               {t('查询')}
             </Button>
@@ -1112,7 +1142,7 @@ const ChannelsTable = () => {
                   }, 100);
                 }
               }}
-              className="w-full md:w-auto"
+              className='w-full md:w-auto'
             >
               {t('重置')}
             </Button>
@@ -1138,13 +1168,17 @@ const ChannelsTable = () => {
       />
 
       <Card
-        className="!rounded-2xl"
+        className='!rounded-2xl'
         title={renderHeader()}
         shadows='always'
         bordered={false}
       >
         <Table
-          columns={compactMode ? getVisibleColumns().map(({ fixed, ...rest }) => rest) : getVisibleColumns()}
+          columns={
+            compactMode
+              ? getVisibleColumns().map(({ fixed, ...rest }) => rest)
+              : getVisibleColumns()
+          }
           dataSource={pageData}
           scroll={compactMode ? undefined : { x: 'max-content' }}
           pagination={{
@@ -1153,11 +1187,12 @@ const ChannelsTable = () => {
             total: channelCount,
             pageSizeOpts: [10, 20, 50, 100],
             showSizeChanger: true,
-            formatPageText: (page) => t('第 {{start}} - {{end}} 条，共 {{total}} 条', {
-              start: page.currentStart,
-              end: page.currentEnd,
-              total: channelCount,
-            }),
+            formatPageText: (page) =>
+              t('第 {{start}} - {{end}} 条，共 {{total}} 条', {
+                start: page.currentStart,
+                end: page.currentEnd,
+                total: channelCount,
+              }),
             onPageSizeChange: (size) => {
               handlePageSizeChange(size);
             },
@@ -1168,22 +1203,26 @@ const ChannelsTable = () => {
           rowSelection={
             enableBatchDelete
               ? {
-                onChange: (selectedRowKeys, selectedRows) => {
-                  setSelectedChannels(selectedRows);
-                },
-              }
+                  onChange: (selectedRowKeys, selectedRows) => {
+                    setSelectedChannels(selectedRows);
+                  },
+                }
               : null
           }
           empty={
             <Empty
-              image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-              darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+              image={
+                <IllustrationNoResult style={{ width: 150, height: 150 }} />
+              }
+              darkModeImage={
+                <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+              }
               description={t('搜索无结果')}
               style={{ padding: 30 }}
             />
           }
-          className="rounded-xl overflow-hidden"
-          size="middle"
+          className='rounded-xl overflow-hidden'
+          size='middle'
           loading={loading || searching}
         />
       </Card>
@@ -1196,10 +1235,10 @@ const ChannelsTable = () => {
         onCancel={() => setShowBatchSetTag(false)}
         maskClosable={false}
         centered={true}
-        size="small"
-        className="!rounded-lg"
+        size='small'
+        className='!rounded-lg'
       >
-        <div className="mb-5">
+        <div className='mb-5'>
           <Typography.Text>{t('请输入要设置的标签名称')}</Typography.Text>
         </div>
         <Input
@@ -1207,9 +1246,12 @@ const ChannelsTable = () => {
           value={batchSetTagValue}
           onChange={(v) => setBatchSetTagValue(v)}
         />
-        <div className="mt-4">
+        <div className='mt-4'>
           <Typography.Text type='secondary'>
-            {t('已选择 ${count} 个渠道').replace('${count}', selectedChannels.length)}
+            {t('已选择 ${count} 个渠道').replace(
+              '${count}',
+              selectedChannels.length,
+            )}
           </Typography.Text>
         </div>
       </Modal>
@@ -1218,13 +1260,20 @@ const ChannelsTable = () => {
       <Modal
         title={
           currentTestChannel && (
-            <div className="flex flex-col gap-2 w-full">
-              <div className="flex items-center gap-2">
-                <Typography.Text strong className="!text-[var(--semi-color-text-0)] !text-base">
+            <div className='flex flex-col gap-2 w-full'>
+              <div className='flex items-center gap-2'>
+                <Typography.Text
+                  strong
+                  className='!text-[var(--semi-color-text-0)] !text-base'
+                >
                   {currentTestChannel.name} {t('渠道的模型测试')}
                 </Typography.Text>
-                <Typography.Text type="tertiary" className="!text-xs flex items-center">
-                  {t('共')} {currentTestChannel.models.split(',').length} {t('个模型')}
+                <Typography.Text
+                  type='tertiary'
+                  className='!text-xs flex items-center'
+                >
+                  {t('共')} {currentTestChannel.models.split(',').length}{' '}
+                  {t('个模型')}
                 </Typography.Text>
               </div>
             </div>
@@ -1233,19 +1282,13 @@ const ChannelsTable = () => {
         visible={showModelTestModal && currentTestChannel !== null}
         onCancel={handleCloseModal}
         footer={
-          <div className="flex justify-end">
+          <div className='flex justify-end'>
             {isBatchTesting ? (
-              <Button
-                type='danger'
-                onClick={handleCloseModal}
-              >
+              <Button type='danger' onClick={handleCloseModal}>
                 {t('停止测试')}
               </Button>
             ) : (
-              <Button
-                type='tertiary'
-                onClick={handleCloseModal}
-              >
+              <Button type='tertiary' onClick={handleCloseModal}>
                 {t('取消')}
               </Button>
             )}
@@ -1254,28 +1297,32 @@ const ChannelsTable = () => {
               loading={isBatchTesting}
               disabled={isBatchTesting}
             >
-              {isBatchTesting ? t('测试中...') : t('批量测试${count}个模型').replace(
-                '${count}',
-                currentTestChannel
-                  ? currentTestChannel.models
-                    .split(',')
-                    .filter((model) =>
-                      model.toLowerCase().includes(modelSearchKeyword.toLowerCase())
-                    ).length
-                  : 0
-              )}
+              {isBatchTesting
+                ? t('测试中...')
+                : t('批量测试${count}个模型').replace(
+                    '${count}',
+                    currentTestChannel
+                      ? currentTestChannel.models
+                          .split(',')
+                          .filter((model) =>
+                            model
+                              .toLowerCase()
+                              .includes(modelSearchKeyword.toLowerCase()),
+                          ).length
+                      : 0,
+                  )}
             </Button>
           </div>
         }
         maskClosable={!isBatchTesting}
-        className="!rounded-lg"
+        className='!rounded-lg'
         size={isMobile ? 'full-width' : 'large'}
       >
-        <div className="model-test-scroll">
+        <div className='model-test-scroll'>
           {currentTestChannel && (
             <div>
               {/* 搜索与操作按钮 */}
-              <div className="flex items-center justify-end gap-2 w-full mb-2">
+              <div className='flex items-center justify-end gap-2 w-full mb-2'>
                 <Input
                   placeholder={t('搜索模型...')}
                   value={modelSearchKeyword}
@@ -1283,7 +1330,7 @@ const ChannelsTable = () => {
                     setModelSearchKeyword(v);
                     setModelTablePage(1);
                   }}
-                  className="!w-full"
+                  className='!w-full'
                   prefix={<IconSearch />}
                   showClear
                 />
@@ -1296,7 +1343,12 @@ const ChannelsTable = () => {
                     }
                     copy(selectedModelKeys.join(',')).then((ok) => {
                       if (ok) {
-                        showSuccess(t('已复制 ${count} 个模型').replace('${count}', selectedModelKeys.length));
+                        showSuccess(
+                          t('已复制 ${count} 个模型').replace(
+                            '${count}',
+                            selectedModelKeys.length,
+                          ),
+                        );
                       } else {
                         showError(t('复制失败，请手动复制'));
                       }
@@ -1312,9 +1364,14 @@ const ChannelsTable = () => {
                     if (!currentTestChannel) return;
                     const successKeys = currentTestChannel.models
                       .split(',')
-                      .filter((m) => m.toLowerCase().includes(modelSearchKeyword.toLowerCase()))
+                      .filter((m) =>
+                        m
+                          .toLowerCase()
+                          .includes(modelSearchKeyword.toLowerCase()),
+                      )
                       .filter((m) => {
-                        const result = modelTestResults[`${currentTestChannel.id}-${m}`];
+                        const result =
+                          modelTestResults[`${currentTestChannel.id}-${m}`];
                         return result && result.success;
                       });
                     if (successKeys.length === 0) {
@@ -1332,16 +1389,19 @@ const ChannelsTable = () => {
                     title: t('模型名称'),
                     dataIndex: 'model',
                     render: (text) => (
-                      <div className="flex items-center">
+                      <div className='flex items-center'>
                         <Typography.Text strong>{text}</Typography.Text>
                       </div>
-                    )
+                    ),
                   },
                   {
                     title: t('状态'),
                     dataIndex: 'status',
                     render: (text, record) => {
-                      const testResult = modelTestResults[`${currentTestChannel.id}-${record.model}`];
+                      const testResult =
+                        modelTestResults[
+                          `${currentTestChannel.id}-${record.model}`
+                        ];
                       const isTesting = testingModels.has(record.model);
 
                       if (isTesting) {
@@ -1361,7 +1421,7 @@ const ChannelsTable = () => {
                       }
 
                       return (
-                        <div className="flex items-center gap-2">
+                        <div className='flex items-center gap-2'>
                           <Tag
                             color={testResult.success ? 'green' : 'red'}
                             shape='circle'
@@ -1369,13 +1429,16 @@ const ChannelsTable = () => {
                             {testResult.success ? t('成功') : t('失败')}
                           </Tag>
                           {testResult.success && (
-                            <Typography.Text type="tertiary">
-                              {t('请求时长: ${time}s').replace('${time}', testResult.time.toFixed(2))}
+                            <Typography.Text type='tertiary'>
+                              {t('请求时长: ${time}s').replace(
+                                '${time}',
+                                testResult.time.toFixed(2),
+                              )}
                             </Typography.Text>
                           )}
                         </div>
                       );
-                    }
+                    },
                   },
                   {
                     title: '',
@@ -1385,21 +1448,25 @@ const ChannelsTable = () => {
                       return (
                         <Button
                           type='tertiary'
-                          onClick={() => testChannel(currentTestChannel, record.model)}
+                          onClick={() =>
+                            testChannel(currentTestChannel, record.model)
+                          }
                           loading={isTesting}
                           size='small'
                         >
                           {t('测试')}
                         </Button>
                       );
-                    }
-                  }
+                    },
+                  },
                 ]}
                 dataSource={(() => {
                   const filtered = currentTestChannel.models
                     .split(',')
                     .filter((model) =>
-                      model.toLowerCase().includes(modelSearchKeyword.toLowerCase()),
+                      model
+                        .toLowerCase()
+                        .includes(modelSearchKeyword.toLowerCase()),
                     );
                   const start = (modelTablePage - 1) * MODEL_TABLE_PAGE_SIZE;
                   const end = start + MODEL_TABLE_PAGE_SIZE;
@@ -1420,7 +1487,11 @@ const ChannelsTable = () => {
                   onSelectAll: (checked) => {
                     const filtered = currentTestChannel.models
                       .split(',')
-                      .filter((m) => m.toLowerCase().includes(modelSearchKeyword.toLowerCase()));
+                      .filter((m) =>
+                        m
+                          .toLowerCase()
+                          .includes(modelSearchKeyword.toLowerCase()),
+                      );
                     allSelectingRef.current = true;
                     setSelectedModelKeys(checked ? filtered : []);
                   },
@@ -1431,7 +1502,9 @@ const ChannelsTable = () => {
                   total: currentTestChannel.models
                     .split(',')
                     .filter((model) =>
-                      model.toLowerCase().includes(modelSearchKeyword.toLowerCase()),
+                      model
+                        .toLowerCase()
+                        .includes(modelSearchKeyword.toLowerCase()),
                     ).length,
                   showSizeChanger: false,
                   onPageChange: (page) => setModelTablePage(page),

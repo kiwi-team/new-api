@@ -62,7 +62,6 @@ const ChannelsTable = (channelsData) => {
     setCurrentMultiKeyChannel,
   } = channelsData;
 
-
   // Get all columns
   const allColumns = useMemo(() => {
     return getChannelsColumns({

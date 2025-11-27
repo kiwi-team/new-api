@@ -7,7 +7,7 @@ import {
   timestamp2string,
   renderGroup,
   renderQuota,
-  getModelCategories
+  getModelCategories,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import {
@@ -28,11 +28,11 @@ import {
   Progress,
   Switch,
   Input,
-  Typography
+  Typography,
 } from '@douyinfe/semi-ui';
 import {
   IllustrationNoResult,
-  IllustrationNoResultDark
+  IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import {
   IconSearch,
@@ -148,9 +148,15 @@ const TokensTable = () => {
           <Tooltip
             content={
               <div className='text-xs'>
-                <div>{t('已用额度')}: {renderQuota(used)}</div>
-                <div>{t('剩余额度')}: {renderQuota(remain)} ({percent.toFixed(0)}%)</div>
-                <div>{t('总额度')}: {renderQuota(total)}</div>
+                <div>
+                  {t('已用额度')}: {renderQuota(used)}
+                </div>
+                <div>
+                  {t('剩余额度')}: {renderQuota(remain)} ({percent.toFixed(0)}%)
+                </div>
+                <div>
+                  {t('总额度')}: {renderQuota(total)}
+                </div>
               </div>
             }
           >
@@ -167,10 +173,15 @@ const TokensTable = () => {
         if (text === 'auto') {
           return (
             <Tooltip
-              content={t('当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）')}
+              content={t(
+                '当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）',
+              )}
               position='top'
             >
-              <Tag color='white' shape='circle'> {t('智能熔断')} </Tag>
+              <Tag color='white' shape='circle'>
+                {' '}
+                {t('智能熔断')}{' '}
+              </Tag>
             </Tooltip>
           );
         }
@@ -182,7 +193,8 @@ const TokensTable = () => {
       key: 'token_key',
       render: (text, record) => {
         const fullKey = 'sk-' + record.key;
-        const maskedKey = 'sk-' + record.key.slice(0, 4) + '**********' + record.key.slice(-4);
+        const maskedKey =
+          'sk-' + record.key.slice(0, 4) + '**********' + record.key.slice(-4);
         const revealed = !!showKeys[record.id];
 
         return (
@@ -201,7 +213,10 @@ const TokensTable = () => {
                     aria-label='toggle token visibility'
                     onClick={(e) => {
                       e.stopPropagation();
-                      setShowKeys(prev => ({ ...prev, [record.id]: !revealed }));
+                      setShowKeys((prev) => ({
+                        ...prev,
+                        [record.id]: !revealed,
+                      }));
                     }}
                   />
                   <Button
@@ -235,14 +250,25 @@ const TokensTable = () => {
           Object.entries(categories).forEach(([key, category]) => {
             if (key === 'all') return;
             if (!category.icon || !category.filter) return;
-            const vendorModels = models.filter((m) => category.filter({ model_name: m }));
+            const vendorModels = models.filter((m) =>
+              category.filter({ model_name: m }),
+            );
             if (vendorModels.length > 0) {
               vendorAvatars.push(
-                <Tooltip key={key} content={vendorModels.join(', ')} position='top' showArrow>
-                  <Avatar size='extra-extra-small' alt={category.label} color='transparent'>
+                <Tooltip
+                  key={key}
+                  content={vendorModels.join(', ')}
+                  position='top'
+                  showArrow
+                >
+                  <Avatar
+                    size='extra-extra-small'
+                    alt={category.label}
+                    color='transparent'
+                  >
                     {category.icon}
                   </Avatar>
-                </Tooltip>
+                </Tooltip>,
               );
               vendorModels.forEach((m) => matchedModels.add(m));
             }
@@ -251,18 +277,21 @@ const TokensTable = () => {
           const unmatchedModels = models.filter((m) => !matchedModels.has(m));
           if (unmatchedModels.length > 0) {
             vendorAvatars.push(
-              <Tooltip key='unknown' content={unmatchedModels.join(', ')} position='top' showArrow>
+              <Tooltip
+                key='unknown'
+                content={unmatchedModels.join(', ')}
+                position='top'
+                showArrow
+              >
                 <Avatar size='extra-extra-small' alt='unknown'>
                   {t('其他')}
                 </Avatar>
-              </Tooltip>
+              </Tooltip>,
             );
           }
 
           return (
-            <AvatarGroup size='extra-extra-small'>
-              {vendorAvatars}
-            </AvatarGroup>
+            <AvatarGroup size='extra-extra-small'>{vendorAvatars}</AvatarGroup>
           );
         } else {
           return (
@@ -307,10 +336,8 @@ const TokensTable = () => {
               position='top'
               showArrow
             >
-              <Tag shape='circle'>
-                {'+' + extraCount}
-              </Tag>
-            </Tooltip>
+              <Tag shape='circle'>{'+' + extraCount}</Tag>
+            </Tooltip>,
           );
         }
 
@@ -372,11 +399,11 @@ const TokensTable = () => {
         return (
           <Space wrap>
             <SplitButtonGroup
-              className="overflow-hidden"
+              className='overflow-hidden'
               aria-label={t('项目操作按钮组')}
             >
               <Button
-                size="small"
+                size='small'
                 type='tertiary'
                 onClick={() => {
                   if (chatsArray.length === 0) {
@@ -400,14 +427,14 @@ const TokensTable = () => {
                 <Button
                   type='tertiary'
                   icon={<IconTreeTriangleDown />}
-                  size="small"
+                  size='small'
                 ></Button>
               </Dropdown>
             </SplitButtonGroup>
 
             <Button
               type='tertiary'
-              size="small"
+              size='small'
               onClick={() => {
                 setEditingToken(record);
                 setShowEdit(true);
@@ -418,7 +445,7 @@ const TokensTable = () => {
 
             <Button
               type='danger'
-              size="small"
+              size='small'
               onClick={() => {
                 Modal.confirm({
                   title: t('确定是否要删除此令牌？'),
@@ -533,10 +560,10 @@ const TokensTable = () => {
         id: 'new-api',
         baseUrl: serverAddress,
         apiKey: 'sk-' + record.key,
-      }
+      };
       // 替换 {cherryConfig} 为base64编码的JSON字符串
       let encodedConfig = encodeURIComponent(
-        btoa(JSON.stringify(cherryConfig))
+        btoa(JSON.stringify(cherryConfig)),
       );
       url = url.replaceAll('{cherryConfig}', encodedConfig);
     } else {
@@ -646,8 +673,8 @@ const TokensTable = () => {
   };
 
   const rowSelection = {
-    onSelect: (record, selected) => { },
-    onSelectAll: (selected, selectedRows) => { },
+    onSelect: (record, selected) => {},
+    onSelectAll: (selected, selectedRows) => {},
     onChange: (selectedRowKeys, selectedRows) => {
       setSelectedKeys(selectedRows);
     },
@@ -694,44 +721,46 @@ const TokensTable = () => {
   };
 
   const renderHeader = () => (
-    <div className="flex flex-col w-full">
-      <div className="mb-2">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full">
-          <div className="flex items-center text-blue-500">
-            <Key size={16} className="mr-2" />
-            <Text>{t('令牌用于API访问认证，可以设置额度限制和模型权限。')}</Text>
+    <div className='flex flex-col w-full'>
+      <div className='mb-2'>
+        <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
+          <div className='flex items-center text-blue-500'>
+            <Key size={16} className='mr-2' />
+            <Text>
+              {t('令牌用于API访问认证，可以设置额度限制和模型权限。')}
+            </Text>
           </div>
           <Button
-            type="tertiary"
-            className="w-full md:w-auto"
+            type='tertiary'
+            className='w-full md:w-auto'
             onClick={() => setCompactMode(!compactMode)}
-            size="small"
+            size='small'
           >
             {compactMode ? t('自适应列表') : t('紧凑列表')}
           </Button>
         </div>
       </div>
 
-      <Divider margin="12px" />
+      <Divider margin='12px' />
 
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4 w-full">
-        <div className="flex flex-wrap gap-2 w-full md:w-auto order-2 md:order-1">
+      <div className='flex flex-col md:flex-row justify-between items-center gap-4 w-full'>
+        <div className='flex flex-wrap gap-2 w-full md:w-auto order-2 md:order-1'>
           <Button
-            type="primary"
-            className="flex-1 md:flex-initial"
+            type='primary'
+            className='flex-1 md:flex-initial'
             onClick={() => {
               setEditingToken({
                 id: undefined,
               });
               setShowEdit(true);
             }}
-            size="small"
+            size='small'
           >
             {t('添加令牌')}
           </Button>
           <Button
             type='tertiary'
-            className="flex-1 md:flex-initial"
+            className='flex-1 md:flex-initial'
             onClick={() => {
               if (selectedKeys.length === 0) {
                 showError(t('请至少选择一个令牌！'));
@@ -749,7 +778,10 @@ const TokensTable = () => {
                         let content = '';
                         for (let i = 0; i < selectedKeys.length; i++) {
                           content +=
-                            selectedKeys[i].name + '    sk-' + selectedKeys[i].key + '\n';
+                            selectedKeys[i].name +
+                            '    sk-' +
+                            selectedKeys[i].key +
+                            '\n';
                         }
                         await copyText(content);
                         Modal.destroyAll();
@@ -773,13 +805,13 @@ const TokensTable = () => {
                 ),
               });
             }}
-            size="small"
+            size='small'
           >
             {t('复制所选令牌')}
           </Button>
           <Button
             type='danger'
-            className="w-full md:w-auto"
+            className='w-full md:w-auto'
             onClick={() => {
               if (selectedKeys.length === 0) {
                 showError(t('请至少选择一个令牌！'));
@@ -789,13 +821,15 @@ const TokensTable = () => {
                 title: t('批量删除令牌'),
                 content: (
                   <div>
-                    {t('确定要删除所选的 {{count}} 个令牌吗？', { count: selectedKeys.length })}
+                    {t('确定要删除所选的 {{count}} 个令牌吗？', {
+                      count: selectedKeys.length,
+                    })}
                   </div>
                 ),
                 onOk: () => batchDeleteTokens(),
               });
             }}
-            size="small"
+            size='small'
           >
             {t('删除所选令牌')}
           </Button>
@@ -806,40 +840,40 @@ const TokensTable = () => {
           getFormApi={(api) => setFormApi(api)}
           onSubmit={searchTokens}
           allowEmpty={true}
-          autoComplete="off"
-          layout="horizontal"
-          trigger="change"
+          autoComplete='off'
+          layout='horizontal'
+          trigger='change'
           stopValidateWithError={false}
-          className="w-full md:w-auto order-1 md:order-2"
+          className='w-full md:w-auto order-1 md:order-2'
         >
-          <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
-            <div className="relative w-full md:w-56">
+          <div className='flex flex-col md:flex-row items-center gap-4 w-full md:w-auto'>
+            <div className='relative w-full md:w-56'>
               <Form.Input
-                field="searchKeyword"
+                field='searchKeyword'
                 prefix={<IconSearch />}
                 placeholder={t('搜索关键字')}
                 showClear
                 pure
-                size="small"
+                size='small'
               />
             </div>
-            <div className="relative w-full md:w-56">
+            <div className='relative w-full md:w-56'>
               <Form.Input
-                field="searchToken"
+                field='searchToken'
                 prefix={<IconSearch />}
                 placeholder={t('密钥')}
                 showClear
                 pure
-                size="small"
+                size='small'
               />
             </div>
-            <div className="flex gap-2 w-full md:w-auto">
+            <div className='flex gap-2 w-full md:w-auto'>
               <Button
-                type="tertiary"
-                htmlType="submit"
+                type='tertiary'
+                htmlType='submit'
                 loading={loading || searching}
-                className="flex-1 md:flex-initial md:w-auto"
-                size="small"
+                className='flex-1 md:flex-initial md:w-auto'
+                size='small'
               >
                 {t('查询')}
               </Button>
@@ -854,8 +888,8 @@ const TokensTable = () => {
                     }, 100);
                   }
                 }}
-                className="flex-1 md:flex-initial md:w-auto"
-                size="small"
+                className='flex-1 md:flex-initial md:w-auto'
+                size='small'
               >
                 {t('重置')}
               </Button>
@@ -876,19 +910,23 @@ const TokensTable = () => {
       ></EditToken>
 
       <Card
-        className="!rounded-2xl"
+        className='!rounded-2xl'
         title={renderHeader()}
         shadows='always'
         bordered={false}
       >
         <Table
-          columns={compactMode ? columns.map(col => {
-            if (col.dataIndex === 'operate') {
-              const { fixed, ...rest } = col;
-              return rest;
-            }
-            return col;
-          }) : columns}
+          columns={
+            compactMode
+              ? columns.map((col) => {
+                  if (col.dataIndex === 'operate') {
+                    const { fixed, ...rest } = col;
+                    return rest;
+                  }
+                  return col;
+                })
+              : columns
+          }
           dataSource={tokens}
           scroll={compactMode ? undefined : { x: 'max-content' }}
           pagination={{
@@ -911,14 +949,18 @@ const TokensTable = () => {
           onRow={handleRow}
           empty={
             <Empty
-              image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-              darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+              image={
+                <IllustrationNoResult style={{ width: 150, height: 150 }} />
+              }
+              darkModeImage={
+                <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+              }
               description={t('搜索无结果')}
               style={{ padding: 30 }}
             />
           }
-          className="rounded-xl overflow-hidden"
-          size="middle"
+          className='rounded-xl overflow-hidden'
+          size='middle'
         ></Table>
       </Card>
     </>

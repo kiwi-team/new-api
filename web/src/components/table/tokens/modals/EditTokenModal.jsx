@@ -79,7 +79,14 @@ const EditTokenModal = (props) => {
   const renderChannelOption = (option) => {
     const color = getChannelStatusColor(option.__status);
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+        }}
+      >
         <span>{option.label}</span>
         <Tag color={color} size='small' />
       </div>
@@ -139,8 +146,14 @@ const EditTokenModal = (props) => {
         const mapped = channels.map((ch) => {
           const ids = Array.isArray(ch?.ids)
             ? ch.ids.map((v) => Number(v)).filter((v) => !isNaN(v))
-            : (Number(ch?.id || 0) > 0 ? [Number(ch.id)] : []);
-          return { ids };
+            : Number(ch?.id || 0) > 0
+              ? [Number(ch.id)]
+              : [];
+          const group_ratio =
+            typeof ch?.group_ratio === 'object' && ch.group_ratio !== null
+              ? ch.group_ratio
+              : undefined;
+          return group_ratio ? { ids, group_ratio } : { ids };
         });
         return {
           modelKey,
@@ -175,9 +188,17 @@ const EditTokenModal = (props) => {
             ? ch.ids.map((v) => Number(v)).filter((v) => !isNaN(v))
             : [];
           if (ids.length === 0) return null;
-          const payload = { ids };
-          if (!isNaN(Number(ch.weight))) payload.weight = Number(ch.weight);
-          return payload;
+          const hasGroupRatio =
+            typeof ch.group_ratio === 'object' && ch.group_ratio !== null;
+          if (hasGroupRatio && ids.length === 1) {
+            const gr = {};
+            for (const [k, v] of Object.entries(ch.group_ratio)) {
+              const num = Number(v);
+              if (!isNaN(num)) gr[k] = num;
+            }
+            return { id: ids[0], group_ratio: gr };
+          }
+          return { ids };
         })
         .filter(Boolean);
       const disableChannels = Array.isArray(item.disable_channels)
@@ -185,8 +206,8 @@ const EditTokenModal = (props) => {
         : [];
       obj[key] = {
         retry: Number(item.retry || 0),
-        disable_channels: disableChannels,
         random_type: item.random_type || 'order',
+        disable_channels: disableChannels,
         channels: mapped,
       };
     });
@@ -217,7 +238,9 @@ const EditTokenModal = (props) => {
   };
 
   const updateRuleField = (idx, key, value) => {
-    const list = channelRulesList.map((r, i) => (i === idx ? { ...r, [key]: value } : r));
+    const list = channelRulesList.map((r, i) =>
+      i === idx ? { ...r, [key]: value } : r,
+    );
     setChannelRulesList(list);
     updateChannelRulesJsonFromList(list);
   };
@@ -227,10 +250,7 @@ const EditTokenModal = (props) => {
       i === ruleIdx
         ? {
             ...r,
-            channels: [
-              ...r.channels,
-              { ids: [] },
-            ],
+            channels: [...r.channels, { ids: [] }],
           }
         : r,
     );
@@ -240,7 +260,9 @@ const EditTokenModal = (props) => {
 
   const removeChannelItem = (ruleIdx, chIdx) => {
     const list = channelRulesList.map((r, i) =>
-      i === ruleIdx ? { ...r, channels: r.channels.filter((_, j) => j !== chIdx) } : r,
+      i === ruleIdx
+        ? { ...r, channels: r.channels.filter((_, j) => j !== chIdx) }
+        : r,
     );
     setChannelRulesList(list);
     updateChannelRulesJsonFromList(list);
@@ -251,7 +273,9 @@ const EditTokenModal = (props) => {
       i === ruleIdx
         ? {
             ...r,
-            channels: r.channels.map((ch, j) => (j === chIdx ? { ...ch, [key]: value } : ch)),
+            channels: r.channels.map((ch, j) =>
+              j === chIdx ? { ...ch, [key]: value } : ch,
+            ),
           }
         : r,
     );
@@ -318,7 +342,9 @@ const EditTokenModal = (props) => {
       });
       setModels(localModelOptions);
       try {
-        const names = Array.isArray(data) ? data.filter((m) => typeof m === 'string') : [];
+        const names = Array.isArray(data)
+          ? data.filter((m) => typeof m === 'string')
+          : [];
         setModelNameList(names);
       } catch {}
     } else {
@@ -362,7 +388,7 @@ const EditTokenModal = (props) => {
           value: ch.id,
           __status: ch.status,
         }));
-        const merged = dedupeOptions([ ...channelOptions, ...opts ]);
+        const merged = dedupeOptions([...channelOptions, ...opts]);
         setChannelOptions(merged);
         rebuildChannelOptionMap(merged);
       } else {
@@ -501,17 +527,17 @@ const EditTokenModal = (props) => {
 
         if (localInputs.expired_time !== -1) {
           let time = Date.parse(localInputs.expired_time);
-        if (isNaN(time)) {
-          showError(t('过期时间格式错误！'));
-          setLoading(false);
-          break;
+          if (isNaN(time)) {
+            showError(t('过期时间格式错误！'));
+            setLoading(false);
+            break;
+          }
+          localInputs.expired_time = Math.ceil(time / 1000);
         }
-        localInputs.expired_time = Math.ceil(time / 1000);
-      }
-      localInputs.model_limits = localInputs.model_limits.join(',');
-      localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
-      localInputs.channel_rules = channelRulesJson || '';
-      let res = await API.post(`/api/token/`, localInputs);
+        localInputs.model_limits = localInputs.model_limits.join(',');
+        localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+        localInputs.channel_rules = channelRulesJson || '';
+        let res = await API.post(`/api/token/`, localInputs);
         const { success, message } = res.data;
         if (success) {
           successCount++;
@@ -810,12 +836,16 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
-                   <Form.Slot label={t('设置渠道规则')}>
+                    <Form.Slot label={t('设置渠道规则')}>
                       <Card className='!rounded-2xl shadow-sm border-0'>
                         <Row gutter={12}>
                           <Col span={24}>
                             <Space>
-                              <Button type='tertiary' onClick={addRule} size='small'>
+                              <Button
+                                type='tertiary'
+                                onClick={addRule}
+                                size='small'
+                              >
                                 {t('添加规则')}
                               </Button>
                             </Space>
@@ -828,10 +858,23 @@ const EditTokenModal = (props) => {
                                     <Form.Slot label={t('模型关键字')}>
                                       <AutoComplete
                                         value={rule.modelKey}
-                                        data={modelNameList.map((m) => ({ value: m, label: m }))}
-                                        onChange={(v) => updateRuleField(idx, 'modelKey', v)}
-                                        onSelect={(item) => updateRuleField(idx, 'modelKey', item?.value || '')}
-                                        placeholder={t('输入以搜索模型名称或前缀')}
+                                        data={modelNameList.map((m) => ({
+                                          value: m,
+                                          label: m,
+                                        }))}
+                                        onChange={(v) =>
+                                          updateRuleField(idx, 'modelKey', v)
+                                        }
+                                        onSelect={(item) =>
+                                          updateRuleField(
+                                            idx,
+                                            'modelKey',
+                                            item?.value || '',
+                                          )
+                                        }
+                                        placeholder={t(
+                                          '输入以搜索模型名称或前缀',
+                                        )}
                                         style={{ width: '100%' }}
                                         showClear
                                       />
@@ -840,7 +883,13 @@ const EditTokenModal = (props) => {
                                   <Col span={6}>
                                     <InputNumber
                                       value={rule.retry}
-                                      onChange={(v) => updateRuleField(idx, 'retry', Number(v || 0))}
+                                      onChange={(v) =>
+                                        updateRuleField(
+                                          idx,
+                                          'retry',
+                                          Number(v || 0),
+                                        )
+                                      }
                                       style={{ width: '100%' }}
                                     />
                                   </Col>
@@ -851,14 +900,18 @@ const EditTokenModal = (props) => {
                                         { label: 'order', value: 'order' },
                                         { label: 'random', value: 'random' },
                                       ]}
-                                      onChange={(v) => updateRuleField(idx, 'random_type', v)}
+                                      onChange={(v) =>
+                                        updateRuleField(idx, 'random_type', v)
+                                      }
                                       style={{ width: '100%' }}
                                     />
                                   </Col>
                                   <Col span={24}>
                                     <Form.Slot label={t('禁用渠道')}>
                                       <TagInput
-                                        value={(rule.disable_channels || []).map((n) => String(n))}
+                                        value={(
+                                          rule.disable_channels || []
+                                        ).map((n) => String(n))}
                                         onChange={(arr) =>
                                           updateRuleField(
                                             idx,
@@ -875,10 +928,19 @@ const EditTokenModal = (props) => {
                                   </Col>
                                   <Col span={24}>
                                     <Space>
-                                      <Button type='tertiary' size='small' onClick={() => addChannelItem(idx)}>
+                                      <Button
+                                        type='tertiary'
+                                        size='small'
+                                        onClick={() => addChannelItem(idx)}
+                                      >
                                         {t('添加渠道组')}
                                       </Button>
-                                      <Button type='danger' theme='borderless' size='small' onClick={() => removeRule(idx)}>
+                                      <Button
+                                        type='danger'
+                                        theme='borderless'
+                                        size='small'
+                                        onClick={() => removeRule(idx)}
+                                      >
                                         {t('删除规则')}
                                       </Button>
                                     </Space>
@@ -888,14 +950,16 @@ const EditTokenModal = (props) => {
                                       <Card className='!rounded-lg border-0'>
                                         <Row gutter={8}>
                                           <Col span={12}>
-                                          <Select
-                                            multiple
-                                            optionList={channelOptions}
-                                            value={(ch.ids || []).map((n) => Number(n))}
-                                            onChange={(vals) =>
-                                              updateChannelItem(
-                                                idx,
-                                                j,
+                                            <Select
+                                              multiple
+                                              optionList={channelOptions}
+                                              value={(ch.ids || []).map((n) =>
+                                                Number(n),
+                                              )}
+                                              onChange={(vals) =>
+                                                updateChannelItem(
+                                                  idx,
+                                                  j,
                                                   'ids',
                                                   (vals || [])
                                                     .map((v) => Number(v))
@@ -910,11 +974,16 @@ const EditTokenModal = (props) => {
                                             />
                                           </Col>
                                           <Col span={12}>
-                                            <Button type='danger' theme='borderless' onClick={() => removeChannelItem(idx, j)}>
+                                            <Button
+                                              type='danger'
+                                              theme='borderless'
+                                              onClick={() =>
+                                                removeChannelItem(idx, j)
+                                              }
+                                            >
                                               {t('删除')}
                                             </Button>
                                           </Col>
-                                          
                                         </Row>
                                       </Card>
                                     </Col>
@@ -924,14 +993,18 @@ const EditTokenModal = (props) => {
                             </Col>
                           ))}
                           <Col span={24}>
-                            <Form.Input field='channel_rules' value={channelRulesJson} style={{ display: 'none' }} />
+                            <Form.Input
+                              field='channel_rules'
+                              value={channelRulesJson}
+                              style={{ display: 'none' }}
+                            />
                           </Col>
                         </Row>
                       </Card>
                     </Form.Slot>
                   </Col>
                   <Col span={24}>
-                   <Form.TextArea
+                    <Form.TextArea
                       field='channel_ratios'
                       label={t('设置渠道倍率')}
                       autosize
