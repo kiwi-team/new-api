@@ -66,10 +66,15 @@ func is25FlashLiteModel(modelName string) bool {
 	return strings.HasPrefix(modelName, "gemini-2.5-flash-lite")
 }
 
+func isNew3ProModel(modelName string) bool {
+	return strings.HasPrefix(modelName, "gemini-3-pro")
+}
+
 // clampThinkingBudget 根据模型名称将预算限制在允许的范围内
 func clampThinkingBudget(modelName string, budget int) int {
 	isNew25Pro := isNew25ProModel(modelName)
 	is25FlashLite := is25FlashLiteModel(modelName)
+	isNew3Pro := isNew3ProModel(modelName)
 
 	if is25FlashLite {
 		if budget < flash25LiteMinBudget {
@@ -79,6 +84,13 @@ func clampThinkingBudget(modelName string, budget int) int {
 			return flash25LiteMaxBudget
 		}
 	} else if isNew25Pro {
+		if budget < pro25MinBudget {
+			return pro25MinBudget
+		}
+		if budget > pro25MaxBudget {
+			return pro25MaxBudget
+		}
+	} else if isNew3Pro {
 		if budget < pro25MinBudget {
 			return pro25MinBudget
 		}
@@ -206,11 +218,11 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 	adaptorWithExtraBody := false
 
 	if len(textRequest.ExtraBody) > 0 {
+		var extraBody map[string]interface{}
+		if err := common.Unmarshal(textRequest.ExtraBody, &extraBody); err != nil {
+			return nil, fmt.Errorf("invalid extra body: %w", err)
+		}
 		if !strings.HasSuffix(info.UpstreamModelName, "-nothinking") {
-			var extraBody map[string]interface{}
-			if err := common.Unmarshal(textRequest.ExtraBody, &extraBody); err != nil {
-				return nil, fmt.Errorf("invalid extra body: %w", err)
-			}
 			// eg. {"google":{"thinking_config":{"thinking_budget":5324,"include_thoughts":true}}}
 			if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
 				adaptorWithExtraBody = true
@@ -236,8 +248,31 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						}
 					}
 				}
+
 			}
 		}
+
+		if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
+			var config *dto.GeminiImageParameters
+			if imageConfig, ok := googleBody["image_config"].(map[string]interface{}); ok {
+				if aspectRatio, ok := imageConfig["aspect_ratio"].(string); ok {
+					config = &dto.GeminiImageParameters{
+						AspectRatio: aspectRatio,
+					}
+				}
+				if imageSize, ok := imageConfig["image_size"].(string); ok {
+					config.ImageSize = imageSize
+				}
+			}
+			if config != nil {
+				raw, err := json.Marshal(config)
+				if err != nil {
+					return nil, fmt.Errorf("marshal image_config failed: %w", err)
+				}
+				geminiRequest.GenerationConfig.ImageConfig = raw
+			}
+		}
+		common.PrintJson("geminiRequest", geminiRequest)
 	}
 
 	if !adaptorWithExtraBody {
@@ -610,10 +645,19 @@ func CovertGemini2OpenAI(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			return nil, err
 		}
 		if thinking.Type == "enabled" {
-			geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-				IncludeThoughts: true,
-				ThinkingBudget:  &thinking.BudgetTokens,
+			if strings.Contains(textRequest.Model, "gemini-3-pro") {
+				//The model does not support setting thinking_budget to 0. (
+				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+					IncludeThoughts: true,
+				}
+			} else {
+				clampedBudget := clampThinkingBudget(textRequest.Model, int(thinking.BudgetTokens))
+				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+					IncludeThoughts: true,
+					ThinkingBudget:  &clampedBudget,
+				}
 			}
+
 		} else {
 			if strings.Contains(textRequest.Model, "gemini-2.5-flash") {
 				zero := 0
@@ -906,21 +950,13 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 			for _, part := range candidate.Content.Parts {
 				if part.InlineData != nil {
 					// 媒体内容
-					if strings.HasPrefix(part.InlineData.MimeType, "image") {
-						imgText := "![image](data:" + part.InlineData.MimeType + ";base64," + part.InlineData.Data + ")"
-						texts = append(texts, imgText)
-					} else {
-						// 其他媒体类型，直接显示链接
-						texts = append(texts, fmt.Sprintf("[media](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data))
-					}
-				} else if part.FunctionCall != nil {
-					choice.FinishReason = constant.FinishReasonToolCalls
-					if call := getResponseToolCall(&part); call != nil {
-						toolCalls = append(toolCalls, *call)
-					}
-				} else if part.Thought {
-					choice.Message.ReasoningContent = part.Text
-				} else if part.InlineData != nil {
+					// if strings.HasPrefix(part.InlineData.MimeType, "image") {
+					// 	imgText := "![image](data:" + part.InlineData.MimeType + ";base64," + part.InlineData.Data + ")"
+					// 	texts = append(texts, imgText)
+					// } else {
+					// 	// 其他媒体类型，直接显示链接
+					// 	texts = append(texts, fmt.Sprintf("[media](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data))
+					// }
 					if strings.HasPrefix(part.InlineData.MimeType, "image") {
 						url, err := service.SimpleUploadToS3(c.Request.Context(), part.InlineData.Data)
 						if err != nil {
@@ -935,7 +971,17 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 								Url:      url,
 							}
 						}
+					} else {
+						// 其他媒体类型，直接显示链接
+						texts = append(texts, fmt.Sprintf("[media](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data))
 					}
+				} else if part.FunctionCall != nil {
+					choice.FinishReason = constant.FinishReasonToolCalls
+					if call := getResponseToolCall(&part); call != nil {
+						toolCalls = append(toolCalls, *call)
+					}
+				} else if part.Thought {
+					choice.Message.ReasoningContent = part.Text
 				} else {
 					if part.ExecutableCode != nil {
 						texts = append(texts, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```")
@@ -951,14 +997,16 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 								if len(txt) > 0 {
 									texts = append(texts, txt)
 								}
-								imgUrl1, err := service.SimpleUploadToS3(c.Request.Context(), imgUrl)
-								if err == nil {
-									imgUrl = imgUrl1
-								}
-								image = &dto.MessageImageUrl{
-									Url: imgUrl,
-								}
+								if imgUrl != "" {
+									imgUrl1, err := service.SimpleUploadToS3(c.Request.Context(), imgUrl)
+									if err == nil {
+										imgUrl = imgUrl1
+									}
+									image = &dto.MessageImageUrl{
+										Url: imgUrl,
+									}
 
+								}
 							}
 						}
 					}

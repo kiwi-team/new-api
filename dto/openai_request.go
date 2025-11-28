@@ -48,6 +48,10 @@ type ExtraBody struct {
 			ThinkingBudget  int  `json:"thinking_budget"`
 			IncludeThoughts bool `json:"include_thoughts"`
 		} `json:"thinking_config"`
+		ImageConfig struct {
+			AspectRatio string `json:"aspect_ratio"`
+			ImageSize   string `json:"image_size"`
+		} `json:"image_config"`
 	} `json:"google"`
 	Minimax *struct {
 		ReasoningSplit bool `json:"reasoning_split,omitempty"`
