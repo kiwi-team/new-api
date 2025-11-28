@@ -227,10 +227,14 @@ func TokenAuth() func(c *gin.Context) {
 			clientUserId = strings.Join(tmpArr[1:], "_")
 		}
 		aiceKey := common.OptionMap["AICE_KEY"]
-		if aiceKey == "" {
-			aiceKey = "XoqKKKphYhUINlbrF0079982C7F84f4cA8B9046cC6A96cEb"
+		aiceKeyArr := strings.Split(aiceKey, ",")
+		isAiceKey := false
+		for _, item := range aiceKeyArr {
+			if strings.Contains(key, item) {
+				isAiceKey = true
+				break
+			}
 		}
-		isAiceKey := strings.Contains(key, aiceKey)
 		if key == "" || key == "midjourney-proxy" {
 			key = c.Request.Header.Get("mj-api-secret")
 			key = strings.TrimPrefix(key, "Bearer ")
