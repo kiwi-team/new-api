@@ -161,6 +161,9 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 		if err != nil {
 			continue
 		}
+		if file == nil {
+			continue
+		}
 		return file, nil
 	}
 	fmt.Printf("upload file to google failed after %d retries, fileUri: %s\n", retryTimes, fileUri)

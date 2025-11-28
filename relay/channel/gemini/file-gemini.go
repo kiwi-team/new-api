@@ -81,12 +81,18 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 }
 
 func CheckFileState(ctx context.Context, client *genai.Client, file *genai.File) (*genai.File, error) {
+	if file == nil {
+		return nil, fmt.Errorf("file is nil")
+	}
 	max := 0
 	for file.State != genai.FileStateActive && max < 10 {
 		fmt.Printf("file state is processing, wait for 10 * %d seconds\n", max+1)
 		time.Sleep(2 * time.Second)
 		file, _ = client.Files.Get(ctx, file.Name, nil)
 		max = max + 1
+	}
+	if file == nil {
+		return nil, fmt.Errorf("file is nil after 10 retries")
 	}
 	return file, nil
 }
