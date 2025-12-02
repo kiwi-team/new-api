@@ -59,6 +59,7 @@ const (
 	ChannelTypeElevenLabs       = 59
 	ChannelTypeAliDashScope     = 60
 	ChannelTypeFAL              = 61
+	ChannelTypeReplicate        = 62
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -125,7 +126,8 @@ var ChannelBaseURLs = []string{
 	"https://ark.cn-beijing.volces.com",         //58
 	"https://api.openai.com",                    //59
 	"https://dashscope.aliyuncs.com",            //60
-	"https://queue.fal.run",
+	"https://queue.fal.run",                     //61
+	"https://api.replicate.com",                 //62
 }
 
 var ChannelTypeNames = map[int]string{
@@ -184,6 +186,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeElevenLabs:     "ElevenLabs",
 	ChannelTypeAliDashScope:   "AliDashScope",
 	ChannelTypeFAL:            "Fal",
+	ChannelTypeReplicate:      "Replicate",
 }
 
 func GetChannelTypeName(channelType int) string {
@@ -191,4 +194,28 @@ func GetChannelTypeName(channelType int) string {
 		return name
 	}
 	return "Unknown"
+}
+
+type ChannelSpecialBase struct {
+	ClaudeBaseURL string
+	OpenAIBaseURL string
+}
+
+var ChannelSpecialBases = map[string]ChannelSpecialBase{
+	"glm-coding-plan": {
+		ClaudeBaseURL: "https://open.bigmodel.cn/api/anthropic",
+		OpenAIBaseURL: "https://open.bigmodel.cn/api/coding/paas/v4",
+	},
+	"glm-coding-plan-international": {
+		ClaudeBaseURL: "https://api.z.ai/api/anthropic",
+		OpenAIBaseURL: "https://api.z.ai/api/coding/paas/v4",
+	},
+	"kimi-coding-plan": {
+		ClaudeBaseURL: "https://api.kimi.com/coding",
+		OpenAIBaseURL: "https://api.kimi.com/coding/v1",
+	},
+	"doubao-coding-plan": {
+		ClaudeBaseURL: "https://ark.cn-beijing.volces.com/api/coding",
+		OpenAIBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
+	},
 }

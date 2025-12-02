@@ -208,6 +208,10 @@ export const CHANNEL_OPTIONS = [
     value: 61,
     color: 'red',
     label: 'Fal',
+  },{
+    value: 62,
+    color: 'blue',
+    label: 'Replicate',
   },
 ];
 

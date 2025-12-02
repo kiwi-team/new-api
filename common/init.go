@@ -30,6 +30,11 @@ func printHelp() {
 func InitEnv() {
 	flag.Parse()
 
+	envVersion := os.Getenv("VERSION")
+	if envVersion != "" {
+		Version = envVersion
+	}
+
 	if *PrintVersion {
 		fmt.Println(Version)
 		os.Exit(0)
@@ -113,6 +118,9 @@ func InitEnv() {
 	ErrorLogBatchSize = GetEnvOrDefault("ERROR_LOG_BATCH_SIZE", 1)
 	SaveErrorLog = GetEnvOrDefaultBool("SAVE_ERROR_LOG", false)
 
+	CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", true)
+	CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
+	CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
 	initConstantEnv()
 }
 
@@ -120,10 +128,12 @@ func initConstantEnv() {
 	constant.StreamingTimeout = GetEnvOrDefault("STREAMING_TIMEOUT", 300)
 	constant.DifyDebug = GetEnvOrDefaultBool("DIFY_DEBUG", true)
 	constant.MaxFileDownloadMB = GetEnvOrDefault("MAX_FILE_DOWNLOAD_MB", 20)
+	constant.StreamScannerMaxBufferMB = GetEnvOrDefault("STREAM_SCANNER_MAX_BUFFER_MB", 64)
 	// ForceStreamOption 覆盖请求参数，强制返回usage信息
 	constant.ForceStreamOption = GetEnvOrDefaultBool("FORCE_STREAM_OPTION", true)
+	constant.CountToken = GetEnvOrDefaultBool("CountToken", false)
 	constant.GetMediaToken = GetEnvOrDefaultBool("GET_MEDIA_TOKEN", true)
-	constant.GetMediaTokenNotStream = GetEnvOrDefaultBool("GET_MEDIA_TOKEN_NOT_STREAM", true)
+	constant.GetMediaTokenNotStream = GetEnvOrDefaultBool("GET_MEDIA_TOKEN_NOT_STREAM", false)
 	constant.UpdateTask = GetEnvOrDefaultBool("UPDATE_TASK", true)
 	constant.AzureDefaultAPIVersion = GetEnvOrDefaultString("AZURE_DEFAULT_API_VERSION", "2025-04-01-preview")
 	constant.GeminiVisionMaxImageNum = GetEnvOrDefault("GEMINI_VISION_MAX_IMAGE_NUM", 16)

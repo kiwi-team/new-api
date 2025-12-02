@@ -60,6 +60,17 @@ func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj
 	info.Action = action
 	c.Set("task_request", requestObj)
 }
+func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
+	v, exists := c.Get("task_request")
+	if !exists {
+		return TaskSubmitReq{}, fmt.Errorf("request not found in context")
+	}
+	req, ok := v.(TaskSubmitReq)
+	if !ok {
+		return TaskSubmitReq{}, fmt.Errorf("invalid task request type")
+	}
+	return req, nil
+}
 
 func validatePrompt(prompt string) *dto.TaskError {
 	if strings.TrimSpace(prompt) == "" {

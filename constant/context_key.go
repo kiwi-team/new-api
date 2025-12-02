@@ -50,6 +50,8 @@ const (
 	ContextKeyUserName     ContextKey = "username"
 	ContextKeyClientUserId ContextKey = "client_user_id"
 
+	ContextKeyLocalCountTokens ContextKey = "local_count_tokens"
+
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 
 	/*response related keys*/

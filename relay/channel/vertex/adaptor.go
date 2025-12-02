@@ -39,6 +39,7 @@ var claudeModelMap = map[string]string{
 	"claude-opus-4-20250514":     "claude-opus-4@20250514",
 	"claude-opus-4-1-20250805":   "claude-opus-4-1@20250805",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-5@20250929",
+	"claude-opus-4-5-20251101":   "claude-opus-4-5@20251101",
 }
 
 const anthropicVersion = "vertex-2023-10-16"
@@ -76,7 +77,9 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	if strings.HasPrefix(info.UpstreamModelName, "claude") {
 		a.RequestMode = RequestModeClaude
-	} else if strings.Contains(info.UpstreamModelName, "llama") {
+	} else if strings.Contains(info.UpstreamModelName, "llama") ||
+		// open source models
+		strings.Contains(info.UpstreamModelName, "-maas") {
 		a.RequestMode = RequestModeLlama
 	} else {
 		a.RequestMode = RequestModeGemini
@@ -168,7 +171,8 @@ func (a *Adaptor) getRequestUrl(info *relaycommon.RelayInfo, modelName, suffix s
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	suffix := ""
 	if a.RequestMode == RequestModeGemini {
-		if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
+		if model_setting.GetGeminiSettings().ThinkingAdapterEnabled &&
+			!model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
 			// 新增逻辑：处理 -thinking-<budget> 格式
 			if strings.Contains(info.UpstreamModelName, "-thinking-") {
 				parts := strings.Split(info.UpstreamModelName, "-thinking-")
@@ -218,6 +222,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 	if a.AccountCredentials.ProjectID != "" {
 		req.Set("x-goog-user-project", a.AccountCredentials.ProjectID)
+	}
+	if strings.Contains(info.UpstreamModelName, "claude") {
+		claude.CommonClaudeHeadersOperation(c, req, info)
 	}
 	return nil
 }
@@ -290,7 +297,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		info.UpstreamModelName = claudeReq.Model
 		return vertexClaudeReq, nil
 	} else if a.RequestMode == RequestModeGemini {
-		geminiRequest, err := gemini.CovertGemini2OpenAI(c, *request, info)
+		geminiRequest, err := gemini.CovertOpenAI2Gemini(c, *request, info)
 		if err != nil {
 			return nil, err
 		}

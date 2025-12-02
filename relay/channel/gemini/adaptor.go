@@ -127,7 +127,8 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
-	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
+	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled &&
+		!model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
 		// 新增逻辑：处理 -thinking-<budget> 格式
 		if strings.Contains(info.UpstreamModelName, "-thinking-") {
 			parts := strings.Split(info.UpstreamModelName, "-thinking-")
@@ -188,7 +189,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 	//geminiRequest, err := CovertGemini2OpenAI(*request, info)
 
-	geminiRequest, err := CovertGemini2OpenAI(c, *request, info)
+	geminiRequest, err := CovertOpenAI2Gemini(c, *request, info)
 	if err != nil {
 		return nil, err
 	}

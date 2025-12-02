@@ -77,6 +77,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeAliDashScope
 	case constant.ChannelTypeFAL:
 		apiType = constant.APITypeFAL
+	case constant.ChannelTypeReplicate:
+		apiType = constant.APITypeReplicate
 	}
 	if apiType == -1 {
 		return constant.APITypeOpenAI, false

@@ -143,6 +143,7 @@ var defaultModelRatio = map[string]float64{
 	"claude-3-7-sonnet-20250219-thinking":       1.5,
 	"claude-sonnet-4-20250514":                  1.5,
 	"claude-sonnet-4-5-20250929":                1.5,
+	"claude-opus-4-5-20251101":                  2.5,
 	"claude-3-opus-20240229":                    7.5, // $15 / 1M tokens
 	"claude-opus-4-20250514":                    7.5,
 	"claude-opus-4-1-20250805":                  7.5,
@@ -268,31 +269,32 @@ var defaultModelRatio = map[string]float64{
 }
 
 var defaultModelPrice = map[string]float64{
-	"suno_music":              0.1,
-	"suno_lyrics":             0.01,
-	"dall-e-3":                0.04,
-	"imagen-3.0-generate-002": 0.03,
-	"gpt-4-gizmo-*":           0.1,
-	"mj_video":                0.8,
-	"mj_imagine":              0.1,
-	"mj_edits":                0.1,
-	"mj_variation":            0.1,
-	"mj_reroll":               0.1,
-	"mj_blend":                0.1,
-	"mj_modal":                0.1,
-	"mj_zoom":                 0.1,
-	"mj_shorten":              0.1,
-	"mj_high_variation":       0.1,
-	"mj_low_variation":        0.1,
-	"mj_pan":                  0.1,
-	"mj_inpaint":              0,
-	"mj_custom_zoom":          0,
-	"mj_describe":             0.05,
-	"mj_upscale":              0.05,
-	"swap_face":               0.05,
-	"mj_upload":               0.05,
-	"sora-2":                  0.3,
-	"sora-2-pro":              0.5,
+	"suno_music":                     0.1,
+	"suno_lyrics":                    0.01,
+	"dall-e-3":                       0.04,
+	"imagen-3.0-generate-002":        0.03,
+	"black-forest-labs/flux-1.1-pro": 0.04,
+	"gpt-4-gizmo-*":                  0.1,
+	"mj_video":                       0.8,
+	"mj_imagine":                     0.1,
+	"mj_edits":                       0.1,
+	"mj_variation":                   0.1,
+	"mj_reroll":                      0.1,
+	"mj_blend":                       0.1,
+	"mj_modal":                       0.1,
+	"mj_zoom":                        0.1,
+	"mj_shorten":                     0.1,
+	"mj_high_variation":              0.1,
+	"mj_low_variation":               0.1,
+	"mj_pan":                         0.1,
+	"mj_inpaint":                     0,
+	"mj_custom_zoom":                 0,
+	"mj_describe":                    0.05,
+	"mj_upscale":                     0.05,
+	"swap_face":                      0.05,
+	"mj_upload":                      0.05,
+	"sora-2":                         0.3,
+	"sora-2-pro":                     0.5,
 }
 
 var defaultAudioRatio = map[string]float64{
@@ -597,6 +599,11 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 			return 2.5 / 0.3, false
 		} else if strings.HasPrefix(name, "gemini-robotics-er-1.5") {
 			return 2.5 / 0.3, false
+		} else if strings.HasPrefix(name, "gemini-3-pro") {
+			if strings.HasPrefix(name, "gemini-3-pro-image") {
+				return 60, false
+			}
+			return 6, false
 		}
 		return 4, false
 	}
@@ -821,4 +828,17 @@ func FormatMatchingModelName(name string) string {
 		name = "gpt-4o-gizmo-*"
 	}
 	return name
+}
+
+// result: 倍率or价格， usePrice， exist
+func GetModelRatioOrPrice(model string) (float64, bool, bool) { // price or ratio
+	price, usePrice := GetModelPrice(model, false)
+	if usePrice {
+		return price, true, true
+	}
+	modelRatio, success, _ := GetModelRatio(model)
+	if success {
+		return modelRatio, false, true
+	}
+	return 37.5, false, false
 }
