@@ -81,7 +81,7 @@ func GetLogByKey(key string) (logs []*Log, err error) {
 	return logs, err
 }
 
-func RecordLog(userId int, logType int, content string) {
+func RecordLog(userId int, logType int, content string, quota int) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
 	}
@@ -92,6 +92,7 @@ func RecordLog(userId int, logType int, content string) {
 		CreatedAt: common.GetTimestamp(),
 		Type:      logType,
 		Content:   content,
+		Quota:     quota,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {

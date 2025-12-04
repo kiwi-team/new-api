@@ -26,6 +26,7 @@ type ContentItem struct {
 	Type     string    `json:"type"`                // "text" or "image_url"
 	Text     string    `json:"text,omitempty"`      // for text type
 	ImageURL *ImageURL `json:"image_url,omitempty"` // for image_url type
+	Role     string    `json:"role,omitempty"`      // for last_frame, first_frame
 }
 
 type ImageURL struct {
@@ -33,8 +34,16 @@ type ImageURL struct {
 }
 
 type requestPayload struct {
-	Model   string        `json:"model"`
-	Content []ContentItem `json:"content"`
+	Duration        int           `json:"duration,omitempty"`
+	Model           string        `json:"model"`
+	Content         []ContentItem `json:"content"`
+	Resolution      string        `json:"resolution,omitempty"`
+	Ratio           string        `json:"ratio,omitempty"`
+	Frames          int           `json:"frames,omitempty"`
+	Seed            int           `json:"seed,omitempty"`
+	CameraFixed     bool          `json:"camerafixed,omitempty"`
+	Watermark       bool          `json:"watermark,omitempty"`
+	ReturnLastFrame bool          `json:"return_last_frame,omitempty"`
 }
 
 type responsePayload struct {
@@ -179,6 +188,10 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Model:   req.Model,
 		Content: []ContentItem{},
 	}
+	duration := req.Duration
+	if duration > 0 {
+		r.Duration = duration
+	}
 
 	// Add text prompt
 	if req.Prompt != "" {
@@ -188,24 +201,72 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		})
 	}
 
+	// https://www.volcengine.com/docs/82379/1520757?lang=zh
+	metadata := req.Metadata
+	imageRole := "first_frame"
+	if metadata != nil {
+		if imageRole1, ok := metadata["image_role"].(string); ok {
+			imageRole = imageRole1
+		}
+		if resolution, ok := metadata["resolution"].(string); ok {
+			r.Resolution = resolution
+		}
+		if ratio, ok := metadata["ratio"].(string); ok {
+			r.Ratio = ratio
+		}
+		if frames, ok := metadata["frames"].(float64); ok {
+			r.Frames = int(frames)
+		}
+		if seed, ok := metadata["seed"].(float64); ok {
+			r.Seed = int(seed)
+		}
+		if camerafixed, ok := metadata["camerafixed"].(bool); ok {
+			r.CameraFixed = camerafixed
+		}
+		if watermark, ok := metadata["watermark"].(bool); ok {
+			r.Watermark = watermark
+		}
+		if returnLastFrame, ok := metadata["return_last_frame"].(bool); ok {
+			r.ReturnLastFrame = returnLastFrame
+		}
+	}
+
 	// Add images if present
 	if req.HasImage() {
-		for _, imgURL := range req.Images {
+		imageNum := len(req.Images)
+		if imageNum == 2 && imageRole == "first_frame,last_frame" {
 			r.Content = append(r.Content, ContentItem{
+				Role: "first_frame",
 				Type: "image_url",
 				ImageURL: &ImageURL{
-					URL: imgURL,
+					URL: req.Images[0],
 				},
 			})
+			r.Content = append(r.Content, ContentItem{
+				Role: "last_frame",
+				Type: "image_url",
+				ImageURL: &ImageURL{
+					URL: req.Images[1],
+				},
+			})
+		} else {
+			for _, img := range req.Images {
+				r.Content = append(r.Content, ContentItem{
+					Type: "image_url",
+					ImageURL: &ImageURL{
+						URL: img,
+					},
+					Role: imageRole,
+				})
+			}
+
 		}
 	}
 
 	// TODO: Add support for additional parameters from metadata
 	// such as ratio, duration, seed, etc.
-	// metadata := req.Metadata
-	// if metadata != nil {
-	//     // Parse and apply metadata parameters
-	// }
+
+	//common.PrintJson("requestPayload", r)
 
 	return &r, nil
 }

@@ -451,7 +451,8 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				status = "queued"
 			}
 			if strings.HasPrefix(originTask.FailReason, "https://") {
-				arr := strings.Split(originTask.FailReason, ".")
+				tmpArr := strings.Split(originTask.FailReason, "?")
+				arr := strings.Split(tmpArr[0], ".")
 				if len(arr) > 0 {
 					format = arr[len(arr)-1]
 				}
