@@ -71,6 +71,13 @@ type requestPayload struct {
 	ExternalTaskId string         `json:"external_task_id,omitempty"`
 }
 
+type avatarRequestPayload struct {
+	Prompt    string `json:"prompt,omitempty"`
+	Image     string `json:"image,omitempty"`
+	SoundFile string `json:"sound_file,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+}
+
 type responsePayload struct {
 	Code      int    `json:"code"`
 	Message   string `json:"message"`
@@ -118,8 +125,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	path := lo.Ternary(info.Action == constant.TaskActionGenerate, "/v1/videos/image2video", "/v1/videos/text2video")
+	if info.UpstreamModelName == "klingai_avatar" {
+		return fmt.Sprintf("%s%s", a.baseURL, "/v1/videos/avatar/image2video"), nil
+	}
 
+	path := lo.Ternary(info.Action == constant.TaskActionGenerate, "/v1/videos/image2video", "/v1/videos/text2video")
 	if isNewAPIRelay(info.ApiKey) {
 		return fmt.Sprintf("%s/kling%s", a.baseURL, path), nil
 	}
@@ -133,7 +143,6 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	if err != nil {
 		return fmt.Errorf("failed to create JWT token: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -149,18 +158,30 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	req := v.(relaycommon.TaskSubmitReq)
 
-	body, err := a.convertToRequestPayload(&req)
-	if err != nil {
-		return nil, err
+	if req.Model == "klingai_avatar" {
+		body, err := a.convertToAvatarRequestPayload(&req)
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	} else {
+		body, err := a.convertToRequestPayload(&req)
+		if err != nil {
+			return nil, err
+		}
+		if body.Image == "" && body.ImageTail == "" {
+			c.Set("action", constant.TaskActionTextGenerate)
+		}
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
 	}
-	if body.Image == "" && body.ImageTail == "" {
-		c.Set("action", constant.TaskActionTextGenerate)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(data), nil
 }
 
 // DoRequest delegates to common helper.
@@ -242,6 +263,23 @@ func (a *TaskAdaptor) GetChannelName() string {
 // ============================
 // helpers
 // ============================
+func (a *TaskAdaptor) convertToAvatarRequestPayload(req *relaycommon.TaskSubmitReq) (*avatarRequestPayload, error) {
+	r := avatarRequestPayload{
+		Prompt: req.Prompt,
+		Image:  req.Image,
+		Mode:   defaultString(req.Mode, "std"),
+	}
+	metadata := req.Metadata
+	medaBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, errors.Wrap(err, "metadata marshal metadata failed")
+	}
+	err = json.Unmarshal(medaBytes, &r)
+	if err != nil {
+		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+	return &r, nil
+}
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
