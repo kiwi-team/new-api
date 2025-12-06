@@ -238,6 +238,7 @@ export default function SettingsSidebarModulesAdmin(props) {
           description: t('绘图任务记录'),
         },
         { key: 'task', title: t('任务日志'), description: t('系统任务记录') },
+        { key: 'statistics', title: t('统计日志'), description: t('系统统计记录') },
       ],
     },
     {

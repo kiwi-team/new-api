@@ -18,12 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState } from 'react';
-import { Card, Divider, Typography, Button } from '@douyinfe/semi-ui';
+import { Card, Divider, Button } from '@douyinfe/semi-ui';
 import PropTypes from 'prop-types';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { IconEyeOpened, IconEyeClosed } from '@douyinfe/semi-icons';
-
-const { Text } = Typography;
 
 /**
  * CardPro 高级卡片组件
@@ -55,6 +53,7 @@ const CardPro = ({
   // 卡片属性
   shadows = '',
   bordered = true,
+  title, // 从props中提取title
   // 自定义样式
   style,
   // 国际化函数
@@ -72,11 +71,18 @@ const CardPro = ({
 
   const renderHeader = () => {
     const hasContent =
-      statsArea || descriptionArea || tabsArea || actionsArea || searchArea;
+      title || statsArea || descriptionArea || tabsArea || actionsArea || searchArea;
     if (!hasContent) return null;
 
     return (
       <div className='flex flex-col w-full'>
+        {/* 标题区域 */}
+        {title && (
+          <div className='mb-2'>
+            {typeof title === 'string' ? <div style={{ fontWeight: 600, fontSize: '16px' }}>{title}</div> : title}
+          </div>
+        )}
+
         {/* 统计信息区域 - 用于type2 */}
         {type === 'type2' && statsArea && <>{statsArea}</>}
 
@@ -181,6 +187,7 @@ CardPro.propTypes = {
   style: PropTypes.object,
   shadows: PropTypes.oneOfType([PropTypes.string, PropTypes.bool]),
   bordered: PropTypes.bool,
+  title: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   // 内容区域
   statsArea: PropTypes.node,
   descriptionArea: PropTypes.node,

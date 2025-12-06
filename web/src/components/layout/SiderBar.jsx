@@ -49,6 +49,7 @@ const routerMap = {
   channelByModel: '/console/channel/model',
   playground: '/console/playground',
   personal: '/console/personal',
+  quotaStatistics: '/console/quota-statistics',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -110,10 +111,17 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className:
           localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
       },
+      {
+        text: t('消耗统计'),
+        itemKey: 'quotaStatistics',
+        to: '/quota-statistics',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
     ];
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
+      if (item.itemKey === 'quotaStatistics') return true;
       const configVisible = isModuleVisible('console', item.itemKey);
       return configVisible;
     });

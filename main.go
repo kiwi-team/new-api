@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -144,9 +145,10 @@ func main() {
 	server := gin.New()
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(fmt.Sprintf("panic detected: %v", err))
+		common.SysLog(fmt.Sprintf("stacktrace from panic: %s", string(debug.Stack())))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
-				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
+				"message": fmt.Sprintf("the Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
 				"type":    "new_api_panic",
 			},
 		})

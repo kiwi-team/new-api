@@ -50,6 +50,7 @@ import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 import ChannelByModel from './pages/Channel/ChannelByModel.js';
 import EditChannel from './pages/Channel/EditChannel.js';
+import QuotaStatistics from './pages/QuotaStatistics';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -164,6 +165,14 @@ function App() {
           element={
             <AdminRoute>
               <Redemption />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/quota-statistics'
+          element={
+            <AdminRoute>
+              <QuotaStatistics />
             </AdminRoute>
           }
         />

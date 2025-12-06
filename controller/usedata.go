@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"os"
@@ -142,4 +143,57 @@ func WarningUserQuota() {
 			}
 		}
 	}
+}
+
+func GetQuotaDataStatistics(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	modelName := c.Query("model_name")
+	clientUserId := c.Query("client_user_id")
+
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    statistics,
+	})
+}
+
+func ExportQuotaDataStatistics(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	modelName := c.Query("model_name")
+	clientUserId := c.Query("client_user_id")
+
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	// Generate CSV
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment;filename=quota_statistics_%d_%d.csv", startTimestamp, endTimestamp))
+
+	writer := csv.NewWriter(c.Writer)
+	// Header
+	writer.Write([]string{"Date", "Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
+
+	for _, stat := range statistics {
+		writer.Write([]string{
+			stat.Date,
+			stat.ClientUserId,
+			stat.ModelName,
+			strconv.FormatInt(stat.TotalCount, 10),
+			strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+			strconv.FormatInt(stat.TotalPrompt, 10),
+			strconv.FormatInt(stat.TotalCompletion, 10),
+		})
+	}
+	writer.Flush()
 }

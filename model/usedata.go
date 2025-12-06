@@ -137,6 +137,54 @@ func SaveQuotaDataCache() {
 	common.SysLog(fmt.Sprintf("保存数据看板数据成功，共保存%d条数据\n", size))
 }
 
+type QuotaDataStatistics struct {
+	Date            string  `json:"date"`
+	ClientUserId    string  `json:"client_user_id"`
+	ModelName       string  `json:"model_name"`
+	TotalCount      int64   `json:"total_count"`
+	TotalQuota      float64 `json:"total_quota"`
+	TotalPrompt     int64   `json:"total_prompt"`
+	TotalCompletion int64   `json:"total_completion"`
+}
+
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string) ([]*QuotaDataStatistics, error) {
+	var statistics []*QuotaDataStatistics
+	var err error
+
+	// Date logic based on DB type
+	dateField := ""
+	if common.UsingSQLite {
+		dateField = "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
+	} else if common.UsingMySQL {
+		dateField = "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
+	} else if common.UsingPostgreSQL {
+		dateField = "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
+	} else {
+		dateField = "DATE(created_at)"
+	}
+
+	tx := DB.Model(&QuotaData{}).
+		Select(dateField+" as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion").
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+
+	if modelName != "" {
+		tx = tx.Where("model_name = ?", modelName)
+	}
+	if clientUserId != "" {
+		tx = tx.Where("client_user_id = ?", clientUserId)
+	}
+
+	err = tx.Group("date, client_user_id, model_name").
+		Order("date DESC").
+		Scan(&statistics).Error
+
+	for _, s := range statistics {
+		s.TotalQuota /= common.QuotaPerUnit
+	}
+
+	return statistics, err
+}
+
 func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, clientUserId string) {
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ?",
 		userId, username, modelName, createdAt, tokenId, channelId, clientUserId).Updates(map[string]interface{}{
