@@ -572,7 +572,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			request.Messages = newMessages
 		}
 		// gemini 模型去掉max_tokens参数
-		request.MaxTokens = 0
+		//request.MaxTokens = 0
 		if isGuoguo {
 			var thinking dto.AnthropicThinking
 			if request.THINKING != nil {
