@@ -86,6 +86,15 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	//	}()
 	//
 
+	err = helper.ModelMappedHelper(c, info, request)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+
+	if request.Stream {
+		info.IsStream = true
+	}
+
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
 	requestStr := ""
 	responseStr := ""
