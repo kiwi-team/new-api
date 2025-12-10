@@ -136,6 +136,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if err1 != nil {
 				err = types.NewError(err1, types.ErrorCodeChannelGetError)
 			}
+			if !strings.Contains(channel.Models, originalModel) {
+				continue
+			}
 			//c.Set(constant.ContextKeyRequestStartTime, time.Now())
 			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 			if i > 0 {
@@ -366,6 +369,9 @@ func RelayClaude(c *gin.Context) {
 			channel, err1 = model.GetChannelById(tokenChannelIds[i], true)
 			if err1 != nil {
 				err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			}
+			if !strings.Contains(channel.Models, originalModel) {
+				continue
 			}
 			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 			if i > 0 {
@@ -740,6 +746,9 @@ func RelayTask(c *gin.Context) {
 			channel, err = model.GetChannelById(tokenChannelIds[i], true)
 			if err != nil {
 				logger.LogError(c, fmt.Sprintf("GetChannelById failed: %s", err.Error()))
+				continue
+			}
+			if !strings.Contains(channel.Models, originalModel) {
 				continue
 			}
 			if i > 0 {
