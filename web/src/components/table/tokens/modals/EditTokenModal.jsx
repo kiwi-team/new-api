@@ -121,7 +121,7 @@ const EditTokenModal = (props) => {
     for (const id of ids) {
       const nid = Number(id);
       if (!channelOptionMap.has(nid)) {
-        base.push({ label: `未知(${nid})`, value: nid, __status: 0 });
+        base.push({ label: `(${nid})未知`, value: nid, __status: 0 });
         changed = true;
       }
     }
@@ -379,13 +379,14 @@ const EditTokenModal = (props) => {
   const loadAllChannels = async () => {
     try {
       const res = await API.get(
-        `/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false`,
+        //`/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false`,
+       '/api/channel/channel-name-list',
       );
       const { success, message, data } = res.data;
       if (success) {
         const items = data?.items || data || [];
         const opts = (Array.isArray(items) ? items : []).map((ch) => ({
-          label: `${ch.name}(${ch.id})`,
+          label: `(${ch.id})${ch.name}`,
           value: ch.id,
           __status: ch.status,
         }));

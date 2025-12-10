@@ -57,10 +57,11 @@ const TokensTable = (tokensData) => {
     (async () => {
       try {
         const res = await API.get(
-          '/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false',
+          //'/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false',
+          '/api/channel/channel-name-list',
           { disableDuplicate: true },
         );
-        const items = res?.data?.data?.items || res?.data?.data || [];
+        const items = res?.data || [];
         const map = new Map();
         items.forEach((ch) => {
           const id = Number(ch.id);

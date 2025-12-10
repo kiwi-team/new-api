@@ -64,6 +64,20 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+func GetNameIdList(c *gin.Context) {
+	var channels []struct {
+		Id     int    `json:"id"`
+		Name   string `json:"name"`
+		Status int    `json:"status"`
+	}
+	err := model.DB.Model(&model.Channel{}).Select("id, name, status").Order("id asc").Find(&channels).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, channels)
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
