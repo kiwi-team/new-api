@@ -921,6 +921,8 @@ const EditTokenModal = (props) => {
                                               .filter((v) => !isNaN(v)),
                                           )
                                         }
+                                        addOnBlur={true}
+                                        separator={[',', '，']}
                                         hideCopy
                                         style={{ width: '100%' }}
                                       />
