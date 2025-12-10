@@ -53,6 +53,7 @@ import {
   IconSave,
   IconClose,
   IconKey,
+  IconMenu,
 } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../../../context/Status';
@@ -469,6 +470,47 @@ const EditTokenModal = (props) => {
       formApiRef.current?.reset();
     }
   }, [props.visiable, props.editingToken.id]);
+
+  const dragItem = useRef(null);
+  const dragOverItem = useRef(null);
+
+  const handleDragStart = (e, ruleIdx, chIdx) => {
+    dragItem.current = { ruleIdx, chIdx };
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.style.opacity = '0.5';
+  };
+
+  const handleDragEnd = (e) => {
+    e.target.style.opacity = '1';
+    const source = dragItem.current;
+    const destination = dragOverItem.current;
+
+    dragItem.current = null;
+    dragOverItem.current = null;
+
+    if (!source || !destination) return;
+    if (source.ruleIdx !== destination.ruleIdx) return;
+    if (source.chIdx === destination.chIdx) return;
+
+    const ruleIdx = source.ruleIdx;
+    const list = [...channelRulesList];
+    const rule = { ...list[ruleIdx] };
+    const channels = [...rule.channels];
+
+    const [movedItem] = channels.splice(source.chIdx, 1);
+    channels.splice(destination.chIdx, 0, movedItem);
+
+    rule.channels = channels;
+    list[ruleIdx] = rule;
+
+    setChannelRulesList(list);
+    updateChannelRulesJsonFromList(list);
+  };
+
+  const handleDragEnter = (e, ruleIdx, chIdx) => {
+    if (dragItem.current?.ruleIdx !== ruleIdx) return;
+    dragOverItem.current = { ruleIdx, chIdx };
+  };
 
   const generateRandomSuffix = () => {
     const characters =
@@ -948,10 +990,36 @@ const EditTokenModal = (props) => {
                                     </Space>
                                   </Col>
                                   {rule.channels.map((ch, j) => (
-                                    <Col span={24} key={`ch_${idx}_${j}`}>
+                                    <Col
+                                      span={24}
+                                      key={`ch_${idx}_${j}`}
+                                      draggable
+                                      onDragStart={(e) =>
+                                        handleDragStart(e, idx, j)
+                                      }
+                                      onDragEnter={(e) =>
+                                        handleDragEnter(e, idx, j)
+                                      }
+                                      onDragEnd={handleDragEnd}
+                                      onDragOver={(e) => e.preventDefault()}
+                                    >
                                       <Card className='!rounded-lg border-0'>
-                                        <Row gutter={8}>
-                                          <Col span={12}>
+                                        <Row
+                                          gutter={8}
+                                          type='flex'
+                                          align='middle'
+                                        >
+                                          <Col
+                                            span={2}
+                                            style={{
+                                              cursor: 'move',
+                                              display: 'flex',
+                                              justifyContent: 'center',
+                                            }}
+                                          >
+                                            <IconMenu className='text-gray-400' />
+                                          </Col>
+                                          <Col span={18}>
                                             <Select
                                               multiple
                                               optionList={channelOptions}
@@ -975,7 +1043,7 @@ const EditTokenModal = (props) => {
                                               style={{ width: '100%' }}
                                             />
                                           </Col>
-                                          <Col span={12}>
+                                          <Col span={4}>
                                             <Button
                                               type='danger'
                                               theme='borderless'
