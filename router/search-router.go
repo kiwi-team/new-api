@@ -12,5 +12,6 @@ func SetSearchRouter(router *gin.Engine) {
 	searchV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
 		searchV1Router.POST("/:engine/:action", controller.Search)
+		searchV1Router.GET("/:engine/:action", controller.Search)
 	}
 }

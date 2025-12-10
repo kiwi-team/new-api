@@ -10,13 +10,13 @@ import (
 
 // {"q":"apple inc","location":"Mexico","gl":"cn","hl":"zh-cn","tbs":"qdr:h","page":2}
 type SearchParams struct {
-	Q        string `json:"q"`
-	Location string `json:"location,omitempty"`
-	Gl       string `json:"gl,omitempty"`
-	Hl       string `json:"hl,omitempty"`
-	Tbs      string `json:"tbs,omitempty"`
-	Num      int    `json:"num,omitempty"`
-	Page     int    `json:"page,omitempty"`
+	Q        string `json:"q" form:"q"`
+	Location string `json:"location,omitempty" form:"location"`
+	Gl       string `json:"gl,omitempty" form:"gl"`
+	Hl       string `json:"hl,omitempty" form:"hl"`
+	Tbs      string `json:"tbs,omitempty" form:"tbs"`
+	Num      int    `json:"num,omitempty" form:"num"`
+	Page     int    `json:"page,omitempty" form:"page"`
 }
 
 type SearchInfo struct {
@@ -43,8 +43,15 @@ func GetSearchInfo(c *gin.Context) *SearchInfo {
 		action = "search"
 	}
 	searchParams := &SearchParams{}
-	if err := c.ShouldBindJSON(searchParams); err != nil {
-		return nil
+	switch c.Request.Method {
+	case "GET":
+		if err := c.ShouldBindQuery(searchParams); err != nil {
+			return nil
+		}
+	case "POST":
+		if err := c.ShouldBindJSON(searchParams); err != nil {
+			return nil
+		}
 	}
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	channelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)

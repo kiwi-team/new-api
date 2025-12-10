@@ -45,7 +45,7 @@ func (s *SerperAdaptor) DoRequest(c *gin.Context, info *searchcommon.SearchInfo,
 	if err != nil {
 		return nil, fmt.Errorf("marshal request body failed: %w", err)
 	}
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, bytes.NewBuffer(requestBodyJSON))
+	req, err := http.NewRequest("POST", fullRequestURL, bytes.NewBuffer(requestBodyJSON))
 	s.SetupRequestHeader(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
