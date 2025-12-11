@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -80,14 +79,16 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
-	streamModel := []string{
-		"kimi-k2-thinking",
-		"kimi-k2-0905",
-		"kimi-k2-0905-preview",
-	}
-	if slices.Contains(streamModel, request.Model) && !info.IsStream {
-		return nil, fmt.Errorf("this moonshot model %s only support stream mode now", request.Model)
-	}
+	/*
+		streamModel := []string{
+			"kimi-k2-thinking",
+			"kimi-k2-0905",
+			"kimi-k2-0905-preview",
+		}
+		if slices.Contains(streamModel, request.Model) && !info.IsStream {
+			return nil, fmt.Errorf("this moonshot model %s only support stream mode now", request.Model)
+		}
+	*/
 	return request, nil
 }
 

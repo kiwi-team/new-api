@@ -132,7 +132,6 @@ func SetApiRouter(router *gin.Engine) {
 		channelRoute.Use(middleware.AdminAuth())
 		{
 			channelRoute.GET("/", controller.GetAllChannels)
-			channelRoute.GET("/channel-name-list", controller.GetNameIdList, middleware.UserAuth())
 			channelRoute.GET("/channel-list-by-model", controller.GetChannelsByModelName)
 			channelRoute.GET("/channel-list-by-model-newapi", controller.GetChannelsByModelNameNewAPI)
 			channelRoute.GET("/search", controller.SearchChannels)
@@ -159,6 +158,10 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/tag/models", controller.GetTagModels)
 			channelRoute.POST("/copy/:id", controller.CopyChannel)
 			channelRoute.POST("/multi_key/manage", controller.ManageMultiKeys)
+		}
+		userCannelRoute := apiRouter.Group("/channel")
+		{
+			userCannelRoute.GET("/channel-name-list", controller.GetNameIdList, middleware.UserAuth())
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
