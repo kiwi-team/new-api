@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -94,6 +96,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 	// docs: https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712216
 	// fix: InternalError.Algo.InvalidParameter: The value of the enable_thinking parameter is restricted to True.
+	enableThinking := request.EnableThinking.(bool)
 	if strings.Contains(request.Model, "thinking") {
 		request.EnableThinking = true
 		request.Stream = true
@@ -107,7 +110,14 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request.Model == "qwen3-235b-a22b-thinking-2507" {
 		request.EnableThinking = true
 	}
-
+	qwen3SupportThinkingModels := common.OptionMap["qwen3_support_thinking_models"]
+	modelList := strings.Split(qwen3SupportThinkingModels, ",")
+	if len(qwen3SupportThinkingModels) == 0 {
+		modelList = []string{"qwen3-235b-a22b-thinking-2507", "qwen3-max-preview"}
+	}
+	if slices.Contains(modelList, request.Model) {
+		request.EnableThinking = enableThinking
+	}
 	switch info.RelayMode {
 	default:
 		aliReq := requestOpenAI2Ali(*request)
