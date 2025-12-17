@@ -11,6 +11,7 @@ const (
 	TaskPlatformNovitaImage                   = "novita-image"
 	TaskPlatformHunyuanImage                  = "hunyuan-image"
 	TaskPlatformFALImage                      = "fal-image"
+	TaskPlatformPPio                          = "ppio"
 )
 
 const (

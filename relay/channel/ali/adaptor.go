@@ -96,7 +96,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 	// docs: https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712216
 	// fix: InternalError.Algo.InvalidParameter: The value of the enable_thinking parameter is restricted to True.
-	enableThinking := request.EnableThinking.(bool)
+	enableThinking := false
+	if request.EnableThinking != nil {
+		enableThinking = request.EnableThinking.(bool)
+	}
 	if strings.Contains(request.Model, "thinking") {
 		request.EnableThinking = true
 		request.Stream = true

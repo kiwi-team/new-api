@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/fal"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	hunyuanppio "github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	"github.com/QuantumNous/new-api/relay/channel/task/novita"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -54,7 +55,11 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	if strings.Contains(cacheGetChannel.GetBaseURL(), "yunwu") {
 		adaptor = &yunwu.TaskAdaptor{}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "ppinfra") {
-		adaptor = &ppio.TaskAdaptor{}
+		if strings.Contains(cacheGetChannel.GetBaseURL(), "hunyuan") {
+			adaptor = &hunyuanppio.TaskAdaptor{}
+		} else {
+			adaptor = &ppio.TaskAdaptor{}
+		}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "novita") {
 		adaptor = &novita.TaskAdaptor{}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "tencentcloudapi") {

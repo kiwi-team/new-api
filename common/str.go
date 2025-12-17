@@ -71,6 +71,14 @@ func String2Int(str string) int {
 	return num
 }
 
+func String2Float64(str string) float64 {
+	num, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		return 0
+	}
+	return num
+}
+
 func StringsContains(strs []string, str string) bool {
 	for _, s := range strs {
 		if s == str {

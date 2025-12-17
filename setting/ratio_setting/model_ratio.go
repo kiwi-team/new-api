@@ -385,6 +385,7 @@ func ModelPrice2JSONString() string {
 	return string(jsonBytes)
 }
 
+// 按次计费模型的价格, 也可以是一秒钟的价格
 func UpdateModelPriceByJSONString(jsonStr string) error {
 	modelPriceMapMutex.Lock()
 	defer modelPriceMapMutex.Unlock()
@@ -402,7 +403,6 @@ func GetModelPrice(name string, printErr bool) (float64, bool) {
 	defer modelPriceMapMutex.RUnlock()
 
 	name = FormatMatchingModelName(name)
-
 	price, ok := modelPriceMap[name]
 	if !ok {
 		if printErr {

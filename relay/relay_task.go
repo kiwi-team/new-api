@@ -17,8 +17,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/fal"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
-	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
+	hunyuanppio "github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	"github.com/QuantumNous/new-api/relay/channel/task/novita"
+	"github.com/QuantumNous/new-api/relay/channel/task/ppio"
 	yunwu_sora "github.com/QuantumNous/new-api/relay/channel/task/sora/yunwu"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -67,8 +68,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 			adaptor = &yunwu_sora.TaskAdaptor{}
 		}
 	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
+		if strings.Contains(info.UpstreamModelName, "hunyuan") {
+			adaptor = &hunyuanppio.TaskAdaptor{}
+			platform = constant.TaskPlatformPPioHunyuanImage
+		} else {
+			adaptor = &ppio.TaskAdaptor{}
+			platform = constant.TaskPlatformPPio
+		}
 		adaptor = &ppio.TaskAdaptor{}
-		platform = constant.TaskPlatformPPioHunyuanImage
 	} else if strings.Contains(info.ChannelBaseUrl, "novita") {
 		platform = constant.TaskPlatformNovitaImage
 		adaptor = &novita.TaskAdaptor{}
@@ -386,7 +393,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				adaptor = &yunwu_sora.TaskAdaptor{}
 			}
 		} else if strings.Contains(baseURL, "ppinfra") {
-			adaptor = &ppio.TaskAdaptor{}
+			if originTask.Platform == constant.TaskPlatformPPioHunyuanImage {
+				adaptor = &hunyuanppio.TaskAdaptor{}
+			} else {
+				adaptor = &ppio.TaskAdaptor{}
+			}
 		} else if strings.Contains(baseURL, "novita") {
 			adaptor = &novita.TaskAdaptor{}
 		} else if strings.Contains(baseURL, "tencentcloudapi") {
