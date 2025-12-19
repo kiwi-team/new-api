@@ -52,6 +52,7 @@ type AliVideoParameters struct {
 	Watermark    bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（wan2.5）
 	Seed         int    `json:"seed,omitempty"`          // 随机数种子
+	ShotType     string `json:"shot_type,omitempty"`     // 镜头类型: "single"（图生视频）、"double"（首尾帧生视频）
 }
 
 // AliVideoResponse 阿里通义万相响应
@@ -248,11 +249,15 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 }
 
 func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) (*AliVideoRequest, error) {
+	imageUrl := req.InputReference
+	if imageUrl == "" && req.Image != "" {
+		imageUrl = req.Image
+	}
 	aliReq := &AliVideoRequest{
 		Model: req.Model,
 		Input: AliVideoInput{
 			Prompt: req.Prompt,
-			ImgURL: req.InputReference,
+			ImgURL: imageUrl,
 		},
 		Parameters: &AliVideoParameters{
 			PromptExtend: true, // 默认开启智能改写
@@ -319,6 +324,44 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 			err = common.Unmarshal(metadataBytes, aliReq)
 			if err != nil {
 				return nil, errors.Wrap(err, "unmarshal metadata failed")
+			}
+			if s, ok := req.Metadata["audio_url"]; ok {
+				aliReq.Input.AudioURL = s.(string)
+			}
+			if v, ok := req.Metadata["negative_prompt"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					aliReq.Input.NegativePrompt = s
+				}
+			}
+			if v, ok := req.Metadata["shot_type"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					aliReq.Parameters.ShotType = s
+				}
+			}
+			if v, ok := req.Metadata["prompt_extend"]; ok {
+				if s, ok := v.(bool); ok {
+					aliReq.Parameters.PromptExtend = s
+				}
+			}
+			if v, ok := req.Metadata["resolution"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					aliReq.Parameters.Resolution = s
+				}
+			}
+			if v, ok := req.Metadata["seed"]; ok {
+				if s, ok := v.(int); ok {
+					aliReq.Parameters.Seed = s
+				}
+			}
+			if v, ok := req.Metadata["watermark"]; ok {
+				if s, ok := v.(bool); ok {
+					aliReq.Parameters.Watermark = s
+				}
+			}
+			if v, ok := req.Metadata["audio"]; ok {
+				if s, ok := v.(bool); ok {
+					aliReq.Parameters.Audio = &s
+				}
 			}
 		} else {
 			return nil, errors.Wrap(err, "marshal metadata failed")

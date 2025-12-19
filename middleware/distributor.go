@@ -69,7 +69,6 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
-
 		var channelIds []int
 		tags := make([]string, 0)
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {

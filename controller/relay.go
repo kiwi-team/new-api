@@ -127,6 +127,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 		}
 	}()
+	disabledChannelIds := make([]int, 0)
 	for i := 0; i <= retryTimes; i++ {
 		if len(tokenChannelIds) > 0 {
 			if i >= len(tokenChannelIds) {
@@ -135,6 +136,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			channel, err1 = model.GetChannelById(tokenChannelIds[i], true)
 			if err1 != nil {
 				err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			}
+			if channel.Status != common.ChannelStatusEnabled {
+				disabledChannelIds = append(disabledChannelIds, channel.Id)
+				continue
 			}
 			if !strings.Contains(channel.Models, originalModel) {
 				continue
@@ -265,6 +270,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+	if len(disabledChannelIds) > 0 && (len(disabledChannelIds) >= len(tokenChannelIds)) {
+		newAPIError = types.NewError(fmt.Errorf("all channels are disabled"), types.ErrorCodeChannelNoAvailableKey)
+	}
 
 	// if newAPIError != nil {
 	// 	newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -361,6 +369,7 @@ func RelayClaude(c *gin.Context) {
 	var err *types.NewAPIError
 	var err1 error
 
+	disabledChannelIds := make([]int, 0)
 	for i := 0; i <= retryTimes; i++ {
 		if len(tokenChannelIds) > 0 {
 			if i >= len(tokenChannelIds) {
@@ -369,6 +378,10 @@ func RelayClaude(c *gin.Context) {
 			channel, err1 = model.GetChannelById(tokenChannelIds[i], true)
 			if err1 != nil {
 				err = types.NewError(err1, types.ErrorCodeChannelGetError)
+			}
+			if channel.Status != common.ChannelStatusEnabled {
+				disabledChannelIds = append(disabledChannelIds, channel.Id)
+				continue
 			}
 			if !strings.Contains(channel.Models, originalModel) {
 				continue
@@ -416,6 +429,9 @@ func RelayClaude(c *gin.Context) {
 			break
 		}
 	}
+	if len(disabledChannelIds) > 0 && (len(disabledChannelIds) >= len(tokenChannelIds)) {
+		newAPIError = types.NewError(fmt.Errorf("all channels are disabled"), types.ErrorCodeChannelNoAvailableKey)
+	}
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
@@ -429,22 +445,6 @@ func RelayClaude(c *gin.Context) {
 			"error": newAPIError.ToClaudeError(),
 		})
 	}
-}
-
-func relayRequest(c *gin.Context, relayMode int, channel *model.Channel) *types.NewAPIError {
-	addUsedChannel(c, channel.Id)
-	requestBody, _ := common.GetRequestBody(c)
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, nil, nil)
-	if err != nil {
-		logger.LogError(c, err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"description": fmt.Sprintf("failed to generate relay info: %s", err.Error()),
-			"type":        "upstream_error",
-			"code":        4,
-		})
-	}
-	return relayHandler(c, info)
 }
 
 func wssRequest(c *gin.Context, ws *websocket.Conn, relayMode int, channel *model.Channel) *types.NewAPIError {
@@ -746,6 +746,9 @@ func RelayTask(c *gin.Context) {
 			channel, err = model.GetChannelById(tokenChannelIds[i], true)
 			if err != nil {
 				logger.LogError(c, fmt.Sprintf("GetChannelById failed: %s", err.Error()))
+				continue
+			}
+			if channel.Status != common.ChannelStatusEnabled {
 				continue
 			}
 			if !strings.Contains(channel.Models, originalModel) {

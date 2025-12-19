@@ -80,15 +80,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	req := v.(relaycommon.TaskSubmitReq)
 
-	// body := PPIOTaskSubmitRequest{
-	// 	Model:           req.Model,
-	// 	Prompt:          req.Prompt,
-	// 	Size:            req.Size,
-	// 	Seed:            -1,
-	// 	Images:          req.Images,
-	// 	SafetyTolerance: "5",
-	// }
-
 	seconds := common.String2Int(req.Seconds)
 	if seconds <= 0 {
 		seconds = 5
@@ -99,7 +90,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	body := WanTaskSubmitRequest{
 		Input: &TaskInput{
-			Prompt: req.Prompt,
+			Prompt:   req.Prompt,
+			ImageURL: req.Image,
 		},
 		Parameters: &TaskParameters{
 			Duration: seconds,
@@ -110,13 +102,44 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if req.Metadata != nil {
 		if v, ok := req.Metadata["aspect_ratio"]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				body.Parameters = &TaskParameters{
-					Size: s,
-				}
+				body.Parameters.Size = s
 			}
 		} else {
-			body.Parameters = &TaskParameters{
-				Size: "1920*1080",
+			body.Parameters.Size = "1920*1080"
+		}
+		if v, ok := req.Metadata["negative_prompt"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				body.Input.NegativePrompt = s
+			}
+		}
+		if v, ok := req.Metadata["shot_type"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				body.Parameters.ShotType = s
+			}
+		}
+		if v, ok := req.Metadata["prompt_extend"]; ok {
+			if s, ok := v.(bool); ok {
+				body.Parameters.PromptExtend = s
+			}
+		}
+		if v, ok := req.Metadata["resolution"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				body.Parameters.Resolution = s
+			}
+		}
+		if v, ok := req.Metadata["seed"]; ok {
+			if s, ok := v.(int); ok {
+				body.Parameters.Seed = s
+			}
+		}
+		if v, ok := req.Metadata["watermark"]; ok {
+			if s, ok := v.(bool); ok {
+				body.Parameters.Watermark = s
+			}
+		}
+		if v, ok := req.Metadata["audio"]; ok {
+			if s, ok := v.(bool); ok {
+				body.Parameters.Audio = s
 			}
 		}
 	}

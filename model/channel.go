@@ -475,7 +475,7 @@ func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (cha
 				continue
 			}
 			channel, err := GetChannelById(item.Id, true)
-			if err == nil && channel.Status == common.ChannelStatusEnabled {
+			if err == nil {
 				channelTag := channel.GetTag()
 				allIn := CheckMultiTags(tags, channelTag)
 				if !allIn {
@@ -490,7 +490,7 @@ func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (cha
 					continue
 				}
 				channel, err := GetChannelById(id, true)
-				if err == nil && channel.Status == common.ChannelStatusEnabled {
+				if err == nil {
 					channelTag := channel.GetTag()
 					allIn := CheckMultiTags(tags, channelTag)
 					if !allIn {
@@ -972,7 +972,6 @@ func DeleteChannelByStatus(status int64) (int64, error) {
 func DeleteDisabledChannel() (int64, error) {
 	var channels []*Channel
 	DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Find(&channels)
-	fmt.Printf("disabled channel count: %d\n", len(channels))
 	for _, channel := range channels {
 		infoStr := common.GetJsonString(channel)
 		CreateDeletedData(&DeletedData{
