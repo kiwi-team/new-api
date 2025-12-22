@@ -25,6 +25,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	info.InitChannelMeta(c)
 
 	responsesReq, ok := info.Request.(*dto.OpenAIResponsesRequest)
+	// https://platform.openai.com/docs/guides/latest-model#gpt-5-2-parameter-compatibility
+	// responses gpt-5模型 开启reasoning后，不能设置top_p
+	if strings.Contains(responsesReq.Model, "gpt-5") && responsesReq.Reasoning != nil {
+		if responsesReq.Reasoning.Effort != "none" {
+			responsesReq.TopP = 0 // 开启reasoning后，top_p必须为0
+		}
+	}
+
 	if !ok {
 		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected dto.OpenAIResponsesRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
