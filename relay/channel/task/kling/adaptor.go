@@ -69,6 +69,7 @@ type requestPayload struct {
 	CameraControl  *CameraControl `json:"camera_control,omitempty"`
 	CallbackUrl    string         `json:"callback_url,omitempty"`
 	ExternalTaskId string         `json:"external_task_id,omitempty"`
+	Sound          string         `json:"sound,omitempty"`
 }
 
 type avatarRequestPayload struct {
