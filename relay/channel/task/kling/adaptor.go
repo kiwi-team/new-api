@@ -282,11 +282,18 @@ func (a *TaskAdaptor) convertToAvatarRequestPayload(req *relaycommon.TaskSubmitR
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+	seconds := common.String2Int(req.Seconds)
+	if seconds <= 0 {
+		seconds = 5
+	}
+	if req.Duration > 0 {
+		seconds = req.Duration
+	}
 	r := requestPayload{
 		Prompt:         req.Prompt,
 		Image:          req.Image,
 		Mode:           defaultString(req.Mode, "std"),
-		Duration:       fmt.Sprintf("%d", defaultInt(req.Duration, 5)),
+		Duration:       fmt.Sprintf("%d", defaultInt(seconds, 5)),
 		AspectRatio:    a.getAspectRatio(req.Size),
 		ModelName:      req.Model,
 		Model:          req.Model, // Keep consistent with model_name, double writing improves compatibility

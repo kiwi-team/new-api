@@ -1,7 +1,6 @@
 package ppio
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,6 +57,10 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	///v3/async/flux-1-kontext-pro
 	modeName := info.OriginModelName
 	switch modeName {
+	case "hailuo-2.3-i2v", "hailuo-2.3-t2v":
+		return fmt.Sprintf("https://api.ppinfra.com/v3/async/minimax-%s", modeName), nil
+	case "vidu-2.0-img2video":
+		return fmt.Sprintf("https://api.ppinfra.com/v3/async/%s", modeName), nil
 	default:
 		return fmt.Sprintf("https://api.ppinfra.com/v3/async/%s", modeName), nil
 	}
@@ -79,76 +82,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("request not found in context")
 	}
 	req := v.(relaycommon.TaskSubmitReq)
-
-	seconds := common.String2Int(req.Seconds)
-	if seconds <= 0 {
-		seconds = 5
+	if strings.HasPrefix(info.OriginModelName, "wan") {
+		return WanRequestBody(req)
+	} else if strings.HasPrefix(info.OriginModelName, "vidu") {
+		return ViduRequestBody(req)
+	} else if strings.HasPrefix(info.OriginModelName, "hailuo") {
+		return HailuoRequestBody(req)
 	}
-	if req.Duration > 0 {
-		seconds = req.Duration
-	}
-
-	body := WanTaskSubmitRequest{
-		Input: &TaskInput{
-			Prompt:   req.Prompt,
-			ImageURL: req.Image,
-		},
-		Parameters: &TaskParameters{
-			Duration: seconds,
-		},
-	}
-
-	// 同步扩展字段的厂商自定义metadata
-	if req.Metadata != nil {
-		if v, ok := req.Metadata["aspect_ratio"]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				body.Parameters.Size = s
-			}
-		} else {
-			body.Parameters.Size = "1920*1080"
-		}
-		if v, ok := req.Metadata["negative_prompt"]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				body.Input.NegativePrompt = s
-			}
-		}
-		if v, ok := req.Metadata["shot_type"]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				body.Parameters.ShotType = s
-			}
-		}
-		if v, ok := req.Metadata["prompt_extend"]; ok {
-			if s, ok := v.(bool); ok {
-				body.Parameters.PromptExtend = s
-			}
-		}
-		if v, ok := req.Metadata["resolution"]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				body.Parameters.Resolution = s
-			}
-		}
-		if v, ok := req.Metadata["seed"]; ok {
-			if s, ok := v.(int); ok {
-				body.Parameters.Seed = s
-			}
-		}
-		if v, ok := req.Metadata["watermark"]; ok {
-			if s, ok := v.(bool); ok {
-				body.Parameters.Watermark = s
-			}
-		}
-		if v, ok := req.Metadata["audio"]; ok {
-			if s, ok := v.(bool); ok {
-				body.Parameters.Audio = s
-			}
-		}
-	}
-
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(data), nil
+	return nil, fmt.Errorf("model %s not supported", info.OriginModelName)
 }
 
 // DoRequest delegates to common helper.

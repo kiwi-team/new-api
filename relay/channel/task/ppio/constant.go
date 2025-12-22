@@ -19,6 +19,17 @@ type PPIOTaskSubmitRequest struct {
 	SafetyTolerance string   `json:"safety_tolerance,omitempty"`
 }
 
+// https://ppio.com/docs/models/reference-vidu-2.0-img2video
+type ViduTaskSubmitRequest struct {
+	Images            []string `json:"images,omitempty"`
+	Prompt            string   `json:"prompt"`
+	Duration          int      `json:"duration,omitempty"`
+	Seed              int      `json:"seed,omitempty"`
+	Resolution        string   `json:"resolution,omitempty"`
+	MovementAmplitude string   `json:"movement_amplitude,omitempty"`
+	BGM               bool     `json:"bgm,omitempty"`
+}
+
 // https://ppio.com/docs/models/reference-wan2.6-t2v
 type WanTaskSubmitRequest struct {
 	Input      *TaskInput      `json:"input"`
