@@ -27,6 +27,7 @@ import {
   renderQuotaWithPrompt,
   getModelCategories,
   selectFilter,
+  isAdmin,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
@@ -878,7 +879,7 @@ const EditTokenModal = (props) => {
                       style={{ width: '100%' }}
                     />
                   </Col>
-                  <Col span={24}>
+                  <Col span={24} className={isAdmin() ? '' : 'tableHiddle'}>
                     <Form.Slot label={t('设置渠道规则')}>
                       <Card className='!rounded-2xl shadow-sm border-0'>
                         <Row gutter={12}>
@@ -1074,7 +1075,7 @@ const EditTokenModal = (props) => {
                       </Card>
                     </Form.Slot>
                   </Col>
-                  <Col span={24}>
+                  <Col span={24} className={isAdmin() ? '' : 'tableHiddle'}>
                     <Form.TextArea
                       field='channel_ratios'
                       label={t('设置渠道倍率')}

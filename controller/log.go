@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-contrib/sessions"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,7 +46,8 @@ func GetAllLogs(c *gin.Context) {
 	export := c.Query("export") == "true"
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, export)
+	isAdmin := isAdmin(c)
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, export, isAdmin)
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group)
 	if err != nil {
 		common.ApiError(c, err)
@@ -117,6 +119,12 @@ func GetAllLogs(c *gin.Context) {
 	return
 }
 
+func isAdmin(c *gin.Context) bool {
+	session := sessions.Default(c)
+	role := session.Get("role")
+	return role.(int) >= common.RoleAdminUser
+}
+
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	userId := c.GetInt("id")
@@ -126,7 +134,8 @@ func GetUserLogs(c *gin.Context) {
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
 	group := c.Query("group")
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group)
+	isAdmin := isAdmin(c)
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -138,8 +147,9 @@ func GetUserLogs(c *gin.Context) {
 }
 
 func SearchAllLogs(c *gin.Context) {
+	isAdmin := isAdmin(c)
 	keyword := c.Query("keyword")
-	logs, err := model.SearchAllLogs(keyword)
+	logs, err := model.SearchAllLogs(keyword, isAdmin)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -155,7 +165,8 @@ func SearchAllLogs(c *gin.Context) {
 func SearchUserLogs(c *gin.Context) {
 	keyword := c.Query("keyword")
 	userId := c.GetInt("id")
-	logs, err := model.SearchUserLogs(userId, keyword)
+	isAdmin := isAdmin(c)
+	logs, err := model.SearchUserLogs(userId, keyword, isAdmin)
 	if err != nil {
 		common.ApiError(c, err)
 		return

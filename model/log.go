@@ -235,7 +235,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, export bool) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -267,6 +267,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
+	}
+	if !isAdmin {
+		tx = tx.Omit("request", "response")
 	}
 	if export {
 		//err = tx.Order("logs.id asc").Omit("request", "response").Find(&logs).Error
@@ -305,7 +308,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	return logs, total, err
 }
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
@@ -332,6 +335,9 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if err != nil {
 		return nil, 0, err
 	}
+	if !isAdmin {
+		tx = tx.Omit("request", "response")
+	}
 	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
@@ -341,13 +347,23 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	return logs, total, err
 }
 
-func SearchAllLogs(keyword string) (logs []*Log, err error) {
-	err = LOG_DB.Where("type = ? or content LIKE ?", keyword, keyword+"%").Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+func SearchAllLogs(keyword string, isAdmin bool) (logs []*Log, err error) {
+	var tx *gorm.DB
+	tx = LOG_DB.Where("type = ? or content LIKE ?", keyword, keyword+"%")
+	if !isAdmin {
+		tx = tx.Omit("request", "response")
+	}
+	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	return logs, err
 }
 
-func SearchUserLogs(userId int, keyword string) (logs []*Log, err error) {
-	err = LOG_DB.Where("user_id = ? and type = ?", userId, keyword).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+func SearchUserLogs(userId int, keyword string, isAdmin bool) (logs []*Log, err error) {
+	var tx *gorm.DB
+	tx = LOG_DB.Where("user_id = ? and type = ?", userId, keyword)
+	if !isAdmin {
+		tx = tx.Omit("request", "response")
+	}
+	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs)
 	return logs, err
 }

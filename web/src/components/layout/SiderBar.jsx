@@ -94,6 +94,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('错误日志'),
         itemKey: 'errorlog',
         to: '/errorlog',
+        className: isAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('绘图日志'),

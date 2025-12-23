@@ -86,8 +86,9 @@ func SendEmail(subject string, receiver string, content string) error {
 	} else {
 		err = smtp.SendMail(addr, auth, SMTPFrom, to, mail)
 	}
-	if err != nil {
-		SysError(fmt.Sprintf("failed to send email to %s: %v", receiver, err))
+	if err != nil && strings.Contains(err.Error(), "short response") { // 部分提供商返回该错误，但实际上邮件已经发送成功
+		fmt.Printf("short response from SMTP server, return nil instead of error: %s", err.Error())
+		return nil
 	}
 	return err
 }

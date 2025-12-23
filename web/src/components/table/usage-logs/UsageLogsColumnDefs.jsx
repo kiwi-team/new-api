@@ -41,6 +41,7 @@ import {
   renderAudioModelPrice,
   renderClaudeModelPrice,
   renderModelPrice,
+  isAdmin,
 } from '../../../helpers';
 import { IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
@@ -438,6 +439,7 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.MULTI_MODEL,
       title: t('多模态'),
       dataIndex: 'multi_model',
+      className: isAdmin() ? '' : 'tableHiddle',
       render: (text, record, index) => {
         return renderMultiModelByObject(record.request);
       },
@@ -579,6 +581,7 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.REQUEST,
       title: t('请求'),
       dataIndex: 'request',
+      className: isAdmin() ? '' : 'tableHiddle',
       render: (text, record, index) => {
         return (
           <div className='flex items-center gap-2'>
@@ -613,6 +616,7 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.RESPONSE,
       title: t('响应'),
       dataIndex: 'response',
+      className: isAdmin() ? '' : 'tableHiddle',
       render: (text, record, index) => {
         return (
           <div className='flex items-center gap-2'>
