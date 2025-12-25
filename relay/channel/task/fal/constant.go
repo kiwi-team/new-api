@@ -43,13 +43,19 @@ type QueryTaskResponse struct {
 		FileSize    interface{} `json:"file_size"`
 		Width       int         `json:"width"`
 		Height      int         `json:"height"`
-	} `json:"images"`
+	} `json:"images,omitempty"`
 	Timings struct {
-	} `json:"timings"`
-	Seed            int    `json:"seed"`
-	HasNsfwConcepts []bool `json:"has_nsfw_concepts"`
-	Prompt          string `json:"prompt"`
-	RequestID       string `json:"request_id"`
+	} `json:"timings,omitzero"`
+	Seed            int    `json:"seed,omitempty"`
+	HasNsfwConcepts []bool `json:"has_nsfw_concepts,omitempty"`
+	Prompt          string `json:"prompt,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
+	Video           struct {
+		URL         string `json:"url,omitempty"`
+		ContentType string `json:"content_type,omitempty"`
+		FileName    string `json:"file_name,omitempty"`
+		FileSize    int    `json:"file_size,omitempty"`
+	} `json:"video,omitzero"`
 }
 
 const (

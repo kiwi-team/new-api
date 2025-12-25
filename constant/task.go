@@ -12,6 +12,7 @@ const (
 	TaskPlatformHunyuanImage                  = "hunyuan-image"
 	TaskPlatformFALImage                      = "fal-image"
 	TaskPlatformPPio                          = "ppio"
+	TaskPlatformFAL                           = "fal"
 )
 
 const (

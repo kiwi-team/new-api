@@ -26,6 +26,7 @@ import (
 // Request / Response structures
 // ============================
 
+// https://platform.vidu.cn/docs/image-to-video
 type requestPayload struct {
 	Model             string   `json:"model"`
 	Images            []string `json:"images"`
@@ -105,6 +106,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 	}
 	info.Action = action
+
+	var taskReq relaycommon.TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
+		return service.TaskErrorWrapper(err, "unmarshal_task_request_failed", http.StatusBadRequest)
+	}
+	seconds := common.String2Int(taskReq.Seconds)
+	if seconds <= 0 {
+		seconds = 5
+	}
+	if taskReq.Duration > 0 {
+		seconds = taskReq.Duration
+	}
+
+	info.PriceData.OtherRatios = map[string]float64{
+		"seconds": float64(seconds),
+	}
+
 	return nil
 }
 
@@ -126,7 +144,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			body.Model = "viduq2"
 		}
 	}
-
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -220,9 +237,13 @@ func (a *TaskAdaptor) GetChannelName() string {
 // ============================
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+	images := req.Images
+	if len(images) == 0 && req.Image != "" {
+		images = append(images, req.Image)
+	}
 	r := requestPayload{
 		Model:             defaultString(req.Model, "viduq1"),
-		Images:            req.Images,
+		Images:            images,
 		Prompt:            req.Prompt,
 		Duration:          defaultInt(req.Duration, 5),
 		Resolution:        defaultString(req.Size, "1080p"),

@@ -21,6 +21,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Typography, Tag } from '@douyinfe/semi-ui';
 import SkeletonWrapper from '../components/SkeletonWrapper';
+const VITE_BASE_HOME_URL = import.meta.env.VITE_BASE_HOME_URL;
 
 const HeaderLogo = ({
   isMobile,
@@ -36,9 +37,8 @@ const HeaderLogo = ({
   if (isMobile && isConsoleRoute) {
     return null;
   }
-
   return (
-    <Link to='/' className='group flex items-center gap-2'>
+    <a href={VITE_BASE_HOME_URL || '/'} target='_blank' className='group flex items-center gap-2'>
       <div className='relative w-8 h-8 md:w-8 md:h-8'>
         <SkeletonWrapper loading={isLoading || !logoLoaded} type='image' />
         <img
@@ -74,7 +74,7 @@ const HeaderLogo = ({
           )}
         </div>
       </div>
-    </Link>
+    </a>
   );
 };
 

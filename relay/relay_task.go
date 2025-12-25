@@ -83,7 +83,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		platform = constant.TaskPlatformHunyuanImage
 		adaptor = &hunyuan.TaskAdaptor{}
 	} else if strings.Contains(info.ChannelBaseUrl, "fal") {
-		platform = constant.TaskPlatformFALImage
+		platform = constant.TaskPlatformFAL
 		adaptor = &fal.TaskAdaptor{}
 	} else {
 		adaptor = GetTaskAdaptor(platform)

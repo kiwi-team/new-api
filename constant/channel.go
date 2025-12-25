@@ -120,14 +120,15 @@ var ChannelBaseURLs = []string{
 	"https://visual.volcengineapi.com",          //52
 	"",                                          //53
 	"https://google.serper.dev",                 //54
-	"https://visual.volcengineapi.com",          //55
-	"https://api.vidu.cn",                       //56
-	"https://llm.submodel.ai",                   //57
-	"https://ark.cn-beijing.volces.com",         //58
-	"https://api.openai.com",                    //59
-	"https://dashscope.aliyuncs.com",            //60
-	"https://queue.fal.run",                     //61
-	"https://api.replicate.com",                 //62
+	//"https://visual.volcengineapi.com",          //55
+	"https://api.vidu.cn",               //55
+	"https://llm.submodel.ai",           //56
+	"https://ark.cn-beijing.volces.com", //57 //豆包视频
+	"https://api.openai.com",            //58
+	"",                                  //59 // elevenLabs
+	"https://dashscope.aliyuncs.com",    //60
+	"https://queue.fal.run",             //61
+	"https://api.replicate.com",         //62
 }
 
 var ChannelTypeNames = map[int]string{

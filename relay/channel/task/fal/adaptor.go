@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/pkg/errors"
 
 	"github.com/gin-gonic/gin"
 
@@ -40,6 +42,22 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Use the standard validation method for TaskSubmitReq
+	var taskReq relaycommon.TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
+		return service.TaskErrorWrapper(err, "unmarshal_task_request_failed", http.StatusBadRequest)
+	}
+	seconds := common.String2Int(taskReq.Seconds)
+	if seconds <= 0 {
+		seconds = 5
+	}
+	if taskReq.Duration > 0 {
+		seconds = taskReq.Duration
+	}
+
+	info.PriceData.OtherRatios = map[string]float64{
+		"seconds": float64(seconds),
+	}
+
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
 }
 
@@ -52,6 +70,8 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	case "imagineart-1.5-preview":
 		//https://queue.fal.run/imagineart/imagineart-1.5-preview/text-to-image
 		return fmt.Sprintf("%s/imagineart/imagineart-1.5-preview/text-to-image", a.baseURL), nil
+	case "hunyuan-video-v1.5":
+		return fmt.Sprintf("%s/fal-ai/%s/image-to-video", a.baseURL, info.OriginModelName), nil
 	}
 	return "", fmt.Errorf("unsupported model name: %s", info.OriginModelName)
 }
@@ -67,11 +87,16 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 // BuildRequestBody converts request into Vertex specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+
 	v, ok := c.Get("task_request")
 	if !ok {
 		return nil, fmt.Errorf("request not found in context")
 	}
 	req := v.(relaycommon.TaskSubmitReq)
+	if strings.HasPrefix(info.OriginModelName, "hunyuan-video") {
+		return HunyuanImage2VideoRequestBody(req)
+	}
+
 	image := req.Image
 	if len(req.Images) > 0 {
 		image = req.Images[0]
@@ -94,6 +119,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			}
 		} else {
 			body.AspectRatio = "1:1"
+		}
+
+		metadata := req.Metadata
+		medaBytes, err := json.Marshal(metadata)
+		if err != nil {
+			return nil, errors.Wrap(err, "metadata marshal metadata failed")
+		}
+		err = json.Unmarshal(medaBytes, &body)
+		if err != nil {
+			return nil, errors.Wrap(err, "unmarshal metadata failed")
 		}
 	}
 
@@ -148,6 +183,8 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http
 	if strings.Contains(task.Properties.UpstreamModelName, "imagineart") {
 		//url := fmt.Sprintf("https://queue.fal.run/imagineart/imagineart-1.5-preview/requests/%s", taskID)
 		url = fmt.Sprintf("https://queue.fal.run/imagineart/%s/requests/%s", task.Properties.UpstreamModelName, taskID)
+	} else if strings.Contains(task.Properties.UpstreamModelName, "hunyuan-video") {
+		url = fmt.Sprintf("https://queue.fal.run/fal-ai/hunyuan-video-v1.5/requests/%s", taskID)
 	} else {
 		url = fmt.Sprintf("https://queue.fal.run/fal-ai/flux-pro/requests/%s", taskID)
 	}
@@ -194,7 +231,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	ti.TaskID = taskId
 	ti.Status = model.TaskStatusInProgress
 	ti.Progress = fmt.Sprintf("%d%%", 10)
-	if len(op.Images) == 0 {
+	if len(op.Images) == 0 && op.Video.URL == "" {
 		return ti, nil
 	}
 	if len(op.Images) > 0 { // some variants use `video` as base64
@@ -218,6 +255,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		} else {
 			ti.Url = imageUrl
 		}
+	}
+	if op.Video.URL != "" {
+		ti.Progress = fmt.Sprintf("%d%%", 100)
+		ti.Status = model.TaskStatusSuccess
+		if v, ok := taskcommon.FinishedTaskCache.Get(taskId); ok {
+			ti.Url = v
+			return ti, nil
+		}
+		ti.Url = op.Video.URL
+		taskcommon.FinishedTaskCache.Set(taskId, ti.Url)
 		return ti, nil
 	}
 	return ti, nil

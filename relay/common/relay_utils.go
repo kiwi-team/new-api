@@ -239,6 +239,7 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 			}
 		}
 	}
+
 	setModelMap(c, info, &req)
 	storeTaskRequest(c, info, action, req)
 	return nil
