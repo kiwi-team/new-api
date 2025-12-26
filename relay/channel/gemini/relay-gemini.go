@@ -311,7 +311,6 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				geminiRequest.GenerationConfig.ImageConfig = raw
 			}
 		}
-		//common.PrintJson("geminiRequest", geminiRequest)
 	}
 
 	if !adaptorWithExtraBody {
@@ -787,6 +786,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 
 		}
 	}
+	//common.PrintJson("geminiRequest", geminiRequest)
 	return &geminiRequest, nil
 }
 

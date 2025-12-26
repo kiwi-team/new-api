@@ -32,14 +32,18 @@ func GetAllErrorLogs(c *gin.Context) {
 	modelName := c.Query("model_name")
 	requestId := c.Query("request_id")
 	channel, _ := strconv.Atoi(c.Query("channel"))
+	tokenId, _ := strconv.Atoi(c.Query("token_id"))
+	clientUserId := c.Query("client_user_id")
 	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
-		RequestId: requestId,
-		ChannelId: channel,
-		ModelName: modelName,
-		StartTime: startTimestamp,
-		EndTime:   endTimestamp,
-		Page:      p,
-		PageSize:  pageSize,
+		RequestId:    requestId,
+		ChannelId:    channel,
+		ModelName:    modelName,
+		StartTime:    startTimestamp,
+		EndTime:      endTimestamp,
+		Page:         p,
+		PageSize:     pageSize,
+		TokenId:      tokenId,
+		ClientUserId: clientUserId,
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{

@@ -72,6 +72,12 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	if req.ModelName != "" {
 		query = query.Where("model_name = ?", req.ModelName)
 	}
+	if req.TokenId > 0 {
+		query = query.Where("token_id = ?", req.TokenId)
+	}
+	if req.ClientUserId != "" {
+		query = query.Where("client_user_id = ?", req.ClientUserId)
+	}
 	var total int64
 	_ = query.Count(&total)
 	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error

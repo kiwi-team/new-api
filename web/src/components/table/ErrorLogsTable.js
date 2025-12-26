@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -55,6 +73,7 @@ const ErrorLogsTable = () => {
     STATUSCODE: 'status_code',
     IP: 'ip',
     BODY: 'body',
+    USER_CLIENT_ID: 'user_client_id',
   };
 
   // State for column visibility
@@ -100,6 +119,7 @@ const ErrorLogsTable = () => {
       [COLUMN_KEYS.REQUESTID]: true,
       [COLUMN_KEYS.STATUSCODE]: isAdminUser,
       [COLUMN_KEYS.IP]: true,
+      [COLUMN_KEYS.USER_CLIENT_ID]: true,
     };
   };
 
@@ -144,6 +164,11 @@ const ErrorLogsTable = () => {
       key: COLUMN_KEYS.ID,
       title: t('ID'),
       dataIndex: 'id',
+    },
+    {
+      key: COLUMN_KEYS.USER_CLIENT_ID,
+      title: t('User Client ID'),
+      dataIndex: 'client_user_id',
     },
     {
       key: COLUMN_KEYS.TOKEN_ID,
@@ -432,6 +457,8 @@ const ErrorLogsTable = () => {
     request_id: '',
     model_name: '',
     channel: '',
+    token_id: '',
+    client_user_id:'',
     dateRange: [
       timestamp2string(now.getTime() / 1000 - 3600),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -471,6 +498,8 @@ const ErrorLogsTable = () => {
       request_id: formValues.request_id,
       p: formValues.p || 1,
       page_size: formValues.page_size || 10,
+      token_id: formValues.token_id || 0,
+      client_user_id: formValues.client_user_id || '',
     };
   };
 
@@ -483,11 +512,13 @@ const ErrorLogsTable = () => {
       start_timestamp,
       end_timestamp,
       channel,
+      token_id,
+      client_user_id,
     } = getFormValues();
     const currentLogType = formLogType !== undefined ? formLogType : logType;
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/error-logs?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}`;
+    let url = `/api/log/error-logs?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}&token_id=${token_id}&client_user_id=${client_user_id}`;
     url = encodeURI(url);
     let res = await API.get(url);
     const { success, message, data } = res.data;
@@ -525,12 +556,12 @@ const ErrorLogsTable = () => {
     setLoading(true);
 
     let url = '';
-    const { model_name, start_timestamp, end_timestamp, channel, request_id } =
+    const { model_name, start_timestamp, end_timestamp, channel, request_id, token_id, client_user_id } =
       getFormValues();
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    url = `/api/log/error-logs?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}`;
+    url = `/api/log/error-logs?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&token_id=${token_id}&client_user_id=${client_user_id}`;
     url = encodeURI(url);
     const res = await API.get(url);
     const { success, message, data } = res.data;
@@ -724,6 +755,22 @@ const ErrorLogsTable = () => {
                     field='channel'
                     prefix={<IconSearch />}
                     placeholder={t('channelID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='token_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('tokenID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='client_user_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('clientUserID')}
                     className='!rounded-full'
                     showClear
                     pure
