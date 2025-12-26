@@ -44,6 +44,7 @@ type requestPayload struct {
 	CameraFixed     bool          `json:"camerafixed,omitempty"`
 	Watermark       bool          `json:"watermark,omitempty"`
 	ReturnLastFrame bool          `json:"return_last_frame,omitempty"`
+	GenerateAudio   bool          `json:"generate_audio,omitempty"`
 }
 
 type responsePayload struct {
@@ -228,6 +229,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		}
 		if returnLastFrame, ok := metadata["return_last_frame"].(bool); ok {
 			r.ReturnLastFrame = returnLastFrame
+		}
+		if generateAudio, ok := metadata["generate_audio"].(bool); ok {
+			r.GenerateAudio = generateAudio
 		}
 	}
 
