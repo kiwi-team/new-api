@@ -251,6 +251,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 				Type:         "enabled",
 				BudgetTokens: &budget,
 			}
+
 		case "disabled":
 			claudeRequest.Thinking = &dto.Thinking{
 				Type: "disabled",
@@ -461,6 +462,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+	if claudeRequest.Thinking != nil {
+		if claudeRequest.Thinking.Type == "enabled" {
+			//https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility
+			claudeRequest.TopK = 0
+			claudeRequest.Temperature = nil
+			claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
+		}
+	}
 	//common.PrintJson("\nclaudeRequest", claudeRequest)
 	return &claudeRequest, nil
 }

@@ -585,7 +585,40 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 	dealFunctionCall(request)
+
+	// https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility
+	if strings.HasPrefix(info.UpstreamModelName, "claude") {
+		if IsThinkingEnabled(request) {
+			request.TopK = 0
+			request.Temperature = nil
+		}
+	}
+	//common.PrintJson("\nopenaiRequest", request)
 	return request, nil
+}
+
+func IsThinkingEnabled(request *dto.GeneralOpenAIRequest) bool {
+	if request.EnableThinking != nil {
+		if request.EnableThinking.(bool) == true {
+			return true
+		}
+	}
+	if strings.HasSuffix(request.Model, "-thinking") {
+		if strings.Contains(request.Model, "claude") ||
+			strings.Contains(request.Model, "gemini") {
+			return true
+		}
+	}
+	if request.THINKING == nil {
+		return false
+	}
+	var thinking dto.AnthropicThinking
+	err := json.Unmarshal(request.THINKING, &thinking)
+	if err != nil {
+		return false
+	}
+	return thinking.Type == "enabled"
+
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {

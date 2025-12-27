@@ -385,36 +385,41 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
+		} else {
+			textRequest.THINKING = json.RawMessage(`{"type": "disabled"}`)
 		}
 	} else if isNuwa && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
-			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" {
 				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
-			if thinking.BudgetTokens > 0 {
-				// extraBody.Google.ThinkingConfig.IncludeThoughts = true
-				// extraBody.Google.ThinkingConfig.ThinkingBudget = thinking.BudgetTokens
-				// extraBodyJSON, err := json.Marshal(struct {
-				// 	ExtraBody dto.ExtraBody `json:"extra_body"`
-				// }{ExtraBody: extraBody})
-				// if err != nil {
-				// 	return fmt.Errorf("failed to marshal reasoning: %w", err)
-				// }
-				// textRequest.ExtraBody = extraBodyJSON
-				//OpenAI API 提供三种思考控制级别："low"、"medium" 和 "high"，分别对应于 1,024、8,192 和 24,576 个令牌
-				if thinking.BudgetTokens >= 24576 {
-					textRequest.ReasoningEffort = "high"
-				} else if thinking.BudgetTokens >= 8000 {
-					textRequest.ReasoningEffort = "medium"
-				} else {
-					textRequest.ReasoningEffort = "low"
-				}
+			if !strings.Contains(textRequest.Model, "claude") &&
+				!strings.Contains(textRequest.Model, "gemini") {
+				if thinking.BudgetTokens > 0 {
+					// extraBody.Google.ThinkingConfig.IncludeThoughts = true
+					// extraBody.Google.ThinkingConfig.ThinkingBudget = thinking.BudgetTokens
+					// extraBodyJSON, err := json.Marshal(struct {
+					// 	ExtraBody dto.ExtraBody `json:"extra_body"`
+					// }{ExtraBody: extraBody})
+					// if err != nil {
+					// 	return fmt.Errorf("failed to marshal reasoning: %w", err)
+					// }
+					// textRequest.ExtraBody = extraBodyJSON
+					//OpenAI API 提供三种思考控制级别："low"、"medium" 和 "high"，分别对应于 1,024、8,192 和 24,576 个令牌
+					if thinking.BudgetTokens >= 24576 {
+						textRequest.ReasoningEffort = "high"
+					} else if thinking.BudgetTokens >= 8000 {
+						textRequest.ReasoningEffort = "medium"
+					} else {
+						textRequest.ReasoningEffort = "low"
+					}
 
-			} else {
-				if textRequest.ReasoningEffort == "" {
-					textRequest.ReasoningEffort = "medium"
+				} else {
+					if textRequest.ReasoningEffort == "" {
+						textRequest.ReasoningEffort = "medium"
+					}
 				}
 			}
 		} else {
@@ -423,6 +428,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Model = textRequest.Model + "-nothinking"
 				info.UpstreamModelName = textRequest.Model
 			}
+			textRequest.THINKING = json.RawMessage(`{"type": "disabled"}`)
 		}
 		// claude-opus-4-1-20250805 开启thinking后，对于nuwa来说，要append一个空的message item
 		if strings.Contains(textRequest.Model, "claude-opus-4-1") {
@@ -434,7 +440,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	} else if isYunwu && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
 			//if !strings.Contains(strings.ToLower(textRequest.Model), "doubao") {
-			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" || strings.Contains(textRequest.Model, "claude") {
+			if textRequest.Model == "gemini-2.5-pro" || textRequest.Model == "gemini-2.5-flash" {
 				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
@@ -443,6 +449,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Model = textRequest.Model + "-nothinking"
 				info.UpstreamModelName = textRequest.Model
 			}
+			textRequest.THINKING = json.RawMessage(`{"type": "disabled"}`)
 		}
 	} else if isSiliconflow && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" && slices.Contains(supportedModels, textRequest.Model) {
@@ -478,6 +485,11 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				}
 			}
 		}
+	}
+
+	// 把claude的stop 设置为空
+	if strings.Contains(textRequest.Model, "claude") {
+		textRequest.Stop = nil
 	}
 
 	return nil
