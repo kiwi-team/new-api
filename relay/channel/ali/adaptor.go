@@ -109,17 +109,18 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if !info.IsStream {
 		request.EnableThinking = false
 	}
-	// 这个模型，必须要开启思考模式
-	if request.Model == "qwen3-235b-a22b-thinking-2507" {
-		request.EnableThinking = true
-	}
+
 	qwen3SupportThinkingModels := common.OptionMap["qwen3_support_thinking_models"]
 	modelList := strings.Split(qwen3SupportThinkingModels, ",")
 	if len(qwen3SupportThinkingModels) == 0 {
-		modelList = []string{"qwen3-235b-a22b-thinking-2507", "qwen3-max-preview"}
+		modelList = []string{"qwen3-max-preview"}
 	}
 	if slices.Contains(modelList, request.Model) {
 		request.EnableThinking = enableThinking
+	}
+	// 这个模型，必须要开启思考模式
+	if request.Model == "qwen3-235b-a22b-thinking-2507" {
+		request.EnableThinking = true
 	}
 	switch info.RelayMode {
 	default:
