@@ -212,6 +212,10 @@ export const CHANNEL_OPTIONS = [
     value: 62,
     color: 'blue',
     label: 'Replicate',
+  }, {
+    value: 63,
+    color: 'yellow',
+    label: 'Pixverse',
   },
 ];
 

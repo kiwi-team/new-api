@@ -150,6 +150,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 
 	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
 	if err != nil {
@@ -169,6 +170,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 
 	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
 	if err != nil {

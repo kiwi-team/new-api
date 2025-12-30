@@ -60,6 +60,7 @@ const (
 	ChannelTypeAliDashScope     = 60
 	ChannelTypeFAL              = 61
 	ChannelTypeReplicate        = 62
+	ChannelTypePixverse         = 63
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -129,6 +130,7 @@ var ChannelBaseURLs = []string{
 	"https://dashscope.aliyuncs.com",    //60
 	"https://queue.fal.run",             //61
 	"https://api.replicate.com",         //62
+	"https://app-api.pixverse.ai",       //63
 }
 
 var ChannelTypeNames = map[int]string{
@@ -188,6 +190,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAliDashScope:   "AliDashScope",
 	ChannelTypeFAL:            "Fal",
 	ChannelTypeReplicate:      "Replicate",
+	ChannelTypePixverse:       "Pixverse",
 }
 
 func GetChannelTypeName(channelType int) string {

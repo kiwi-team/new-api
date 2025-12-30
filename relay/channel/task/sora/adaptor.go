@@ -117,8 +117,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, _ *relayco
 			return
 		}
 		dResp.ID = dResp.TaskID
-		dResp.TaskID = ""
 	}
+	dResp.TaskID = dResp.ID // task_id 兼容旧接口 ，其他渠道的模型也都返回task_id
 
 	c.JSON(http.StatusOK, dResp)
 	return dResp.ID, responseBody, nil

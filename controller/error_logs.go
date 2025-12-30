@@ -34,6 +34,8 @@ func GetAllErrorLogs(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
 	clientUserId := c.Query("client_user_id")
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	fmt.Printf("clientUserId: %s\n", clientUserId)
 	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
 		RequestId:    requestId,
 		ChannelId:    channel,

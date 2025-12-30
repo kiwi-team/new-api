@@ -70,10 +70,19 @@ func GetNameIdList(c *gin.Context) {
 		Name   string `json:"name"`
 		Status int    `json:"status"`
 	}
-	err := model.DB.Model(&model.Channel{}).Select("id, name, status").Order("id asc").Find(&channels).Error
-	if err != nil {
-		common.ApiError(c, err)
-		return
+	isAdmin := model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	if isAdmin {
+		err := model.DB.Model(&model.Channel{}).Select("id, name, status").Order("id asc").Find(&channels).Error
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	} else {
+		channels = make([]struct {
+			Id     int    `json:"id"`
+			Name   string `json:"name"`
+			Status int    `json:"status"`
+		}, 0)
 	}
 	common.ApiSuccess(c, channels)
 }

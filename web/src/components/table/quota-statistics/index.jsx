@@ -51,7 +51,14 @@ const QuotaStatisticsTable = () => {
     const startTimestamp = Math.floor(dateRange[0].getTime() / 1000);
     const endTimestamp = Math.floor(dateRange[1].getTime() / 1000);
     try {
-      const res = await API.get(`/api/data/statistics?start_timestamp=${startTimestamp}&end_timestamp=${endTimestamp}&model_name=${modelName}&client_user_id=${clientUserId}`);
+      const res = await API.get('/api/data/statistics', {
+        params: {
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp,
+          model_name: modelName,
+          client_user_id: clientUserId,
+        },
+      });
       const { success, message, data } = res.data;
       if (success) {
         setData(data);
@@ -78,7 +85,13 @@ const QuotaStatisticsTable = () => {
     const endTimestamp = Math.floor(dateRange[1].getTime() / 1000);
     
     try {
-      const res = await API.get(`/api/data/statistics/export?start_timestamp=${startTimestamp}&end_timestamp=${endTimestamp}&model_name=${modelName}&client_user_id=${clientUserId}`, {
+      const res = await API.get('/api/data/statistics/export', {
+        params: {
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp,
+          model_name: modelName,
+          client_user_id: clientUserId,
+        },
         responseType: 'blob'
       });
       

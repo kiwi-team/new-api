@@ -283,6 +283,7 @@ func Max(a int, b int) int {
 
 func MessageWithRequestId(message string, id string) string {
 	rewrite := OptionMap["RewriteMessage"]
+	doc := OptionMap["general_setting.docs_link"]
 	var ruleArr []string
 	if rewrite != "" {
 		err := json.Unmarshal([]byte(rewrite), &ruleArr)
@@ -301,6 +302,8 @@ func MessageWithRequestId(message string, id string) string {
 	re := regexp.MustCompile(`\s*\(request id: [^\)]+\)`)
 	message = re.ReplaceAllString(message, "")
 	message = strings.TrimSpace(message)
+	re = regexp.MustCompile(`https?://\S+`)
+	message = re.ReplaceAllString(message, doc)
 	return fmt.Sprintf("%s (request id: %s)", message, id)
 }
 

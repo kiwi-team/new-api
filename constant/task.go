@@ -13,6 +13,7 @@ const (
 	TaskPlatformFALImage                      = "fal-image"
 	TaskPlatformPPio                          = "ppio"
 	TaskPlatformFAL                           = "fal"
+	TaskPlatformPixverse                      = "pixverse"
 )
 
 const (
@@ -21,6 +22,7 @@ const (
 
 	TaskActionGenerate          = "generate"
 	TaskActionTextGenerate      = "textGenerate"
+	TaskActionImageGenerate     = "imageGenerate"
 	TaskActionFirstTailGenerate = "firstTailGenerate"
 	TaskActionReferenceGenerate = "referenceGenerate"
 )

@@ -191,6 +191,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		return
 	}
 
+	request, _ := common.GetRequestBody(c)
+	var responseStr string
 	defer func() {
 		// release quota
 		if info.ConsumeQuota && taskErr == nil {
@@ -232,7 +234,6 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					other["user_group_ratio"] = userGroupRatio
 				}
 				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
-				request, _ := common.GetRequestBody(c)
 				model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 					ChannelId:    info.ChannelId,
 					ModelName:    modelName,
@@ -244,6 +245,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					Other:        other,
 					ClientUserId: clientUserId,
 					Request:      string(request),
+					Response:     responseStr,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)
@@ -255,6 +257,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	if taskErr != nil {
 		return
 	}
+	responseStr = string(taskData)
 	info.ConsumeQuota = true
 	// insert task
 	task := model.InitTask(platform, info)
@@ -262,6 +265,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	task.Quota = quota
 	task.Data = taskData
 	task.Action = info.Action
+	task.Request = string(request)
 	err = task.Insert()
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)

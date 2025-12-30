@@ -36,6 +36,7 @@ const (
 	TaskStatusInProgress            = "IN_PROGRESS"
 	TaskStatusFailure               = "FAILURE"
 	TaskStatusSuccess               = "SUCCESS"
+	TaskStatusDeleted               = "DELETED"
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
@@ -57,6 +58,7 @@ type Task struct {
 	FinishTime int64                 `json:"finish_time" gorm:"index"`
 	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
 	Properties Properties            `json:"properties" gorm:"type:json"`
+	Request    string                `json:"request" gorm:"default:''"`
 	VideoUrl   string                `json:"video_url" gorm:"type:varchar(1024)"`
 
 	// 禁止返回给用户，内部可能包含key等隐私信息

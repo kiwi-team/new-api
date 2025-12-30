@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -45,11 +46,22 @@ func GetAllTokens(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for _, t := range tokens {
+		clearTokenInfo(c, t)
+	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tokens)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func clearTokenInfo(c *gin.Context, token *model.Token) {
+	isAdmin := model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	if !isAdmin {
+		token.ChannelRules = ""
+		token.ChannelRatios = ""
+	}
 }
 
 func SearchTokens(c *gin.Context) {
@@ -62,6 +74,9 @@ func SearchTokens(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	for _, t := range tokens {
+		clearTokenInfo(c, t)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -83,6 +98,7 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clearTokenInfo(c, token)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -199,8 +215,10 @@ func AddToken(c *gin.Context) {
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
-		ChannelRules:       token.ChannelRules,
-		ChannelRatios:      token.ChannelRatios,
+	}
+	if model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId)) {
+		cleanToken.ChannelRules = token.ChannelRules
+		cleanToken.ChannelRatios = token.ChannelRatios
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -278,8 +296,11 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
-		cleanToken.ChannelRules = token.ChannelRules
-		cleanToken.ChannelRatios = token.ChannelRatios
+		isAdmin := model.IsAdmin(userId)
+		if isAdmin {
+			cleanToken.ChannelRules = token.ChannelRules
+			cleanToken.ChannelRatios = token.ChannelRatios
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {

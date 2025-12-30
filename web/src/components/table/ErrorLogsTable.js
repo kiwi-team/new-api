@@ -167,7 +167,7 @@ const ErrorLogsTable = () => {
     },
     {
       key: COLUMN_KEYS.USER_CLIENT_ID,
-      title: t('User Client ID'),
+      title: t('Client USER ID'),
       dataIndex: 'client_user_id',
     },
     {
@@ -518,9 +518,19 @@ const ErrorLogsTable = () => {
     const currentLogType = formLogType !== undefined ? formLogType : logType;
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/error-logs?model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&p=${p}&page_size=${page_size}&token_id=${token_id}&client_user_id=${client_user_id}`;
-    url = encodeURI(url);
-    let res = await API.get(url);
+    let res = await API.get("/api/log/error-logs",{
+      params: {
+        model_name,
+        start_timestamp: localStartTimestamp,
+        end_timestamp: localEndTimestamp,
+        channel,
+        request_id,
+        p,
+        page_size,
+        token_id,
+        client_user_id,
+      },
+    });
     const { success, message, data } = res.data;
     if (success) {
       setStat(data);
