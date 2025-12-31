@@ -77,14 +77,17 @@ func GetNameIdList(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		common.ApiSuccess(c, channels)
+		return
 	} else {
 		channels = make([]struct {
 			Id     int    `json:"id"`
 			Name   string `json:"name"`
 			Status int    `json:"status"`
 		}, 0)
+		common.ApiSuccess(c, channels)
+		return
 	}
-	common.ApiSuccess(c, channels)
 }
 
 func GetAllChannels(c *gin.Context) {

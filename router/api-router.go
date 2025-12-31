@@ -160,8 +160,9 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/multi_key/manage", controller.ManageMultiKeys)
 		}
 		userCannelRoute := apiRouter.Group("/channel")
+		userCannelRoute.Use(middleware.UserAuth())
 		{
-			userCannelRoute.GET("/channel-name-list", controller.GetNameIdList, middleware.UserAuth())
+			userCannelRoute.GET("/channel-name-list", controller.GetNameIdList)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
