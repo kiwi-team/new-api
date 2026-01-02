@@ -604,6 +604,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		gap := time.Minute
 		if strings.Contains(channelError.ChannelName, "海外") ||
 			channelError.ChannelType == constant.ChannelTypeAli ||
+			strings.Contains(err.Error(), "received empty response from Gemini: no meaningful content in candidates") ||
 			strings.Contains(err.Error(), "aliyun") {
 			gap = 60 * time.Minute
 		}
