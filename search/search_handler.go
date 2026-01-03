@@ -54,6 +54,6 @@ func GetSearchAdptor(engine string) (engine.SearchAdptor, error) {
 	case "serper":
 		return &serper.SerperAdaptor{}, nil
 	default:
-		return nil, errors.New("not implemented")
+		return nil, errors.New("search engine not implemented")
 	}
 }
