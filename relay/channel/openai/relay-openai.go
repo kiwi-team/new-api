@@ -38,6 +38,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		}
 	}
 	data = setDeltaRole(c, info, data)
+	data = setResponseModel(c, info, data)
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -114,6 +115,27 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	return helper.ObjectData(c, lastStreamResponse)
 }
 
+func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
+	if strings.Contains(info.UpstreamModelName, "glm-4.7") {
+		var lastStreamResponse dto.ChatCompletionsStreamResponse
+		err := common.UnmarshalJsonStr(lastStreamData, &lastStreamResponse)
+		if err != nil {
+			common.SysError("error setting delta role: " + err.Error())
+			return lastStreamData
+		}
+		if strings.Contains(lastStreamResponse.Model, "glm-4.7") {
+			lastStreamResponse.Model = "glm.4.7"
+		}
+		byteArr, err1 := common.Marshal(lastStreamResponse)
+		if err1 != nil {
+			common.SysError("error setting delta role: " + err1.Error())
+			return lastStreamData
+		}
+		return string(byteArr)
+	}
+	return lastStreamData
+}
+
 func setDeltaRole(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
 	var setRoleValue string
 	if len(info.ChannelSetting.SetRole) > 0 {
@@ -128,6 +150,7 @@ func setDeltaRole(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData st
 		common.SysError("error setting delta role: " + err.Error())
 		return lastStreamData
 	}
+
 	if len(lastStreamResponse.Choices) == 0 {
 		return lastStreamData
 	}
@@ -400,6 +423,10 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if strings.Contains(simpleResponse.Model, "glm-4.7") {
+		simpleResponse.Model = "glm-4.7"
+		responseBody, _ = common.Marshal(simpleResponse)
 	}
 	isGuoguo := strings.Contains(info.ChannelBaseUrl, "aiguoguo")
 	isChat := strings.Contains(info.ChannelBaseUrl, "chataiapi")

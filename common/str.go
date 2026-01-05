@@ -177,6 +177,9 @@ func maskHostForPlainDomain(domain string) string {
 // www.openai.com -> ***.***.com
 // api.openai.com -> ***.***.com
 func MaskSensitiveInfo(str string) string {
+	if len(str) > 0 {
+		return str
+	}
 	// Mask URLs
 	urlPattern := regexp.MustCompile(`(http|https)://[^\s/$.?#].[^\s]*`)
 	str = urlPattern.ReplaceAllStringFunc(str, func(urlStr string) string {
