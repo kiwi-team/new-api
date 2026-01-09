@@ -166,7 +166,7 @@ func (a *TaskAdaptor) GetModelList() []string { return []string{"hunyuan-image-3
 func (a *TaskAdaptor) GetChannelName() string { return "ppio-hunyuan-image-3" }
 
 // FetchTask fetch task status
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, ok := body["task_id"].(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid task_id")

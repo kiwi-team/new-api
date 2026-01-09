@@ -179,7 +179,7 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	}
 
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
 		TotalTokens:      int(minimaxResp.ExtraInfo.UsageCharacters),
 	}

@@ -42,8 +42,11 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	}
 	//key channel ratio
 	ratios, ok1 := ctx.Get("token_channel_ratios")
-	if ok1 {
+	if ok1 && ratios != nil {
 		ratioMap := ratios.(map[int]float64)
+		if ratioMap == nil {
+			return groupRatioInfo
+		}
 		if ratio, exists := ratioMap[relayInfo.ChannelId]; exists {
 			groupRatioInfo.GroupRatio = ratio
 			return groupRatioInfo
@@ -140,7 +143,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// check if free model pre-consume is disabled
 	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 		// if model price or ratio is 0, do not pre-consume quota
-		if usePrice {
+		if groupRatioInfo.GroupRatio == 0 {
+			preConsumedQuota = 0
+			freeModel = true
+		} else if usePrice {
 			if modelPrice == 0 {
 				preConsumedQuota = 0
 				freeModel = true

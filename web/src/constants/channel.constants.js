@@ -216,7 +216,11 @@ export const CHANNEL_OPTIONS = [
     value: 63,
     color: 'yellow',
     label: 'Pixverse',
-  },
+  }, {
+    value: 64,
+    color: 'blue',
+    label: 'Ltx',
+  }
 ];
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

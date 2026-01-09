@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,12 +11,12 @@ import (
 )
 
 type OpenAIError struct {
-	Message    string            `json:"message"`
-	Type       string            `json:"type"`
-	Param      string            `json:"param"`
-	Code       any               `json:"code"`
-	StatusCode int               `json:"status_code,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	Message    string          `json:"message"`
+	Type       string          `json:"type"`
+	Param      string          `json:"param"`
+	Code       any             `json:"code"`
+	StatusCode int             `json:"status_code,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
 }
 
 type ClaudeError struct {
@@ -103,6 +104,15 @@ type NewAPIError struct {
 	errorType      ErrorType
 	errorCode      ErrorCode
 	StatusCode     int
+	Metadata       json.RawMessage
+}
+
+// Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
+func (e *NewAPIError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 func (e *NewAPIError) GetErrorCode() ErrorCode {
@@ -331,6 +341,13 @@ func WithOpenAIError(openAIError OpenAIError, statusCode int, ops ...NewAPIError
 		StatusCode: statusCode,
 		Err:        errors.New(openAIError.Message),
 		errorCode:  ErrorCode(code),
+	}
+	// OpenRouter
+	if len(openAIError.Metadata) > 0 {
+		openAIError.Message = fmt.Sprintf("%s (%s)", openAIError.Message, openAIError.Metadata)
+		e.Metadata = openAIError.Metadata
+		e.RelayError = openAIError
+		e.Err = errors.New(openAIError.Message)
 	}
 	for _, op := range ops {
 		op(e)

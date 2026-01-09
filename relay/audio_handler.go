@@ -84,8 +84,18 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	// https://help.aliyun.com/zh/model-studio/qwen-tts?spm=a2c4g.11186623.0.0.26e12b19qDqr2k
 	// https://console.volcengine.com/speech/service/10035/buy-word?AppID=1921851494&ActiveID=volc.seedtts.default
 	// tts 按照字符数计费
-	common.SetContextKey(c, constant.ContextKeyTTSCount, utf8.RuneCountInString(audioReq.Input))
-	postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	/*
+		common.SetContextKey(c, constant.ContextKeyTTSCount, utf8.RuneCountInString(audioReq.Input))
+		postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	*/
+	// todo fix tts
+	extraContent := []string{}
+	if usage.(*dto.Usage).CompletionTokenDetails.AudioTokens > 0 || usage.(*dto.Usage).PromptTokensDetails.AudioTokens > 0 {
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyTTSCount, utf8.RuneCountInString(audioReq.Input))
+		postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
+	}
 
 	return nil
 }

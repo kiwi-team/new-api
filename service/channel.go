@@ -99,6 +99,11 @@ func ShouldDisableChannel(channelType int, err *types.NewAPIError) bool {
 	return search
 }
 
+func IsInAutoDisableList(lowerMessage string) bool {
+	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
+	return search
+}
+
 func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
 	if !common.AutomaticEnableChannelEnabled {
 		return false

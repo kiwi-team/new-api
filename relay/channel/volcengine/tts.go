@@ -213,9 +213,9 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
 
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.GetEstimatePromptTokens(),
 	}
 
 	return usage, nil
@@ -327,9 +327,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 				common.SetContextKey(c, constant.ContextKeyAudioUrl, audioUrl)
 				common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
 				usage = &dto.Usage{
-					PromptTokens:     info.PromptTokens,
+					PromptTokens:     info.GetEstimatePromptTokens(),
 					CompletionTokens: 0,
-					TotalTokens:      info.PromptTokens,
+					TotalTokens:      info.GetEstimatePromptTokens(),
 				}
 				return usage, nil
 			}
@@ -353,9 +353,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 	common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
 	//c.Status(http.StatusOK)
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.Usage.PromptTokens, //info.PromptTokens,
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.Usage.PromptTokens, //info.PromptTokens,
 	}
 	return usage, nil
 }
@@ -535,9 +535,9 @@ func handleTTSWebSocketResponse2(c *gin.Context, requestURL string, volcRequest 
 	common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
 	//c.Status(http.StatusOK)
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(),
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.GetEstimatePromptTokens(),
 	}
 	return usage, nil
 }

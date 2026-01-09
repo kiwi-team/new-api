@@ -148,7 +148,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	} else {
-		postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+		extraContent := []string{}
+		postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
 	}
 	return nil
 }

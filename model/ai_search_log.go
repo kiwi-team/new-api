@@ -20,7 +20,8 @@ type AiSearchLog struct {
 	RelatedSearches  string `json:"related_searches" gorm:"default:''"`
 	Credits          int    `json:"credits"`
 	UseTimeSeconds   int64  `json:"use_time_seconds" gorm:"default:0"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_ai_search_created_a"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_ai_search_created_at"`
+	ClientUserId     string `json:"client_user_id" gorm:"default:'';index:idx_ai_search_client_user_id"`
 }
 
 type SerperSearchResult struct {
@@ -32,7 +33,7 @@ type SerperSearchResult struct {
 }
 
 func SaveAiSearchLog(result *SerperSearchResult, info searchCommon.SearchInfo) error {
-	return DB.Create(&AiSearchLog{
+	return LOG_DB.Create(&AiSearchLog{
 		Credits:          result.Credits,
 		KnowledgeGraph:   common.JsonStringify(result.KnowledgeGraph),
 		Organic:          common.JsonStringify(result.Organic),
@@ -45,5 +46,6 @@ func SaveAiSearchLog(result *SerperSearchResult, info searchCommon.SearchInfo) e
 		TokenId:          info.TokenId,
 		UserId:           info.UserId,
 		ChannelId:        info.ChannelId,
+		ClientUserId:     info.ClientUserId,
 	}).Error
 }

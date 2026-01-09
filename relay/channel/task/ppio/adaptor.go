@@ -121,7 +121,7 @@ func (a *TaskAdaptor) GetModelList() []string { return []string{"flux-1-kontext-
 func (a *TaskAdaptor) GetChannelName() string { return "novita" }
 
 // FetchTask fetch task status
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, ok := body["task_id"].(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid task_id")

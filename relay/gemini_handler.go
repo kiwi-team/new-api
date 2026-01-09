@@ -218,7 +218,8 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		responseStr = streamRecorder.GetRecordedString()
 	}
 
-	postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	extraContent := []string{}
+	postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
 	return nil
 }
 
@@ -317,6 +318,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		return openaiErr
 	}
 
-	postConsumeQuota(c, info, usage.(*dto.Usage), "", "", "")
+	extraContent := []string{}
+	postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, "", "")
 	return nil
 }

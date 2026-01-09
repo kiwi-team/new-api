@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -104,11 +105,22 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	var videoURL string
-	client := &http.Client{
-		Timeout: 60 * time.Second,
+	proxy := channel.GetSetting().Proxy
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create proxy client for task %s: %s", taskID, err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"message": "Failed to create proxy client",
+				"type":    "server_error",
+			},
+		})
+		return
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, "", nil)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "", nil)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create request: %s", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{

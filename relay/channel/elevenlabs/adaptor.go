@@ -154,9 +154,9 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	//c.Data(http.StatusOK, contentType, audioData)
 
 	usage = &dto.Usage{
-		PromptTokens:     info.PromptTokens,
+		PromptTokens:     info.Usage.PromptTokens, //info.PromptTokens,
 		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
+		TotalTokens:      info.Usage.PromptTokens, //info.PromptTokens,
 	}
 
 	return usage, nil

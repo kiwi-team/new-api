@@ -14,6 +14,7 @@ const (
 	TaskPlatformPPio                          = "ppio"
 	TaskPlatformFAL                           = "fal"
 	TaskPlatformPixverse                      = "pixverse"
+	TaskPlatformLtx                           = "ltx"
 )
 
 const (
@@ -22,9 +23,10 @@ const (
 
 	TaskActionGenerate          = "generate"
 	TaskActionTextGenerate      = "textGenerate"
-	TaskActionImageGenerate     = "imageGenerate"
+	TaskActionImageGenerate     = "imageGenerate" // image to video
 	TaskActionFirstTailGenerate = "firstTailGenerate"
 	TaskActionReferenceGenerate = "referenceGenerate"
+	TaskActionRemix             = "remixGenerate"
 )
 
 var SunoModel2Action = map[string]string{

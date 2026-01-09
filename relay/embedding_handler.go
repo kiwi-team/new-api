@@ -82,7 +82,8 @@ func EmbeddingHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}
-	postConsumeQuota(c, info, usage.(*dto.Usage), "", "", "")
+	extraContent := []string{}
+	postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, "", "")
 	//postConsumeQuota(c, info, usage.(*dto.Usage), "")
 	return nil
 }

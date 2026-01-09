@@ -61,6 +61,7 @@ const (
 	ChannelTypeFAL              = 61
 	ChannelTypeReplicate        = 62
 	ChannelTypePixverse         = 63
+	ChannelTypeLtx              = 64
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -131,6 +132,7 @@ var ChannelBaseURLs = []string{
 	"https://queue.fal.run",             //61
 	"https://api.replicate.com",         //62
 	"https://app-api.pixverse.ai",       //63
+	"https://api.ltx.video",             //64
 }
 
 var ChannelTypeNames = map[int]string{
@@ -191,6 +193,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeFAL:            "Fal",
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypePixverse:       "Pixverse",
+	ChannelTypeLtx:            "Ltx",
 }
 
 func GetChannelTypeName(channelType int) string {

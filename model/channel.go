@@ -320,6 +320,9 @@ func (channel *Channel) Save() error {
 }
 
 func (channel *Channel) SaveWithoutKey() error {
+	if channel.Id == 0 {
+		return errors.New("channel ID is 0")
+	}
 	return DB.Omit("key").Save(channel).Error
 }
 
@@ -415,7 +418,7 @@ func SearchChannels(keyword string, group string, model string, idSort bool) ([]
 }
 
 func GetChannelById(id int, selectAll bool) (*Channel, error) {
-	channel := &Channel{Id: id}
+	channel := &Channel{}
 	var err error = nil
 	if selectAll {
 		err = DB.First(channel, "id = ?", id).Error
@@ -425,7 +428,7 @@ func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	if channel == nil {
+	if channel.Id == 0 {
 		return nil, errors.New("channel not found")
 	}
 	return channel, nil

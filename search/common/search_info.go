@@ -31,6 +31,7 @@ type SearchInfo struct {
 	RequestURLPath   string        `json:"request_url_path"`
 	SearchParameters *SearchParams `json:"search_parameters"`
 	UseTimeSeconds   int64         `json:"use_time_seconds"`
+	ClientUserId     string        `json:"client_user_id,omitempty"`
 }
 
 func GetSearchInfo(c *gin.Context) *SearchInfo {
@@ -69,5 +70,6 @@ func GetSearchInfo(c *gin.Context) *SearchInfo {
 		ChannelKey:       common.GetContextKeyString(c, constant.ContextKeyChannelKey),
 		SearchParameters: searchParams,
 		RequestURLPath:   c.Request.URL.String(),
+		ClientUserId:     common.GetContextKeyString(c, constant.ContextKeyClientUserId),
 	}
 }

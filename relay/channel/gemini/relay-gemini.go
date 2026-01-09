@@ -21,8 +21,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,6 +35,7 @@ var geminiSupportedMimeTypes = map[string]bool{
 	"audio/x-wav":     true,
 	"image/png":       true,
 	"image/jpeg":      true,
+	"image/jpg":       true, // support old image/jpeg
 	"image/webp":      true,
 	"text/plain":      true,
 	"video/mov":       true,
@@ -113,6 +114,7 @@ func clampThinkingBudget(modelName string, budget int) int {
 // "effort": "high" - Allocates a large portion of tokens for reasoning (approximately 80% of max_tokens)
 // "effort": "medium" - Allocates a moderate portion of tokens (approximately 50% of max_tokens)
 // "effort": "low" - Allocates a smaller portion of tokens (approximately 20% of max_tokens)
+// "effort": "minimal" - Allocates a minimal portion of tokens (approximately 5% of max_tokens)
 func clampThinkingBudgetByEffort(modelName string, effort string) int {
 	isNew25Pro := isNew25ProModel(modelName)
 	is25FlashLite := is25FlashLiteModel(modelName)
@@ -133,6 +135,8 @@ func clampThinkingBudgetByEffort(modelName string, effort string) int {
 		maxBudget = maxBudget * 50 / 100
 	case "low":
 		maxBudget = maxBudget * 20 / 100
+	case "minimal":
+		maxBudget = maxBudget * 5 / 100
 	}
 	return clampThinkingBudget(modelName, maxBudget)
 }
@@ -193,6 +197,12 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 					ThinkingBudget: common.GetPointer(0),
 				}
 			}
+		} else if _, level, ok := reasoning.TrimEffortSuffix(info.UpstreamModelName); ok && level != "" {
+			geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
+				IncludeThoughts: true,
+				ThinkingLevel:   level,
+			}
+			info.ReasoningEffort = level
 		}
 	}
 }
@@ -406,7 +416,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 	}
 
 	for _, message := range textRequest.Messages {
-		if message.Role == "system" {
+		if message.Role == "system" || message.Role == "developer" {
 			msg := strings.TrimSpace(message.StringContent())
 			if msg != "" {
 				system_content = append(system_content, msg)
@@ -1342,7 +1352,7 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if usage.CompletionTokens <= 0 {
 		str := responseText.String()
 		if len(str) > 0 {
-			usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.PromptTokens)
+			usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		} else {
 			usage = &dto.Usage{}
 		}
@@ -1515,11 +1525,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// Google has not yet clarified how embedding models will be billed
 	// refer to openai billing method to use input tokens billing
 	// https://platform.openai.com/docs/guides/embeddings#what-are-embeddings
-	usage := &dto.Usage{
-		PromptTokens:     info.PromptTokens,
-		CompletionTokens: 0,
-		TotalTokens:      info.PromptTokens,
-	}
+	usage := service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
 	openAIResponse.Usage = *usage
 
 	jsonResponse, jsonErr := common.Marshal(openAIResponse)

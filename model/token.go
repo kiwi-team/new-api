@@ -34,6 +34,7 @@ type Token struct {
 	ChannelRules       string         `json:"channel_rules" gorm:"default:'{}'"`  // 这个key配置的渠道规则
 	ChannelRatios      string         `json:"channel_ratios" gorm:"default:'{}'"` // 这个key下面，配置渠道的倍率
 	Group              string         `json:"group" gorm:"default:''"`
+	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
@@ -41,26 +42,26 @@ func (token *Token) Clean() {
 	token.Key = ""
 }
 
-func (token *Token) GetIpLimitsMap() map[string]any {
+func (token *Token) GetIpLimits() []string {
 	// delete empty spaces
 	//split with \n
-	ipLimitsMap := make(map[string]any)
+	ipLimits := make([]string, 0)
 	if token.AllowIps == nil {
-		return ipLimitsMap
+		return ipLimits
 	}
 	cleanIps := strings.ReplaceAll(*token.AllowIps, " ", "")
 	if cleanIps == "" {
-		return ipLimitsMap
+		return ipLimits
 	}
 	ips := strings.Split(cleanIps, "\n")
 	for _, ip := range ips {
 		ip = strings.TrimSpace(ip)
 		ip = strings.ReplaceAll(ip, ",", "")
-		if common.IsIP(ip) {
-			ipLimitsMap[ip] = true
+		if ip != "" {
+			ipLimits = append(ipLimits, ip)
 		}
 	}
-	return ipLimitsMap
+	return ipLimits
 }
 
 func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
@@ -169,7 +170,12 @@ func ValidateUserToken(key string) (token *Token, err error) {
 		}
 		return token, nil
 	}
-	return nil, errors.New("无效的令牌")
+	common.SysLog("ValidateUserToken: failed to get token: " + err.Error())
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("无效的令牌")
+	} else {
+		return nil, errors.New("无效的令牌，数据库查询出错，请联系管理员")
+	}
 }
 
 func GetTokenByIds(id int, userId int) (*Token, error) {
@@ -242,7 +248,8 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_ratios").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_ratios", "cross_group_retry").Updates(token).Error
+	//"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
 	return err
 }
 

@@ -4,10 +4,12 @@ type ContextKey string
 
 const (
 	ContextKeyCompletionsResponses            = "completions_responses"
-	ContextKeyOriginalModel        ContextKey = "original_model"
-	ContextKeyRequestStartTime     ContextKey = "request_start_time"
 	ContextKeyTokenCountMeta       ContextKey = "token_count_meta"
 	ContextKeyPromptTokens         ContextKey = "prompt_tokens"
+	ContextKeyEstimatedTokens      ContextKey = "estimated_tokens"
+
+	ContextKeyOriginalModel    ContextKey = "original_model"
+	ContextKeyRequestStartTime ContextKey = "request_start_time"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
@@ -18,6 +20,7 @@ const (
 	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
 	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
 	ContextKeyTokenAllowIps          ContextKey = "token_allow_ips"
+	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
 
 	/* channel related keys */
 	ContextKeyChannelRatio                      ContextKey = "channel_ratio"
@@ -38,6 +41,10 @@ const (
 	ContextKeyChannelIsMultiKey                 ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex              ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey                        ContextKey = "channel_key"
+
+	ContextKeyAutoGroup           ContextKey = "auto_group"
+	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
+	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
 
 	/* user related keys */
 	ContextKeyUserId       ContextKey = "id"
