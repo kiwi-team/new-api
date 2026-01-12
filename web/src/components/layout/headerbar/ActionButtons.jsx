@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import { Button } from '@douyinfe/semi-ui';
 import NewYearButton from './NewYearButton';
 import NotificationButton from './NotificationButton';
 import ThemeToggle from './ThemeToggle';
@@ -39,7 +40,17 @@ const ActionButtons = ({
   logout,
   navigate,
   t,
+  onlyLogout = false,
 }) => {
+  if (onlyLogout) {
+    return (
+      <div className='flex items-center gap-2 md:gap-3'>
+        <Button type='primary' onClick={logout}>
+          {t('退出')}
+        </Button>
+      </div>
+    );
+  }
   return (
     <div className='flex items-center gap-2 md:gap-3'>
       <NewYearButton isNewYear={isNewYear} />

@@ -176,6 +176,21 @@ func RootAuth() func(c *gin.Context) {
 	}
 }
 
+func ToioAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleCommonUser)
+		session := sessions.Default(c)
+		flag := session.Get("is_toio")
+		if flag != true {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无权进行此操作，未通过 toio 登录",
+			})
+			c.Abort()
+			return
+		}
+	}
+}
 func WssAuth(c *gin.Context) {
 
 }
@@ -319,6 +334,10 @@ func TokenAuth() func(c *gin.Context) {
 		if common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
 			if len(clientUserId) <= 8 && !isAiceKey {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
+				return
+			}
+			if ok, err1 := model.CheckCliendUserQuota(clientUserId); !ok || err1 != nil {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，预算不足，请联系管理员")
 				return
 			}
 		}

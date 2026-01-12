@@ -53,6 +53,9 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     navigate,
     t,
   } = useHeaderBar({ onMobileMenuToggle, drawerOpen });
+  const toioOnlyLogout =
+    (userState?.user && userState.user.toio_registered === 1) ||
+    localStorage.getItem('is_toio') === 'true';
 
   const {
     noticeVisible,
@@ -76,53 +79,77 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
 
       <div className='w-full px-2'>
         <div className='flex items-center justify-between h-16'>
-          <div className='flex items-center'>
-            <MobileMenuButton
-              isConsoleRoute={isConsoleRoute}
-              isMobile={isMobile}
-              drawerOpen={drawerOpen}
-              collapsed={collapsed}
-              onToggle={handleMobileMenuToggle}
-              t={t}
-            />
+          {toioOnlyLogout ? (
+            <div className='flex-1 flex justify-end'>
+              <ActionButtons
+                isNewYear={isNewYear}
+                unreadCount={unreadCount}
+                onNoticeOpen={handleNoticeOpen}
+                theme={theme}
+                onThemeToggle={handleThemeToggle}
+                currentLang={currentLang}
+                onLanguageChange={handleLanguageChange}
+                userState={userState}
+                isLoading={isLoading}
+                isMobile={isMobile}
+                isSelfUseMode={isSelfUseMode}
+                logout={logout}
+                navigate={navigate}
+                t={t}
+                onlyLogout={true}
+              />
+            </div>
+          ) : (
+            <>
+              <div className='flex items-center'>
+                <MobileMenuButton
+                  isConsoleRoute={isConsoleRoute}
+                  isMobile={isMobile}
+                  drawerOpen={drawerOpen}
+                  collapsed={collapsed}
+                  onToggle={handleMobileMenuToggle}
+                  t={t}
+                />
 
-            <HeaderLogo
-              isMobile={isMobile}
-              isConsoleRoute={isConsoleRoute}
-              logo={logo}
-              logoLoaded={logoLoaded}
-              isLoading={isLoading}
-              systemName={systemName}
-              isSelfUseMode={isSelfUseMode}
-              isDemoSiteMode={isDemoSiteMode}
-              t={t}
-            />
-          </div>
+                <HeaderLogo
+                  isMobile={isMobile}
+                  isConsoleRoute={isConsoleRoute}
+                  logo={logo}
+                  logoLoaded={logoLoaded}
+                  isLoading={isLoading}
+                  systemName={systemName}
+                  isSelfUseMode={isSelfUseMode}
+                  isDemoSiteMode={isDemoSiteMode}
+                  t={t}
+                />
+              </div>
 
-          <Navigation
-            mainNavLinks={mainNavLinks}
-            isMobile={isMobile}
-            isLoading={isLoading}
-            userState={userState}
-            pricingRequireAuth={pricingRequireAuth}
-          />
+              <Navigation
+                mainNavLinks={mainNavLinks}
+                isMobile={isMobile}
+                isLoading={isLoading}
+                userState={userState}
+                pricingRequireAuth={pricingRequireAuth}
+              />
 
-          <ActionButtons
-            isNewYear={isNewYear}
-            unreadCount={unreadCount}
-            onNoticeOpen={handleNoticeOpen}
-            theme={theme}
-            onThemeToggle={handleThemeToggle}
-            currentLang={currentLang}
-            onLanguageChange={handleLanguageChange}
-            userState={userState}
-            isLoading={isLoading}
-            isMobile={isMobile}
-            isSelfUseMode={isSelfUseMode}
-            logout={logout}
-            navigate={navigate}
-            t={t}
-          />
+              <ActionButtons
+                isNewYear={isNewYear}
+                unreadCount={unreadCount}
+                onNoticeOpen={handleNoticeClose}
+                theme={theme}
+                onThemeToggle={handleThemeToggle}
+                currentLang={currentLang}
+                onLanguageChange={handleLanguageChange}
+                userState={userState}
+                isLoading={isLoading}
+                isMobile={isMobile}
+                isSelfUseMode={isSelfUseMode}
+                logout={logout}
+                navigate={navigate}
+                t={t}
+              />
+            </>
+          )}
         </div>
       </div>
     </header>

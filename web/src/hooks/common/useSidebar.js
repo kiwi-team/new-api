@@ -38,6 +38,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     log: true,
     midjourney: true,
     task: true,
+    errorlog: true,
   },
   personal: {
     enabled: true,
@@ -52,6 +53,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     redemption: true,
     user: true,
     setting: true,
+    'cuquota': true,
   },
 };
 

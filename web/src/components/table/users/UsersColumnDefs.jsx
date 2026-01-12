@@ -336,6 +336,21 @@ export const getUsersColumns = ({
       },
     },
     {
+      title: t('TOIO'),
+      dataIndex: 'toio_registered',
+      render: (text, record) => {
+        return record.toio_registered === 1 ? (
+          <Tag color='green' shape='circle' size='small'>
+            {t('已标记')}
+          </Tag>
+        ) : (
+          <Tag color='white' shape='circle' size='small'>
+            {t('未标记')}
+          </Tag>
+        );
+      },
+    },
+    {
       title: t('邀请信息'),
       dataIndex: 'invite',
       render: (text, record, index) => renderInviteInfo(text, record, t),

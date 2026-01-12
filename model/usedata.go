@@ -129,8 +129,10 @@ func SaveQuotaDataCache() {
 			//quotaDataDB.Quota += quotaData.Quota
 			//DB.Table("quota_data").Save(quotaDataDB)
 			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.ClientUserId)
+			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
+			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		}
 	}
 	CacheQuotaData = make(map[string]*QuotaData)
@@ -145,9 +147,11 @@ type QuotaDataStatistics struct {
 	TotalQuota      float64 `json:"total_quota"`
 	TotalPrompt     int64   `json:"total_prompt"`
 	TotalCompletion int64   `json:"total_completion"`
+	FixedQuota      int     `json:"fixed_quota"`
+	TempQuota       int     `json:"temp_quota"`
 }
 
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string) ([]*QuotaDataStatistics, error) {
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, expandModels bool, expandDates bool) ([]*QuotaDataStatistics, error) {
 	var statistics []*QuotaDataStatistics
 	var err error
 
@@ -163,8 +167,22 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		dateField = "DATE(created_at)"
 	}
 
+	var selectFields string
+	if expandDates {
+		if expandModels {
+			selectFields = dateField + " as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
+		} else {
+			selectFields = dateField + " as date, client_user_id, '' as model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
+		}
+	} else {
+		if expandModels {
+			selectFields = "'' as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
+		} else {
+			selectFields = "'' as date, client_user_id, '' as model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
+		}
+	}
 	tx := DB.Model(&QuotaData{}).
-		Select(dateField+" as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion").
+		Select(selectFields).
 		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
 
 	if modelName != "" {
@@ -174,12 +192,34 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		tx = tx.Where("client_user_id = ?", clientUserId)
 	}
 
-	err = tx.Group("date, client_user_id, model_name").
-		Order("date DESC").
-		Scan(&statistics).Error
+	if expandDates {
+		if expandModels {
+			err = tx.Group("date, client_user_id, model_name").
+				Order("date DESC").
+				Scan(&statistics).Error
+		} else {
+			err = tx.Group("date, client_user_id").
+				Order("date DESC").
+				Scan(&statistics).Error
+		}
+	} else {
+		if expandModels {
+			err = tx.Group("client_user_id, model_name").
+				Scan(&statistics).Error
+		} else {
+			err = tx.Group("client_user_id").
+				Scan(&statistics).Error
+		}
+	}
 
 	for _, s := range statistics {
 		s.TotalQuota /= common.QuotaPerUnit
+		if !expandModels && s.ClientUserId != "" {
+			var cu CliendUserQuota
+			_ = DB.Where("client_user_id = ?", s.ClientUserId).First(&cu).Error
+			s.FixedQuota = cu.FixedQuota
+			s.TempQuota = cu.TempQuota
+		}
 	}
 
 	return statistics, err

@@ -91,6 +91,11 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	if strings.Contains(c.Request.URL.Path, "/toio/login") || user.ToioRegistered == 1 {
+		session := sessions.Default(c)
+		session.Set("is_toio", true)
+		_ = session.Save()
+	}
 	setupLogin(&user, c)
 }
 
@@ -114,12 +119,13 @@ func setupLogin(user *model.User, c *gin.Context) {
 		"message": "",
 		"success": true,
 		"data": map[string]any{
-			"id":           user.Id,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"role":         user.Role,
-			"status":       user.Status,
-			"group":        user.Group,
+			"id":              user.Id,
+			"username":        user.Username,
+			"display_name":    user.DisplayName,
+			"role":            user.Role,
+			"status":          user.Status,
+			"group":           user.Group,
+			"toio_registered": user.ToioRegistered,
 		},
 	})
 }
@@ -207,11 +213,15 @@ func Register(c *gin.Context) {
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
 	cleanUser := model.User{
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.Username,
-		InviterId:   inviterId,
-		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
+		Username:       user.Username,
+		Password:       user.Password,
+		DisplayName:    user.Username,
+		InviterId:      inviterId,
+		Role:           common.RoleCommonUser, // 明确设置角色为普通用户
+		ToioRegistered: 1,                     // 标记为已注册Toio
+	}
+	if strings.Contains(c.Request.URL.Path, "/toio/register") {
+		cleanUser.ToioRegistered = 1
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
@@ -447,7 +457,7 @@ func GetSelf(c *gin.Context) {
 	user.Remark = ""
 
 	// 计算用户权限信息
-	permissions := calculateUserPermissions(userRole)
+	permissions := calculateUserPermissions(userRole, user.ToioRegistered)
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
@@ -479,6 +489,7 @@ func GetSelf(c *gin.Context) {
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
+		"toio_registered":   user.ToioRegistered,        // 新增Toio注册状态字段
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -490,8 +501,18 @@ func GetSelf(c *gin.Context) {
 }
 
 // 计算用户权限的辅助函数
-func calculateUserPermissions(userRole int) map[string]interface{} {
+func calculateUserPermissions(userRole int, toioRegistered int) map[string]interface{} {
 	permissions := map[string]interface{}{}
+	if toioRegistered == 1 {
+		// 注册Toio的用户，只能访问聊天区域
+		permissions["sidebar_modules"] = map[string]interface{}{
+			"console": map[string]interface{}{
+				"quotaStatistics": true,
+				"cuquota":         true,
+			},
+		}
+		return permissions
+	}
 
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
@@ -648,6 +669,10 @@ func UpdateUser(c *gin.Context) {
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
+	}
+	// 仅 Root 用户允许修改 toio_registered；否则保持原值
+	if myRole != common.RoleRootUser {
+		updatedUser.ToioRegistered = originUser.ToioRegistered
 	}
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
@@ -874,6 +899,10 @@ func CreateUser(c *gin.Context) {
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
+	}
+	// 仅 Root 用户可以设置 toio_registered
+	if myRole == common.RoleRootUser && user.ToioRegistered == 1 {
+		cleanUser.ToioRegistered = 1
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)

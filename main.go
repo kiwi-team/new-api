@@ -92,6 +92,10 @@ func main() {
 
 	// 数据看板
 	go model.UpdateQuotaData()
+	// UID临时预算过期归零
+	go model.ResetExpiredCliendUserTempQuota()
+	// 飞书机器人消耗告警
+	go controller.FeishuQuotaAlerts()
 
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))

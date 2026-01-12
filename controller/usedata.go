@@ -151,8 +151,10 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	expandModels := c.Query("expand_models") == "true"
+	expandDates := c.Query("expand_dates") == "true"
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -171,8 +173,10 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	expandModels := c.Query("expand_models") == "true"
+	expandDates := c.Query("expand_dates") == "true"
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -184,18 +188,66 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 
 	writer := csv.NewWriter(c.Writer)
 	// Header
-	writer.Write([]string{"Date", "Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
+	if expandDates {
+		if expandModels {
+			writer.Write([]string{"Date", "Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
+		} else {
+			writer.Write([]string{"Date", "Client User ID", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget"})
+		}
+	} else {
+		if expandModels {
+			writer.Write([]string{"Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
+		} else {
+			writer.Write([]string{"Client User ID", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget"})
+		}
+	}
 
 	for _, stat := range statistics {
-		writer.Write([]string{
-			stat.Date,
-			stat.ClientUserId,
-			stat.ModelName,
-			strconv.FormatInt(stat.TotalCount, 10),
-			strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
-			strconv.FormatInt(stat.TotalPrompt, 10),
-			strconv.FormatInt(stat.TotalCompletion, 10),
-		})
+		if expandDates {
+			if expandModels {
+				writer.Write([]string{
+					stat.Date,
+					stat.ClientUserId,
+					stat.ModelName,
+					strconv.FormatInt(stat.TotalCount, 10),
+					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+					strconv.FormatInt(stat.TotalPrompt, 10),
+					strconv.FormatInt(stat.TotalCompletion, 10),
+				})
+			} else {
+				writer.Write([]string{
+					stat.Date,
+					stat.ClientUserId,
+					strconv.FormatInt(stat.TotalCount, 10),
+					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+					strconv.FormatInt(stat.TotalPrompt, 10),
+					strconv.FormatInt(stat.TotalCompletion, 10),
+					strconv.Itoa(stat.FixedQuota),
+					strconv.Itoa(stat.TempQuota),
+				})
+			}
+		} else {
+			if expandModels {
+				writer.Write([]string{
+					stat.ClientUserId,
+					stat.ModelName,
+					strconv.FormatInt(stat.TotalCount, 10),
+					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+					strconv.FormatInt(stat.TotalPrompt, 10),
+					strconv.FormatInt(stat.TotalCompletion, 10),
+				})
+			} else {
+				writer.Write([]string{
+					stat.ClientUserId,
+					strconv.FormatInt(stat.TotalCount, 10),
+					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+					strconv.FormatInt(stat.TotalPrompt, 10),
+					strconv.FormatInt(stat.TotalCompletion, 10),
+					strconv.Itoa(stat.FixedQuota),
+					strconv.Itoa(stat.TempQuota),
+				})
+			}
+		}
 	}
 	writer.Flush()
 }

@@ -47,6 +47,7 @@ type User struct {
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	ToioRegistered   int            `json:"toio_registered" gorm:"type:int;default:0;index"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -458,11 +459,12 @@ func (user *User) Edit(updatePassword bool) error {
 
 	newUser := *user
 	updates := map[string]interface{}{
-		"username":     newUser.Username,
-		"display_name": newUser.DisplayName,
-		"group":        newUser.Group,
-		"quota":        newUser.Quota,
-		"remark":       newUser.Remark,
+		"username":        newUser.Username,
+		"display_name":    newUser.DisplayName,
+		"group":           newUser.Group,
+		"quota":           newUser.Quota,
+		"remark":          newUser.Remark,
+		"toio_registered": newUser.ToioRegistered,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

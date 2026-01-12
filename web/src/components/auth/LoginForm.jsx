@@ -170,7 +170,12 @@ const LoginForm = () => {
         localStorage.setItem('user', JSON.stringify(data));
         setUserData(data);
         updateAPI();
-        navigate('/');
+        if (data?.toio_registered === 1) {
+          localStorage.setItem('is_toio', 'true');
+          navigate('/console/quota-statistics');
+        } else {
+          navigate('/console');
+        }
         showSuccess('登录成功！');
         setShowWeChatLoginModal(false);
       } else {
@@ -227,7 +232,12 @@ const LoginForm = () => {
               centered: true,
             });
           }
-          navigate('/console');
+          if (data?.toio_registered === 1) {
+            localStorage.setItem('is_toio', 'true');
+            navigate('/console/quota-statistics');
+          } else {
+            navigate('/console');
+          }
         } else {
           showError(message);
         }
@@ -272,7 +282,12 @@ const LoginForm = () => {
         showSuccess('登录成功！');
         setUserData(data);
         updateAPI();
-        navigate('/');
+        if (data?.toio_registered === 1) {
+          localStorage.setItem('is_toio', 'true');
+          navigate('/console/quota-statistics');
+        } else {
+          navigate('/console');
+        }
       } else {
         showError(message);
       }
@@ -411,7 +426,12 @@ const LoginForm = () => {
         setUserData(finish.data);
         updateAPI();
         showSuccess('登录成功！');
-        navigate('/console');
+        if (finish.data?.toio_registered === 1) {
+          localStorage.setItem('is_toio', 'true');
+          navigate('/console/quota-statistics');
+        } else {
+          navigate('/console');
+        }
       } else {
         showError(finish.message || 'Passkey 登录失败，请重试');
       }
@@ -446,7 +466,12 @@ const LoginForm = () => {
     setUserData(data);
     updateAPI();
     showSuccess('登录成功！');
-    navigate('/console');
+    if (data?.toio_registered === 1) {
+      localStorage.setItem('is_toio', 'true');
+      navigate('/console/quota-statistics');
+    } else {
+      navigate('/console');
+    }
   };
 
   // 返回登录页面

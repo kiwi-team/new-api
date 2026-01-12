@@ -17,13 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { lazy, Suspense, useContext, useMemo } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import React, { lazy, Suspense, useContext, useMemo, useEffect } from 'react';
+import { Route, Routes, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, isRoot } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
+import ToioRegisterForm from './components/auth/ToioRegisterForm';
 import LoginForm from './components/auth/LoginForm';
+import ToioLoginForm from './components/auth/ToioLoginForm';
 import NotFound from './pages/NotFound';
 import Forbidden from './pages/Forbidden';
 import Setting from './pages/Setting';
@@ -52,6 +54,7 @@ import SetupCheck from './components/layout/SetupCheck';
 import ChannelByModel from './pages/Channel/ChannelByModel.js';
 import EditChannel from './pages/Channel/EditChannel.js';
 import QuotaStatistics from './pages/QuotaStatistics';
+import CliendUserQuotaPage from './pages/CliendUserQuota';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -61,7 +64,9 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 
 function App() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [statusState] = useContext(StatusContext);
+  const toioMode = (localStorage.getItem('is_toio') === 'true') && !isRoot();
 
   // 获取模型广场权限配置
   const pricingRequireAuth = useMemo(() => {
@@ -87,6 +92,13 @@ function App() {
 
   return (
     <SetupCheck>
+      {toioMode && (() => {
+        const allowed = ['/console/quota-statistics', '/console/cliend-user-quota'];
+        if (!allowed.includes(location.pathname)) {
+          return <Navigate to='/console/quota-statistics' replace />;
+        }
+        return null;
+      })()}
       <Routes>
         <Route
           path='/'
@@ -180,9 +192,29 @@ function App() {
         <Route
           path='/console/quota-statistics'
           element={
-            <AdminRoute>
-              <QuotaStatistics />
-            </AdminRoute>
+            toioMode ? (
+              <PrivateRoute>
+                <QuotaStatistics />
+              </PrivateRoute>
+            ) : (
+              <AdminRoute>
+                <QuotaStatistics />
+              </AdminRoute>
+            )
+          }
+        />
+        <Route
+          path='/console/cliend-user-quota'
+          element={
+            toioMode ? (
+              <PrivateRoute>
+                <CliendUserQuotaPage />
+              </PrivateRoute>
+            ) : (
+              <AdminRoute>
+                <CliendUserQuotaPage />
+              </AdminRoute>
+            )
           }
         />
         <Route
@@ -212,11 +244,31 @@ function App() {
           }
         />
         <Route
+          path='/toio/login'
+          element={
+            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <AuthRedirect>
+                <ToioLoginForm />
+              </AuthRedirect>
+            </Suspense>
+          }
+        />
+        <Route
           path='/register'
           element={
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
               <AuthRedirect>
                 <RegisterForm />
+              </AuthRedirect>
+            </Suspense>
+          }
+        />
+        <Route
+          path='/toio/register'
+          element={
+            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <AuthRedirect>
+                <ToioRegisterForm />
               </AuthRedirect>
             </Suspense>
           }

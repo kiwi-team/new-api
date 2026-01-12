@@ -25,6 +25,7 @@ import {
   showSuccess,
   renderQuota,
   renderQuotaWithPrompt,
+  isRoot,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
@@ -99,6 +100,9 @@ const EditUserModal = (props) => {
     const { success, message, data } = res.data;
     if (success) {
       data.password = '';
+      if (typeof data.toio_registered !== 'undefined') {
+        data.toio_registered = data.toio_registered === 1;
+      }
       formApiRef.current?.setValues({ ...getInitValues(), ...data });
     } else {
       showError(message);
@@ -117,10 +121,14 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     if (typeof payload.quota === 'string')
       payload.quota = parseInt(payload.quota) || 0;
+    if (typeof payload.toio_registered !== 'undefined') {
+      payload.toio_registered = payload.toio_registered ? 1 : 0;
+    }
     if (userId) {
       payload.id = parseInt(userId);
     }
     const url = userId ? `/api/user/` : `/api/user/self`;
+    // 仅 Root 允许修改 toio_registered，否则由后端忽略/保持
     const res = await API.put(url, payload);
     const { success, message } = res.data;
     if (success) {
@@ -306,6 +314,16 @@ const EditUserModal = (props) => {
                           />
                         </Form.Slot>
                       </Col>
+                      {isRoot() && (
+                        <Col span={24}>
+                          <Form.Switch
+                            field='toio_registered'
+                            label={t('TOIO注册')}
+                            checkedText={t('是')}
+                            uncheckedText={t('否')}
+                          />
+                        </Col>
+                      )}
                     </Row>
                   </Card>
                 )}

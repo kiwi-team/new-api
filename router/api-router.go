@@ -118,6 +118,13 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 			}
 		}
+		toioRoot := router.Group("/toio")
+		toioRoot.Use(gzip.Gzip(gzip.DefaultCompression))
+		toioRoot.Use(middleware.GlobalAPIRateLimit())
+		{
+			toioRoot.POST("/login", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Login)
+			toioRoot.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
@@ -220,6 +227,13 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 		dataRoute.GET("/statistics", middleware.AdminAuth(), controller.GetQuotaDataStatistics)
 		dataRoute.GET("/statistics/export", middleware.AdminAuth(), controller.ExportQuotaDataStatistics)
+		toioDataRoute := apiRouter.Group("/toio/data")
+		toioDataRoute.Use(middleware.ToioAuth())
+		{
+			toioDataRoute.GET("/", controller.GetAllQuotaDates)
+			toioDataRoute.GET("/statistics", controller.GetQuotaDataStatistics)
+			toioDataRoute.GET("/statistics/export", controller.ExportQuotaDataStatistics)
+		}
 
 		logRoute.Use(middleware.CORS())
 		{
@@ -304,6 +318,18 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.PUT("/:id/name", controller.UpdateDeploymentName)
 			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
+		}
+
+		cuQuotaRoute := apiRouter.Group("/cliend_user_quota")
+		cuQuotaRoute.Use(middleware.AdminAuth())
+		{
+			cuQuotaRoute.GET("/", controller.GetAllCliendUserQuota)
+			cuQuotaRoute.GET("/search", controller.SearchCliendUserQuota)
+			cuQuotaRoute.GET("/logs", controller.GetCliendUserQuotaLogs)
+			cuQuotaRoute.GET("/:id", controller.GetCliendUserQuota)
+			cuQuotaRoute.POST("/", controller.CreateCliendUserQuota)
+			cuQuotaRoute.PUT("/", controller.UpdateCliendUserQuota)
+			cuQuotaRoute.DELETE("/:id", controller.DeleteCliendUserQuota)
 		}
 	}
 }

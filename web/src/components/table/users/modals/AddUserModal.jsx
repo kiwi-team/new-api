@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState, useRef } from 'react';
-import { API, showError, showSuccess } from '../../../../helpers';
+import { API, showError, showSuccess, isRoot } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
   Button,
@@ -32,6 +32,7 @@ import {
   Form,
   Row,
   Col,
+  Switch,
 } from '@douyinfe/semi-ui';
 import { IconSave, IconClose, IconUserAdd } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
@@ -49,11 +50,16 @@ const AddUserModal = (props) => {
     display_name: '',
     password: '',
     remark: '',
+    toio_registered: false,
   });
 
   const submit = async (values) => {
     setLoading(true);
-    const res = await API.post(`/api/user/`, values);
+    const payload = {
+      ...values,
+      toio_registered: values.toio_registered ? 1 : 0,
+    };
+    const res = await API.post(`/api/user/`, payload);
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('用户账户创建成功！'));
@@ -175,6 +181,20 @@ const AddUserModal = (props) => {
                   </Col>
                 </Row>
               </Card>
+              {isRoot() && (
+                <Card className='!rounded-2xl shadow-sm border-0 mt-2'>
+                  <Row gutter={12}>
+                    <Col span={24}>
+                      <Form.Switch
+                        field='toio_registered'
+                        label={t('TOIO注册')}
+                        checkedText={t('是')}
+                        uncheckedText={t('否')}
+                      />
+                    </Col>
+                  </Row>
+                </Card>
+              )}
             </div>
           </Form>
         </Spin>

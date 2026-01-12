@@ -51,6 +51,7 @@ const routerMap = {
   playground: '/console/playground',
   personal: '/console/personal',
   quotaStatistics: '/console/quota-statistics',
+  cuquota: '/console/cliend-user-quota',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -69,56 +70,31 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const [openedKeys, setOpenedKeys] = useState([]);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
+  const toioMode = (() => {
+    try {
+      const u = localStorage.getItem('user');
+      if (u) {
+        const parsed = JSON.parse(u);
+        if (parsed?.toio_registered === 1) return !isRoot();
+      }
+    } catch {}
+    return (localStorage.getItem('is_toio') === 'true') && !isRoot();
+  })();
 
   const workspaceItems = useMemo(() => {
+    if (toioMode) {
+      return [
+        { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: '' },
+      ];
+    }
     const items = [
-      {
-        text: t('数据看板'),
-        itemKey: 'detail',
-        to: '/detail',
-        className:
-          localStorage.getItem('enable_data_export') === 'true'
-            ? ''
-            : 'tableHiddle',
-      },
-      {
-        text: t('令牌管理'),
-        itemKey: 'token',
-        to: '/token',
-      },
-      {
-        text: t('使用日志'),
-        itemKey: 'log',
-        to: '/log',
-      },
-      {
-        text: t('错误日志'),
-        itemKey: 'errorlog',
-        to: '/errorlog',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('绘图日志'),
-        itemKey: 'midjourney',
-        to: '/midjourney',
-        className:
-          localStorage.getItem('enable_drawing') === 'true'
-            ? ''
-            : 'tableHiddle',
-      },
-      {
-        text: t('任务日志'),
-        itemKey: 'task',
-        to: '/task',
-        className:
-          localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
-      },
-      {
-        text: t('消耗统计'),
-        itemKey: 'quotaStatistics',
-        to: '/quota-statistics',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
+      { text: t('数据看板'), itemKey: 'detail', to: '/detail', className: localStorage.getItem('enable_data_export') === 'true' ? '' : 'tableHiddle' },
+      { text: t('令牌管理'), itemKey: 'token', to: '/token' },
+      { text: t('使用日志'), itemKey: 'log', to: '/log' },
+      { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
+      { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
+      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isAdmin() ? '' : 'tableHiddle' },
     ];
 
     // 根据配置过滤项目
@@ -135,6 +111,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_task'),
     t,
     isModuleVisible,
+    toioMode,
   ]);
 
   const financeItems = useMemo(() => {
@@ -161,49 +138,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   }, [t, isModuleVisible]);
 
   const adminItems = useMemo(() => {
+    if (toioMode) {
+      return [
+        { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: '' },
+      ];
+    }
     const items = [
-      {
-        text: t('渠道管理'),
-        itemKey: 'channel',
-        to: '/channel',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      // {
-      //   text: t('模型-渠道'),
-      //   itemKey: 'channelByModel',
-      //   to: '/console/channel/model',
-      //   className: isAdmin() ? '' : 'tableHiddle',
-      // },
-      {
-        text: t('模型管理'),
-        itemKey: 'models',
-        to: '/console/models',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('模型部署'),
-        itemKey: 'deployment',
-        to: '/deployment',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('兑换码管理'),
-        itemKey: 'redemption',
-        to: '/redemption',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('用户管理'),
-        itemKey: 'user',
-        to: '/user',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('系统设置'),
-        itemKey: 'setting',
-        to: '/setting',
-        className: isRoot() ? '' : 'tableHiddle',
-      },
+      { text: t('渠道管理'), itemKey: 'channel', to: '/channel', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('模型管理'), itemKey: 'models', to: '/console/models', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('模型部署'), itemKey: 'deployment', to: '/deployment', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('用户管理'), itemKey: 'user', to: '/user', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
     ];
 
     // 根据配置过滤项目
@@ -213,7 +160,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [isAdmin(), isRoot(), t, isModuleVisible, toioMode]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -455,7 +402,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           }}
         >
           {/* 聊天区域 */}
-          {hasSectionVisibleModules('chat') && (
+          {!toioMode && hasSectionVisibleModules('chat') && (
             <div className='sidebar-section'>
               {!collapsed && (
                 <div className='sidebar-group-label'>{t('聊天')}</div>
@@ -478,7 +425,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 个人中心区域 */}
-          {hasSectionVisibleModules('personal') && (
+          {!toioMode && hasSectionVisibleModules('personal') && (
             <>
               <Divider className='sidebar-divider' />
               <div>
@@ -491,7 +438,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
-          {isAdmin() && hasSectionVisibleModules('admin') && (
+          {(isAdmin() && hasSectionVisibleModules('admin')) || toioMode ? (
             <>
               <Divider className='sidebar-divider' />
               <div>
@@ -501,7 +448,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
                 {adminItems.map((item) => renderNavItem(item))}
               </div>
             </>
-          )}
+          ) : null}
         </Nav>
       </SkeletonWrapper>
 

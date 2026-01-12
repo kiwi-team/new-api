@@ -293,6 +293,8 @@ func migrateDB() error {
 		&TwoFABackupCode{},
 		&DeletedData{},
 		&Checkin{},
+		&CliendUserQuota{},
+		&CliendUserQuotaLog{},
 	)
 	if err != nil {
 		return err
