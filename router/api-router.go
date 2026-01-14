@@ -242,6 +242,12 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			logRoute.GET("/token", controller.GetLogByKey)
 		}
+		logRootRoute := apiRouter.Group("/log")
+		logRootRoute.Use(middleware.RootAuth())
+		{
+			logRootRoute.GET("/:id/request", controller.GetLogRequest)
+			logRootRoute.GET("/:id/response", controller.GetLogResponse)
+		}
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())
 		{

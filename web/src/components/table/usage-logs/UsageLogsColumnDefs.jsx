@@ -42,6 +42,8 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
   isAdmin,
+  isRoot,
+  API,
 } from '../../../helpers';
 import { IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
 import { Route } from 'lucide-react';
@@ -581,23 +583,26 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.REQUEST,
       title: t('请求'),
       dataIndex: 'request',
-      className: isAdmin() ? '' : 'tableHiddle',
+      className: isRoot() ? '' : 'tableHiddle',
       render: (text, record, index) => {
         return (
           <div className='flex items-center gap-2'>
-            <div className='max-w-[200px] overflow-auto truncate'>
-              {text.substring(0, 30)}
-            </div>
             <div className='flex gap-1'>
               <Button
                 theme='borderless'
                 type='tertiary'
                 size='small'
                 icon={<IconEyeOpened />}
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  callback(e, text, 'showDetailModal');
-                  //  showDetailDialog(text, true);
+                  const res = await API.get(`/api/log/${record.id}/request`);
+                  const { success, data, message } = res.data;
+                  if (success) {
+                    const content = data?.content || '';
+                    callback(e, content, 'showDetailModal');
+                  } else {
+                    // noop
+                  }
                 }}
               />
               <Button
@@ -605,7 +610,12 @@ export const getLogsColumns = ({
                 type='tertiary'
                 size='small'
                 icon={<IconCopy />}
-                onClick={(e) => copyText(e, text)}
+                onClick={async (e) => {
+                  const res = await API.get(`/api/log/${record.id}/request`);
+                  const { success, data } = res.data;
+                  const content = success ? data?.content || '' : '';
+                  copyText(e, content);
+                }}
               />
             </div>
           </div>
@@ -616,23 +626,26 @@ export const getLogsColumns = ({
       key: COLUMN_KEYS.RESPONSE,
       title: t('响应'),
       dataIndex: 'response',
-      className: isAdmin() ? '' : 'tableHiddle',
+      className: isRoot() ? '' : 'tableHiddle',
       render: (text, record, index) => {
         return (
           <div className='flex items-center gap-2'>
-            <div className='max-w-[200px] overflow-auto truncate'>
-              {text.substring(0, 30)}
-            </div>
             <div className='flex gap-1'>
               <Button
                 theme='borderless'
                 type='tertiary'
                 size='small'
                 icon={<IconEyeOpened />}
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  callback(e, text, 'showDetailModal');
-                  //  showDetailDialog(text, true);
+                  const res = await API.get(`/api/log/${record.id}/response`);
+                  const { success, data, message } = res.data;
+                  if (success) {
+                    const content = data?.content || '';
+                    callback(e, content, 'showDetailModal');
+                  } else {
+                    // noop
+                  }
                 }}
               />
               <Button
@@ -640,7 +653,12 @@ export const getLogsColumns = ({
                 type='tertiary'
                 size='small'
                 icon={<IconCopy />}
-                onClick={(e) => copyText(e, text)}
+                onClick={async (e) => {
+                  const res = await API.get(`/api/log/${record.id}/response`);
+                  const { success, data } = res.data;
+                  const content = success ? data?.content || '' : '';
+                  copyText(e, content);
+                }}
               />
             </div>
           </div>

@@ -119,6 +119,46 @@ func GetAllLogs(c *gin.Context) {
 	return
 }
 
+func GetLogRequest(c *gin.Context) {
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
+	var result struct {
+		Request string `gorm:"column:request" json:"request"`
+	}
+	err := model.LOG_DB.Model(&model.Log{}).Select("request").Where("id = ?", id).First(&result).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"content": result.Request,
+		},
+	})
+}
+
+func GetLogResponse(c *gin.Context) {
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
+	var result struct {
+		Response string `gorm:"column:response" json:"response"`
+	}
+	err := model.LOG_DB.Model(&model.Log{}).Select("response").Where("id = ?", id).First(&result).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"content": result.Response,
+		},
+	})
+}
+
 func isAdmin(c *gin.Context) bool {
 	session := sessions.Default(c)
 	role := session.Get("role")

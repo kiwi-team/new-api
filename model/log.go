@@ -268,7 +268,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	if !isAdmin {
+	if !export {
 		tx = tx.Omit("request", "response")
 	}
 	if export {
@@ -335,9 +335,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if err != nil {
 		return nil, 0, err
 	}
-	if !isAdmin {
-		tx = tx.Omit("request", "response")
-	}
+	tx = tx.Omit("request", "response")
 	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
