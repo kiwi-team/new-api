@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
-import { Card, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useRef, useState } from 'react';
+import { Button, Card, Space, Spin } from '@douyinfe/semi-ui';
 import SettingsGeneral from '../../pages/Setting/Operation/SettingsGeneral';
 import SettingsHeaderNavModules from '../../pages/Setting/Operation/SettingsHeaderNavModules';
 import SettingsSidebarModulesAdmin from '../../pages/Setting/Operation/SettingsSidebarModulesAdmin';
@@ -27,7 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
-import { API, showError, toBoolean } from '../../helpers';
+import { API, showError, showSuccess, toBoolean, isRoot } from '../../helpers';
 
 const OperationSetting = () => {
   let [inputs, setInputs] = useState({
@@ -78,6 +78,32 @@ const OperationSetting = () => {
   });
 
   let [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
+  const exportOptions = async () => {
+    try {
+      const res = await API.get('/api/option/export', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'options.csv';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      showError('导出失败');
+    }
+  };
+  const importOptions = async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await API.post('/api/option/import', formData);
+      const { success, message } = res.data;
+      if (success) showSuccess(message || '导入成功');
+      else showError(message);
+    } catch (e) {
+      showError('导入失败');
+    }
+  };
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
@@ -116,6 +142,35 @@ const OperationSetting = () => {
   return (
     <>
       <Spin spinning={loading} size='large'>
+        {isRoot() && (
+          <Card style={{ marginTop: '10px' }}>
+            <Space>
+              <Button size='small' type='tertiary' onClick={exportOptions}>
+                导出 Options
+              </Button>
+              <input
+                ref={fileInputRef}
+                type='file'
+                accept='.csv'
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) importOptions(f);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+                style={{ display: 'none' }}
+              />
+              <Button
+                size='small'
+                onClick={() => {
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                  fileInputRef.current?.click();
+                }}
+              >
+                导入 Options
+              </Button>
+            </Space>
+          </Card>
+        )}
         {/* 通用设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsGeneral options={inputs} refresh={onRefresh} />

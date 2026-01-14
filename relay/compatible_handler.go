@@ -281,6 +281,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	isDeepseek := strings.Contains(info.ChannelBaseUrl, "deepseek")
 	isMoonshot := strings.Contains(info.ChannelBaseUrl, "moonshot")
 	isPPIO := strings.Contains(info.ChannelBaseUrl, "ppinfra")
+	isGlm := strings.Contains(strings.ToLower(info.UpstreamModelName), "glm")
 	// openrouter 用的是openai的格式，但是claude的模型需要开启thinking
 	var thinking dto.AnthropicThinking
 
@@ -398,16 +399,12 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			textRequest.EnableThinking = nil
 		}
 	} else if isPPIO && strings.Contains(textRequest.Model, "glm-4.7") {
-		if textRequest.THINKING != nil {
-			if thinking.Type == "enabled" {
-				textRequest.EnableThinking = true
-			} else {
-				textRequest.EnableThinking = false
-			}
-		} else {
+		if textRequest.THINKING == nil {
 			// https://docs.bigmodel.cn/cn/guide/capabilities/thinking#%E6%A0%B8%E5%BF%83%E5%8F%82%E6%95%B0%E8%AF%B4%E6%98%8E
 			//enabled（默认）：启用动态思考，glm-4.7 glm-4.5v为强制思考，其它模型自动判断是否需要深度思考
-			textRequest.EnableThinking = true
+			//textRequest.EnableThinking = true
+			// 默认是要开启思考的，和官方保持一致的行为
+			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
 		}
 	}
 
@@ -425,7 +422,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		}
 	}
 	// 对于deepseek和moonshot官方的api，assistant 的content只能是字符串
-	if isDeepseek || isMoonshot {
+	if isDeepseek || isMoonshot || isGlm {
 		for i, msg := range textRequest.Messages {
 			if msg.Role != "user" {
 				cnt := msg.ParseContent()

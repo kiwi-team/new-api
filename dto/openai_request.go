@@ -24,8 +24,9 @@ type FormatJsonSchema struct {
 }
 
 type AnthropicThinking struct {
-	Type         string `json:"type,omitempty"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Type          string `json:"type,omitempty"`
+	BudgetTokens  int    `json:"budget_tokens,omitempty"`
+	ClearThinking bool   `json:"clear_thinking,omitempty"` //https://docs.z.ai/guides/capabilities/thinking-mode#preserved-thinking,False for Preserved Thinking
 }
 
 /*

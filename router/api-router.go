@@ -132,6 +132,9 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.PUT("/", controller.UpdateOption)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 			optionRoute.POST("/migrate_console_setting", controller.MigrateConsoleSetting) // 用于迁移检测的旧键，下个版本会删除
+			// Import/Export options
+			optionRoute.GET("/export", controller.ExportOptionsCSV)
+			optionRoute.POST("/import", controller.ImportOptionsCSV)
 		}
 		ratioSyncRoute := apiRouter.Group("/ratio_sync")
 		ratioSyncRoute.Use(middleware.RootAuth())
@@ -205,7 +208,7 @@ func SetApiRouter(router *gin.Engine) {
 		redemptionRoute.Use(middleware.AdminAuth())
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
-			redemptionRoute.GET("/search", controller.SearchRedemptions)
+			redemptionRoute.GET("/error-logs", middleware.AdminAuth(), controller.GetAllErrorLogs)
 			redemptionRoute.GET("/:id", controller.GetRedemption)
 			redemptionRoute.POST("/", controller.AddRedemption)
 			redemptionRoute.PUT("/", controller.UpdateRedemption)
@@ -330,6 +333,18 @@ func SetApiRouter(router *gin.Engine) {
 			cuQuotaRoute.POST("/", controller.CreateCliendUserQuota)
 			cuQuotaRoute.PUT("/", controller.UpdateCliendUserQuota)
 			cuQuotaRoute.DELETE("/:id", controller.DeleteCliendUserQuota)
+		}
+
+		// Root-only import/export
+		adminRootRoute := apiRouter.Group("/admin")
+		adminRootRoute.Use(middleware.RootAuth())
+		{
+			adminRootRoute.GET("/export/users", controller.ExportUsersCSV)
+			adminRootRoute.GET("/export/tokens", controller.ExportTokensCSV)
+			adminRootRoute.GET("/export/channels", controller.ExportChannelsCSV)
+			adminRootRoute.POST("/import/users", controller.ImportUsersCSV)
+			adminRootRoute.POST("/import/tokens", controller.ImportTokensCSV)
+			adminRootRoute.POST("/import/channels", controller.ImportChannelsCSV)
 		}
 	}
 }

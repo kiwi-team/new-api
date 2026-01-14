@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   Button,
   Dropdown,
@@ -26,6 +26,7 @@ import {
   Typography,
   Select,
 } from '@douyinfe/semi-ui';
+import { API, showError, showSuccess, isRoot } from '../../../helpers';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 
 const ChannelsActions = ({
@@ -54,6 +55,48 @@ const ChannelsActions = ({
   setActivePage,
   t,
 }) => {
+  const fileInputRef = useRef(null);
+  const handleExport = async () => {
+    try {
+      const res = await API.get('/api/admin/export/channels', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'channels.csv';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.log(e);
+      showError(t('导出失败'));
+    }
+  };
+  const handleImport = async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await API.post('/api/admin/import/channels', formData);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(message || t('导入成功'));
+        const { searchKeyword, searchGroup, searchModel } = getFormValues();
+        if (searchKeyword === '' && searchGroup === '' && searchModel === '') {
+          await loadChannels(activePage, pageSize, idSort, enableTagMode);
+        } else {
+          await searchChannels(
+            enableTagMode,
+            activeTypeKey,
+            statusFilter,
+            activePage,
+            pageSize,
+            idSort,
+          );
+        }
+      } else showError(message);
+    } catch (e) {
+      console.log(e);
+      showError(t('导入失败'));
+    }
+  };
   return (
     <div className='flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
@@ -176,6 +219,40 @@ const ChannelsActions = ({
               {t('批量操作')}
             </Button>
           </Dropdown>
+
+          {isRoot() && (
+            <Button
+              size='small'
+              type='tertiary'
+              className='w-full md:w-auto'
+              onClick={handleExport}
+            >
+              {t('导出CSV')}
+            </Button>
+          )}
+          <input
+            type='file'
+            accept='.csv'
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImport(f);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }}
+          />
+          {isRoot() && (
+            <Button
+              size='small'
+              className='w-full md:w-auto'
+              onClick={() => {
+                if (fileInputRef.current) fileInputRef.current.value = '';
+                fileInputRef.current?.click();
+              }}
+            >
+              {t('导入CSV')}
+            </Button>
+          )}
 
           <CompactModeToggle
             compactMode={compactMode}

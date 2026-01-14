@@ -340,6 +340,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		request.Model = info.UpstreamModelName
 		request.THINKING = json.RawMessage(`{"type": "enabled"}`)
 	}
+	//common.PrintJson("volcengine doubao request", request)
 	return request, nil
 }
 

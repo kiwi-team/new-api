@@ -105,7 +105,7 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 	if priceMap[taskType][modelName][Resolution] == 0 {
 		return 0
 	}
-	return priceMap[taskType][modelName][Resolution]
+	return priceMap[taskType][modelName][Resolution] * 1.5 // 国外模型计费1.5 cover成本
 }
 
 // BuildRequestURL constructs the upstream URL.

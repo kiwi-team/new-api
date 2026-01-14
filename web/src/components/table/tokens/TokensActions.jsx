@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Button, Space } from '@douyinfe/semi-ui';
 import { showError } from '../../../helpers';
+import { API, showSuccess, isRoot } from '../../../helpers';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
 
@@ -35,6 +36,7 @@ const TokensActions = ({
   // Modal states
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Handle copy selected tokens with options
   const handleCopySelectedTokens = () => {
@@ -85,6 +87,64 @@ const TokensActions = ({
         >
           {t('复制所选令牌')}
         </Button>
+
+        {isRoot() && (
+          <Button
+            type='tertiary'
+            className='flex-1 md:flex-initial'
+            onClick={async () => {
+              try {
+                const res = await API.get('/api/admin/export/tokens', { responseType: 'blob' });
+                const url = window.URL.createObjectURL(new Blob([res.data]));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tokens.csv';
+                a.click();
+                window.URL.revokeObjectURL(url);
+              } catch (e) {
+                showError(t('导出失败'));
+              }
+            }}
+            size='small'
+          >
+            {t('导出CSV')}
+          </Button>
+        )}
+
+        <input
+          type='file'
+          accept='.csv'
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+              const formData = new FormData();
+              formData.append('file', f);
+              const res = await API.post('/api/admin/import/tokens', formData);
+              const { success, message } = res.data;
+              if (success) showSuccess(message || t('导入成功'));
+              else showError(message);
+            } catch (err) {
+              showError(t('导入失败'));
+            }
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }}
+        />
+        {isRoot() && (
+          <Button
+            type='tertiary'
+            className='flex-1 md:flex-initial'
+            onClick={() => {
+              if (fileInputRef.current) fileInputRef.current.value = '';
+              fileInputRef.current?.click();
+            }}
+            size='small'
+          >
+            {t('导入CSV')}
+          </Button>
+        )}
 
         <Button
           type='danger'

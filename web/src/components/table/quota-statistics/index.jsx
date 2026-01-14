@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useState, useEffect } from 'react';
 import CardPro from '../../common/ui/CardPro';
-import { Table, Button, DatePicker, Space, Input, Tag } from '@douyinfe/semi-ui';
+import { Table, Button, DatePicker, Space, Input, Tag, Popover } from '@douyinfe/semi-ui';
 import { showError, API } from '../../../helpers';
 
 const QuotaStatisticsTable = () => {
@@ -50,7 +50,7 @@ const QuotaStatisticsTable = () => {
 
   const columns = (() => {
     const base = [
-      { title: 'UID', dataIndex: 'client_user_id', key: 'client_user_id' },
+      { title: 'UID', dataIndex: 'client_user_id', key: 'client_user_id', sorter: (a, b) => String(a.client_user_id).localeCompare(String(b.client_user_id)) },
     ];
     if (expandDates) {
       base.unshift({ title: 'Date', dataIndex: 'date', key: 'date' });
@@ -62,17 +62,26 @@ const QuotaStatisticsTable = () => {
         title: '月总预算',
         dataIndex: 'fixed_quota',
         key: 'month_budget',
-        render: (_, record) => (
-          <div>
-            <span style={{ color: '#10b981' }}>月度固定预算: {record.fixed_quota}</span>
-            {' + '}
-            <span style={{ color: '#f59e0b' }}>临时预算: {record.temp_quota}</span>
-          </div>
-        ),
+        render: (_, record) => {
+          const fixed = parseInt(record.fixed_quota || 0, 10);
+          const temp = parseInt(record.temp_quota || 0, 10);
+          const total = fixed + temp;
+          const content = (
+            <div className='text-xs'>
+              <div style={{ color: '#10b981' }}>固定: {fixed}</div>
+              <div style={{ color: '#f59e0b' }}>临时: {temp}</div>
+            </div>
+          );
+          return (
+            <Popover content={content} position='top'>
+              <Tag color='white' shape='circle'> {total}</Tag>
+            </Popover>
+          );
+        },
       });
     }
     base.push({ title: '请求次数', dataIndex: 'total_count', key: 'total_count' });
-    base.push({ title: '消耗($)', dataIndex: 'total_quota', key: 'total_quota' });
+    base.push({ title: '消耗($)', dataIndex: 'total_quota', key: 'total_quota', sorter: (a, b) => (parseFloat(a.total_quota) || 0) - (parseFloat(b.total_quota) || 0) });
     base.push({ title: '总PromptTokens', dataIndex: 'total_prompt', key: 'total_prompt' });
     base.push({ title: '总Completion Tokens', dataIndex: 'total_completion', key: 'total_completion' });
     return base;
@@ -99,8 +108,9 @@ const QuotaStatisticsTable = () => {
       });
       const { success, message, data } = res.data;
       if (success) {
-        setData(data);
-        const sum = (data || []).reduce((acc, cur) => {
+        const list = Array.isArray(data) ? data : [];
+        setData(list);
+        const sum = (list || []).reduce((acc, cur) => {
           const v = parseFloat(cur.total_quota) || 0;
           return acc + v;
         }, 0);
@@ -122,6 +132,9 @@ const QuotaStatisticsTable = () => {
   useEffect(() => {
     fetchData();
   }, [expandModels, expandDates]);
+  useEffect(() => {
+    fetchData();
+  }, [clientUserId, modelName]);
 
   useEffect(() => {
     if (toioMode) {
@@ -202,11 +215,11 @@ const QuotaStatisticsTable = () => {
           </>
         )}
         <Input 
-            placeholder="UID" 
+            placeholder="UID(模糊)" 
             value={clientUserId} 
             onChange={setClientUserId} 
             style={{ width: 200 }}
-                />
+        />
                 <Button theme='solid' onClick={fetchData} loading={loading}>Search</Button>
                 <Button onClick={handleExport}>Export CSV</Button>
             </Space>

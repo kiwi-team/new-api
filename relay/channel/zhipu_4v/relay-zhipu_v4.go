@@ -41,7 +41,7 @@ func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIReq
 	} else {
 		Stop, _ = request.Stop.([]string)
 	}
-	return &dto.GeneralOpenAIRequest{
+	glmRequest := &dto.GeneralOpenAIRequest{
 		Model:       request.Model,
 		Stream:      request.Stream,
 		Messages:    messages,
@@ -53,4 +53,6 @@ func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIReq
 		ToolChoice:  request.ToolChoice,
 		THINKING:    request.THINKING,
 	}
+	//common.PrintJson("glm request", glmRequest)
+	return glmRequest
 }

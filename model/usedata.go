@@ -152,7 +152,7 @@ type QuotaDataStatistics struct {
 }
 
 func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, expandModels bool, expandDates bool) ([]*QuotaDataStatistics, error) {
-	var statistics []*QuotaDataStatistics
+	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
 	// Date logic based on DB type
@@ -189,7 +189,7 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		tx = tx.Where("model_name = ?", modelName)
 	}
 	if clientUserId != "" {
-		tx = tx.Where("client_user_id = ?", clientUserId)
+		tx = tx.Where("client_user_id LIKE ?", "%"+clientUserId+"%")
 	}
 
 	if expandDates {
@@ -222,6 +222,9 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		}
 	}
 
+	if statistics == nil {
+		statistics = make([]*QuotaDataStatistics, 0)
+	}
 	return statistics, err
 }
 

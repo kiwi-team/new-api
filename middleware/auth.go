@@ -336,9 +336,11 @@ func TokenAuth() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
 				return
 			}
-			if ok, err1 := model.CheckCliendUserQuota(clientUserId); !ok || err1 != nil {
-				abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，预算不足，请联系管理员")
-				return
+			if !isAiceKey {
+				if ok, err1 := model.CheckCliendUserQuota(clientUserId); !ok || err1 != nil {
+					abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，预算不足，请联系管理员")
+					return
+				}
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyClientUserId, clientUserId)

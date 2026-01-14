@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -24,48 +22,53 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		GroupRatio:        1.0, // default ratio
 		GroupSpecialRatio: -1,
 	}
-	// 如果key的维度，针对某个模型设置了分组倍率，就已这个为最优先的分组倍率
-	rules, ok := ctx.Get("token_channel_rules")
-	if ok {
-		tokenChannelRules := rules.(map[string]dto.ChannelRulesItem)
-		if tokenGroupRuleItem, exists := (tokenChannelRules)[ctx.GetString("original_model")]; exists {
-			// 针对模型设置了分组倍率，就以这个为最优先的分组倍率
-			for _, channel := range tokenGroupRuleItem.Channels {
-				if channel.Id == relayInfo.ChannelId {
-					if ratio, ok1 := channel.GroupRatio[relayInfo.UsingGroup]; ok1 {
-						groupRatioInfo.GroupRatio = ratio
-						return groupRatioInfo
+	if relayInfo == nil {
+		return groupRatioInfo
+	}
+	/*
+		// 如果key的维度，针对某个模型设置了分组倍率，就已这个为最优先的分组倍率
+		rules, ok := ctx.Get("token_channel_rules")
+		if ok {
+			tokenChannelRules := rules.(map[string]dto.ChannelRulesItem)
+			if tokenGroupRuleItem, exists := (tokenChannelRules)[ctx.GetString("original_model")]; exists {
+				// 针对模型设置了分组倍率，就以这个为最优先的分组倍率
+				for _, channel := range tokenGroupRuleItem.Channels {
+					if channel.Id == relayInfo.ChannelId {
+						if ratio, ok1 := channel.GroupRatio[relayInfo.UsingGroup]; ok1 {
+							groupRatioInfo.GroupRatio = ratio
+							return groupRatioInfo
+						}
 					}
 				}
 			}
 		}
-	}
-	//key channel ratio
-	ratios, ok1 := ctx.Get("token_channel_ratios")
-	if ok1 && ratios != nil {
-		ratioMap := ratios.(map[int]float64)
-		if ratioMap == nil {
-			return groupRatioInfo
-		}
-		if ratio, exists := ratioMap[relayInfo.ChannelId]; exists {
-			groupRatioInfo.GroupRatio = ratio
-			return groupRatioInfo
-		}
-	}
-
-	// channel default ratio
-	ratioAny, ok2 := ctx.Get("channel_ratio")
-	if ok2 {
-		ratio := ratioAny.(*float64)
-		if ratio != nil {
-			if *ratio > constant.LessIsZero {
-				groupRatioInfo.GroupRatio = *ratio
-			} else {
-				groupRatioInfo.GroupRatio = 0.0
+		//key channel ratio
+		ratios, ok1 := ctx.Get("token_channel_ratios")
+		if ok1 && ratios != nil {
+			ratioMap := ratios.(map[int]float64)
+			if ratioMap == nil {
+				return groupRatioInfo
+			}
+			if ratio, exists := ratioMap[relayInfo.ChannelId]; exists {
+				groupRatioInfo.GroupRatio = ratio
+				return groupRatioInfo
 			}
 		}
-		return groupRatioInfo
-	}
+
+		// channel default ratio
+		ratioAny, ok2 := ctx.Get("channel_ratio")
+		if ok2 {
+			ratio := ratioAny.(*float64)
+			if ratio != nil {
+				if *ratio > constant.LessIsZero {
+					groupRatioInfo.GroupRatio = *ratio
+				} else {
+					groupRatioInfo.GroupRatio = 0.0
+				}
+			}
+			return groupRatioInfo
+		}
+	*/
 
 	// check auto group
 	autoGroup, exists := ctx.Get("auto_group")

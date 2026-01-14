@@ -181,7 +181,7 @@ func FeishuQuotaAlerts() {
 			if err != nil {
 				continue
 			}
-			remain := totalBudget - monthSum
+			remain := totalBudget - int(float64(monthSum)/common.QuotaPerUnit)
 			if remain < 0 {
 				remain = 0
 			}
@@ -197,7 +197,7 @@ func FeishuQuotaAlerts() {
 					entry = uidMonthThresholdMap[cu.ClientUserId]
 				}
 				if remainPct <= th && entry[key] != monthStart {
-					content := fmt.Sprintf("UID预算预警：UID=%s 本月已消耗 %f，剩余预算 %f（总预算 %d，<=%s%%）", cu.ClientUserId, float64(monthSum)/common.QuotaPerUnit, float64(remain)/common.QuotaPerUnit, totalBudget, key)
+					content := fmt.Sprintf("UID预算预警：UID=%s 本月已消耗 %f，剩余预算 %d（总预算 %d，<=%s%%）", cu.ClientUserId, float64(monthSum)/common.QuotaPerUnit, remain, totalBudget, key)
 					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
 						MsgType: "text",
 						Content: dto.FeishuContent{Text: content},
