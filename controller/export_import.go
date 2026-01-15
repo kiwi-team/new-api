@@ -511,69 +511,48 @@ func ImportChannelsCSV(c *gin.Context) {
 		}
 		weightStr := record[idx("weight")]
 		var weightPtr *uint
-		if strings.TrimSpace(weightStr) != "" {
-			wv := uint(common.String2Int(weightStr))
-			weightPtr = &wv
-		}
+		wv := uint(common.String2Int(weightStr))
+		weightPtr = &wv
 		baseURL := record[idx("base_url")]
 		var baseURLPtr *string
-		if strings.TrimSpace(baseURL) != "" {
-			baseURLPtr = &baseURL
-		}
+		baseURLPtr = &baseURL
 		modelMapping := record[idx("model_mapping")]
 		var modelMappingPtr *string
-		if strings.TrimSpace(modelMapping) != "" {
-			modelMappingPtr = &modelMapping
-		}
+		modelMappingPtr = &modelMapping
 		ratioStr := record[idx("ratio")]
 		var ratioPtr *float64
 		if strings.TrimSpace(ratioStr) != "" {
 			if f, err := strconv.ParseFloat(ratioStr, 64); err == nil {
 				ratioPtr = &f
 			}
+		} else {
+			tmp := 0.0
+			ratioPtr = &tmp
 		}
 		remark := record[idx("remark")]
 		var remarkPtr *string
-		if strings.TrimSpace(remark) != "" {
-			remarkPtr = &remark
-		}
+		remarkPtr = &remark
 		statusCodeMapping := record[idx("status_code_mapping")]
 		var statusCodeMappingPtr *string
-		if strings.TrimSpace(statusCodeMapping) != "" {
-			statusCodeMappingPtr = &statusCodeMapping
-		}
+		statusCodeMappingPtr = &statusCodeMapping
 		priorityStr := record[idx("priority")]
 		var priorityPtr *int64
-		if strings.TrimSpace(priorityStr) != "" {
-			pv := int64(common.String2Int(priorityStr))
-			priorityPtr = &pv
-		}
+		pv := int64(common.String2Int(priorityStr))
+		priorityPtr = &pv
 		autoBanStr := record[idx("auto_ban")]
-		var autoBanPtr *int
-		if strings.TrimSpace(autoBanStr) != "" {
-			av := common.String2Int(autoBanStr)
-			autoBanPtr = &av
-		}
+		av := common.String2Int(autoBanStr)
+		autoBanPtr := &av
 		tag := record[idx("tag")]
-		var tagPtr *string
-		if strings.TrimSpace(tag) != "" {
-			tagPtr = &tag
-		}
+		tagPtr := &tag
 		setting := record[idx("setting")]
 		var settingPtr *string
-		if strings.TrimSpace(setting) != "" {
-			settingPtr = &setting
-		}
+		settingPtr = &setting
 		paramOverride := record[idx("param_override")]
 		var paramOverridePtr *string
-		if strings.TrimSpace(paramOverride) != "" {
-			paramOverridePtr = &paramOverride
-		}
+		paramOverridePtr = &paramOverride
 		headerOverride := record[idx("header_override")]
 		var headerOverridePtr *string
-		if strings.TrimSpace(headerOverride) != "" {
-			headerOverridePtr = &headerOverride
-		}
+		headerOverridePtr = &headerOverride
 
 		ch := model.Channel{
 			Id:                 id,
