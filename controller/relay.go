@@ -190,6 +190,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ChannelIds: tokenChannelIds,
 	}
 
+	channelFound := false
 	for ; retryParam.GetRetry() <= retryTimes; retryParam.IncreaseRetry() {
 		if len(tokenChannelIds) > 0 {
 			if retryParam.GetRetry() >= len(tokenChannelIds) {
@@ -210,6 +211,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				continue
 			}
 		}
+		channelFound = true
 
 		addUsedChannel(c, channel.Id)
 		requestBody, bodyErr := common.GetRequestBody(c)
@@ -244,6 +246,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, retryTimes-retryParam.GetRetry()) {
 			break
 		}
+	}
+
+	// Check if no valid channel was found when using tokenChannelIds
+	if len(tokenChannelIds) > 0 && !channelFound && newAPIError == nil {
+		newAPIError = types.NewError(
+			fmt.Errorf("暂无可用的渠道支持模型 %s）", relayInfo.OriginModelName),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -567,6 +578,7 @@ func RelayTask(c *gin.Context) {
 		ChannelIds: tokenChannelIds,
 	}
 	var taskErr *dto.TaskError
+	channelFound := false
 	for ; shouldRetryTaskRelay(c, retryParam.GetRetry(), taskErr, retryTimes) && retryParam.GetRetry() <= retryTimes; retryParam.IncreaseRetry() {
 		if len(tokenChannelIds) > 0 {
 			if retryParam.GetRetry() >= len(tokenChannelIds) {
@@ -583,6 +595,7 @@ func RelayTask(c *gin.Context) {
 			}
 
 		}
+		channelFound = true
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("CacheGetRandomSatisfiedChannel failed: %s", newAPIError.Error()))
 			taskErr = service.TaskErrorWrapperLocal(newAPIError.Err, "get_channel_failed", http.StatusInternalServerError)
@@ -607,6 +620,16 @@ func RelayTask(c *gin.Context) {
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		taskErr = taskRelayHandler(c, relayInfo)
 	}
+
+	// Check if no valid channel was found when using tokenChannelIds
+	if len(tokenChannelIds) > 0 && !channelFound && taskErr == nil {
+		taskErr = service.TaskErrorWrapperLocal(
+			fmt.Errorf("暂无可用渠道支持模型 %s）", relayInfo.OriginModelName),
+			"get_channel_failed",
+			http.StatusServiceUnavailable,
+		)
+	}
+
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
