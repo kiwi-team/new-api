@@ -341,6 +341,22 @@ func SaveTmpFile(filename string, data io.Reader) (string, error) {
 	return f.Name(), nil
 }
 
+// WriteJsonFile writes data as JSON to a file. If the file exists, it will be overwritten.
+// This function is primarily used for debugging purposes.
+func WriteJsonFile(filename string, data interface{}) error {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return errors.Wrapf(err, "failed to marshal data to JSON")
+	}
+
+	err = os.WriteFile(filename, jsonData, 0644)
+	if err != nil {
+		return errors.Wrapf(err, "failed to write JSON file %s", filename)
+	}
+
+	return nil
+}
+
 // BuildURL concatenates base and endpoint, returns the complete url string
 func BuildURL(base string, endpoint string) string {
 	u, err := url.Parse(base)

@@ -234,6 +234,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			}
 		}
 	}
+	// https://platform.claude.com/docs/en/build-with-claude/extended-thinking#interleaved-thinking
+	// 开启 interleaved thinking后，the budget_tokens can exceed the max_tokens paramete
+	enabledInterleavedThinking := strings.Contains(c.GetHeader("anthropic-beta"), "interleaved-thinking-2025-05-14")
 
 	// thinking
 	if textRequest.THINKING != nil {
@@ -244,8 +247,11 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		switch thinking.Type {
 		case "enabled":
 			budget := thinking.BudgetTokens
-			if budget > int(textRequest.MaxTokens) {
-				budget = int(textRequest.MaxTokens) - 1
+			if budget > int(textRequest.MaxTokens) && !enabledInterleavedThinking {
+				budget = int(textRequest.MaxTokens) - 1 // 没有开启InterleavedThinking的时候，budget不能超过max_tokens
+			}
+			if budget < 1024 {
+				budget = 1024 //Must be ≥1024 and less than max_tokens.
 			}
 			claudeRequest.Thinking = &dto.Thinking{
 				Type:         "enabled",
@@ -471,6 +477,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 	//common.PrintJson("\nclaudeRequest", claudeRequest)
+	//common.WriteJsonFile("claudeRequest.json", claudeRequest)
 	return &claudeRequest, nil
 }
 
