@@ -41,6 +41,7 @@ const routerMap = {
   errorlog: '/console/errorlog',
   midjourney: '/console/midjourney',
   setting: '/console/setting',
+  modelRouteConfig: '/console/model-route-config',
   about: '/about',
   detail: '/console',
   pricing: '/pricing',
@@ -150,6 +151,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('用户管理'), itemKey: 'user', to: '/user', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
     ];
 

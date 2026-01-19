@@ -460,7 +460,7 @@ func ImportTokensCSV(c *gin.Context) {
 		if err := model.DB.Create(&t).Error; err == nil {
 			count++
 		} else {
-			fmt.Printf("6666 error %#v\n", err)
+			fmt.Printf("error %#v\n", err)
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

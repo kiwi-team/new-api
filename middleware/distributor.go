@@ -96,6 +96,13 @@ func Distribute() func(c *gin.Context) {
 		if len(specialChannelIds) > 0 {
 			channelIds = specialChannelIds
 			c.Set("new_retry_times", len(specialChannelIds))
+		} else {
+			// 获取全局模型渠道路由
+			modelRouterChannelIds, retryTimes, _ := model.GetChannelIdsByModel(modelName, "", "")
+			if len(modelRouterChannelIds) > 0 {
+				channelIds = modelRouterChannelIds
+				c.Set("new_retry_times", retryTimes)
+			}
 		}
 		c.Set("token_channel_ids", channelIds)
 

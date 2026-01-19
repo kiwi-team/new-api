@@ -53,7 +53,8 @@ export const DEFAULT_ADMIN_CONFIG = {
     redemption: true,
     user: true,
     setting: true,
-    'cuquota': true,
+    cuquota: true,
+    modelRouteConfig: true,
   },
 };
 

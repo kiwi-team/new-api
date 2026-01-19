@@ -74,6 +74,7 @@ import {
   CircleUser,
   Package,
   Server,
+  GitBranch,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -148,6 +149,8 @@ export function getLucideIcon(key, selected = false) {
       return <Server {...commonProps} color={iconColor} />;
     case 'setting':
       return <Settings {...commonProps} color={iconColor} />;
+    case 'modelRouteConfig':
+      return <GitBranch {...commonProps} color={iconColor} />;
     default:
       return <CircleUser {...commonProps} color={iconColor} />;
   }

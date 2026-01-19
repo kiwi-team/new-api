@@ -295,6 +295,7 @@ func migrateDB() error {
 		&Checkin{},
 		&CliendUserQuota{},
 		&CliendUserQuotaLog{},
+		&ModelRouteConfig{},
 	)
 	if err != nil {
 		return err

@@ -55,6 +55,7 @@ import ChannelByModel from './pages/Channel/ChannelByModel.js';
 import EditChannel from './pages/Channel/EditChannel.js';
 import QuotaStatistics from './pages/QuotaStatistics';
 import CliendUserQuotaPage from './pages/CliendUserQuota';
+import ModelRouteConfig from './pages/ModelRouteConfig';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -320,6 +321,14 @@ function App() {
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Setting />
               </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/model-route-config'
+          element={
+            <AdminRoute>
+              <ModelRouteConfig />
             </AdminRoute>
           }
         />

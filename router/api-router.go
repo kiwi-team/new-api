@@ -352,5 +352,19 @@ func SetApiRouter(router *gin.Engine) {
 			adminRootRoute.POST("/import/tokens", controller.ImportTokensCSV)
 			adminRootRoute.POST("/import/channels", controller.ImportChannelsCSV)
 		}
+
+		// Model Route Config - Root only
+		modelRouteConfigRoute := apiRouter.Group("/model_route_config")
+		modelRouteConfigRoute.Use(middleware.RootAuth())
+		{
+			modelRouteConfigRoute.GET("/", controller.GetAllModelRouteConfigs)
+			modelRouteConfigRoute.GET("/search", controller.SearchModelRouteConfigs)
+			modelRouteConfigRoute.GET("/:id", controller.GetModelRouteConfig)
+			modelRouteConfigRoute.POST("/", controller.AddModelRouteConfig)
+			modelRouteConfigRoute.PUT("/", controller.UpdateModelRouteConfig)
+			modelRouteConfigRoute.DELETE("/:id", controller.DeleteModelRouteConfig)
+			modelRouteConfigRoute.POST("/batch/delete", controller.BatchDeleteModelRouteConfigs)
+			modelRouteConfigRoute.POST("/status", controller.UpdateModelRouteConfigStatus)
+		}
 	}
 }
