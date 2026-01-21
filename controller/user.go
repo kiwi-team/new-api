@@ -527,6 +527,14 @@ func calculateUserPermissions(userRole int, toioRegistered int) map[string]inter
 				"setting": false, // 管理员不能访问系统设置
 			},
 		}
+	} else if userRole == common.RoleLeaderUser {
+		// Leader 用户可以设置边栏，可以看消耗统计，但不能访问管理员区域
+		permissions["sidebar_settings"] = true
+		permissions["sidebar_modules"] = map[string]interface{}{
+			"admin": map[string]interface{}{
+				"enabled": false, // Leader 用户不能访问管理员区域
+			},
+		}
 	} else {
 		// 普通用户只能设置个人功能，不包含管理员区域
 		permissions["sidebar_settings"] = true
@@ -567,7 +575,12 @@ func generateDefaultSidebarConfig(userRole int) string {
 	}
 
 	// 管理员区域 - 根据角色决定
-	if userRole == common.RoleAdminUser {
+	if userRole == common.RoleLeaderUser {
+		// Leader 用户不能访问管理员区域
+		defaultConfig["admin"] = map[string]interface{}{
+			"enabled": false,
+		}
+	} else if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
 		defaultConfig["admin"] = map[string]interface{}{
 			"enabled":    true,
@@ -575,6 +588,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"models":     true,
 			"redemption": true,
 			"user":       true,
+			"cuquota":    true,  // 管理员可以访问 UID 预算管理
 			"setting":    false, // 管理员不能访问系统设置
 		}
 	} else if userRole == common.RoleRootUser {
@@ -585,6 +599,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"models":     true,
 			"redemption": true,
 			"user":       true,
+			"cuquota":    true, // Root 可以访问 UID 预算管理
 			"setting":    true,
 		}
 	}
@@ -984,18 +999,24 @@ func ManageUser(c *gin.Context) {
 		if myRole != common.RoleRootUser {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "普通管理员用户无法提升其他用户为管理员",
+				"message": "普通管理员用户无法提升其他用户",
 			})
 			return
 		}
+		// 根据当前角色提升到下一级别
 		if user.Role >= common.RoleAdminUser {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "该用户已经是管理员",
+				"message": "该用户已经是管理员或更高级别",
 			})
 			return
 		}
-		user.Role = common.RoleAdminUser
+		// 普通用户 -> Leader 用户 -> 管理员
+		if user.Role == common.RoleCommonUser {
+			user.Role = common.RoleLeaderUser
+		} else if user.Role == common.RoleLeaderUser {
+			user.Role = common.RoleAdminUser
+		}
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			c.JSON(http.StatusOK, gin.H{
@@ -1011,7 +1032,12 @@ func ManageUser(c *gin.Context) {
 			})
 			return
 		}
-		user.Role = common.RoleCommonUser
+		// 管理员 -> Leader 用户 -> 普通用户
+		if user.Role == common.RoleAdminUser {
+			user.Role = common.RoleLeaderUser
+		} else if user.Role == common.RoleLeaderUser {
+			user.Role = common.RoleCommonUser
+		}
 	}
 
 	if err := user.Update(false); err != nil {

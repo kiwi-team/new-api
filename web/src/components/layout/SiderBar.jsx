@@ -25,7 +25,7 @@ import { ChevronLeft } from 'lucide-react';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { isAdmin, isRoot, showError } from '../../helpers';
+import { isAdmin, isLeader, isRoot, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
@@ -95,7 +95,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
-      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isLeader() ? '' : 'tableHiddle' },
     ];
 
     // 根据配置过滤项目
@@ -140,9 +140,14 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
   const adminItems = useMemo(() => {
     if (toioMode) {
-      return [
-        { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: '' },
-      ];
+      if (isAdmin()) {
+        return [
+          { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: '' },
+        ];
+      }else if (isLeader()) {
+        return [];
+
+      }
     }
     const items = [
       { text: t('渠道管理'), itemKey: 'channel', to: '/channel', className: isAdmin() ? '' : 'tableHiddle' },
@@ -157,6 +162,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
+      // UID 预算管理需要管理员权限，Leader 用户不能访问
+      if (item.itemKey === 'cuquota' && !isAdmin()) {
+        return false;
+      }
       const configVisible = isModuleVisible('admin', item.itemKey);
       return configVisible;
     });
@@ -440,6 +449,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
+          {/* Leader 用户（role=5）不能看到管理员区域 */}
           {(isAdmin() && hasSectionVisibleModules('admin')) || toioMode ? (
             <>
               <Divider className='sidebar-divider' />

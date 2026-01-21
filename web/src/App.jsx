@@ -21,7 +21,7 @@ import React, { lazy, Suspense, useContext, useMemo, useEffect } from 'react';
 import { Route, Routes, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute, isRoot } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, isRoot } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
 import ToioRegisterForm from './components/auth/ToioRegisterForm';
 import LoginForm from './components/auth/LoginForm';
@@ -198,9 +198,9 @@ function App() {
                 <QuotaStatistics />
               </PrivateRoute>
             ) : (
-              <AdminRoute>
+              <LeaderRoute>
                 <QuotaStatistics />
-              </AdminRoute>
+              </LeaderRoute>
             )
           }
         />

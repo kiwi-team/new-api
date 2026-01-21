@@ -150,12 +150,13 @@ const (
 const (
 	RoleGuestUser  = 0
 	RoleCommonUser = 1
+	RoleLeaderUser = 5 // Leader 用户：可以看消耗统计，但看不到 UID 预算管理
 	RoleAdminUser  = 10
 	RoleRootUser   = 100
 )
 
 func IsValidateRole(role int) bool {
-	return role == RoleGuestUser || role == RoleCommonUser || role == RoleAdminUser || role == RoleRootUser
+	return role == RoleGuestUser || role == RoleCommonUser || role == RoleLeaderUser || role == RoleAdminUser || role == RoleRootUser
 }
 
 var (
