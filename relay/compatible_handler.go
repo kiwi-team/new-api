@@ -203,7 +203,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	// 创建流式响应记录器（如果需要记录响应）
 	var streamRecorder *helper.StreamResponseRecorder
-	if saveRequestResponse {
+	if saveRequestResponse && httpResp != nil {
 		// 使用流式记录器包装原始响应体，不影响实时传输
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
@@ -218,6 +218,12 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	// 在流式传输完成后，从记录器中获取完整的响应数据
 	if saveRequestResponse && streamRecorder != nil {
 		responseStr = streamRecorder.GetRecordedString()
+	}
+	// 对于 SDK 渠道（如 AWS），从 context 获取响应字符串
+	if saveRequestResponse && responseStr == "" {
+		if sdkRespStr, exists := c.Get(string(constant.ContextKeySdkResponseStr)); exists {
+			responseStr = sdkRespStr.(string)
+		}
 	}
 
 	//if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/ali"
 	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/aws"
+	"github.com/QuantumNous/new-api/relay/channel/awsv2"
 	"github.com/QuantumNous/new-api/relay/channel/baidu"
 	"github.com/QuantumNous/new-api/relay/channel/baidu_v2"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -133,6 +134,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &openai.Adaptor{}
 	case constant.APITypeReplicate:
 		return &replicate.Adaptor{}
+	case constant.APITypeAwsV2:
+		return &awsv2.Adaptor{}
 	}
 	return nil
 }

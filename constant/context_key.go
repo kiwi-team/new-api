@@ -62,6 +62,7 @@ const (
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 
 	/*response related keys*/
-	ContextKeyAudioUrl ContextKey = "audio_url"
-	ContextKeyTTSCount ContextKey = "tts_word_count"
+	ContextKeyAudioUrl       ContextKey = "audio_url"
+	ContextKeyTTSCount       ContextKey = "tts_word_count"
+	ContextKeySdkResponseStr ContextKey = "sdk_response_str"
 )

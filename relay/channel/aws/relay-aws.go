@@ -26,6 +26,8 @@ import (
 	"github.com/aws/smithy-go/auth/bearer"
 )
 
+// https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
+
 // getAwsErrorStatusCode extracts HTTP status code from AWS SDK error
 func getAwsErrorStatusCode(err error) int {
 	// Check for HTTP response error which contains status code
