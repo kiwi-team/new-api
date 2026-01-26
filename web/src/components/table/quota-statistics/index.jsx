@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useState, useEffect } from 'react';
 import CardPro from '../../common/ui/CardPro';
-import { Table, Button, DatePicker, Space, Input, Tag, Popover } from '@douyinfe/semi-ui';
+import { Table, Button, DatePicker, Space, Input, Tag } from '@douyinfe/semi-ui';
 import { showError, API } from '../../../helpers';
 
 const QuotaStatisticsTable = () => {
@@ -66,22 +66,41 @@ const QuotaStatisticsTable = () => {
           const fixed = parseInt(record.fixed_quota || 0, 10);
           const temp = parseInt(record.temp_quota || 0, 10);
           const total = fixed + temp;
-          const content = (
-            <div className='text-xs'>
-              <div style={{ color: '#10b981' }}>固定: {fixed}</div>
-              <div style={{ color: '#f59e0b' }}>临时: {temp}</div>
-            </div>
-          );
           return (
-            <Popover content={content} position='top'>
-              <Tag color='white' shape='circle'> {total}</Tag>
-            </Popover>
+            <span>
+              {total}
+              <span style={{ color: '#888', fontSize: '12px', marginLeft: 4 }}>
+                (固定{fixed}+临时{temp})
+              </span>
+            </span>
           );
         },
       });
     }
+    // 消耗列，根据月总预算显示不同颜色
+    base.push({
+      title: '消耗($)',
+      dataIndex: 'total_quota',
+      key: 'total_quota',
+      sorter: (a, b) => (parseFloat(a.total_quota) || 0) - (parseFloat(b.total_quota) || 0),
+      render: (value, record) => {
+        const quota = parseFloat(value) || 0;
+        const fixed = parseInt(record.fixed_quota || 0, 10);
+        const temp = parseInt(record.temp_quota || 0, 10);
+        const monthBudget = fixed + temp;
+        let color = 'inherit';
+        if (monthBudget > 0) {
+          if (quota >= monthBudget) {
+            color = '#ef4444'; // 红色：超过或等于月总预算
+          } else if (quota >= monthBudget * 0.5) {
+            color = '#f59e0b'; // 黄色：超过50%
+          }
+        }
+        return <span style={{ color, fontWeight: color !== 'inherit' ? 'bold' : 'normal' }}>{quota.toFixed(6)}</span>;
+      },
+    });
+    // 请求次数列放到消耗后面
     base.push({ title: '请求次数', dataIndex: 'total_count', key: 'total_count' });
-    base.push({ title: '消耗($)', dataIndex: 'total_quota', key: 'total_quota', sorter: (a, b) => (parseFloat(a.total_quota) || 0) - (parseFloat(b.total_quota) || 0) });
     base.push({ title: '总PromptTokens', dataIndex: 'total_prompt', key: 'total_prompt' });
     base.push({ title: '总Completion Tokens', dataIndex: 'total_completion', key: 'total_completion' });
     return base;

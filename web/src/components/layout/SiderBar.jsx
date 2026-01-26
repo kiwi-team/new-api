@@ -53,6 +53,10 @@ const routerMap = {
   personal: '/console/personal',
   quotaStatistics: '/console/quota-statistics',
   cuquota: '/console/cliend-user-quota',
+  // Debug module routes
+  debugExecutor: '/console/debug/executor',
+  debugTemplates: '/console/debug/templates',
+  debugLogs: '/console/debug/logs',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -172,6 +176,17 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     return filteredItems;
   }, [isAdmin(), isRoot(), t, isModuleVisible, toioMode]);
+
+  // Debug module items - only for root users
+  const debugItems = useMemo(() => {
+    if (!isRoot()) return [];
+    
+    return [
+      { text: t('调试器'), itemKey: 'debugExecutor', to: '/console/debug/executor' },
+      { text: t('测试数据'), itemKey: 'debugTemplates', to: '/console/debug/templates' },
+      { text: t('调试日志'), itemKey: 'debugLogs', to: '/console/debug/logs' },
+    ];
+  }, [isRoot(), t]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -461,6 +476,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
               </div>
             </>
           ) : null}
+
+          {/* 调试模块区域 - 仅超级管理员可见 */}
+          {isRoot() && debugItems.length > 0 && (
+            <>
+              <Divider className='sidebar-divider' />
+              <div>
+                {!collapsed && (
+                  <div className='sidebar-group-label'>{t('调试模块')}</div>
+                )}
+                {debugItems.map((item) => renderNavItem(item))}
+              </div>
+            </>
+          )}
         </Nav>
       </SkeletonWrapper>
 

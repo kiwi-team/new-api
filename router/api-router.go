@@ -366,5 +366,46 @@ func SetApiRouter(router *gin.Engine) {
 			modelRouteConfigRoute.POST("/batch/delete", controller.BatchDeleteModelRouteConfigs)
 			modelRouteConfigRoute.POST("/status", controller.UpdateModelRouteConfigStatus)
 		}
+
+		// Debug Module - Root only
+		debugRoute := apiRouter.Group("/debug")
+		debugRoute.Use(middleware.RootAuth())
+		{
+			// 渠道和 Key 信息
+			debugRoute.GET("/channels", controller.GetDebugChannels)
+			debugRoute.GET("/keys", controller.GetDebugKeys)
+			debugRoute.GET("/tags", controller.GetDebugTags)
+
+			// 调试配置
+			debugRoute.GET("/configurations", controller.GetDebugConfigurations)
+			debugRoute.GET("/configurations/:id", controller.GetDebugConfiguration)
+			debugRoute.POST("/configurations", controller.CreateDebugConfiguration)
+			debugRoute.PUT("/configurations/:id", controller.UpdateDebugConfiguration)
+			debugRoute.DELETE("/configurations/:id", controller.DeleteDebugConfiguration)
+			debugRoute.POST("/configurations/:id/execute", controller.ExecuteDebugConfiguration)
+
+			// 直接执行调试请求
+			debugRoute.POST("/execute", controller.ExecuteDebugRequest)
+			debugRoute.POST("/execute/stream", controller.ExecuteDebugRequestStream)
+
+			// 测试数据（模板的简化版，用于保存调试数据）
+			debugRoute.GET("/test-data", controller.GetDebugTestData)
+			debugRoute.POST("/test-data", controller.CreateDebugTestData)
+			debugRoute.PUT("/test-data/:id", controller.UpdateDebugTestData)
+			debugRoute.DELETE("/test-data/:id", controller.DeleteDebugTestData)
+
+			// 调试模板
+			debugRoute.GET("/templates", controller.GetDebugTemplates)
+			debugRoute.GET("/templates/:id", controller.GetDebugTemplate)
+			debugRoute.POST("/templates", controller.CreateDebugTemplate)
+			debugRoute.PUT("/templates/:id", controller.UpdateDebugTemplate)
+			debugRoute.DELETE("/templates/:id", controller.DeleteDebugTemplate)
+
+			// 调试日志
+			debugRoute.GET("/logs", controller.GetDebugLogs)
+			debugRoute.GET("/logs/:id", controller.GetDebugLog)
+			debugRoute.DELETE("/logs/:id", controller.DeleteDebugLog)
+			debugRoute.POST("/logs/batch/tag", controller.BatchTagDebugLogs)
+		}
 	}
 }

@@ -75,6 +75,9 @@ import {
   Package,
   Server,
   GitBranch,
+  Bug,
+  FileText,
+  ScrollText,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -151,6 +154,13 @@ export function getLucideIcon(key, selected = false) {
       return <Settings {...commonProps} color={iconColor} />;
     case 'modelRouteConfig':
       return <GitBranch {...commonProps} color={iconColor} />;
+    // Debug module icons
+    case 'debugExecutor':
+      return <Bug {...commonProps} color={iconColor} />;
+    case 'debugTemplates':
+      return <FileText {...commonProps} color={iconColor} />;
+    case 'debugLogs':
+      return <ScrollText {...commonProps} color={iconColor} />;
     default:
       return <CircleUser {...commonProps} color={iconColor} />;
   }

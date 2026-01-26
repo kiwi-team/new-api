@@ -21,7 +21,7 @@ import React, { lazy, Suspense, useContext, useMemo, useEffect } from 'react';
 import { Route, Routes, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, isRoot } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, RootRoute, isRoot } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
 import ToioRegisterForm from './components/auth/ToioRegisterForm';
 import LoginForm from './components/auth/LoginForm';
@@ -56,6 +56,11 @@ import EditChannel from './pages/Channel/EditChannel.js';
 import QuotaStatistics from './pages/QuotaStatistics';
 import CliendUserQuotaPage from './pages/CliendUserQuota';
 import ModelRouteConfig from './pages/ModelRouteConfig';
+
+// Debug module pages
+import DebugExecutor from './pages/Debug/Executor';
+import DebugTemplates from './pages/Debug/Templates';
+import DebugLogs from './pages/Debug/Logs';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -330,6 +335,31 @@ function App() {
             <AdminRoute>
               <ModelRouteConfig />
             </AdminRoute>
+          }
+        />
+        {/* Debug Module Routes - Root Only */}
+        <Route
+          path='/console/debug/executor'
+          element={
+            <RootRoute>
+              <DebugExecutor />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/debug/templates'
+          element={
+            <RootRoute>
+              <DebugTemplates />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/debug/logs'
+          element={
+            <RootRoute>
+              <DebugLogs />
+            </RootRoute>
           }
         />
         <Route

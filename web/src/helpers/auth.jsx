@@ -82,4 +82,21 @@ export function LeaderRoute({ children }) {
   return <Navigate to='/forbidden' replace />;
 }
 
+export function RootRoute({ children }) {
+  const raw = localStorage.getItem('user');
+  if (!raw) {
+    return <Navigate to='/login' state={{ from: history.location }} />;
+  }
+  try {
+    const user = JSON.parse(raw);
+    // 只有超级管理员 (role === 100) 可以访问
+    if (user && typeof user.role === 'number' && user.role === 100) {
+      return children;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return <Navigate to='/forbidden' replace />;
+}
+
 export { PrivateRoute };

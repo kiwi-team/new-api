@@ -162,9 +162,25 @@ const CliendUserQuotaPage = () => {
   const columns = [
     //{ title: 'ID', dataIndex: 'id', width: 80 },
     { title: 'Client UID', dataIndex: 'client_user_id', width: 220 },
-    { title: '月度固定预算', dataIndex: 'fixed_quota', width: 100 },
-    { title: '临时预算', dataIndex: 'temp_quota', width: 100 },
-    { title: '本月已使用($)', dataIndex: 'used_quota', width: 160, render: (v) => ((parseInt(v, 10) || 0) / 500000).toFixed(6) },
+    { 
+      title: '月度固定预算', 
+      dataIndex: 'fixed_quota', 
+      width: 130,
+      sorter: (a, b) => (parseInt(a.fixed_quota, 10) || 0) - (parseInt(b.fixed_quota, 10) || 0),
+    },
+    { 
+      title: '临时预算', 
+      dataIndex: 'temp_quota', 
+      width: 100,
+      sorter: (a, b) => (parseInt(a.temp_quota, 10) || 0) - (parseInt(b.temp_quota, 10) || 0),
+    },
+    { 
+      title: '本月已使用($)', 
+      dataIndex: 'used_quota', 
+      width: 160, 
+      render: (v) => ((parseInt(v, 10) || 0) / 500000).toFixed(6),
+      sorter: (a, b) => (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
+    },
     { title: '临时预算过期时间', dataIndex: 'expired_at', width: 200, render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-') },
     {
       title: '操作',
