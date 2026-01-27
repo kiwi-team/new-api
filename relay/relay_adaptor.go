@@ -45,6 +45,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
+	taskWorldLabs "github.com/QuantumNous/new-api/relay/channel/task/worldlabs"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/visualvolcengine"
@@ -179,6 +180,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskPixverse.TaskAdaptor{}
 		case constant.ChannelTypeLtx:
 			return &taskLtx.TaskAdaptor{}
+		case constant.ChannelTypeWorldLabs:
+			return &taskWorldLabs.TaskAdaptor{}
 		}
 	}
 	return nil

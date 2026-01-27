@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useState, useEffect } from 'react';
 import CardPro from '../../common/ui/CardPro';
-import { Table, Button, DatePicker, Space, Input, Tag } from '@douyinfe/semi-ui';
-import { showError, API } from '../../../helpers';
+import { Table, Button, DatePicker, Space, Input, Tag, Select } from '@douyinfe/semi-ui';
+import { showError, API, isRoot } from '../../../helpers';
 
 const QuotaStatisticsTable = () => {
   const [loading, setLoading] = useState(false);
@@ -47,6 +47,42 @@ const QuotaStatisticsTable = () => {
     return localStorage.getItem('is_toio') === 'true';
   })();
   const [clientUserId, setClientUserId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [userList, setUserList] = useState([]);
+  const [userListLoading, setUserListLoading] = useState(false);
+
+  // 获取用户列表（仅root用户可用）
+  const fetchUserList = async () => {
+    if (!isRoot()) return;
+    setUserListLoading(true);
+    try {
+      const res = await API.get('/api/user/', {
+        params: {
+          page: 1,
+          page_size: 1000, // 获取足够多的用户
+        },
+      });
+      const { success, data } = res.data;
+      if (success && data?.items) {
+        const options = data.items.map((user) => ({
+          value: user.id,
+          label: `${user.username} (ID: ${user.id})`,
+        }));
+        setUserList([{ value: 0, label: '全部用户' }, ...options]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch user list:', error);
+    } finally {
+      setUserListLoading(false);
+    }
+  };
+
+  // 初始化时获取用户列表
+  useEffect(() => {
+    if (isRoot()) {
+      fetchUserList();
+    }
+  }, []);
 
   const columns = (() => {
     const base = [
@@ -115,16 +151,19 @@ const QuotaStatisticsTable = () => {
     const startTimestamp = Math.floor(dateRange[0].getTime() / 1000);
     const endTimestamp = Math.floor(dateRange[1].getTime() / 1000);
     try {
-      const res = await API.get('/api/data/statistics', {
-        params: {
-          start_timestamp: startTimestamp,
-          end_timestamp: endTimestamp,
-          model_name: modelName,
-          client_user_id: clientUserId,
-          expand_models: expandModels,
-          expand_dates: expandDates,
-        },
-      });
+      const params = {
+        start_timestamp: startTimestamp,
+        end_timestamp: endTimestamp,
+        model_name: modelName,
+        client_user_id: clientUserId,
+        expand_models: expandModels,
+        expand_dates: expandDates,
+      };
+      // 仅root用户可以传递user_id参数
+      if (isRoot() && selectedUserId && selectedUserId > 0) {
+        params.user_id = selectedUserId;
+      }
+      const res = await API.get('/api/data/statistics', { params });
       const { success, message, data } = res.data;
       if (success) {
         const list = Array.isArray(data) ? data : [];
@@ -156,6 +195,10 @@ const QuotaStatisticsTable = () => {
   }, [clientUserId, modelName]);
 
   useEffect(() => {
+    fetchData();
+  }, [selectedUserId]);
+
+  useEffect(() => {
     if (toioMode) {
       setExpandModels(false);
       setExpandDates(false);
@@ -172,15 +215,20 @@ const QuotaStatisticsTable = () => {
     const endTimestamp = Math.floor(dateRange[1].getTime() / 1000);
     
     try {
+      const params = {
+        start_timestamp: startTimestamp,
+        end_timestamp: endTimestamp,
+        model_name: modelName,
+        client_user_id: clientUserId,
+        expand_models: expandModels,
+        expand_dates: expandDates,
+      };
+      // 仅root用户可以传递user_id参数
+      if (isRoot() && selectedUserId && selectedUserId > 0) {
+        params.user_id = selectedUserId;
+      }
       const res = await API.get('/api/data/statistics/export', {
-        params: {
-          start_timestamp: startTimestamp,
-          end_timestamp: endTimestamp,
-          model_name: modelName,
-          client_user_id: clientUserId,
-          expand_models: expandModels,
-          expand_dates: expandDates,
-        },
+        params,
         responseType: 'blob'
       });
       
@@ -239,6 +287,18 @@ const QuotaStatisticsTable = () => {
             onChange={setClientUserId} 
             style={{ width: 200 }}
         />
+        {isRoot() && (
+          <Select
+            placeholder="选择用户"
+            style={{ width: 200 }}
+            optionList={userList}
+            value={selectedUserId}
+            onChange={setSelectedUserId}
+            loading={userListLoading}
+            filter
+            showClear
+          />
+        )}
                 <Button theme='solid' onClick={fetchData} loading={loading}>Search</Button>
                 <Button onClick={handleExport}>Export CSV</Button>
             </Space>

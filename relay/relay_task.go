@@ -547,6 +547,19 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 					"task_id":  originTask.TaskID,
 					"url":      originTask.FailReason,
 				}
+				// Add World Labs specific fields if available
+				if ti.ColliderMeshUrl != "" {
+					out["collider_mesh_url"] = ti.ColliderMeshUrl
+				}
+				if ti.SplatUrl500k != "" {
+					out["splat_url_500k"] = ti.SplatUrl500k
+				}
+				if ti.SplatUrlFullRes != "" {
+					out["splat_url_full_res"] = ti.SplatUrlFullRes
+				}
+				if ti.WorldMarbleUrl != "" {
+					out["world_marble_url"] = ti.WorldMarbleUrl
+				}
 				respBody, _ = json.Marshal(dto.TaskResponse[any]{
 					Code: "success",
 					Data: out,
@@ -560,6 +573,19 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 					"status":   status,
 					"task_id":  originTask.TaskID,
 					"url":      originTask.FailReason,
+				}
+				// Add World Labs specific fields if available
+				if ti.ColliderMeshUrl != "" {
+					out["collider_mesh_url"] = ti.ColliderMeshUrl
+				}
+				if ti.SplatUrl500k != "" {
+					out["splat_url_500k"] = ti.SplatUrl500k
+				}
+				if ti.SplatUrlFullRes != "" {
+					out["splat_url_full_res"] = ti.SplatUrlFullRes
+				}
+				if ti.WorldMarbleUrl != "" {
+					out["world_marble_url"] = ti.WorldMarbleUrl
 				}
 				respBody, _ = json.Marshal(dto.TaskResponse[any]{
 					Code: "success",

@@ -21,12 +21,13 @@ const (
 	SunoActionMusic  = "MUSIC"
 	SunoActionLyrics = "LYRICS"
 
-	TaskActionGenerate          = "generate"
-	TaskActionTextGenerate      = "textGenerate"
-	TaskActionImageGenerate     = "imageGenerate" // image to video
-	TaskActionFirstTailGenerate = "firstTailGenerate"
-	TaskActionReferenceGenerate = "referenceGenerate"
-	TaskActionRemix             = "remixGenerate"
+	TaskActionGenerate           = "generate"
+	TaskActionTextGenerate       = "textGenerate"
+	TaskActionImageGenerate      = "imageGenerate" // image to video
+	TaskActionFirstTailGenerate  = "firstTailGenerate"
+	TaskActionReferenceGenerate  = "referenceGenerate"
+	TaskActionRemix              = "remixGenerate"
+	TaskActionMultiImageGenerate = "multiImageGenerate"
 )
 
 var SunoModel2Action = map[string]string{

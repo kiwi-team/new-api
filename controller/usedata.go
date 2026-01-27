@@ -153,8 +153,9 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
+	userId, _ := strconv.Atoi(c.Query("user_id"))
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates, userId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -175,8 +176,9 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
+	userId, _ := strconv.Atoi(c.Query("user_id"))
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, expandModels, expandDates, userId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

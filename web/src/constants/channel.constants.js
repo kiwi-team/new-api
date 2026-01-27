@@ -225,6 +225,10 @@ export const CHANNEL_OPTIONS = [
     value: 64,
     color: 'blue',
     label: 'Ltx',
+  }, {
+    value:66,
+    color:"red",
+    label:"worldlabs"
   }
 ];
 

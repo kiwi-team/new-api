@@ -593,6 +593,12 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+
+	// World Labs specific fields
+	ColliderMeshUrl string `json:"collider_mesh_url,omitempty"`
+	SplatUrl500k    string `json:"splat_url_500k,omitempty"`
+	SplatUrlFullRes string `json:"splat_url_full_res,omitempty"`
+	WorldMarbleUrl  string `json:"world_marble_url,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {
