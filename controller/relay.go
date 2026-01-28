@@ -588,9 +588,11 @@ func RelayTask(c *gin.Context) {
 		channel, newAPIError := getChannel(c, relayInfo, retryParam)
 		if len(tokenChannelIds) > 0 {
 			if channel.Status != common.ChannelStatusEnabled {
+				taskErr = &dto.TaskError{Code: "disabled_channel"}
 				continue
 			}
 			if !slices.Contains(strings.Split(channel.Models, ","), relayInfo.OriginModelName) {
+				taskErr = &dto.TaskError{Code: "not_supported_channel"}
 				continue
 			}
 
@@ -622,7 +624,7 @@ func RelayTask(c *gin.Context) {
 	}
 
 	// Check if no valid channel was found when using tokenChannelIds
-	if len(tokenChannelIds) > 0 && !channelFound && taskErr == nil {
+	if len(tokenChannelIds) > 0 && !channelFound && (taskErr == nil || taskErr.Code == "disabled_channel" || taskErr.Code == "not_supported_channel") {
 		taskErr = service.TaskErrorWrapperLocal(
 			fmt.Errorf("暂无可用渠道支持模型 %s）", relayInfo.OriginModelName),
 			"get_channel_failed",
@@ -658,8 +660,12 @@ func shouldRetryTaskRelay(c *gin.Context, round int, taskErr *dto.TaskError, ret
 	if round == 0 {
 		return true
 	}
+	//  第一次taskErr 肯定是nil，但是这个时候是需要继续retry的
+	// 当第二次或者更多次的时候，如果 taskErr是nil，说明任务提交成功，不用在retry了
 	if taskErr == nil {
-		return false
+		if round > 0 {
+			return false
+		}
 	}
 	if retryTimes <= 0 {
 		return false
