@@ -35,18 +35,79 @@ var ModelList = []string{
 // Request structures
 // ============================
 
+// ImagePromptSource represents the source type for image prompt
+// Can be "uri" or "data_base64"
+type ImagePromptSource string
+
+const (
+	ImagePromptSourceURI    ImagePromptSource = "uri"
+	ImagePromptSourceBase64 ImagePromptSource = "data_base64"
+)
+
+// ImagePrompt represents the image_prompt field which can be either URI or Base64
+// URI format: {"uri": "xxx", "source": "uri"}
+// Base64 format: {"data_base64": "xxx", "extension": "png", "source": "data_base64"}
+type ImagePrompt struct {
+	// For URI source
+	URI string `json:"uri,omitempty"`
+
+	// For Base64 source
+	DataBase64 string `json:"data_base64,omitempty"`
+	Extension  string `json:"extension,omitempty"`
+
+	// Source type: "uri" or "data_base64"
+	Source ImagePromptSource `json:"source"`
+}
+
+type MultiImagePromptItem struct {
+	Content *ImagePrompt `json:"content,omitempty"`
+	Azimuth *float32     `json:"azimuth,omitempty"`
+}
+
+// NewImagePromptFromURI creates an ImagePrompt from a URI
+func NewImagePromptFromURI(uri string) *ImagePrompt {
+	return &ImagePrompt{
+		URI:    uri,
+		Source: ImagePromptSourceURI,
+	}
+}
+
+// NewImagePromptFromBase64 creates an ImagePrompt from base64 data
+func NewImagePromptFromBase64(data, extension string) *ImagePrompt {
+	return &ImagePrompt{
+		DataBase64: data,
+		Extension:  extension,
+		Source:     ImagePromptSourceBase64,
+	}
+}
+
 // WorldPrompt is a union type for different prompt types
+// The API uses discriminated union pattern: type field determines the structure
 type WorldPrompt struct {
-	Type             string `json:"type"` // "text", "image", "multi_image", "video"
+	Type string `json:"type"` // "text", "image", "multi_image", "video"
+
+	// Common fields
 	TextPrompt       string `json:"text_prompt,omitempty"`
 	DisableRecaption bool   `json:"disable_recaption,omitempty"`
-	// For image prompt
-	ImageURL string `json:"image_url,omitempty"`
-	// For multi-image prompt
-	ImageURLs  []string `json:"image_urls,omitempty"`
-	AutoLayout bool     `json:"auto_layout,omitempty"`
-	// For video prompt
-	VideoURL string `json:"video_url,omitempty"`
+	IsPano           bool   `json:"is_pano,omitempty"`
+
+	// For image prompt (type="image")
+	ImagePrompt *ImagePrompt `json:"image_prompt,omitempty"`
+
+	// For multi-image prompt (type="multi_image")
+	MultiImagePrompt  *[]MultiImagePromptItem `json:"multi_image_prompt,omitempty"`
+	ReconstructImages bool                    `json:"reconstruct_images,omitempty"`
+
+	// For video prompt (type="video")
+	VideoPrompt *VideoPromptInput `json:"video_prompt,omitempty"`
+}
+
+// VideoPromptInput represents the video input for world generation
+type VideoPromptInput struct {
+	URI        string            `json:"uri,omitempty"`
+	DataBase64 string            `json:"data_base64,omitempty"`
+	Extension  string            `json:"extension,omitempty"`
+	Source     ImagePromptSource `json:"source"`
 }
 
 type Permission struct {
@@ -164,6 +225,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if req.HasImage() {
 		if len(req.Images) > 1 {
 			action = constant.TaskActionMultiImageGenerate
+		} else if len(req.Images) == 1 || len(req.Image) > 0 {
+			action = constant.TaskActionImageGenerate
 		} else {
 			action = constant.TaskActionGenerate
 		}
@@ -408,26 +471,25 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	switch info.Action {
 	case constant.TaskActionMultiImageGenerate:
 		// Multi-image to world
+		var imagePrompts []MultiImagePromptItem
+		for _, imgURL := range req.Images {
+			imagePrompts = append(imagePrompts, MultiImagePromptItem{Content: createImagePrompt(imgURL)})
+		}
 		worldReq.WorldPrompt = WorldPrompt{
-			Type:       "multi_image",
-			ImageURLs:  req.Images,
-			AutoLayout: true,
+			Type:             "multi-image",
+			MultiImagePrompt: &imagePrompts,
+			TextPrompt:       req.Prompt,
 		}
-		if req.Prompt != "" {
-			worldReq.WorldPrompt.TextPrompt = req.Prompt
-		}
-	case constant.TaskActionGenerate:
+	case constant.TaskActionImageGenerate:
 		// Single image to world
 		imageURL := req.Image
 		if imageURL == "" && len(req.Images) > 0 {
 			imageURL = req.Images[0]
 		}
 		worldReq.WorldPrompt = WorldPrompt{
-			Type:     "image",
-			ImageURL: imageURL,
-		}
-		if req.Prompt != "" {
-			worldReq.WorldPrompt.TextPrompt = req.Prompt
+			Type:        "image",
+			ImagePrompt: createImagePrompt(imageURL),
+			TextPrompt:  req.Prompt,
 		}
 	default:
 		// Text to world
@@ -456,12 +518,74 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		if disableRecaption, ok := req.Metadata["disable_recaption"].(bool); ok {
 			worldReq.WorldPrompt.DisableRecaption = disableRecaption
 		}
-		if autoLayout, ok := req.Metadata["auto_layout"].(bool); ok {
-			worldReq.WorldPrompt.AutoLayout = autoLayout
+		if isPano, ok := req.Metadata["is_pano"].(bool); ok {
+			worldReq.WorldPrompt.IsPano = isPano
+		}
+		// Handle permission from metadata
+		if permission, ok := req.Metadata["permission"].(map[string]interface{}); ok {
+			worldReq.Permission = &Permission{}
+			if public, ok := permission["public"].(bool); ok {
+				worldReq.Permission.Public = public
+			}
+			if readers, ok := permission["allowed_readers"].([]interface{}); ok {
+				for _, r := range readers {
+					if rStr, ok := r.(string); ok {
+						worldReq.Permission.AllowedReaders = append(worldReq.Permission.AllowedReaders, rStr)
+					}
+				}
+			}
+			if writers, ok := permission["allowed_writers"].([]interface{}); ok {
+				for _, w := range writers {
+					if wStr, ok := w.(string); ok {
+						worldReq.Permission.AllowedWriters = append(worldReq.Permission.AllowedWriters, wStr)
+					}
+				}
+			}
 		}
 	}
 
 	return worldReq, nil
+}
+
+// createImagePrompt creates an ImagePrompt from a string
+// If the string starts with "data:" or looks like base64, it creates a base64 prompt
+// Otherwise, it creates a URI prompt
+func createImagePrompt(input string) *ImagePrompt {
+	// Check if it's a base64 data URL (data:image/png;base64,xxx)
+	if len(input) > 5 && input[:5] == "data:" {
+		// Parse data URL: data:image/png;base64,xxx
+		// Find the comma that separates metadata from data
+		commaIdx := -1
+		for i, c := range input {
+			if c == ',' {
+				commaIdx = i
+				break
+			}
+		}
+		if commaIdx > 0 {
+			metadata := input[5:commaIdx] // e.g., "image/png;base64"
+			data := input[commaIdx+1:]
+
+			// Extract extension from mime type
+			extension := "png" // default
+			if len(metadata) > 6 && metadata[:6] == "image/" {
+				// Find the end of mime type (before ;base64)
+				endIdx := len(metadata)
+				for i, c := range metadata {
+					if c == ';' {
+						endIdx = i
+						break
+					}
+				}
+				extension = metadata[6:endIdx]
+			}
+
+			return NewImagePromptFromBase64(data, extension)
+		}
+	}
+
+	// Default to URI
+	return NewImagePromptFromURI(input)
 }
 
 func defaultString(value, defaultValue string) string {
