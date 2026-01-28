@@ -33,3 +33,6 @@ data/
 .gomodcache/
 .gocache-temp
 .gopath
+
+
+docs/
