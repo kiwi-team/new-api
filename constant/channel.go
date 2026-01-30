@@ -64,6 +64,7 @@ const (
 	ChannelTypeLtx              = 64
 	ChannelTypeAwsV2            = 65
 	ChannelTypeWorldLabs        = 66
+	ChannelTypeFALSync          = 67
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -137,6 +138,7 @@ var ChannelBaseURLs = []string{
 	"https://api.ltx.video",             //64
 	"",                                  //65 awsv2
 	"https://api.worldlabs.ai",          //66 worldlabs
+	"https://queue.fal.run",             //67 fal_sync
 }
 
 var ChannelTypeNames = map[int]string{
@@ -200,6 +202,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeLtx:            "Ltx",
 	ChannelTypeAwsV2:          "AWS V2",
 	ChannelTypeWorldLabs:      "WorldLabs",
+	ChannelTypeFALSync:        "FAL Sync",
 }
 
 func GetChannelTypeName(channelType int) string {

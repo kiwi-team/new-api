@@ -31,9 +31,40 @@ type ImageRequest struct {
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
-	Image            json.RawMessage `json:"image,omitempty"`
+	Image            json.RawMessage `json:"image,omitempty"`  // 单张图片 (string)
+	Images           json.RawMessage `json:"images,omitempty"` // 多张图片 ([]string)
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// GetImageURLs extracts image URLs from both Image (string) and Images ([]string) fields
+// Returns a slice of image URLs, supporting both single and multiple image inputs
+func (i *ImageRequest) GetImageURLs() ([]string, error) {
+	var urls []string
+
+	// Parse Images field (array format) first
+	if len(i.Images) > 0 {
+		var imageArray []string
+		if err := json.Unmarshal(i.Images, &imageArray); err == nil {
+			for _, url := range imageArray {
+				if trimmed := strings.TrimSpace(url); trimmed != "" {
+					urls = append(urls, trimmed)
+				}
+			}
+		}
+	}
+
+	// Parse Image field (string format)
+	if len(i.Image) > 0 {
+		var imageStr string
+		if err := json.Unmarshal(i.Image, &imageStr); err == nil {
+			if trimmed := strings.TrimSpace(imageStr); trimmed != "" {
+				urls = append(urls, trimmed)
+			}
+		}
+	}
+
+	return urls, nil
 }
 
 func (i *ImageRequest) UnmarshalJSON(data []byte) error {

@@ -81,6 +81,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeReplicate
 	case constant.ChannelTypeAwsV2:
 		apiType = constant.APITypeAwsV2
+	case constant.ChannelTypeFALSync:
+		apiType = constant.APITypeFALSync
 	}
 	if apiType == -1 {
 		return constant.APITypeOpenAI, false

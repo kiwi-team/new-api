@@ -213,6 +213,11 @@ export const CHANNEL_OPTIONS = [
     value: 61,
     color: 'red',
     label: 'Fal',
+  },
+  {
+    value: 67,
+    color: 'red',
+    label: 'FAL Sync',
   },{
     value: 62,
     color: 'blue',
