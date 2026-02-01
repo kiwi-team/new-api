@@ -95,7 +95,9 @@ func main() {
 	// UID临时预算过期归零
 	if os.Getenv("ENABLE_RESET_EXPIRED_QUOTA") == "true" {
 		go model.ResetExpiredCliendUserTempQuota()
+		go model.ResetMonthlyUsedQuota()
 	}
+
 	// 飞书机器人消耗告警
 	if os.Getenv("ENABLE_UID_FEISHU_ALERTS") == "true" {
 		go controller.FeishuQuotaAlerts()
