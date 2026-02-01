@@ -63,7 +63,7 @@ func ResetExpiredCliendUserTempQuota() {
 	for {
 		now := time.Now().Unix()
 		var rows []CliendUserQuota
-		err := DB.Where("expired_at > 0 AND expired_at <= ? AND temp_quota > 0", now).Find(&rows).Error
+		err := DB.Where("expired_at > 0 AND expired_at <= ? AND (temp_quota > 0 or used_quota > 0)", now).Find(&rows).Error
 		if err == nil {
 			for _, row := range rows {
 				oldTemp := row.TempQuota
