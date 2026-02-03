@@ -253,6 +253,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			if budget < 1024 {
 				budget = 1024 //Must be ≥1024 and less than max_tokens.
 			}
+			if claudeRequest.MaxTokens < uint(budget) {
+				claudeRequest.MaxTokens = uint(budget) + 1
+			}
 			claudeRequest.Thinking = &dto.Thinking{
 				Type:         "enabled",
 				BudgetTokens: &budget,

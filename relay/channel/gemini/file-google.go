@@ -85,6 +85,7 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 		return nil, fmt.Errorf("Writer.Close: %w", err)
 	}
 
+	//fmt.Printf("upload file to google: %s/%s", bucket, object)
 	return &genai.File{
 		URI:         fmt.Sprintf("gs://%s/%s", bucket, object),
 		DownloadURI: fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, object),
@@ -166,6 +167,6 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 		}
 		return file, nil
 	}
-	fmt.Printf("upload file to google failed after %d retries, fileUri: %s\n", retryTimes, fileUri)
+	//fmt.Printf("upload file to google failed after %d retries, fileUri: %s\n", retryTimes, fileUri)
 	return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s", retryTimes, fileUri)
 }
