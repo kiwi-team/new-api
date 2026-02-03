@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
-import { API, showError, showSuccess } from '../../helpers';
+import React, { useEffect, useState, useMemo } from 'react';
+import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
 import { Button, Table, Modal, Form, Input, Space, Typography } from '@douyinfe/semi-ui';
 
 const { Title } = Typography;
@@ -27,14 +27,19 @@ const CliendUserQuotaPage = () => {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(100);
   const [total, setTotal] = useState(0);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState(null);
   const [formApi, setFormApi] = useState(null);
+  
+  // 判断是否为管理员或root用户
+  const isAdminOrRoot = useMemo(() => isAdmin() || isRoot(), []);
+  
   const initFormValues = {
     client_user_id: '',
+    client_name: '',
     fixed_quota: 0,
     temp_quota: 0,
     remark: '',
@@ -91,6 +96,7 @@ const CliendUserQuotaPage = () => {
     setEditing(record);
     setFormValues({
       client_user_id: record.client_user_id,
+      client_name: record.client_name || '',
       fixed_quota: record.fixed_quota,
       temp_quota: record.temp_quota,
       remark: record.remark || '',
@@ -162,6 +168,8 @@ const CliendUserQuotaPage = () => {
   const columns = [
     //{ title: 'ID', dataIndex: 'id', width: 80 },
     { title: 'Client UID', dataIndex: 'client_user_id', width: 220 },
+    // 只有管理员或root用户才能看到ClientName列
+    ...(isAdminOrRoot ? [{ title: 'Client Name', dataIndex: 'client_name', width: 150 }] : []),
     { 
       title: '月度固定预算', 
       dataIndex: 'fixed_quota', 
@@ -246,6 +254,13 @@ const CliendUserQuotaPage = () => {
                 label='Client UID'
                 disabled={!!editing}
               />
+              {isAdminOrRoot && (
+                <Form.Input
+                  field='client_name'
+                  label='Client Name'
+                  placeholder='客户名称（仅管理员可见）'
+                />
+              )}
               <Form.InputNumber
                 field='fixed_quota'
                 label='月度固定预算'

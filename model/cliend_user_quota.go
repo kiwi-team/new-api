@@ -14,6 +14,7 @@ import (
 type CliendUserQuota struct {
 	Id           int    `json:"id"`
 	ClientUserId string `json:"client_user_id" gorm:"uniqueIndex;size:200;not null;default:''"`
+	ClientName   string `json:"client_name" gorm:"default:''"`
 	FixedQuota   int    `json:"fixed_quota" gorm:"type:int;default:0"`
 	TempQuota    int    `json:"temp_quota" gorm:"type:int;default:0"`
 	UsedQuota    int    `json:"used_quota" gorm:"type:int;default:0"`

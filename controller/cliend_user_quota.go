@@ -12,6 +12,7 @@ import (
 
 type CuQuotaUpsertRequest struct {
 	ClientUserId string `json:"client_user_id" binding:"required"`
+	ClientName   string `json:"client_name"`
 	FixedQuota   int    `json:"fixed_quota"`
 	TempQuota    int    `json:"temp_quota"`
 	Remark       string `json:"remark"`
@@ -88,6 +89,7 @@ func CreateCliendUserQuota(c *gin.Context) {
 	}
 	row := model.CliendUserQuota{
 		ClientUserId: req.ClientUserId,
+		ClientName:   req.ClientName,
 		FixedQuota:   req.FixedQuota,
 		TempQuota:    req.TempQuota,
 		UpdatedAt:    time.Now().Unix(),
@@ -138,6 +140,7 @@ func UpdateCliendUserQuota(c *gin.Context) {
 		return
 	}
 	updates := map[string]interface{}{
+		"client_name": req.ClientName,
 		"fixed_quota": req.FixedQuota,
 		"temp_quota":  req.TempQuota,
 		"updated_at":  time.Now().Unix(),
