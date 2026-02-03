@@ -72,6 +72,17 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 	{
+		// Moonshot Formulas 路由
+		formulasRouter := relayV1Router.Group("/formulas")
+		formulasRouter.Use(middleware.Distribute())
+		{
+			// POST /v1/formulas/:vendor/:formula/fibers
+			formulasRouter.POST("/:vendor/:formula/fibers", controller.RelayMoonshotFormulas)
+			// GET /v1/formulas/:vendor/:formula/tools
+			formulasRouter.GET("/:vendor/:formula/tools", controller.RelayMoonshotFormulas)
+		}
+	}
+	{
 		//http router
 		httpRouter := relayV1Router.Group("")
 		httpRouter.Use(middleware.Distribute())

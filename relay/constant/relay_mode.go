@@ -50,6 +50,10 @@ const (
 	RelayModeRealtime
 
 	RelayModeGemini
+
+	RelayModeMoonshotFormulasTools
+
+	RelayModeMoonshotFormulasFibers
 )
 
 func Path2RelayMode(path string) int {
@@ -86,6 +90,18 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeGemini
 	} else if strings.HasPrefix(path, "/mj") {
 		relayMode = Path2RelayModeMidjourney(path)
+	} else if strings.HasPrefix(path, "/v1/formulas") {
+		relayMode = Path2RelayModeMoonshot(path)
+	}
+	return relayMode
+}
+
+func Path2RelayModeMoonshot(path string) int {
+	relayMode := RelayModeUnknown
+	if strings.HasSuffix(path, "/tools") {
+		relayMode = RelayModeMoonshotFormulasTools
+	} else if strings.HasSuffix(path, "fibers") {
+		relayMode = RelayModeMoonshotFormulasFibers
 	}
 	return relayMode
 }

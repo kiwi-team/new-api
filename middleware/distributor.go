@@ -484,6 +484,27 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/serper") {
 		modelRequest.Model = "serper"
 	}
+
+	// Moonshot Formulas 路由处理
+	// 这些路由不需要通过模型匹配选择渠道，而是直接使用 moonshot 渠道
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/formulas/") {
+		// 从路径中提取 formula 名称作为模型名
+		// 路径格式: /v1/formulas/:vendor/:formula/fibers 或 /v1/formulas/:vendor/:formula/tools
+		parts := strings.Split(c.Request.URL.Path, "/")
+		if len(parts) >= 5 {
+			// parts[0]="", parts[1]="v1", parts[2]="formulas", parts[3]=vendor, parts[4]=formula
+			vendor := parts[3]
+			formula := parts[4]
+			// 使用 moonshot-v1-8k 作为默认模型来匹配 moonshot 渠道
+			// 实际的 formula 信息会从 URL 路径中获取
+			modelRequest.Model = "moonshot-v1-8k"
+			c.Set("moonshot_formula_vendor", vendor)
+			c.Set("moonshot_formula_name", formula)
+		}
+		relayMode := relayconstant.Path2RelayModeMoonshot(c.Request.URL.Path)
+		c.Set("relay_mode", relayMode)
+	}
+
 	return &modelRequest, shouldSelectChannel, nil
 }
 
