@@ -1,6 +1,7 @@
 package moonshot
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -89,6 +90,28 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			return nil, fmt.Errorf("this moonshot model %s only support stream mode now", request.Model)
 		}
 	*/
+	//https://platform.moonshot.cn/docs/api/chat#%E5%AD%97%E6%AE%B5%E8%AF%B4%E6%98%8E
+	// https://platform.moonshot.cn/docs/guide/kimi-k2-5-quickstart#%E5%8F%82%E6%95%B0%E5%8F%98%E5%8A%A8%E8%AF%B4%E6%98%8E
+	if request.Model == "kimi-k2.5" {
+		request.TopP = 0.95
+		if request.THINKING != nil {
+			var thinking dto.Thinking
+			err := json.Unmarshal(request.THINKING, &thinking)
+			if err == nil {
+				if thinking.Type == "enabled" {
+					tmp := 1.0
+					request.Temperature = &tmp
+					request.THINKING = json.RawMessage(`{"type":"enabled"}`)
+				} else if thinking.Type == "disabled" {
+					tmp := 0.6
+					request.Temperature = &tmp
+					request.THINKING = json.RawMessage(`{"type":"disabled"}`)
+				}
+			} else {
+				request.THINKING = json.RawMessage(`{"type":"disabled"}`)
+			}
+		}
+	}
 	return request, nil
 }
 

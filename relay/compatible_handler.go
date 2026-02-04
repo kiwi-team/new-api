@@ -112,6 +112,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		requestBody = bytes.NewBuffer(body)
 	} else {
 		convertedRequest, err1 := adaptor.ConvertOpenAIRequest(c, info, request)
+		//common.PrintJson("\n 66666 convertedRequest:\n", convertedRequest)
 		if err1 != nil {
 			return types.NewError(err1, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
