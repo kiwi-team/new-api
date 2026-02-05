@@ -110,6 +110,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			} else {
 				request.THINKING = json.RawMessage(`{"type":"disabled"}`)
 			}
+		} else {
+			tmp := 1.0
+			request.Temperature = &tmp
 		}
 	}
 	return request, nil
