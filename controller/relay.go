@@ -409,10 +409,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 
 	tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 	clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+	clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
 	requestId := c.GetString(common.RequestIdKey)
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	if common.SaveErrorLog {
-		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId)
+		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo)
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况

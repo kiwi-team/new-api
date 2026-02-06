@@ -220,6 +220,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
+	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -234,6 +235,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
 		ClientUserId:     clientUserId,
+		ClientScenairo:   clientScenairo,
 	})
 }
 
@@ -341,6 +343,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		cacheCreationTokens1h, cacheCreationRatio1h,
 		modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
+	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -357,6 +360,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		Request:          requestStr,
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
+		ClientScenairo:   clientScenairo,
 	})
 
 }
@@ -470,6 +474,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
+	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
@@ -486,6 +491,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Request:          requestStr,
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
+		ClientScenairo:   clientScenairo,
 	})
 }
 

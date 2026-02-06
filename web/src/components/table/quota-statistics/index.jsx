@@ -47,7 +47,15 @@ const QuotaStatisticsTable = () => {
     return localStorage.getItem('is_toio') === 'true';
   })();
   const [clientUserId, setClientUserId] = useState('');
+  const [clientScenairos, setClientScenairos] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
+
+  const scenairoOptions = [
+    { value: 'PersonalExperiment', label: '个人实验' },
+    { value: 'ReleaseEvaluation', label: '发版评测' },
+    { value: 'DailyExternalModelEvaluation', label: '日常外部模型评测' },
+    { value: 'Other', label: '其他' },
+  ];
   const [userList, setUserList] = useState([]);
   const [userListLoading, setUserListLoading] = useState(false);
 
@@ -156,6 +164,7 @@ const QuotaStatisticsTable = () => {
         end_timestamp: endTimestamp,
         model_name: modelName,
         client_user_id: clientUserId,
+        client_scenairos: clientScenairos.join(','),
         expand_models: expandModels,
         expand_dates: expandDates,
       };
@@ -192,7 +201,7 @@ const QuotaStatisticsTable = () => {
   }, [expandModels, expandDates]);
   useEffect(() => {
     fetchData();
-  }, [clientUserId, modelName]);
+  }, [clientUserId, modelName, clientScenairos]);
 
   useEffect(() => {
     fetchData();
@@ -220,6 +229,7 @@ const QuotaStatisticsTable = () => {
         end_timestamp: endTimestamp,
         model_name: modelName,
         client_user_id: clientUserId,
+        client_scenairos: clientScenairos.join(','),
         expand_models: expandModels,
         expand_dates: expandDates,
       };
@@ -250,7 +260,8 @@ const QuotaStatisticsTable = () => {
         type='type2'
         title="Quota Statistics"
         searchArea={
-      <Space>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Space>
             <DatePicker 
                 type="dateTimeRange" 
                 value={dateRange} 
@@ -259,49 +270,63 @@ const QuotaStatisticsTable = () => {
             <Tag color='white' shape='circle'>
               <span>总消耗: ${totalUSD.toFixed(2)}</span>
             </Tag>
-        {!toioMode && (
-          <>
-            <Button
-              type='tertiary'
-              onClick={() => setExpandModels(!expandModels)}
-            >
-              {expandModels ? '按模型展开: 开' : '按模型展开: 关'}
-            </Button>
-            <Button
-              type='tertiary'
-              onClick={() => setExpandDates(!expandDates)}
-            >
-              {expandDates ? '按日期展开: 开' : '按日期展开: 关'}
-            </Button>
+            {!toioMode && (
+              <>
+                <Button
+                  type='tertiary'
+                  onClick={() => setExpandModels(!expandModels)}
+                >
+                  {expandModels ? '按模型展开: 开' : '按模型展开: 关'}
+                </Button>
+                <Button
+                  type='tertiary'
+                  onClick={() => setExpandDates(!expandDates)}
+                >
+                  {expandDates ? '按日期展开: 开' : '按日期展开: 关'}
+                </Button>
+              </>
+            )}
+        </Space>
+        <Space>
+            {!toioMode && (
+              <Input 
+                  placeholder="Model Name" 
+                  value={modelName} 
+                  onChange={setModelName} 
+                  style={{ width: 150 }}
+              />
+            )}
             <Input 
-                placeholder="Model Name" 
-                value={modelName} 
-                onChange={setModelName} 
-                style={{ width: 200 }}
+                placeholder="UID(模糊)" 
+                value={clientUserId} 
+                onChange={setClientUserId} 
+                style={{ width: 150 }}
             />
-          </>
-        )}
-        <Input 
-            placeholder="UID(模糊)" 
-            value={clientUserId} 
-            onChange={setClientUserId} 
-            style={{ width: 200 }}
-        />
-        {isRoot() && (
-          <Select
-            placeholder="选择用户"
-            style={{ width: 200 }}
-            optionList={userList}
-            value={selectedUserId}
-            onChange={setSelectedUserId}
-            loading={userListLoading}
-            filter
-            showClear
-          />
-        )}
-                <Button theme='solid' onClick={fetchData} loading={loading}>Search</Button>
-                <Button onClick={handleExport}>Export CSV</Button>
-            </Space>
+            <Select
+                placeholder="Scenairo"
+                multiple
+                style={{ width: 220 }}
+                optionList={scenairoOptions}
+                value={clientScenairos}
+                onChange={setClientScenairos}
+                showClear
+            />
+            {isRoot() && (
+              <Select
+                placeholder="选择用户"
+                style={{ width: 180 }}
+                optionList={userList}
+                value={selectedUserId}
+                onChange={setSelectedUserId}
+                loading={userListLoading}
+                filter
+                showClear
+              />
+            )}
+            <Button theme='solid' onClick={fetchData} loading={loading}>Search</Button>
+            <Button onClick={handleExport}>Export CSV</Button>
+        </Space>
+      </div>
         }
     >
       <Table columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />

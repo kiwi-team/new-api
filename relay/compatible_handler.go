@@ -1009,6 +1009,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		logContent = fmt.Sprintf("ttsRatio:%.2f，TTS 输入字符数:%d，TTS语音计费: %s", ttsRatio, ttsCount, logger.FormatQuota(quota))
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
+	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -1025,5 +1026,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		Request:          requestStr,
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
+		ClientScenairo:   clientScenairo,
 	})
 }

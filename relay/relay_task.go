@@ -301,18 +301,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					other["user_group_ratio"] = userGroupRatio
 				}
 				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+				clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
 				model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-					ChannelId:    info.ChannelId,
-					ModelName:    modelName,
-					TokenName:    tokenName,
-					Quota:        quota,
-					Content:      logContent,
-					TokenId:      info.TokenId,
-					Group:        info.UsingGroup,
-					Other:        other,
-					ClientUserId: clientUserId,
-					Request:      string(request),
-					Response:     responseStr,
+					ChannelId:      info.ChannelId,
+					ModelName:      modelName,
+					TokenName:      tokenName,
+					Quota:          quota,
+					Content:        logContent,
+					TokenId:        info.TokenId,
+					Group:          info.UsingGroup,
+					Other:          other,
+					ClientUserId:   clientUserId,
+					ClientScenairo: clientScenairo,
+					Request:        string(request),
+					Response:       responseStr,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)

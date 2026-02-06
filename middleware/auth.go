@@ -245,6 +245,7 @@ func TokenAuth() func(c *gin.Context) {
 			key = strings.TrimSpace(key[7:])
 		}
 		clientUserId := c.Request.Header.Get("uid")
+		clientScenairo := c.Request.Header.Get("scenairo")
 		// 从key中提取client_user_id
 		tmpArr := strings.Split(key, "_")
 		if len(tmpArr) >= 2 {
@@ -350,6 +351,7 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyClientUserId, clientUserId)
+		common.SetContextKey(c, constant.ContextKeyClientScenairo, clientScenairo)
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {

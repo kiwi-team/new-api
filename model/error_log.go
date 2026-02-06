@@ -13,23 +13,24 @@ import (
 )
 
 type ErrorLog struct {
-	Id           int    `json:"id"`
-	UserId       int    `json:"user_id" gorm:"index"`
-	CreatedAt    int64  `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
-	ChannelId    int    `json:"channel_id" gorm:"index"`
-	ChannelName  string `json:"channel_name" gorm:"default:''"`
-	TokenId      int    `json:"token_id" gorm:"index"`
-	TokenName    string `json:"token_name"`
-	ModelName    string `json:"model_name" gorm:"default:''"`
-	Message      string `json:"message" gorm:"default:''"`
-	Type         string `json:"type" gorm:"default:''"`
-	Param        string `json:"param" gorm:"default:''"`
-	Code         string `json:"code" gorm:"default:''"`
-	RequestId    string `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
-	StatusCode   int    `json:"status_code" gorm:"default:0"`
-	Body         string `json:"body" gorm:"default:''"`
-	Ip           string `json:"ip" gorm:"default:''"`
-	ClientUserId string `json:"client_user_id" gorm:"default:''"`
+	Id             int    `json:"id"`
+	UserId         int    `json:"user_id" gorm:"index"`
+	CreatedAt      int64  `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
+	ChannelId      int    `json:"channel_id" gorm:"index"`
+	ChannelName    string `json:"channel_name" gorm:"default:''"`
+	TokenId        int    `json:"token_id" gorm:"index"`
+	TokenName      string `json:"token_name"`
+	ModelName      string `json:"model_name" gorm:"default:''"`
+	Message        string `json:"message" gorm:"default:''"`
+	Type           string `json:"type" gorm:"default:''"`
+	Param          string `json:"param" gorm:"default:''"`
+	Code           string `json:"code" gorm:"default:''"`
+	RequestId      string `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
+	StatusCode     int    `json:"status_code" gorm:"default:0"`
+	Body           string `json:"body" gorm:"default:''"`
+	Ip             string `json:"ip" gorm:"default:''"`
+	ClientUserId   string `json:"client_user_id" gorm:"default:''"`
+	ClientScenairo string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 }
 
 func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
@@ -111,26 +112,27 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 
 var LogList []*ErrorLog
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
 	log := &ErrorLog{
-		UserId:       userId,
-		CreatedAt:    common.GetTimestamp(),
-		ChannelId:    channelId,
-		Message:      err.Message,
-		Type:         string(err.Type),
-		Param:        err.Param,
-		ChannelName:  channelName,
-		ModelName:    modelName,
-		Code:         fmt.Sprintf("%v", err.Code),
-		StatusCode:   err.StatusCode,
-		Body:         body,
-		Ip:           ip,
-		TokenId:      tokenId,
-		RequestId:    requestId,
-		ClientUserId: clientUserId,
+		UserId:         userId,
+		CreatedAt:      common.GetTimestamp(),
+		ChannelId:      channelId,
+		Message:        err.Message,
+		Type:           string(err.Type),
+		Param:          err.Param,
+		ChannelName:    channelName,
+		ModelName:      modelName,
+		Code:           fmt.Sprintf("%v", err.Code),
+		StatusCode:     err.StatusCode,
+		Body:           body,
+		Ip:             ip,
+		TokenId:        tokenId,
+		RequestId:      requestId,
+		ClientUserId:   clientUserId,
+		ClientScenairo: clientScenairo,
 	}
 	return LOG_DB.Create(log).Error
 	// LogList = append(LogList, log)

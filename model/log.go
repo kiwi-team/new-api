@@ -40,6 +40,7 @@ type Log struct {
 	Request          string `json:"request" gorm:"type:text"`
 	Response         string `json:"response" gorm:"type:text"`
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
+	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 }
 
 // don't use iota, avoid change log type value
@@ -165,6 +166,7 @@ type RecordConsumeLogParams struct {
 	Request          string                 `json:"request"`
 	Response         string                 `json:"response"`
 	ClientUserId     string                 `json:"client_user_id"`
+	ClientScenairo   string                 `json:"client_scenairo"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -204,10 +206,11 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			}
 			return ""
 		}(),
-		Other:        otherStr,
-		Request:      strings.TrimSpace(params.Request),
-		Response:     strings.TrimSpace(params.Response),
-		ClientUserId: params.ClientUserId,
+		Other:          otherStr,
+		Request:        strings.TrimSpace(params.Request),
+		Response:       strings.TrimSpace(params.Response),
+		ClientUserId:   params.ClientUserId,
+		ClientScenairo: params.ClientScenairo,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
@@ -229,6 +232,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 				ChannelId:        params.ChannelId,
 				TokenId:          params.TokenId,
 				ClientUserId:     params.ClientUserId,
+				ClientScenairo:   params.ClientScenairo,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
