@@ -51,7 +51,7 @@ const QuotaStatisticsTable = () => {
   const [selectedUserId, setSelectedUserId] = useState(null);
 
   const scenairoOptions = [
-    { value: 'PersonalExperiment', label: '个人实验' },
+    { value: 'PersonalExperiment', label: '个人实验(含未标记)' },
     { value: 'ReleaseEvaluation', label: '发版评测' },
     { value: 'DailyExternalModelEvaluation', label: '日常外部模型评测' },
     { value: 'Other', label: '其他' },

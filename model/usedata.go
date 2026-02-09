@@ -199,26 +199,54 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	// 处理多选scenairo筛选
 	if clientScenairos != "" {
 		scenairoList := strings.Split(clientScenairos, ",")
+		// 已知的三个场景（不含空值）
 		knownScenairos := []string{"PersonalExperiment", "ReleaseEvaluation", "DailyExternalModelEvaluation"}
 		hasOther := false
+		hasPersonalExperiment := false
 		normalScenairos := make([]string, 0)
 		for _, s := range scenairoList {
 			s = strings.TrimSpace(s)
 			if s == "Other" {
 				hasOther = true
+			} else if s == "PersonalExperiment" {
+				hasPersonalExperiment = true
+				normalScenairos = append(normalScenairos, s)
 			} else if s != "" {
 				normalScenairos = append(normalScenairos, s)
 			}
 		}
-		if hasOther && len(normalScenairos) > 0 {
-			// 同时选择了"其他"和具体的scenairo
-			tx = tx.Where("(client_scenairo IN ? OR client_scenairo NOT IN ?)", normalScenairos, knownScenairos)
-		} else if hasOther {
-			// 只选择了"其他"
-			tx = tx.Where("client_scenairo NOT IN ?", knownScenairos)
-		} else if len(normalScenairos) > 0 {
-			// 只选择了具体的scenairo
-			tx = tx.Where("client_scenairo IN ?", normalScenairos)
+
+		// 构建查询条件
+		var conditions []string
+		var args []interface{}
+
+		// 个人实验：包含 PersonalExperiment 和空值
+		if hasPersonalExperiment {
+			conditions = append(conditions, "(client_scenairo = ? OR client_scenairo = '')")
+			args = append(args, "PersonalExperiment")
+		}
+
+		// 其他普通场景（发版评测、日常外部模型评测）
+		otherNormalScenairos := make([]string, 0)
+		for _, s := range normalScenairos {
+			if s != "PersonalExperiment" {
+				otherNormalScenairos = append(otherNormalScenairos, s)
+			}
+		}
+		if len(otherNormalScenairos) > 0 {
+			conditions = append(conditions, "client_scenairo IN ?")
+			args = append(args, otherNormalScenairos)
+		}
+
+		// "其他"：不在三个已知场景中，且不为空
+		if hasOther {
+			conditions = append(conditions, "(client_scenairo NOT IN ? AND client_scenairo != '')")
+			args = append(args, knownScenairos)
+		}
+
+		if len(conditions) > 0 {
+			combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
+			tx = tx.Where(combinedCondition, args...)
 		}
 	}
 	if userId > 0 {
