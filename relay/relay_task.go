@@ -220,6 +220,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		}
 		if len(info.PriceData.OtherRatios) > 0 {
 			for _, ra := range info.PriceData.OtherRatios {
+				fmt.Printf("666666 ra:%v\n", ra)
 				if 1.0 != ra {
 					ratio *= ra
 				}

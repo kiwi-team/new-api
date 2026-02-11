@@ -245,11 +245,18 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if len(images) == 0 && req.Image != "" {
 		images = append(images, req.Image)
 	}
+	seconds := common.String2Int(req.Seconds)
+	if seconds <= 0 {
+		seconds = 5
+	}
+	if req.Duration > 0 {
+		seconds = req.Duration
+	}
 	r := requestPayload{
 		Model:             defaultString(req.Model, "viduq1"),
 		Images:            images,
 		Prompt:            req.Prompt,
-		Duration:          defaultInt(req.Duration, 5),
+		Duration:          seconds,
 		Resolution:        defaultString(req.Size, "1080p"),
 		MovementAmplitude: "auto",
 		Bgm:               false,

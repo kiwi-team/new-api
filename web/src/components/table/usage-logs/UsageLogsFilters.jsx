@@ -111,6 +111,14 @@ const LogsFilters = ({
                 pure
                 size='small'
               />
+              <Form.Input
+                field='client_user_id'
+                prefix={<IconSearch />}
+                placeholder={t('Client User ID')}
+                showClear
+                pure
+                size='small'
+              />
             </>
           )}
         </div>

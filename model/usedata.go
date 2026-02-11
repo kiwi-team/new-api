@@ -332,6 +332,6 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string, defaultTi
 
 func GetQuotaByTime(userId int, startTime int64, endTime int64) (int, error) {
 	var quota int
-	err := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) as quota").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Find(&quota).Error
+	err := DB.Table("quota_data").Select("COALESCE(sum(quota), 0) as quota").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Find(&quota).Error
 	return quota, err
 }
