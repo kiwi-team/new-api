@@ -26,6 +26,7 @@ import ModelRatioSettings from '../../pages/Setting/Ratio/ModelRatioSettings';
 import ModelSettingsVisualEditor from '../../pages/Setting/Ratio/ModelSettingsVisualEditor';
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
+import HumanReadablePriceEditor from '../../pages/Setting/Ratio/HumanReadablePriceEditor';
 
 import { API, showError, toBoolean } from '../../helpers';
 
@@ -97,6 +98,9 @@ const RatioSetting = () => {
       {/* 模型倍率设置以及可视化编辑器 */}
       <Card style={{ marginTop: '10px' }}>
         <Tabs type='card'>
+          <Tabs.TabPane tab={t('人性化价格配置')} itemKey='human-price'>
+            <HumanReadablePriceEditor options={inputs} refresh={onRefresh} />
+          </Tabs.TabPane>
           <Tabs.TabPane tab={t('模型倍率设置')} itemKey='model'>
             <ModelRatioSettings options={inputs} refresh={onRefresh} />
           </Tabs.TabPane>
