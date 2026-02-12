@@ -405,8 +405,11 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		} else {
 			textRequest.EnableThinking = nil
 		}
-	} else if isPPIO && strings.Contains(textRequest.Model, "glm-4.7") {
-		if textRequest.THINKING == nil {
+	} else if isPPIO {
+		defaultEnbaledThinking := strings.Contains(textRequest.Model, "glm-4.7") ||
+			strings.Contains(textRequest.Model, "glm-5") ||
+			strings.Contains(textRequest.Model, "glm-4.5v")
+		if textRequest.THINKING == nil && defaultEnbaledThinking {
 			// https://docs.bigmodel.cn/cn/guide/capabilities/thinking#%E6%A0%B8%E5%BF%83%E5%8F%82%E6%95%B0%E8%AF%B4%E6%98%8E
 			//enabled（默认）：启用动态思考，glm-4.7 glm-4.5v为强制思考，其它模型自动判断是否需要深度思考
 			//textRequest.EnableThinking = true

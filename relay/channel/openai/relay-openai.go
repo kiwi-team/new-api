@@ -116,7 +116,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 }
 
 func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
-	if strings.Contains(info.UpstreamModelName, "glm-4.7") {
+	if strings.Contains(info.UpstreamModelName, "glm-4.7") || strings.Contains(info.UpstreamModelName, "glm-5") {
 		var lastStreamResponse dto.ChatCompletionsStreamResponse
 		err := common.UnmarshalJsonStr(lastStreamData, &lastStreamResponse)
 		if err != nil {
@@ -124,7 +124,10 @@ func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamDat
 			return lastStreamData
 		}
 		if strings.Contains(lastStreamResponse.Model, "glm-4.7") {
-			lastStreamResponse.Model = "glm.4.7"
+			lastStreamResponse.Model = "glm-4.7"
+		}
+		if strings.Contains(lastStreamResponse.Model, "glm-5") {
+			lastStreamResponse.Model = "glm-5"
 		}
 		byteArr, err1 := common.Marshal(lastStreamResponse)
 		if err1 != nil {
