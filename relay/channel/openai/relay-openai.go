@@ -431,6 +431,10 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		simpleResponse.Model = "glm-4.7"
 		responseBody, _ = common.Marshal(simpleResponse)
 	}
+	if strings.Contains(simpleResponse.Model, "glm-5") {
+		simpleResponse.Model = "glm-5"
+		responseBody, _ = common.Marshal(simpleResponse)
+	}
 	isGuoguo := strings.Contains(info.ChannelBaseUrl, "aiguoguo")
 	isChat := strings.Contains(info.ChannelBaseUrl, "chataiapi")
 	isNuwa := strings.Contains(info.ChannelBaseUrl, "nuwa")
