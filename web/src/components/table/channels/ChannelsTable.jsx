@@ -146,6 +146,8 @@ const ChannelsTable = (channelsData) => {
       rowSelection={
         enableBatchDelete
           ? {
+              onSelect: (record, selected) => {},
+              onSelectAll: (selected, selectedRows) => {},
               onChange: (selectedRowKeys, selectedRows) => {
                 setSelectedChannels(selectedRows);
               },

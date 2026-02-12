@@ -53,6 +53,8 @@ const ChannelsActions = ({
   activePage,
   pageSize,
   setActivePage,
+  showSyncModal,
+  selectedChannels,
   t,
 }) => {
   const fileInputRef = useRef(null);
@@ -128,6 +130,18 @@ const ChannelsActions = ({
           >
             {t('批量设置标签')}
           </Button>
+
+          {isRoot() && (
+            <Button
+              size='small'
+              disabled={!enableBatchDelete || !selectedChannels || selectedChannels.length === 0}
+              type='tertiary'
+              onClick={showSyncModal}
+              className='w-full md:w-auto'
+            >
+              {t('同步到其他环境')}
+            </Button>
+          )}
 
           <Dropdown
             size='small'

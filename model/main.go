@@ -301,6 +301,9 @@ func migrateDB() error {
 		&DebugTestSuite{},
 		&DebugConfiguration{},
 		&DebugRequestLog{},
+		// Sync module tables
+		&SyncEnvironment{},
+		&SyncLog{},
 	)
 	if err != nil {
 		return err

@@ -57,6 +57,8 @@ const routerMap = {
   debugExecutor: '/console/debug/executor',
   debugTemplates: '/console/debug/templates',
   debugLogs: '/console/debug/logs',
+  // Sync module routes
+  sync: '/console/sync',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -185,6 +187,15 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('调试器'), itemKey: 'debugExecutor', to: '/console/debug/executor' },
       { text: t('测试数据'), itemKey: 'debugTemplates', to: '/console/debug/templates' },
       { text: t('调试日志'), itemKey: 'debugLogs', to: '/console/debug/logs' },
+    ];
+  }, [isRoot(), t]);
+
+  // Sync module items - only for root users
+  const syncItems = useMemo(() => {
+    if (!isRoot()) return [];
+    
+    return [
+      { text: t('环境管理'), itemKey: 'sync', to: '/console/sync' },
     ];
   }, [isRoot(), t]);
 
@@ -486,6 +497,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
                   <div className='sidebar-group-label'>{t('调试模块')}</div>
                 )}
                 {debugItems.map((item) => renderNavItem(item))}
+              </div>
+            </>
+          )}
+
+          {/* 环境同步区域 - 仅超级管理员可见 */}
+          {isRoot() && syncItems.length > 0 && (
+            <>
+              <Divider className='sidebar-divider' />
+              <div>
+                {!collapsed && (
+                  <div className='sidebar-group-label'>{t('环境同步')}</div>
+                )}
+                {syncItems.map((item) => renderNavItem(item))}
               </div>
             </>
           )}

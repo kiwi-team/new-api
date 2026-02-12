@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Banner } from '@douyinfe/semi-ui';
 import { IconAlertTriangle } from '@douyinfe/semi-icons';
 import CardPro from '../../common/ui/CardPro';
@@ -33,11 +33,13 @@ import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import EditChannelModal from './modals/EditChannelModal';
 import EditTagModal from './modals/EditTagModal';
 import MultiKeyManageModal from './modals/MultiKeyManageModal';
+import SyncChannelsModal from './modals/SyncChannelsModal';
 import { createCardProPagination } from '../../../helpers/utils';
 
 const ChannelsPage = () => {
   const channelsData = useChannelsData();
   const isMobile = useIsMobile();
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   return (
     <>
@@ -63,6 +65,12 @@ const ChannelsPage = () => {
         channel={channelsData.currentMultiKeyChannel}
         onRefresh={channelsData.refresh}
       />
+      <SyncChannelsModal
+        visible={showSyncModal}
+        onCancel={() => setShowSyncModal(false)}
+        selectedChannels={channelsData.selectedChannels}
+        t={channelsData.t}
+      />
 
       {/* Main Content */}
       {channelsData.globalPassThroughEnabled ? (
@@ -84,7 +92,7 @@ const ChannelsPage = () => {
       <CardPro
         type='type3'
         tabsArea={<ChannelsTabs {...channelsData} />}
-        actionsArea={<ChannelsActions {...channelsData} />}
+        actionsArea={<ChannelsActions {...channelsData} showSyncModal={() => setShowSyncModal(true)} />}
         searchArea={<ChannelsFilters {...channelsData} />}
         paginationArea={createCardProPagination({
           currentPage: channelsData.activePage,

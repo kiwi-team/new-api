@@ -35,9 +35,11 @@ import {
   IconSearch,
   IconSave,
   IconEdit,
+  IconSync,
 } from '@douyinfe/semi-icons';
-import { API, showError, showSuccess } from '../../../helpers';
+import { API, showError, showSuccess, isRoot } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import SyncModelPricesModal from './SyncModelPricesModal';
 
 // 默认汇率
 const DEFAULT_USD_TO_CNY_RATE = 7.3;
@@ -94,6 +96,7 @@ export default function HumanReadablePriceEditor(props) {
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(DEFAULT_USD_TO_CNY_RATE);
+  const [showSyncModal, setShowSyncModal] = useState(false);
   const formRef = useRef(null);
   const pageSize = 10;
 
@@ -387,6 +390,14 @@ export default function HumanReadablePriceEditor(props) {
           <Button type='primary' icon={<IconSave />} onClick={submitData} loading={loading}>
             {t('保存')}
           </Button>
+          {isRoot() && (
+            <Button
+              icon={<IconSync />}
+              onClick={() => setShowSyncModal(true)}
+            >
+              {t('同步到其他环境')}
+            </Button>
+          )}
           <Input
             prefix={<IconSearch />}
             placeholder={t('搜索模型名称')}
@@ -475,6 +486,12 @@ export default function HumanReadablePriceEditor(props) {
           />
         </Form>
       </Modal>
+
+      <SyncModelPricesModal
+        visible={showSyncModal}
+        onCancel={() => setShowSyncModal(false)}
+        options={props.options}
+      />
     </>
   );
 }

@@ -382,6 +382,12 @@ func GetModelPriceMap() map[string]float64 {
 	return modelPriceMap
 }
 
+func GetModelRatioMap() map[string]float64 {
+	modelRatioMapMutex.RLock()
+	defer modelRatioMapMutex.RUnlock()
+	return modelRatioMap
+}
+
 func ModelPrice2JSONString() string {
 	modelPriceMapMutex.RLock()
 	defer modelPriceMapMutex.RUnlock()

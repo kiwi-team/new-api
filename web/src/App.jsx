@@ -62,6 +62,9 @@ import DebugExecutor from './pages/Debug/Executor';
 import DebugTemplates from './pages/Debug/Templates';
 import DebugLogs from './pages/Debug/Logs';
 
+// Sync module pages
+import SyncEnvironment from './pages/SyncEnvironment';
+
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
@@ -359,6 +362,15 @@ function App() {
           element={
             <RootRoute>
               <DebugLogs />
+            </RootRoute>
+          }
+        />
+        {/* Sync Module Routes - Root Only */}
+        <Route
+          path='/console/sync'
+          element={
+            <RootRoute>
+              <SyncEnvironment />
             </RootRoute>
           }
         />

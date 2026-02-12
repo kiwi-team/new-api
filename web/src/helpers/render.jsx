@@ -78,6 +78,7 @@ import {
   Bug,
   FileText,
   ScrollText,
+  RefreshCw,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -161,6 +162,9 @@ export function getLucideIcon(key, selected = false) {
       return <FileText {...commonProps} color={iconColor} />;
     case 'debugLogs':
       return <ScrollText {...commonProps} color={iconColor} />;
+    // Sync module icons
+    case 'sync':
+      return <RefreshCw {...commonProps} color={iconColor} />;
     default:
       return <CircleUser {...commonProps} color={iconColor} />;
   }

@@ -407,5 +407,27 @@ func SetApiRouter(router *gin.Engine) {
 			debugRoute.DELETE("/logs/:id", controller.DeleteDebugLog)
 			debugRoute.POST("/logs/batch/tag", controller.BatchTagDebugLogs)
 		}
+
+		// 环境同步模块 - Root only
+		syncRoute := apiRouter.Group("/sync")
+		syncRoute.Use(middleware.RootAuth())
+		{
+			// 环境管理
+			syncRoute.GET("/environments", controller.GetSyncEnvironments)
+			syncRoute.GET("/environments/enabled", controller.GetEnabledSyncEnvironments)
+			syncRoute.POST("/environments", controller.AddSyncEnvironment)
+			syncRoute.PUT("/environments/:id", controller.UpdateSyncEnvironment)
+			syncRoute.DELETE("/environments/:id", controller.DeleteSyncEnvironment)
+			syncRoute.POST("/environments/:id/test", controller.TestSyncEnvironment)
+
+			// 渠道同步
+			syncRoute.POST("/channels", controller.SyncChannels)
+
+			// 模型价格同步
+			syncRoute.POST("/model-prices", controller.SyncModelPrices)
+
+			// 同步历史
+			syncRoute.GET("/logs", controller.GetSyncLogs)
+		}
 	}
 }
