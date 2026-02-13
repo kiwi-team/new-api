@@ -81,6 +81,7 @@ const ErrorLogsTable = () => {
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detailContent, setDetailContent] = useState('');
+  const [loadingBodyId, setLoadingBodyId] = useState(null);
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -249,28 +250,17 @@ const ErrorLogsTable = () => {
       render: (text, record, index) => {
         return (
           <div className='flex items-center gap-2'>
-            <div className='max-w-[200px] overflow-auto truncate'>
-              {t(text)}
-            </div>
-            <div className='flex gap-1'>
-              <Button
-                theme='borderless'
-                type='tertiary'
-                size='small'
-                icon={<IconEyeOpened />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  showDetailDialog(text, true);
-                }}
-              />
-              <Button
-                theme='borderless'
-                type='tertiary'
-                size='small'
-                icon={<IconCopy />}
-                onClick={(e) => copyBodyContent(e, text)}
-              />
-            </div>
+            <Button
+              theme='borderless'
+              type='tertiary'
+              size='small'
+              icon={<IconEyeOpened />}
+              loading={loadingBodyId === record.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                fetchAndShowBody(record.id);
+              }}
+            />
           </div>
         );
       },
@@ -633,6 +623,24 @@ const ErrorLogsTable = () => {
   const showDetailDialog = (content, isJson = true) => {
     setDetailContent(isJson ? formatJsonContent(content) : content);
     setShowDetailModal(true);
+  };
+
+  // 获取并显示body内容
+  const fetchAndShowBody = async (id) => {
+    setLoadingBodyId(id);
+    try {
+      const res = await API.get(`/api/log/error-logs/${id}/body`);
+      const { success, message, data } = res.data;
+      if (success) {
+        showDetailDialog(data, true);
+      } else {
+        showError(message);
+      }
+    } catch (e) {
+      showError(e.message || t('获取Body失败'));
+    } finally {
+      setLoadingBodyId(null);
+    }
   };
 
   // 复制body内容

@@ -33,6 +33,13 @@ type ErrorLog struct {
 	ClientScenairo string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 }
 
+// GetErrorLogBody 根据ID获取错误日志的body字段
+func GetErrorLogBody(id int) (string, error) {
+	var body string
+	err := LOG_DB.Model(&ErrorLog{}).Where("id = ?", id).Pluck("body", &body).Error
+	return body, err
+}
+
 func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	var errorLogs []*ErrorLog
 	var err error
@@ -81,7 +88,8 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	var total int64
 	_ = query.Count(&total)
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
+	// 不返回body字段，减少数据传输量
+	err = query.Omit("body").Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
 	tokenIds := make([]int, 0)
 	for _, log := range errorLogs {
 		if slices.Contains(tokenIds, log.TokenId) {

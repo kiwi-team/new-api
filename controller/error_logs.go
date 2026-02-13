@@ -18,6 +18,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetErrorLogBody 获取错误日志的body字段
+func GetErrorLogBody(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无效的ID",
+		})
+		return
+	}
+	body, err := model.GetErrorLogBody(id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    body,
+	})
+}
+
 func GetAllErrorLogs(c *gin.Context) {
 	p, _ := strconv.Atoi(c.Query("p"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
