@@ -207,6 +207,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
+			// 当使用 tokenChannelIds 时，如果获取渠道失败（如 no enabled keys），继续尝试下一个渠道
+			if len(tokenChannelIds) > 0 {
+				newAPIError = channelErr
+				continue
+			}
 			newAPIError = channelErr
 			break
 		}
