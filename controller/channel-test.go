@@ -402,6 +402,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		model.RecordConsumeLog(c, 1, channel.Id, usage.PromptTokens, usage.CompletionTokens, info.OriginModelName, "模型测试",
 			quota, "模型测试", 0, quota, int(consumedTime), false, info.Group, other, string(requestJson), string(respBody))
 	*/
+	requestId := c.GetString(common.RequestIdKey)
 	model.RecordConsumeLog(c, 1, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -416,6 +417,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		Other:            other,
 		Request:          string(requestStr),
 		Response:         string(respBody),
+		RequestId:        requestId,
 	})
 	//common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
@@ -630,7 +632,7 @@ func testAllChannels(notify bool) error {
 
 			// disable channel
 			if isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, true)
 			}
 
 			// enable channel

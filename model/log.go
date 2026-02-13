@@ -41,6 +41,7 @@ type Log struct {
 	Response         string `json:"response" gorm:"type:text"`
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	RequestId        string `json:"request_id" gorm:"index;default:''"`
 }
 
 // don't use iota, avoid change log type value
@@ -167,6 +168,7 @@ type RecordConsumeLogParams struct {
 	Response         string                 `json:"response"`
 	ClientUserId     string                 `json:"client_user_id"`
 	ClientScenairo   string                 `json:"client_scenairo"`
+	RequestId        string                 `json:"request_id"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -211,6 +213,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Response:       strings.TrimSpace(params.Response),
 		ClientUserId:   params.ClientUserId,
 		ClientScenairo: params.ClientScenairo,
+		RequestId:      params.RequestId,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {

@@ -220,6 +220,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
 			clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 			clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
+			requestId := c.GetString(common.RequestIdKey)
 			other := service.GenerateMjOtherInfo(info, priceData)
 			model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 				ChannelId:      info.ChannelId,
@@ -232,6 +233,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 				Other:          other,
 				ClientUserId:   clientUserId,
 				ClientScenairo: clientScenairo,
+				RequestId:      requestId,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(info.ChannelId, priceData.Quota)
@@ -525,6 +527,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			other := service.GenerateMjOtherInfo(relayInfo, priceData)
 			clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 			clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
+			requestId := c.GetString(common.RequestIdKey)
 			model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
 				ChannelId:      relayInfo.ChannelId,
 				ModelName:      modelName,
@@ -536,6 +539,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 				Other:          other,
 				ClientUserId:   clientUserId,
 				ClientScenairo: clientScenairo,
+				RequestId:      requestId,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(relayInfo.ChannelId, priceData.Quota)

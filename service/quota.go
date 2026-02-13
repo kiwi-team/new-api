@@ -221,6 +221,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	requestId := ctx.GetString(common.RequestIdKey)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -236,6 +237,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Other:            other,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		RequestId:        requestId,
 	})
 }
 
@@ -344,6 +346,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	requestId := ctx.GetString(common.RequestIdKey)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -361,6 +364,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		RequestId:        requestId,
 	})
 
 }
@@ -475,6 +479,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	requestId := ctx.GetString(common.RequestIdKey)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
@@ -492,6 +497,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		RequestId:        requestId,
 	})
 }
 

@@ -1013,6 +1013,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	requestId := ctx.GetString(common.RequestIdKey)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -1030,5 +1031,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		RequestId:        requestId,
 	})
 }

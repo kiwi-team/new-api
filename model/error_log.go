@@ -112,9 +112,14 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 
 var LogList []*ErrorLog
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, includeBody bool) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
+
+	bodyToSave := ""
+	if includeBody {
+		bodyToSave = body
+	}
 
 	log := &ErrorLog{
 		UserId:         userId,
@@ -127,7 +132,7 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		ModelName:      modelName,
 		Code:           fmt.Sprintf("%v", err.Code),
 		StatusCode:     err.StatusCode,
-		Body:           body,
+		Body:           bodyToSave,
 		Ip:             ip,
 		TokenId:        tokenId,
 		RequestId:      requestId,

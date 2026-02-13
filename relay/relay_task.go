@@ -303,6 +303,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				}
 				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 				clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
+				requestId := c.GetString(common.RequestIdKey)
 				model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 					ChannelId:      info.ChannelId,
 					ModelName:      modelName,
@@ -316,6 +317,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					ClientScenairo: clientScenairo,
 					Request:        string(request),
 					Response:       responseStr,
+					RequestId:      requestId,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)

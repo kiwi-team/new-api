@@ -190,6 +190,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ChannelIds: tokenChannelIds,
 	}
 
+	// 用于收集重试过程中的错误信息，延迟处理以优化错误日志存储
+	type pendingError struct {
+		channelError types.ChannelError
+		apiError     *types.NewAPIError
+	}
+	var pendingErrors []pendingError
+
 	channelFound := false
 	for ; retryParam.GetRetry() <= retryTimes; retryParam.IncreaseRetry() {
 		if len(tokenChannelIds) > 0 {
@@ -238,14 +245,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			// 请求成功，处理之前收集的错误（不包含request body，因为消耗日志会记录）
+			for _, pe := range pendingErrors {
+				processChannelError(c, pe.channelError, pe.apiError, false)
+			}
 			return
 		}
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		// 收集错误信息，延迟处理
+		pendingErrors = append(pendingErrors, pendingError{
+			channelError: *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+			apiError:     newAPIError,
+		})
 
 		if !shouldRetry(c, newAPIError, retryTimes-retryParam.GetRetry()) {
 			break
 		}
+	}
+
+	// 所有渠道都失败了，处理收集的错误
+	// 只有最后一个错误记录request body
+	for i, pe := range pendingErrors {
+		includeBody := (i == len(pendingErrors)-1) // 只有最后一个错误包含body
+		processChannelError(c, pe.channelError, pe.apiError, includeBody)
 	}
 
 	// Check if no valid channel was found when using tokenChannelIds
@@ -402,7 +424,7 @@ func sendFeishuQianfeiNotify(channelError types.ChannelError, err *types.NewAPIE
 	})
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, includeBody bool) {
 	openaiError := err.ToOpenAIError()
 	bodyBytes, _ := common.GetRequestBody(c)
 	body := string(bodyBytes)
@@ -413,7 +435,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	requestId := c.GetString(common.RequestIdKey)
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	if common.SaveErrorLog {
-		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo)
+		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, includeBody)
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
