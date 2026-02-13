@@ -335,3 +335,62 @@ func GetQuotaByTime(userId int, startTime int64, endTime int64) (int, error) {
 	err := DB.Table("quota_data").Select("COALESCE(sum(quota), 0) as quota").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Find(&quota).Error
 	return quota, err
 }
+
+// ChannelQuotaStatistics 渠道消耗统计
+type ChannelQuotaStatistics struct {
+	ChannelId   int     `json:"channel_id"`
+	ChannelName string  `json:"channel_name"`
+	ModelName   string  `json:"model_name"`
+	TotalCount  int64   `json:"total_count"`
+	TotalQuota  float64 `json:"total_quota"`
+}
+
+// GetChannelQuotaStatistics 获取渠道消耗统计数据
+func GetChannelQuotaStatistics(startTime int64, endTime int64) ([]*ChannelQuotaStatistics, error) {
+	statistics := make([]*ChannelQuotaStatistics, 0)
+
+	// 查询每个渠道下各模型的消耗数据
+	err := DB.Table("quota_data").
+		Select("channel_id, model_name, sum(count) as total_count, sum(quota) as total_quota").
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Group("channel_id, model_name").
+		Order("total_quota DESC").
+		Scan(&statistics).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取渠道名称
+	channelIds := make([]int, 0)
+	channelIdMap := make(map[int]bool)
+	for _, s := range statistics {
+		if !channelIdMap[s.ChannelId] {
+			channelIds = append(channelIds, s.ChannelId)
+			channelIdMap[s.ChannelId] = true
+		}
+	}
+
+	if len(channelIds) > 0 {
+		var channels []struct {
+			Id   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIds).Find(&channels).Error; err == nil {
+			channelNameMap := make(map[int]string)
+			for _, ch := range channels {
+				channelNameMap[ch.Id] = ch.Name
+			}
+			for _, s := range statistics {
+				s.ChannelName = channelNameMap[s.ChannelId]
+				// 转换为美元单位
+				s.TotalQuota = s.TotalQuota / common.QuotaPerUnit
+			}
+		}
+	}
+
+	if statistics == nil {
+		statistics = make([]*ChannelQuotaStatistics, 0)
+	}
+	return statistics, nil
+}

@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Tabs, TabPane } from '@douyinfe/semi-ui';
+import { Card, Tabs, TabPane, Select, Spin } from '@douyinfe/semi-ui';
 import { PieChart } from 'lucide-react';
 import { VChart } from '@visactor/react-vchart';
+import { renderQuota } from '../../helpers';
 
 const ChartsPanel = ({
   activeChartTab,
@@ -29,6 +30,11 @@ const ChartsPanel = ({
   spec_model_line,
   spec_pie,
   spec_rank_bar,
+  spec_channel_pie,
+  channelList,
+  selectedChannelId,
+  channelStatLoading,
+  handleChannelChange,
   CARD_PROPS,
   CHART_CONFIG,
   FLEX_CENTER_GAP2,
@@ -54,6 +60,7 @@ const ChartsPanel = ({
             <TabPane tab={<span>{t('消耗趋势')}</span>} itemKey='2' />
             <TabPane tab={<span>{t('调用次数分布')}</span>} itemKey='3' />
             <TabPane tab={<span>{t('调用次数排行')}</span>} itemKey='4' />
+            <TabPane tab={<span>{t('渠道消耗统计')}</span>} itemKey='5' />
           </Tabs>
         </div>
       }
@@ -71,6 +78,33 @@ const ChartsPanel = ({
         )}
         {activeChartTab === '4' && (
           <VChart spec={spec_rank_bar} option={CHART_CONFIG} />
+        )}
+        {activeChartTab === '5' && (
+          <div className='h-full flex flex-col'>
+            <div className='flex items-center gap-2 mb-2 px-2'>
+              <span className='text-sm'>{t('选择渠道')}:</span>
+              <Select
+                value={selectedChannelId}
+                onChange={handleChannelChange}
+                style={{ width: 280 }}
+                placeholder={t('请选择渠道')}
+                optionList={channelList.map((ch) => ({
+                  value: ch.channel_id,
+                  label: `${ch.channel_name} (${renderQuota(ch.total_quota, 2)})`,
+                }))}
+                loading={channelStatLoading}
+              />
+            </div>
+            <div className='flex-1'>
+              {channelStatLoading ? (
+                <div className='h-full flex items-center justify-center'>
+                  <Spin size='large' />
+                </div>
+              ) : (
+                <VChart spec={spec_channel_pie} option={CHART_CONFIG} />
+              )}
+            </div>
+          </div>
         )}
       </div>
     </Card>

@@ -255,3 +255,21 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	}
 	writer.Flush()
 }
+
+// GetChannelQuotaStatistics 获取渠道消耗统计数据
+func GetChannelQuotaStatistics(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+
+	statistics, err := model.GetChannelQuotaStatistics(startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    statistics,
+	})
+}

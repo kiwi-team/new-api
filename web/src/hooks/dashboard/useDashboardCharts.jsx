@@ -25,6 +25,8 @@ import {
   renderQuota,
   modelToColor,
   getQuotaWithUnit,
+  API,
+  showError,
 } from '../../helpers';
 import {
   processRawData,
@@ -259,6 +261,168 @@ export const useDashboardCharts = (
     },
   });
 
+  // ========== 渠道消耗统计 ==========
+  const [channelStatData, setChannelStatData] = useState([]);
+  const [channelList, setChannelList] = useState([]);
+  const [selectedChannelId, setSelectedChannelId] = useState(null);
+  const [channelStatLoading, setChannelStatLoading] = useState(false);
+
+  // 渠道消耗饼图
+  const [spec_channel_pie, setSpecChannelPie] = useState({
+    type: 'pie',
+    data: [
+      {
+        id: 'channelPieData',
+        values: [{ type: 'null', value: '0' }],
+      },
+    ],
+    outerRadius: 0.8,
+    innerRadius: 0.5,
+    padAngle: 0.6,
+    valueField: 'value',
+    categoryField: 'type',
+    pie: {
+      style: {
+        cornerRadius: 10,
+      },
+      state: {
+        hover: {
+          outerRadius: 0.85,
+          stroke: '#000',
+          lineWidth: 1,
+        },
+        selected: {
+          outerRadius: 0.85,
+          stroke: '#000',
+          lineWidth: 1,
+        },
+      },
+    },
+    title: {
+      visible: true,
+      text: t('渠道模型消耗分布'),
+      subtext: `${t('总计')}：${renderQuota(0, 2)}`,
+    },
+    legends: {
+      visible: true,
+      orient: 'left',
+    },
+    label: {
+      visible: true,
+    },
+    tooltip: {
+      mark: {
+        content: [
+          {
+            key: (datum) => datum['type'],
+            value: (datum) => renderQuota(datum['value'], 4),
+          },
+        ],
+      },
+    },
+    color: {
+      specified: modelColorMap,
+    },
+  });
+
+  // 加载渠道消耗统计数据
+  const loadChannelStatistics = useCallback(
+    async (startTimestamp, endTimestamp) => {
+      setChannelStatLoading(true);
+      try {
+        const url = `/api/data/channel-statistics?start_timestamp=${startTimestamp}&end_timestamp=${endTimestamp}`;
+        const res = await API.get(url);
+        const { success, message, data } = res.data;
+        if (success && data) {
+          setChannelStatData(data);
+
+          // 按渠道汇总消耗，生成渠道列表（按消耗从大到小排序）
+          const channelQuotaMap = new Map();
+          data.forEach((item) => {
+            const existing = channelQuotaMap.get(item.channel_id) || {
+              channel_id: item.channel_id,
+              channel_name: item.channel_name || `渠道 ${item.channel_id}`,
+              total_quota: 0,
+            };
+            existing.total_quota += item.total_quota;
+            channelQuotaMap.set(item.channel_id, existing);
+          });
+
+          const sortedChannels = Array.from(channelQuotaMap.values()).sort(
+            (a, b) => b.total_quota - a.total_quota,
+          );
+          setChannelList(sortedChannels);
+
+          // 默认选择消耗最高的渠道
+          if (sortedChannels.length > 0 && selectedChannelId === null) {
+            setSelectedChannelId(sortedChannels[0].channel_id);
+            updateChannelPieChart(data, sortedChannels[0].channel_id);
+          } else if (selectedChannelId !== null) {
+            updateChannelPieChart(data, selectedChannelId);
+          }
+        } else {
+          showError(message || t('获取渠道统计数据失败'));
+        }
+      } catch (error) {
+        showError(t('获取渠道统计数据失败'));
+      }
+      setChannelStatLoading(false);
+    },
+    [selectedChannelId, t],
+  );
+
+  // 更新渠道饼图数据
+  const updateChannelPieChart = useCallback(
+    (data, channelId) => {
+      const channelData = data.filter((item) => item.channel_id === channelId);
+      const pieData = channelData
+        .map((item) => ({
+          type: item.model_name,
+          value: item.total_quota,
+        }))
+        .sort((a, b) => b.value - a.value);
+
+      const totalQuota = pieData.reduce((sum, item) => sum + item.value, 0);
+      const channelName =
+        channelData[0]?.channel_name || `渠道 ${channelId}`;
+
+      // 生成颜色映射
+      const newModelColors = {};
+      pieData.forEach((item) => {
+        newModelColors[item.type] =
+          modelColorMap[item.type] || modelToColor(item.type);
+      });
+
+      setSpecChannelPie((prev) => ({
+        ...prev,
+        data: [
+          {
+            id: 'channelPieData',
+            values: pieData.length > 0 ? pieData : [{ type: 'null', value: 0 }],
+          },
+        ],
+        title: {
+          ...prev.title,
+          text: `${channelName} - ${t('模型消耗分布')}`,
+          subtext: `${t('总计')}：${renderQuota(totalQuota, 2)}`,
+        },
+        color: {
+          specified: { ...modelColorMap, ...newModelColors },
+        },
+      }));
+    },
+    [t],
+  );
+
+  // 切换渠道
+  const handleChannelChange = useCallback(
+    (channelId) => {
+      setSelectedChannelId(channelId);
+      updateChannelPieChart(channelStatData, channelId);
+    },
+    [channelStatData, updateChannelPieChart],
+  );
+
   // ========== 数据处理函数 ==========
   const generateModelColors = useCallback((uniqueModels, modelColors) => {
     const newModelColors = {};
@@ -439,6 +603,14 @@ export const useDashboardCharts = (
     spec_line,
     spec_model_line,
     spec_rank_bar,
+    spec_channel_pie,
+
+    // 渠道统计相关
+    channelList,
+    selectedChannelId,
+    channelStatLoading,
+    loadChannelStatistics,
+    handleChannelChange,
 
     // 函数
     updateChartData,

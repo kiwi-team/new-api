@@ -93,6 +93,15 @@ const Dashboard = () => {
       }
     });
     await dashboardData.loadUptimeData();
+
+    // 加载渠道统计数据
+    const { start_timestamp, end_timestamp } = dashboardData.inputs;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    await dashboardCharts.loadChannelStatistics(
+      localStartTimestamp,
+      localEndTimestamp,
+    );
   };
 
   const handleRefresh = async () => {
@@ -100,10 +109,28 @@ const Dashboard = () => {
     if (data && data.length > 0) {
       dashboardCharts.updateChartData(data);
     }
+
+    // 刷新渠道统计数据
+    const { start_timestamp, end_timestamp } = dashboardData.inputs;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    await dashboardCharts.loadChannelStatistics(
+      localStartTimestamp,
+      localEndTimestamp,
+    );
   };
 
   const handleSearchConfirm = async () => {
     await dashboardData.handleSearchConfirm(dashboardCharts.updateChartData);
+
+    // 刷新渠道统计数据
+    const { start_timestamp, end_timestamp } = dashboardData.inputs;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    await dashboardCharts.loadChannelStatistics(
+      localStartTimestamp,
+      localEndTimestamp,
+    );
   };
 
   // ========== 数据准备 ==========
@@ -182,6 +209,11 @@ const Dashboard = () => {
             spec_model_line={dashboardCharts.spec_model_line}
             spec_pie={dashboardCharts.spec_pie}
             spec_rank_bar={dashboardCharts.spec_rank_bar}
+            spec_channel_pie={dashboardCharts.spec_channel_pie}
+            channelList={dashboardCharts.channelList}
+            selectedChannelId={dashboardCharts.selectedChannelId}
+            channelStatLoading={dashboardCharts.channelStatLoading}
+            handleChannelChange={dashboardCharts.handleChannelChange}
             CARD_PROPS={CARD_PROPS}
             CHART_CONFIG={CHART_CONFIG}
             FLEX_CENTER_GAP2={FLEX_CENTER_GAP2}
