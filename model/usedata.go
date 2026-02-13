@@ -384,7 +384,7 @@ func GetChannelQuotaStatistics(startTime int64, endTime int64) ([]*ChannelQuotaS
 			for _, s := range statistics {
 				s.ChannelName = channelNameMap[s.ChannelId]
 				// 转换为美元单位
-				s.TotalQuota = s.TotalQuota / common.QuotaPerUnit
+				//s.TotalQuota = s.TotalQuota / common.QuotaPerUnit
 			}
 		}
 	}
