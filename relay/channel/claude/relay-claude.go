@@ -247,13 +247,18 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		switch thinking.Type {
 		case "enabled":
 			budget := thinking.BudgetTokens
-			if budget > int(textRequest.MaxTokens) && !enabledInterleavedThinking {
-				budget = int(textRequest.MaxTokens) - 1 // 没有开启InterleavedThinking的时候，budget不能超过max_tokens
+			// 没有开启InterleavedThinking的时候，budget必须小于max_tokens
+			if !enabledInterleavedThinking {
+				// max_tokens 必须大于 budget_tokens，调整 budget 而不是 max_tokens，避免超出模型最大限制
+				if budget >= int(claudeRequest.MaxTokens) {
+					budget = int(claudeRequest.MaxTokens) - 1
+				}
 			}
+			// 兜底逻辑：budget >= 1024, max_tokens >= 1025, max_tokens > budget
 			if budget < 1024 {
-				budget = 1024 //Must be ≥1024 and less than max_tokens.
+				budget = 1024
 			}
-			if claudeRequest.MaxTokens < uint(budget) {
+			if claudeRequest.MaxTokens <= uint(budget) && !enabledInterleavedThinking {
 				claudeRequest.MaxTokens = uint(budget) + 1
 			}
 			claudeRequest.Thinking = &dto.Thinking{
