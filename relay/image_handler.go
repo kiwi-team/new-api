@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -38,6 +39,18 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+	requestStr := ""
+	responseStr := ""
+	if saveRequestResponse {
+		requestBytes, marshalErr := common.Marshal(request)
+		if marshalErr != nil {
+			logger.LogError(c, fmt.Sprintf("marshal imageRequest failed: %s", marshalErr.Error()))
+		} else {
+			requestStr = string(requestBytes)
+		}
+	}
+
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
@@ -47,16 +60,17 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	var requestBody io.Reader
 
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		body, err := common.GetRequestBody(c)
+		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = bytes.NewBuffer(body)
+		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertImageRequest(c, info, *request)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
+		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 
 		switch convertedRequest.(type) {
 		case *bytes.Buffer:
@@ -105,11 +119,29 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 	}
 
+	// 创建响应记录器（如果需要记录响应）
+	var streamRecorder *helper.StreamResponseRecorder
+	if saveRequestResponse && httpResp != nil {
+		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
+		httpResp.Body = streamRecorder
+	}
+
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
+	}
+
+	// 在响应处理完成后，从记录器中获取完整的响应数据
+	if saveRequestResponse && streamRecorder != nil {
+		responseStr = streamRecorder.GetRecordedString()
+	}
+	// 对于 SDK 渠道（如 AWS），从 context 获取响应字符串
+	if saveRequestResponse && responseStr == "" {
+		if sdkRespStr, exists := c.Get(string(constant.ContextKeySdkResponseStr)); exists {
+			responseStr = sdkRespStr.(string)
+		}
 	}
 
 	if usage.(*dto.Usage).TotalTokens == 0 {
@@ -136,8 +168,6 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		logContent = append(logContent, fmt.Sprintf("生成数量 %d", request.N))
 	}
 
-	// todo save request and response
-	//postConsumeQuota(c, info, usage.(*dto.Usage), logContent...,"","")
-	postConsumeQuota(c, info, usage.(*dto.Usage), logContent, "", "")
+	postConsumeQuota(c, info, usage.(*dto.Usage), logContent, requestStr, responseStr)
 	return nil
 }

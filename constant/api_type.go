@@ -42,5 +42,6 @@ const (
 	APITypeReplicate
 	APITypeAwsV2
 	APITypeFALSync
+	APITypeCodex
 	APITypeDummy // this one is only for count, do not add any channel after this
 )

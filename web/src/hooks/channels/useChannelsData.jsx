@@ -36,6 +36,7 @@ import {
 import { useIsMobile } from '../common/useIsMobile';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import { Modal, Button } from '@douyinfe/semi-ui';
+import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
 
 export const useChannelsData = () => {
   const { t } = useTranslation();
@@ -86,6 +87,7 @@ export const useChannelsData = () => {
   const [isBatchTesting, setIsBatchTesting] = useState(false);
   const [modelTablePage, setModelTablePage] = useState(1);
   const [selectedEndpointType, setSelectedEndpointType] = useState('');
+  const [isStreamTest, setIsStreamTest] = useState(false);
   const [globalPassThroughEnabled, setGlobalPassThroughEnabled] =
     useState(false);
 
@@ -494,7 +496,7 @@ export const useChannelsData = () => {
     }
     const { success, message } = res.data;
     if (success) {
-      showSuccess('操作成功完成！');
+      showSuccess(t('操作成功完成！'));
       let newChannels = [...channels];
       for (let i = 0; i < newChannels.length; i++) {
         if (newChannels[i].tag === tag) {
@@ -749,6 +751,19 @@ export const useChannelsData = () => {
   };
 
   const updateChannelBalance = async (record) => {
+    if (record?.type === 57) {
+      openCodexUsageModal({
+        t,
+        record,
+        onCopy: async (text) => {
+          const ok = await copy(text);
+          if (ok) showSuccess(t('已复制'));
+          else showError(t('复制失败'));
+        },
+      });
+      return;
+    }
+
     const res = await API.get(`/api/channel/update_balance/${record.id}/`);
     const { success, message, balance } = res.data;
     if (success) {
@@ -841,7 +856,12 @@ export const useChannelsData = () => {
   };
 
   // Test channel - 单个模型测试，参考旧版实现
-  const testChannel = async (record, model, endpointType = '') => {
+  const testChannel = async (
+    record,
+    model,
+    endpointType = '',
+    stream = false,
+  ) => {
     const testKey = `${record.id}-${model}`;
 
     // 检查是否应该停止批量测试
@@ -856,6 +876,9 @@ export const useChannelsData = () => {
       let url = `/api/channel/test/${record.id}?model=${model}`;
       if (endpointType) {
         url += `&endpoint_type=${endpointType}`;
+      }
+      if (stream) {
+        url += `&stream=true`;
       }
       const res = await API.get(url);
 
@@ -985,7 +1008,12 @@ export const useChannelsData = () => {
         );
 
         const batchPromises = batch.map((model) =>
-          testChannel(currentTestChannel, model, selectedEndpointType),
+          testChannel(
+            currentTestChannel,
+            model,
+            selectedEndpointType,
+            isStreamTest,
+          ),
         );
         const batchResults = await Promise.allSettled(batchPromises);
         results.push(...batchResults);
@@ -1070,6 +1098,7 @@ export const useChannelsData = () => {
     setSelectedModelKeys([]);
     setModelTablePage(1);
     setSelectedEndpointType('');
+    setIsStreamTest(false);
     // 可选择性保留测试结果，这里不清空以便用户查看
   };
 
@@ -1160,6 +1189,8 @@ export const useChannelsData = () => {
     setModelTablePage,
     selectedEndpointType,
     setSelectedEndpointType,
+    isStreamTest,
+    setIsStreamTest,
     allSelectingRef,
 
     // Multi-key management states

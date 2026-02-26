@@ -40,6 +40,7 @@ export const useTokensData = (openFluentNotification) => {
   const [tokenCount, setTokenCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [searching, setSearching] = useState(false);
+  const [searchMode, setSearchMode] = useState(false); // 是否处于搜索结果视图
 
   // Selection state
   const [selectedKeys, setSelectedKeys] = useState([]);
@@ -93,6 +94,7 @@ export const useTokensData = (openFluentNotification) => {
   // Load tokens function
   const loadTokens = async (page = 1, size = pageSize) => {
     setLoading(true);
+    setSearchMode(false);
     const res = await API.get(`/api/token/?p=${page}&size=${size}`);
     const { success, message, data } = res.data;
     if (success) {
@@ -176,7 +178,7 @@ export const useTokensData = (openFluentNotification) => {
     }
     const { success, message } = res.data;
     if (success) {
-      showSuccess('操作成功完成！');
+      showSuccess(t('操作成功完成！'));
       let token = res.data.data;
       let newTokens = [...tokens];
       if (action !== 'delete') {
@@ -190,26 +192,37 @@ export const useTokensData = (openFluentNotification) => {
   };
 
   // Search tokens function
-  const searchTokens = async () => {
+  const searchTokens = async (page = 1, size = pageSize) => {
+     const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
+    const normalizedSize =
+      Number.isInteger(size) && size > 0 ? size : pageSize;
     const { searchKeyword, searchToken, model, channel } = getFormValues();
+    if (searchKeyword === '' && searchToken === '') {
+      setSearchMode(false);
+    }
     if (
       searchKeyword === '' &&
       searchToken === '' &&
       model === '' &&
       channel === ''
     ) {
+  // const searchTokens = async (page = 1, size = pageSize) => {
+  //   const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
+  //   const normalizedSize =
+  //     Number.isInteger(size) && size > 0 ? size : pageSize;
+
+  //   const { searchKeyword, searchToken } = getFormValues();
       await loadTokens(1);
       return;
     }
     setSearching(true);
     const res = await API.get(
-      `/api/token/search?keyword=${searchKeyword}&token=${searchToken}&model=${model}&channel=${channel}`,
+      `/api/token/search?keyword=${encodeURIComponent(searchKeyword)}&token=${encodeURIComponent(searchToken)}&p=${normalizedPage}&size=${normalizedSize}&model=${model}&channel=${channel}`,
     );
     const { success, message, data } = res.data;
     if (success) {
-      setTokens(data);
-      setTokenCount(data.length);
-      setActivePage(1);
+      setSearchMode(true);
+      syncPageData(data);
     } else {
       showError(message);
     }
@@ -233,12 +246,20 @@ export const useTokensData = (openFluentNotification) => {
 
   // Page handlers
   const handlePageChange = (page) => {
-    loadTokens(page, pageSize).then();
+    if (searchMode) {
+      searchTokens(page, pageSize).then();
+    } else {
+      loadTokens(page, pageSize).then();
+    }
   };
 
   const handlePageSizeChange = async (size) => {
     setPageSize(size);
-    await loadTokens(1, size);
+    if (searchMode) {
+      await searchTokens(1, size);
+    } else {
+      await loadTokens(1, size);
+    }
   };
 
   // Row selection handlers

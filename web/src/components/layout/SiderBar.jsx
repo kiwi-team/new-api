@@ -37,6 +37,7 @@ const routerMap = {
   redemption: '/console/redemption',
   topup: '/console/topup',
   user: '/console/user',
+  subscription: '/console/subscription',
   log: '/console/log',
   errorlog: '/console/errorlog',
   midjourney: '/console/midjourney',
@@ -160,10 +161,17 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('模型管理'), itemKey: 'models', to: '/console/models', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型部署'), itemKey: 'deployment', to: '/deployment', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
+      {
+        text: t('订阅管理'),
+        itemKey: 'subscription',
+        to: '/subscription',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
       { text: t('用户管理'), itemKey: 'user', to: '/user', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
+
     ];
 
     // 根据配置过滤项目

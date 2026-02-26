@@ -67,6 +67,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       deployment: true,
       redemption: true,
       user: true,
+      subscription: true,
       setting: true,
     },
   });
@@ -129,6 +130,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         deployment: true,
         redemption: true,
         user: true,
+        subscription: true,
         setting: true,
       },
     };
@@ -199,6 +201,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             deployment: true,
             redemption: true,
             user: true,
+            subscription: true,
             setting: true,
           },
         };
@@ -269,7 +272,16 @@ export default function SettingsSidebarModulesAdmin(props) {
           description: t('模型-渠道'),
         },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
-        { key: 'deployment', title: t('模型部署'), description: t('模型部署管理') },
+        {
+          key: 'deployment',
+          title: t('模型部署'),
+          description: t('模型部署管理'),
+        },
+        {
+          key: 'subscription',
+          title: t('订阅管理'),
+          description: t('订阅套餐管理'),
+        },
         {
           key: 'redemption',
           title: t('兑换码管理'),

@@ -65,6 +65,7 @@ const (
 	ChannelTypeAwsV2            = 65
 	ChannelTypeWorldLabs        = 66
 	ChannelTypeFALSync          = 67
+	ChannelTypeCodex            = 68
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -139,6 +140,7 @@ var ChannelBaseURLs = []string{
 	"",                                  //65 awsv2
 	"https://api.worldlabs.ai",          //66 worldlabs
 	"https://queue.fal.run",             //67 fal_sync
+	"https://chatgpt.com",               // 68 codex
 }
 
 var ChannelTypeNames = map[int]string{
@@ -203,6 +205,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAwsV2:          "AWS V2",
 	ChannelTypeWorldLabs:      "WorldLabs",
 	ChannelTypeFALSync:        "FAL Sync",
+	ChannelTypeCodex:          "Codex",
 }
 
 func GetChannelTypeName(channelType int) string {

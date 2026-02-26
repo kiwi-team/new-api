@@ -64,6 +64,14 @@ type LatLng struct {
 	Longitude *float64 `json:"longitude,omitempty"`
 }
 
+// createGeminiFileSource 根据数据内容创建正确类型的 FileSource
+func createGeminiFileSource(data string, mimeType string) *types.FileSource {
+	if strings.HasPrefix(data, "http://") || strings.HasPrefix(data, "https://") {
+		return types.NewURLFileSource(data)
+	}
+	return types.NewBase64FileSource(data, mimeType)
+}
+
 func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	var files []*types.FileMeta = make([]*types.FileMeta, 0)
 
@@ -80,27 +88,23 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 				inputTexts = append(inputTexts, part.Text)
 			}
 			if part.InlineData != nil && part.InlineData.Data != "" {
-				if strings.HasPrefix(part.InlineData.MimeType, "image/") {
-					files = append(files, &types.FileMeta{
-						FileType:   types.FileTypeImage,
-						OriginData: part.InlineData.Data,
-					})
-				} else if strings.HasPrefix(part.InlineData.MimeType, "audio/") {
-					files = append(files, &types.FileMeta{
-						FileType:   types.FileTypeAudio,
-						OriginData: part.InlineData.Data,
-					})
-				} else if strings.HasPrefix(part.InlineData.MimeType, "video/") {
-					files = append(files, &types.FileMeta{
-						FileType:   types.FileTypeVideo,
-						OriginData: part.InlineData.Data,
-					})
+				mimeType := part.InlineData.MimeType
+				source := createGeminiFileSource(part.InlineData.Data, mimeType)
+				var fileType types.FileType
+				if strings.HasPrefix(mimeType, "image/") {
+					fileType = types.FileTypeImage
+				} else if strings.HasPrefix(mimeType, "audio/") {
+					fileType = types.FileTypeAudio
+				} else if strings.HasPrefix(mimeType, "video/") {
+					fileType = types.FileTypeVideo
 				} else {
-					files = append(files, &types.FileMeta{
-						FileType:   types.FileTypeFile,
-						OriginData: part.InlineData.Data,
-					})
+					fileType = types.FileTypeFile
 				}
+				files = append(files, &types.FileMeta{
+					FileType: fileType,
+					Source:   source,
+					MimeType: mimeType,
+				})
 			}
 		}
 	}
@@ -341,6 +345,88 @@ type GeminiChatGenerationConfig struct {
 	ImageConfig        json.RawMessage       `json:"imageConfig,omitempty"`  // RawMessage to allow flexible image config
 }
 
+// UnmarshalJSON allows GeminiChatGenerationConfig to accept both snake_case and camelCase fields.
+func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
+	type Alias GeminiChatGenerationConfig
+	var aux struct {
+		Alias
+		TopPSnake               float64               `json:"top_p,omitempty"`
+		TopKSnake               float64               `json:"top_k,omitempty"`
+		MaxOutputTokensSnake    uint                  `json:"max_output_tokens,omitempty"`
+		CandidateCountSnake     int                   `json:"candidate_count,omitempty"`
+		StopSequencesSnake      []string              `json:"stop_sequences,omitempty"`
+		ResponseMimeTypeSnake   string                `json:"response_mime_type,omitempty"`
+		ResponseSchemaSnake     any                   `json:"response_schema,omitempty"`
+		ResponseJsonSchemaSnake json.RawMessage       `json:"response_json_schema,omitempty"`
+		PresencePenaltySnake    *float32              `json:"presence_penalty,omitempty"`
+		FrequencyPenaltySnake   *float32              `json:"frequency_penalty,omitempty"`
+		ResponseLogprobsSnake   bool                  `json:"response_logprobs,omitempty"`
+		MediaResolutionSnake    MediaResolution       `json:"media_resolution,omitempty"`
+		ResponseModalitiesSnake []string              `json:"response_modalities,omitempty"`
+		ThinkingConfigSnake     *GeminiThinkingConfig `json:"thinking_config,omitempty"`
+		SpeechConfigSnake       json.RawMessage       `json:"speech_config,omitempty"`
+		ImageConfigSnake        json.RawMessage       `json:"image_config,omitempty"`
+	}
+
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	*c = GeminiChatGenerationConfig(aux.Alias)
+
+	// Prioritize snake_case if present
+	if aux.TopPSnake != 0 {
+		c.TopP = aux.TopPSnake
+	}
+	if aux.TopKSnake != 0 {
+		c.TopK = aux.TopKSnake
+	}
+	if aux.MaxOutputTokensSnake != 0 {
+		c.MaxOutputTokens = aux.MaxOutputTokensSnake
+	}
+	if aux.CandidateCountSnake != 0 {
+		c.CandidateCount = aux.CandidateCountSnake
+	}
+	if len(aux.StopSequencesSnake) > 0 {
+		c.StopSequences = aux.StopSequencesSnake
+	}
+	if aux.ResponseMimeTypeSnake != "" {
+		c.ResponseMimeType = aux.ResponseMimeTypeSnake
+	}
+	if aux.ResponseSchemaSnake != nil {
+		c.ResponseSchema = aux.ResponseSchemaSnake
+	}
+	if len(aux.ResponseJsonSchemaSnake) > 0 {
+		c.ResponseJsonSchema = aux.ResponseJsonSchemaSnake
+	}
+	if aux.PresencePenaltySnake != nil {
+		c.PresencePenalty = aux.PresencePenaltySnake
+	}
+	if aux.FrequencyPenaltySnake != nil {
+		c.FrequencyPenalty = aux.FrequencyPenaltySnake
+	}
+	if aux.ResponseLogprobsSnake {
+		c.ResponseLogprobs = aux.ResponseLogprobsSnake
+	}
+	if aux.MediaResolutionSnake != "" {
+		c.MediaResolution = aux.MediaResolutionSnake
+	}
+	if len(aux.ResponseModalitiesSnake) > 0 {
+		c.ResponseModalities = aux.ResponseModalitiesSnake
+	}
+	if aux.ThinkingConfigSnake != nil {
+		c.ThinkingConfig = aux.ThinkingConfigSnake
+	}
+	if len(aux.SpeechConfigSnake) > 0 {
+		c.SpeechConfig = aux.SpeechConfigSnake
+	}
+	if len(aux.ImageConfigSnake) > 0 {
+		c.ImageConfig = aux.ImageConfigSnake
+	}
+
+	return nil
+}
+
 type MediaResolution string
 
 type GeminiChatCandidate struct {
@@ -367,11 +453,12 @@ type GeminiChatResponse struct {
 }
 
 type GeminiUsageMetadata struct {
-	PromptTokenCount     int                         `json:"promptTokenCount"`
-	CandidatesTokenCount int                         `json:"candidatesTokenCount"`
-	TotalTokenCount      int                         `json:"totalTokenCount"`
-	ThoughtsTokenCount   int                         `json:"thoughtsTokenCount"`
-	PromptTokensDetails  []GeminiPromptTokensDetails `json:"promptTokensDetails"`
+	PromptTokenCount        int                         `json:"promptTokenCount"`
+	CandidatesTokenCount    int                         `json:"candidatesTokenCount"`
+	TotalTokenCount         int                         `json:"totalTokenCount"`
+	ThoughtsTokenCount      int                         `json:"thoughtsTokenCount"`
+	CachedContentTokenCount int                         `json:"cachedContentTokenCount"`
+	PromptTokensDetails     []GeminiPromptTokensDetails `json:"promptTokensDetails"`
 }
 
 type GeminiPromptTokensDetails struct {

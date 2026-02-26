@@ -234,6 +234,10 @@ export const CHANNEL_OPTIONS = [
     value:66,
     color:"red",
     label:"worldlabs"
+  }, {
+    value:68,
+    color:"blue",
+    label:"Codex (OpenAI OAuth)"
   }
 ];
 

@@ -61,6 +61,7 @@ type Task struct {
 	Request    string                `json:"request" gorm:"default:''"`
 	VideoUrl   string                `json:"video_url" gorm:"type:varchar(1024)"`
 
+	Username string `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`

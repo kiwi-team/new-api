@@ -26,6 +26,8 @@ import SettingGeminiModel from '../../pages/Setting/Model/SettingGeminiModel';
 import SettingClaudeModel from '../../pages/Setting/Model/SettingClaudeModel';
 import SettingGlobalModel from '../../pages/Setting/Model/SettingGlobalModel';
 import SettingChannelConfig from '@/pages/Setting/Model/SettingChannelConfig';
+import SettingGrokModel from '../../pages/Setting/Model/SettingGrokModel';
+import SettingsChannelAffinity from '../../pages/Setting/Operation/SettingsChannelAffinity';
 
 const ModelSetting = () => {
   const { t } = useTranslation();
@@ -40,12 +42,15 @@ const ModelSetting = () => {
     'claude.thinking_adapter_budget_tokens_percentage': 0.8,
     'global.pass_through_request_enabled': false,
     'global.thinking_model_blacklist': '[]',
+    'global.chat_completions_to_responses_policy': '{}',
     'general_setting.ping_interval_enabled': false,
     'general_setting.ping_interval_seconds': 60,
     'gemini.thinking_adapter_enabled': false,
     'gemini.thinking_adapter_budget_tokens_percentage': 0.6,
     GlobalFirstChannelsSwitch: false,
     GlobalFirstChannels: '',
+    'grok.violation_deduction_enabled': true,
+    'grok.violation_deduction_amount': 0.05,
   });
 
   let [loading, setLoading] = useState(false);
@@ -62,10 +67,16 @@ const ModelSetting = () => {
           item.key === 'claude.model_headers_settings' ||
           item.key === 'claude.default_max_tokens' ||
           item.key === 'gemini.supported_imagine_models' ||
-          item.key === 'global.thinking_model_blacklist'
+          item.key === 'global.thinking_model_blacklist' ||
+          item.key === 'global.chat_completions_to_responses_policy'
         ) {
           if (item.value !== '') {
-            item.value = JSON.stringify(JSON.parse(item.value), null, 2);
+            try {
+              item.value = JSON.stringify(JSON.parse(item.value), null, 2);
+            } catch (e) {
+              // Keep raw value so user can fix it, and avoid crashing the page.
+              console.error(`Invalid JSON for option ${item.key}:`, e);
+            }
           }
         }
         // Keep boolean config keys ending with enabled/Enabled so UI parses correctly.
@@ -108,6 +119,10 @@ const ModelSetting = () => {
         <Card style={{ marginTop: '10px' }}>
           <SettingGlobalModel options={inputs} refresh={onRefresh} />
         </Card>
+        {/* Channel affinity */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsChannelAffinity options={inputs} refresh={onRefresh} />
+        </Card>
         {/* Gemini */}
         <Card style={{ marginTop: '10px' }}>
           <SettingGeminiModel options={inputs} refresh={onRefresh} />
@@ -115,6 +130,10 @@ const ModelSetting = () => {
         {/* Claude */}
         <Card style={{ marginTop: '10px' }}>
           <SettingClaudeModel options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* Grok */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingGrokModel options={inputs} refresh={onRefresh} />
         </Card>
       </Spin>
     </>
