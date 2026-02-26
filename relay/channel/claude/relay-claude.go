@@ -513,11 +513,15 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 			choice.Delta.Content = claudeResponse.Delta.Text
 			switch claudeResponse.Delta.Type {
 			case "input_json_delta":
+				partialJson := ""
+				if claudeResponse.Delta.PartialJson != nil {
+					partialJson = *claudeResponse.Delta.PartialJson
+				}
 				tools = append(tools, dto.ToolCallResponse{
 					Type:  "function",
 					Index: common.GetPointer(fcIdx),
 					Function: dto.FunctionResponse{
-						Arguments: *claudeResponse.Delta.PartialJson,
+						Arguments: partialJson,
 					},
 				})
 			case "signature_delta":

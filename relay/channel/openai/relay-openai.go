@@ -447,7 +447,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		for i, choice := range simpleResponse.Choices {
 			if choice.Message.Content != nil {
 				// 解析出图片地址
-				text, imgUrl, err1 := ParseTextAndImageURL(choice.Message.Content.(string))
+				contentStr := choice.Message.StringContent()
+				if contentStr == "" {
+					continue
+				}
+				text, imgUrl, err1 := ParseTextAndImageURL(contentStr)
 				if err1 != nil {
 					continue
 				}

@@ -66,6 +66,7 @@ const (
 	ChannelTypeWorldLabs        = 66
 	ChannelTypeFALSync          = 67
 	ChannelTypeCodex            = 68
+	ChannelTypeRunwayML         = 69
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -141,6 +142,7 @@ var ChannelBaseURLs = []string{
 	"https://api.worldlabs.ai",          //66 worldlabs
 	"https://queue.fal.run",             //67 fal_sync
 	"https://chatgpt.com",               // 68 codex
+	"https://api.dev.runwayml.com",      // 69 runwayml
 }
 
 var ChannelTypeNames = map[int]string{
@@ -206,6 +208,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeWorldLabs:      "WorldLabs",
 	ChannelTypeFALSync:        "FAL Sync",
 	ChannelTypeCodex:          "Codex",
+	ChannelTypeRunwayML:       "RunwayML",
 }
 
 func GetChannelTypeName(channelType int) string {

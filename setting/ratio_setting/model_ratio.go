@@ -298,6 +298,7 @@ var defaultModelPrice = map[string]float64{
 	"sora-2":                         0.3,
 	"sora-2-pro":                     0.5,
 	"gpt-4o-mini-tts":                0.3,
+	"gen4.5":                         0.5,
 }
 
 var defaultAudioRatio = map[string]float64{

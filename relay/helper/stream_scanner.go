@@ -223,6 +223,12 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				// 使用超时机制防止写操作阻塞
 				done := make(chan bool, 1)
 				gopool.Go(func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.LogError(c, fmt.Sprintf("panic in stream data handler: %v", r))
+							done <- false
+						}
+					}()
 					writeMutex.Lock()
 					defer writeMutex.Unlock()
 					done <- dataHandler(data)

@@ -238,6 +238,10 @@ export const CHANNEL_OPTIONS = [
     value:68,
     color:"blue",
     label:"Codex (OpenAI OAuth)"
+  }, {
+    value: 69,
+    color: 'purple',
+    label: 'RunwayML',
   }
 ];
 
