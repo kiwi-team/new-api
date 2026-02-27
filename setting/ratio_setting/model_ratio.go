@@ -203,6 +203,7 @@ var defaultModelRatio = map[string]float64{
 	"glm-4v-plus":                               0.01 * RMB,
 	"qwen-turbo":                                0.8572, // ￥0.012 / 1k tokens
 	"qwen-plus":                                 10,     // ￥0.14 / 1k tokens
+	"qwen3-omni-flash-realtime":                 0.1286, // ￥1.8 / 1M tokens (text input)
 	"text-embedding-v1":                         0.05,   // ￥0.0007 / 1k tokens
 	"SparkDesk-v1.1":                            1.2858, // ￥0.018 / 1k tokens
 	"SparkDesk-v2.1":                            1.2858, // ￥0.018 / 1k tokens
@@ -307,16 +308,18 @@ var defaultAudioRatio = map[string]float64{
 	"gpt-4o-realtime-preview":      8,
 	"gpt-4o-mini-realtime-preview": 16.67,
 	"gpt-4o-mini-tts":              25,
+	"qwen3-omni-flash-realtime":    8.78, // audio_input ￥15.8 / text_input ￥1.8 = 8.78
 }
 
 var defaultAudioCompletionRatio = map[string]float64{
-	"gpt-4o-realtime":      2,
-	"gpt-4o-mini-realtime": 2,
-	"gpt-4o-mini-tts":      1,
-	"tts-1":                0,
-	"tts-1-hd":             0,
-	"tts-1-1106":           0,
-	"tts-1-hd-1106":        0,
+	"gpt-4o-realtime":           2,
+	"gpt-4o-mini-realtime":      2,
+	"gpt-4o-mini-tts":           1,
+	"tts-1":                     0,
+	"tts-1-hd":                  0,
+	"tts-1-1106":                0,
+	"tts-1-hd-1106":             0,
+	"qwen3-omni-flash-realtime": 4.93, // audio_output ￥62.6 / text_output ￥12.7 = 4.93
 }
 
 var modelPriceMap = types.NewRWMap[string, float64]()
@@ -324,10 +327,11 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
 var defaultCompletionRatio = map[string]float64{
-	"gpt-4-gizmo-*":  2,
-	"gpt-4o-gizmo-*": 3,
-	"gpt-4-all":      2,
-	"gpt-image-1":    8,
+	"gpt-4-gizmo-*":             2,
+	"gpt-4o-gizmo-*":            3,
+	"gpt-4-all":                 2,
+	"gpt-image-1":               8,
+	"qwen3-omni-flash-realtime": 7.06, // multimodal output ￥12.7 / text input ￥1.8 = 7.06
 }
 
 // InitRatioSettings initializes all model related settings maps

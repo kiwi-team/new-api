@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
+	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/sensenova"
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
@@ -144,6 +145,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &awsv2.Adaptor{}
 	case constant.APITypeCodex:
 		return &codex.Adaptor{}
+	case constant.APITypeQwenRealtime:
+		return &qwen_realtime.Adaptor{}
 	}
 	return nil
 }
