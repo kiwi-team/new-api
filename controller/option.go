@@ -169,6 +169,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "VideoRatio":
+		err = ratio_setting.UpdateVideoRatioByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "视频倍率设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "CreateCacheRatio":
 		err = ratio_setting.UpdateCreateCacheRatioByJSONString(option.Value.(string))
 		if err != nil {

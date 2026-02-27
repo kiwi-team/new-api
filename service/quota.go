@@ -27,6 +27,7 @@ import (
 type TokenDetails struct {
 	TextTokens  int
 	AudioTokens int
+	VideoTokens int
 }
 
 type QuotaInfo struct {
@@ -60,6 +61,7 @@ func calculateAudioQuota(info QuotaInfo) int {
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(info.ModelName))
 	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(info.ModelName))
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(info.ModelName))
+	videoRatio := decimal.NewFromFloat(ratio_setting.GetVideoRatio(info.ModelName))
 
 	groupRatio := decimal.NewFromFloat(info.GroupRatio)
 	modelRatio := decimal.NewFromFloat(info.ModelRatio)
@@ -69,12 +71,14 @@ func calculateAudioQuota(info QuotaInfo) int {
 	outputTextTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens))
 	inputAudioTokens := decimal.NewFromInt(int64(info.InputDetails.AudioTokens))
 	outputAudioTokens := decimal.NewFromInt(int64(info.OutputDetails.AudioTokens))
+	inputVideoTokens := decimal.NewFromInt(int64(info.InputDetails.VideoTokens))
 
 	quota := decimal.Zero
 	quota = quota.Add(inputTextTokens)
 	quota = quota.Add(outputTextTokens.Mul(completionRatio))
 	quota = quota.Add(inputAudioTokens.Mul(audioRatio))
 	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio))
+	quota = quota.Add(inputVideoTokens.Mul(videoRatio))
 
 	quota = quota.Mul(ratio)
 
@@ -105,6 +109,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	textOutTokens := usage.OutputTokenDetails.TextTokens
 	audioInputTokens := usage.InputTokenDetails.AudioTokens
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
+	videoInputTokens := usage.InputTokenDetails.VideoTokens
 	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
 
@@ -125,6 +130,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
 			AudioTokens: audioInputTokens,
+			VideoTokens: videoInputTokens,
 		},
 		OutputDetails: TokenDetails{
 			TextTokens:  textOutTokens,
@@ -163,11 +169,13 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	audioInputTokens := usage.InputTokenDetails.AudioTokens
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
+	videoInputTokens := usage.InputTokenDetails.VideoTokens
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(modelName))
 	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(relayInfo.OriginModelName))
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(modelName))
+	videoRatio := decimal.NewFromFloat(ratio_setting.GetVideoRatio(relayInfo.OriginModelName))
 
 	modelRatio := relayInfo.PriceData.ModelRatio
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
@@ -178,6 +186,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
 			AudioTokens: audioInputTokens,
+			VideoTokens: videoInputTokens,
 		},
 		OutputDetails: TokenDetails{
 			TextTokens:  textOutTokens,
@@ -194,8 +203,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	totalTokens := usage.TotalTokens
 	var logContent string
 	if !usePrice {
-		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
-			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), groupRatio)
+		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，视频倍率 %.2f，分组倍率 %.2f",
+			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), videoRatio.InexactFloat64(), groupRatio)
 	} else {
 		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
 	}
@@ -218,7 +227,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logContent += ", " + extraContent
 	}
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
-		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), videoRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)

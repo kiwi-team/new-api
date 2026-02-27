@@ -383,6 +383,12 @@ export const useLogsData = () => {
           key: t('文字输出'),
           value: other.text_output,
         });
+        if (other?.video_input > 0) {
+          expandDataLocal.push({
+            key: t('图片/视频输入'),
+            value: other.video_input,
+          });
+        }
       }
       if (other?.cache_tokens > 0) {
         expandDataLocal.push({
@@ -483,6 +489,8 @@ export const useLogsData = () => {
               other?.user_group_ratio,
               other?.cache_tokens || 0,
               other?.cache_ratio || 1.0,
+              other?.video_input || 0,
+              other?.video_ratio || 1.0,
             );
           } else if (other?.claude) {
             content = renderClaudeModelPrice(

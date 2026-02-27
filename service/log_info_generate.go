@@ -159,15 +159,17 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other map[st
 	other["request_conversion"] = chain
 }
 
-func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
+func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, videoRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
 	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, 0, 0.0, modelPrice, userGroupRatio)
 	info["ws"] = true
 	info["audio_input"] = usage.InputTokenDetails.AudioTokens
 	info["audio_output"] = usage.OutputTokenDetails.AudioTokens
 	info["text_input"] = usage.InputTokenDetails.TextTokens
 	info["text_output"] = usage.OutputTokenDetails.TextTokens
+	info["video_input"] = usage.InputTokenDetails.VideoTokens
 	info["audio_ratio"] = audioRatio
 	info["audio_completion_ratio"] = audioCompletionRatio
+	info["video_ratio"] = videoRatio
 	return info
 }
 

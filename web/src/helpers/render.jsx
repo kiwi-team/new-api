@@ -1602,6 +1602,8 @@ export function renderAudioModelPrice(
   user_group_ratio,
   cacheTokens = 0,
   cacheRatio = 1.0,
+  videoInputTokens = 0,
+  videoRatio = 1.0,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1650,7 +1652,9 @@ export function renderAudioModelPrice(
         audioRatio *
         audioCompletionRatio *
         groupRatio;
-    let price = textPrice + audioPrice;
+    let videoPrice =
+      (videoInputTokens / 1000000) * inputRatioPrice * videoRatio * groupRatio;
+    let price = textPrice + audioPrice + videoPrice;
     return (
       <>
         <article>
@@ -1761,16 +1765,53 @@ export function renderAudioModelPrice(
               },
             )}
           </p>
+          {videoInputTokens > 0 && (
+            <>
+              <p>
+                {i18next.t(
+                  '图片/视频价格：{{symbol}}{{price}} * {{videoRatio}} = {{symbol}}{{total}} / 1M tokens (视频倍率: {{videoRatio}})',
+                  {
+                    symbol: symbol,
+                    price: (inputRatioPrice * rate).toFixed(6),
+                    total: (inputRatioPrice * videoRatio * rate).toFixed(6),
+                    videoRatio: videoRatio,
+                  },
+                )}
+              </p>
+              <p>
+                {i18next.t(
+                  '图片/视频输入 {{input}} tokens / 1M tokens * {{symbol}}{{videoInputPrice}} = {{symbol}}{{total}}',
+                  {
+                    input: videoInputTokens,
+                    symbol: symbol,
+                    videoInputPrice: (videoRatio * inputRatioPrice * rate).toFixed(6),
+                    total: (videoPrice * rate).toFixed(6),
+                  },
+                )}
+              </p>
+            </>
+          )}
           <p>
-            {i18next.t(
-              '总价：文字价格 {{textPrice}} + 音频价格 {{audioPrice}} = {{symbol}}{{total}}',
-              {
-                symbol: symbol,
-                total: (price * rate).toFixed(6),
-                textPrice: (textPrice * rate).toFixed(6),
-                audioPrice: (audioPrice * rate).toFixed(6),
-              },
-            )}
+            {videoInputTokens > 0
+              ? i18next.t(
+                  '总价：文字价格 {{textPrice}} + 音频价格 {{audioPrice}} + 图片/视频价格 {{videoPrice}} = {{symbol}}{{total}}',
+                  {
+                    symbol: symbol,
+                    total: (price * rate).toFixed(6),
+                    textPrice: (textPrice * rate).toFixed(6),
+                    audioPrice: (audioPrice * rate).toFixed(6),
+                    videoPrice: (videoPrice * rate).toFixed(6),
+                  },
+                )
+              : i18next.t(
+                  '总价：文字价格 {{textPrice}} + 音频价格 {{audioPrice}} = {{symbol}}{{total}}',
+                  {
+                    symbol: symbol,
+                    total: (price * rate).toFixed(6),
+                    textPrice: (textPrice * rate).toFixed(6),
+                    audioPrice: (audioPrice * rate).toFixed(6),
+                  },
+                )}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
         </article>

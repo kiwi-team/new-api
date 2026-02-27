@@ -344,6 +344,7 @@ func InitRatioSettings() {
 	imageRatioMap.AddAll(defaultImageRatio)
 	audioRatioMap.AddAll(defaultAudioRatio)
 	audioCompletionRatioMap.AddAll(defaultAudioCompletionRatio)
+	videoRatioMap.AddAll(defaultVideoRatio)
 }
 
 func GetModelPriceMap() map[string]float64 {
@@ -625,6 +626,11 @@ var imageRatioMap = types.NewRWMap[string, float64]()
 var audioRatioMap = types.NewRWMap[string, float64]()
 var audioCompletionRatioMap = types.NewRWMap[string, float64]()
 
+var defaultVideoRatio = map[string]float64{
+	"qwen3-omni-flash-realtime": 1.83, // video_input ￥3.3 / text_input ￥1.8 = 1.83
+}
+var videoRatioMap = types.NewRWMap[string, float64]()
+
 func ImageRatio2JSONString() string {
 	return imageRatioMap.MarshalJSONString()
 }
@@ -655,6 +661,22 @@ func AudioCompletionRatio2JSONString() string {
 
 func UpdateAudioCompletionRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(audioCompletionRatioMap, jsonStr, InvalidateExposedDataCache)
+}
+
+func GetVideoRatio(name string) float64 {
+	name = FormatMatchingModelName(name)
+	if ratio, ok := videoRatioMap.Get(name); ok {
+		return ratio
+	}
+	return 1
+}
+
+func VideoRatio2JSONString() string {
+	return videoRatioMap.MarshalJSONString()
+}
+
+func UpdateVideoRatioByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(videoRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
 func GetModelRatioCopy() map[string]float64 {

@@ -37,6 +37,7 @@ type QwenRealtimeResponse struct {
 	Usage *QwenRealtimeUsage `json:"usage,omitempty"`
 }
 
+// raw usage: {"total_tokens": 622, "input_tokens": 532, "output_tokens": 90, "input_tokens_details": {"text_tokens": 314, "audio_tokens": 75, "video_tokens": 143}, "output_tokens_details": {"text_tokens": 25, "audio_tokens": 65}}
 // QwenRealtimeUsage holds token usage from the upstream response.
 type QwenRealtimeUsage struct {
 	TotalTokens         int               `json:"total_tokens"`
@@ -50,6 +51,7 @@ type QwenRealtimeUsage struct {
 type QwenTokenDetails struct {
 	TextTokens  int `json:"text_tokens"`
 	AudioTokens int `json:"audio_tokens"`
+	VideoTokens int `json:"video_tokens,omitempty"`
 }
 
 // QwenRealtimeError represents an error event from the upstream.
@@ -68,6 +70,7 @@ func accumulateUsage(target *dto.RealtimeUsage, source *QwenRealtimeUsage) {
 	if source.InputTokensDetails != nil {
 		target.InputTokenDetails.TextTokens += source.InputTokensDetails.TextTokens
 		target.InputTokenDetails.AudioTokens += source.InputTokensDetails.AudioTokens
+		target.InputTokenDetails.VideoTokens += source.InputTokensDetails.VideoTokens
 	}
 	if source.OutputTokensDetails != nil {
 		target.OutputTokenDetails.TextTokens += source.OutputTokensDetails.TextTokens

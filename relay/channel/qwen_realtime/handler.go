@@ -161,6 +161,7 @@ func qwenPreConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *d
 	totalUsage.OutputTokens += usage.OutputTokens
 	totalUsage.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
 	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
+	totalUsage.InputTokenDetails.VideoTokens += usage.InputTokenDetails.VideoTokens
 	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
 	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
 
