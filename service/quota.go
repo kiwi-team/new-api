@@ -235,6 +235,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
+		Request:          strings.Join(relayInfo.WsRequestMessages, "\n"),
+		Response:         strings.Join(relayInfo.WsResponseMessages, "\n"),
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,

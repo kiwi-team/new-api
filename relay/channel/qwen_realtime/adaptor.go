@@ -24,8 +24,8 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	baseUrl := strings.TrimRight(info.ChannelBaseUrl, "/")
-	//fmt.Printf("baseUrl: %s\n", baseUrl)
-	return fmt.Sprintf("%s/api-ws/v1/realtime?model=qwen3-omni-flash-realtime", baseUrl), nil
+	//fmt.Printf("baseUrl: %s,%s\n", baseUrl, info.OriginModelName)
+	return fmt.Sprintf("%s/api-ws/v1/realtime?model=%s", baseUrl, info.OriginModelName), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {

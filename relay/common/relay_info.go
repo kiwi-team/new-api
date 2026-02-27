@@ -159,6 +159,11 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+
+	// WsRequestMessages collects non-binary client→upstream WebSocket messages for logging.
+	WsRequestMessages []string
+	// WsResponseMessages collects non-binary upstream→client WebSocket messages for logging.
+	WsResponseMessages []string
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

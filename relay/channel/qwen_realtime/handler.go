@@ -2,6 +2,7 @@ package qwen_realtime
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -15,6 +16,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+// collectWsMessage parses the event type and appends the full message to the appropriate
+// message slice on info for database logging.
+func collectWsMessage(c *gin.Context, info *relaycommon.RelayInfo, mu *sync.Mutex, direction string, message []byte) {
+	summary := fmt.Sprintf("[%s] %s", direction, string(message))
+
+	mu.Lock()
+	if direction == "client→upstream" {
+		info.WsRequestMessages = append(info.WsRequestMessages, summary)
+	} else {
+		info.WsResponseMessages = append(info.WsResponseMessages, summary)
+	}
+	mu.Unlock()
+}
 
 // QwenRealtimeHandler starts bidirectional message forwarding between the client
 // and upstream Qwen Realtime WebSocket connections. It accumulates usage from
@@ -34,6 +49,8 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 
 	usage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+
+	var msgMu sync.Mutex
 
 	// Upstream goroutine: Client → Upstream (direct passthrough, no parsing)
 	gopool.Go(func() {
@@ -56,6 +73,7 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 					return
 				}
 				// Direct passthrough: write raw message to upstream without parsing
+				collectWsMessage(c, info, &msgMu, "client→upstream", message)
 				err = targetConn.WriteMessage(msgType, message)
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to target: %v", err)
@@ -86,6 +104,7 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 					return
 				}
 				info.SetFirstResponseTime()
+				collectWsMessage(c, info, &msgMu, "upstream→client", message)
 
 				// Try to parse for usage extraction; failures are non-fatal
 				event := &QwenRealtimeEvent{}

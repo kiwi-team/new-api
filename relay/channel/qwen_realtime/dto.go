@@ -17,10 +17,11 @@ const (
 
 // Qwen Realtime server→client event types
 const (
-	QwenEventSessionCreated = "session.created"
-	QwenEventSessionUpdated = "session.updated"
-	QwenEventResponseDone   = "response.done"
-	QwenEventError          = "error"
+	QwenEventSessionCreated     = "session.created"
+	QwenEventSessionUpdated     = "session.updated"
+	QwenEventResponseDone       = "response.done"
+	QwenEventError              = "error"
+	QwenEventResponseAudioDelta = "response.audio.delta"
 )
 
 // QwenRealtimeEvent is used to parse downstream WebSocket messages.
