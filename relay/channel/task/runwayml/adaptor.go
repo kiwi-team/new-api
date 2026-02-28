@@ -132,7 +132,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	} else {
 		body = a.buildTextToVideoRequest(&req)
 	}
-
+	//common.PrintJson("runway:", body)
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal request body failed")

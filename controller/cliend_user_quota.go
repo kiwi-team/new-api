@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"encoding/csv"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -201,6 +203,46 @@ func DeleteCliendUserQuota(c *gin.Context) {
 		"success": true,
 		"message": "",
 	})
+}
+
+func ExportCliendUserQuotaCSV(c *gin.Context) {
+	var rows []model.CliendUserQuota
+	if err := model.DB.Order("id desc").Find(&rows).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment;filename=cliend_user_quota.csv")
+	// Write UTF-8 BOM for Excel compatibility
+	c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+	w := csv.NewWriter(c.Writer)
+	w.Write([]string{
+		"id", "client_user_id", "client_name", "fixed_quota", "temp_quota",
+		"used_quota", "used_quota_usd", "updated_at", "expired_at",
+	})
+	for _, r := range rows {
+		usedUSD := fmt.Sprintf("%.6f", float64(r.UsedQuota)/500000.0)
+		updatedAt := ""
+		if r.UpdatedAt > 0 {
+			updatedAt = time.Unix(r.UpdatedAt, 0).Format("2006-01-02 15:04:05")
+		}
+		expiredAt := ""
+		if r.ExpiredAt > 0 {
+			expiredAt = time.Unix(r.ExpiredAt, 0).Format("2006-01-02 15:04:05")
+		}
+		w.Write([]string{
+			strconv.Itoa(r.Id),
+			r.ClientUserId,
+			r.ClientName,
+			strconv.Itoa(r.FixedQuota),
+			strconv.Itoa(r.TempQuota),
+			strconv.Itoa(r.UsedQuota),
+			usedUSD,
+			updatedAt,
+			expiredAt,
+		})
+	}
+	w.Flush()
 }
 
 func GetCliendUserQuotaLogs(c *gin.Context) {

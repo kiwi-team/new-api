@@ -216,6 +216,26 @@ const CliendUserQuotaPage = () => {
             onChange={(v) => setSearchKeyword(v)}
           />
           <Button onClick={() => fetchData(1, pageSize, searchKeyword)}>搜索</Button>
+          {isAdminOrRoot && (
+            <Button
+              type='tertiary'
+              onClick={async () => {
+                try {
+                  const res = await API.get('/api/cliend_user_quota/export', { responseType: 'blob' });
+                  const url = window.URL.createObjectURL(new Blob([res.data]));
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'cliend_user_quota.csv';
+                  a.click();
+                  window.URL.revokeObjectURL(url);
+                } catch (e) {
+                  showError('导出失败');
+                }
+              }}
+            >
+              导出CSV
+            </Button>
+          )}
           <Button type='primary' onClick={openCreate}>
             新建
           </Button>
