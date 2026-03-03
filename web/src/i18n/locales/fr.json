@@ -1911,6 +1911,7 @@
     "缓存倍率 {{cacheRatio}}": "Ratio de cache {{cacheRatio}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "Création de cache {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (ratio : {{ratio}})",
     "缓存创建 Tokens": "Jetons de création de cache",
+    "请求体读取耗时": "Temps de lecture du corps",
     "缓存创建: {{cacheCreationRatio}}": "Création de cache : {{cacheCreationRatio}}",
     "缓存创建: 1h {{cacheCreationRatio1h}}": "Création de cache : 1h {{cacheCreationRatio1h}}",
     "缓存创建: 5m {{cacheCreationRatio5m}}": "Création de cache : 5m {{cacheCreationRatio5m}}",

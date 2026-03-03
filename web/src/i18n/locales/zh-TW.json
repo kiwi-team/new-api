@@ -1886,6 +1886,7 @@
     "缓存倍率 {{cacheRatio}}": "快取倍率 {{cacheRatio}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "快取建立 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})",
     "缓存创建 Tokens": "快取建立 Tokens",
+    "请求体读取耗时": "請求體讀取耗時",
     "缓存创建: {{cacheCreationRatio}}": "快取建立: {{cacheCreationRatio}}",
     "缓存创建: 1h {{cacheCreationRatio1h}}": "快取建立: 1h {{cacheCreationRatio1h}}",
     "缓存创建: 5m {{cacheCreationRatio5m}}": "快取建立: 5m {{cacheCreationRatio5m}}",

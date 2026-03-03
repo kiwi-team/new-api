@@ -218,7 +218,7 @@ func ExportCliendUserQuotaCSV(c *gin.Context) {
 	w := csv.NewWriter(c.Writer)
 	w.Write([]string{
 		"id", "client_user_id", "client_name", "fixed_quota", "temp_quota",
-		"used_quota", "used_quota_usd", "updated_at", "expired_at",
+		"used_quota_usd", "updated_at", "expired_at",
 	})
 	for _, r := range rows {
 		usedUSD := fmt.Sprintf("%.6f", float64(r.UsedQuota)/500000.0)
@@ -236,7 +236,6 @@ func ExportCliendUserQuotaCSV(c *gin.Context) {
 			r.ClientName,
 			strconv.Itoa(r.FixedQuota),
 			strconv.Itoa(r.TempQuota),
-			strconv.Itoa(r.UsedQuota),
 			usedUSD,
 			updatedAt,
 			expiredAt,

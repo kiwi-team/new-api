@@ -402,6 +402,14 @@ export const useLogsData = () => {
           value: other.cache_creation_tokens,
         });
       }
+      if (other?.body_read_time_ms > 0) {
+        const ms = other.body_read_time_ms;
+        const display = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+        expandDataLocal.push({
+          key: t('请求体读取耗时'),
+          value: display,
+        });
+      }
       if (logs[i].type === 2) {
         expandDataLocal.push({
           key: t('日志详情'),

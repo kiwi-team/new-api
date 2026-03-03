@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,18 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 	// 使用新的存储系统
 	storage, err := CreateBodyStorageFromReader(c.Request.Body, contentLength, maxBytes)
 	_ = c.Request.Body.Close()
+
+	// 计算请求体接收耗时（从 Nginx 收到请求到 Go 读完全部 body）
+	// Nginx 通过 X-Request-Start header 传递请求到达时间戳（$msec，秒级浮点数）
+	reqStartStr := c.GetHeader("X-Request-Start")
+	if reqStartStr != "" {
+		if reqStartSec, parseErr := strconv.ParseFloat(reqStartStr, 64); parseErr == nil {
+			bodyReadMs := int(float64(time.Now().UnixMilli()) - reqStartSec*1000)
+			if bodyReadMs > 0 {
+				SetContextKey(c, constant.ContextKeyRequestBodyReadTime, bodyReadMs)
+			}
+		}
+	}
 
 	if err != nil {
 		if IsRequestBodyTooLargeError(err) {

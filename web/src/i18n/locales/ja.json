@@ -1894,6 +1894,7 @@
     "缓存倍率 {{cacheRatio}}": "Cache ratio {{cacheRatio}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "Cache creation {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (ratio: {{ratio}})",
     "缓存创建 Tokens": "キャッシュ作成トークン",
+    "请求体读取耗时": "リクエストボディ読取時間",
     "缓存创建: {{cacheCreationRatio}}": "キャッシュ作成：{{cacheCreationRatio}}",
     "缓存创建: 1h {{cacheCreationRatio1h}}": "キャッシュ作成：1h {{cacheCreationRatio1h}}",
     "缓存创建: 5m {{cacheCreationRatio5m}}": "キャッシュ作成：5m {{cacheCreationRatio5m}}",

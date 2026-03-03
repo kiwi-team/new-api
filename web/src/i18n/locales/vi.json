@@ -2200,6 +2200,7 @@
     "缓存倍率 {{cacheRatio}}": "Cache ratio {{cacheRatio}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "Cache creation {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (ratio: {{ratio}})",
     "缓存创建 Tokens": "Tokens tạo bộ nhớ đệm",
+    "请求体读取耗时": "Thời gian đọc body",
     "缓存创建: {{cacheCreationRatio}}": "Tạo bộ nhớ đệm: {{cacheCreationRatio}}",
     "缓存创建: 1h {{cacheCreationRatio1h}}": "Tạo bộ nhớ đệm: 1h {{cacheCreationRatio1h}}",
     "缓存创建: 5m {{cacheCreationRatio5m}}": "Tạo bộ nhớ đệm: 5m {{cacheCreationRatio5m}}",

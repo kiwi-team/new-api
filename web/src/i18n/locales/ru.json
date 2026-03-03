@@ -1924,6 +1924,7 @@
     "缓存倍率 {{cacheRatio}}": "Коэффициент кэша {{cacheRatio}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "Создание кэша {{tokens}} токенов / 1M токенов * {{symbol}}{{price}} (множитель: {{ratio}})",
     "缓存创建 Tokens": "Создание кэша токенов",
+    "请求体读取耗时": "Время чтения тела запроса",
     "缓存创建: {{cacheCreationRatio}}": "Создание кэша: {{cacheCreationRatio}}",
     "缓存创建: 1h {{cacheCreationRatio1h}}": "Создание кэша: 1h {{cacheCreationRatio1h}}",
     "缓存创建: 5m {{cacheCreationRatio5m}}": "Создание кэша: 5m {{cacheCreationRatio5m}}",

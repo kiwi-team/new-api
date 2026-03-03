@@ -75,4 +75,9 @@ const (
 
 	// ContextKeyLanguage stores the user's language preference for i18n
 	ContextKeyLanguage ContextKey = "language"
+
+	// ContextKeyRequestBodyReadTime stores the duration (in milliseconds) to fully read the request body from the client
+	ContextKeyRequestBodyReadTime ContextKey = "request_body_read_time_ms"
+	// ContextKeyRequestArrivalTime stores the time when the request first arrived (before body is read)
+	ContextKeyRequestArrivalTime ContextKey = "request_arrival_time"
 )

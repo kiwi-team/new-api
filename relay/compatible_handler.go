@@ -1029,6 +1029,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		other["image_generation_call_price"] = imageGenerationCallPrice
 	}
 
+	// 记录请求体读取耗时（毫秒）
+	if bodyReadMs := common.GetContextKeyInt(ctx, constant.ContextKeyRequestBodyReadTime); bodyReadMs > 0 {
+		other["body_read_time_ms"] = bodyReadMs
+	}
+
 	ttsCount := common.GetContextKeyInt(ctx, constant.ContextKeyTTSCount)
 	if ttsCount > 0 {
 		ttsRatio := ratio_setting.GetTTSRatio(relayInfo.UpstreamModelName)

@@ -167,19 +167,16 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	//common.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	if !common.LogConsumeEnabled {
 		return
 	}
-	//logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
-	//requestId := c.GetString(common.RequestIdKey)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
-	needRecordIp := false
+	var clientIp string
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
 		if settingMap.RecordIpLog {
-			needRecordIp = true
+			clientIp = c.ClientIP()
 		}
 	}
 	log := &Log{
@@ -198,23 +195,21 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UseTime:          params.UseTimeSeconds,
 		IsStream:         params.IsStream,
 		Group:            params.Group,
-		Ip: func() string {
-			if needRecordIp {
-				return c.ClientIP()
-			}
-			return ""
-		}(),
-		Other:          otherStr,
-		Request:        strings.TrimSpace(params.Request),
-		Response:       strings.TrimSpace(params.Response),
-		ClientUserId:   params.ClientUserId,
-		ClientScenairo: params.ClientScenairo,
-		RequestId:      params.RequestId,
+		Ip:               clientIp,
+		Other:            otherStr,
+		Request:          strings.TrimSpace(params.Request),
+		Response:         strings.TrimSpace(params.Response),
+		ClientUserId:     params.ClientUserId,
+		ClientScenairo:   params.ClientScenairo,
+		RequestId:        params.RequestId,
 	}
-	err := LOG_DB.Create(log).Error
-	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
-	}
+	// 异步写入日志，避免大请求体（如 base64 图片）阻塞请求响应
+	gopool.Go(func() {
+		err := LOG_DB.Create(log).Error
+		if err != nil {
+			common.SysError("failed to record consume log: " + err.Error())
+		}
+	})
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			//LogQuotaData(userId, username, modelName, quota, common.GetTimestamp(), promptTokens+completionTokens)
