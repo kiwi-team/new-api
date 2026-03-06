@@ -265,3 +265,25 @@ func GetCliendUserQuotaLogs(c *gin.Context) {
 	pageInfo.SetItems(rows)
 	common.ApiSuccess(c, pageInfo)
 }
+
+// GetCliendUserProjectAllocations 获取某个UID的项目预算分配详情
+func GetCliendUserProjectAllocations(c *gin.Context) {
+	clientUserId := c.Query("client_user_id")
+	if clientUserId == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "client_user_id is required",
+		})
+		return
+	}
+	details, err := model.GetProjectAllocationDetails(clientUserId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    details,
+	})
+}

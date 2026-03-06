@@ -1040,6 +1040,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		quota = int(float64(ttsCount) / 1000 * ttsRatio)
 		logContent = fmt.Sprintf("ttsRatio:%.2f，TTS 输入字符数:%d，TTS语音计费: %s", ttsRatio, ttsCount, logger.FormatQuota(quota))
 	}
+
+	// Track project consumption and get project name for logging
+	projectName, _ := service.TrackProjectConsumption(ctx, quota)
+
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
@@ -1061,5 +1065,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
+		ProjectName:      projectName,
 	})
 }

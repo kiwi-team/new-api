@@ -42,6 +42,7 @@ type Log struct {
 	Response         string `json:"response" gorm:"type:text"`
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName      string `json:"project_name" gorm:"index;size:100;default:''"`
 }
 
 // don't use iota, avoid change log type value
@@ -102,12 +103,12 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	requestId := c.GetString(common.RequestIdKey)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
+	needRecordIp := true
+	// if settingMap, err := GetUserSetting(userId, false); err == nil {
+	// 	if settingMap.RecordIpLog {
+	// 		needRecordIp = true
+	// 	}
+	// }
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
@@ -164,6 +165,7 @@ type RecordConsumeLogParams struct {
 	ClientUserId     string                 `json:"client_user_id"`
 	ClientScenairo   string                 `json:"client_scenairo"`
 	RequestId        string                 `json:"request_id"`
+	ProjectName      string                 `json:"project_name"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -173,12 +175,11 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := c.GetString("username")
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
-	var clientIp string
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			clientIp = c.ClientIP()
-		}
-	}
+	clientIp := c.ClientIP()
+	//if settingMap, err := GetUserSetting(userId, false); err == nil {
+	//	if settingMap.RecordIpLog {
+	//	}
+	//}
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
@@ -202,6 +203,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ClientUserId:     params.ClientUserId,
 		ClientScenairo:   params.ClientScenairo,
 		RequestId:        params.RequestId,
+		ProjectName:      params.ProjectName,
 	}
 	// 异步写入日志，避免大请求体（如 base64 图片）阻塞请求响应
 	gopool.Go(func() {
@@ -227,6 +229,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 				TokenId:          params.TokenId,
 				ClientUserId:     params.ClientUserId,
 				ClientScenairo:   params.ClientScenairo,
+				ProjectName:      params.ProjectName,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})

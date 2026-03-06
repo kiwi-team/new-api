@@ -312,6 +312,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				if hasUserGroupRatio {
 					other["user_group_ratio"] = userGroupRatio
 				}
+
+				// Track project consumption and get project name for logging
+				projectName, _ := service.TrackProjectConsumption(c, quota)
+
 				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 				clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
 				requestId := c.GetString(common.RequestIdKey)
@@ -329,6 +333,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					Request:        string(requestBytes),
 					Response:       responseStr,
 					RequestId:      requestId,
+					ProjectName:    projectName,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)

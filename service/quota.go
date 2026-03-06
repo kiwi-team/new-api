@@ -222,6 +222,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
+	// Track project consumption and get project name for logging
+	projectName, _ := TrackProjectConsumption(ctx, quota)
+
 	logModel := modelName
 	if extraContent != "" {
 		logContent += ", " + extraContent
@@ -249,6 +252,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
+		ProjectName:      projectName,
 	})
 }
 
@@ -330,6 +334,9 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 
+	// Track project consumption and get project name for logging
+	projectName, _ := TrackProjectConsumption(ctx, quota)
+
 	other := GenerateClaudeOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio,
 		cacheTokens, cacheRatio,
 		cacheCreationTokens, cacheCreationRatio,
@@ -357,6 +364,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
+		ProjectName:      projectName,
 	})
 
 }
@@ -444,6 +452,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 
+	// Track project consumption and get project name for logging
+	projectName, _ := TrackProjectConsumption(ctx, quota)
+
 	logModel := relayInfo.OriginModelName
 	if extraContent != "" {
 		logContent += ", " + extraContent
@@ -471,6 +482,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
+		ProjectName:      projectName,
 	})
 }
 

@@ -27,6 +27,7 @@ type QuotaData struct {
 	ChannelId        int    `json:"channel_id" gorm:"index"`
 	ClientUserId     string `json:"client_user_id" gorm:"index;size:200;default:''"`
 	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName      string `json:"project_name" gorm:"index;size:200;default:''"`
 }
 
 type LogQuotaDataCache struct {
@@ -43,6 +44,7 @@ type LogQuotaDataCache struct {
 	ChannelId        int
 	ClientUserId     string
 	ClientScenairo   string
+	ProjectName      string
 }
 
 func UpdateQuotaData() {
@@ -64,8 +66,8 @@ func UpdateQuotaData() {
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
-func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string) {
-	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo)
+func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string) {
+	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo, projectName)
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
 		quotaData.Count += 1
@@ -89,6 +91,7 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 			ChannelId:        channelId,
 			ClientUserId:     clientUserId,
 			ClientScenairo:   clientScenairo,
+			ProjectName:      projectName,
 		}
 	}
 	CacheQuotaData[key] = quotaData
@@ -109,12 +112,13 @@ func LogQuotaData(logQuotaData *LogQuotaDataCache) {
 	channelId := logQuotaData.ChannelId
 	clientUserId := logQuotaData.ClientUserId
 	clientScenairo := logQuotaData.ClientScenairo
+	projectName := logQuotaData.ProjectName
 	// 只精确到小时
 	createdAt = createdAt - (createdAt % 3600)
 
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
-	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, tokenId, channelId, clientUserId, clientScenairo)
+	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, tokenId, channelId, clientUserId, clientScenairo, projectName)
 }
 
 func SaveQuotaDataCache() {
@@ -127,13 +131,13 @@ func SaveQuotaDataCache() {
 	// 3. 如果没有数据，就插入数据
 	for _, quotaData := range CacheQuotaData {
 		quotaDataDB := &QuotaData{}
-		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo).First(quotaDataDB)
+		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ?",
+			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
 			//quotaDataDB.Count += quotaData.Count
 			//quotaDataDB.Quota += quotaData.Quota
 			//DB.Table("quota_data").Save(quotaDataDB)
-			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.ClientUserId, quotaData.ClientScenairo)
+			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
@@ -156,7 +160,7 @@ type QuotaDataStatistics struct {
 	TempQuota       int     `json:"temp_quota"`
 }
 
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, userId int) ([]*QuotaDataStatistics, error) {
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, userId int, projectName string) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -195,6 +199,9 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	}
 	if clientUserId != "" {
 		tx = tx.Where("client_user_id LIKE ?", "%"+clientUserId+"%")
+	}
+	if projectName != "" {
+		tx = tx.Where("project_name = ?", projectName)
 	}
 	// 处理多选scenairo筛选
 	if clientScenairos != "" {
@@ -289,9 +296,9 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, clientUserId string, clientScenairo string) {
-	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ?",
-		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo).Updates(map[string]interface{}{
+func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, clientUserId string, clientScenairo string, projectName string) {
+	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ?",
+		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName).Updates(map[string]interface{}{
 		"count":             gorm.Expr("count + ?", count),
 		"quota":             gorm.Expr("quota + ?", quota),
 		"token_used":        gorm.Expr("token_used + ?", tokenUsed),
@@ -393,4 +400,15 @@ func GetChannelQuotaStatistics(startTime int64, endTime int64) ([]*ChannelQuotaS
 		statistics = make([]*ChannelQuotaStatistics, 0)
 	}
 	return statistics, nil
+}
+
+// GetDistinctProjectNames 获取所有不重复的项目名称
+func GetDistinctProjectNames() ([]string, error) {
+	var names []string
+	err := DB.Model(&Project{}).
+		Distinct("project_name").
+		Where("project_name != ''").
+		Order("project_name").
+		Pluck("project_name", &names).Error
+	return names, err
 }

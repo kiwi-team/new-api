@@ -361,6 +361,16 @@ export default function SettingsSidebarModulesUser() {
         },
         { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
         {
+          key: 'cuquota',
+          title: t('UID预算管理'),
+          description: t('用户预算额度管理'),
+        },
+        {
+          key: 'project',
+          title: t('项目预算管理'),
+          description: t('项目预算分配管理'),
+        },
+        {
           key: 'setting',
           title: t('系统设置'),
           description: t('系统参数配置'),

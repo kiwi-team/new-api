@@ -387,13 +387,34 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 
+		// Project header validation
+		// Extract X-Project or project header
+		projectName := c.GetHeader("X-Project")
+		if projectName == "" {
+			projectName = c.GetHeader("project")
+		}
+
+		// Validate project if provided
+		projectQuota := 0
+		if projectName != "" {
+			allocation, err := service.ValidateProjectRequest(projectName, clientUserId)
+			if err != nil {
+				abortWithOpenAiMessage(c, http.StatusForbidden, err.Error())
+				return
+			}
+			projectQuota = allocation.AllocatedQuota
+			common.SetContextKey(c, constant.ContextKeyProjectName, projectName)
+			common.SetContextKey(c, constant.ContextKeyProjectId, allocation.ProjectId)
+			common.SetContextKey(c, constant.ContextKeyProjectAllocationId, allocation.Id)
+		}
+
 		if common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
 			if len(clientUserId) <= 8 && !isAiceKey {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
 				return
 			}
 			if !isAiceKey {
-				if ok, err1 := model.CheckCliendUserQuota(clientUserId); !ok || err1 != nil {
+				if ok, err1 := model.CheckCliendUserQuota(clientUserId, projectQuota); !ok || err1 != nil {
 					abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，预算不足，请联系管理员")
 					return
 				}
@@ -401,6 +422,13 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		common.SetContextKey(c, constant.ContextKeyClientUserId, clientUserId)
 		common.SetContextKey(c, constant.ContextKeyClientScenairo, clientScenairo)
+
+		// Handle scenario header, default to personal_experiment
+		scenario := c.GetHeader("scenario")
+		if scenario == "" {
+			scenario = "personal_experiment"
+		}
+		common.SetContextKey(c, constant.ContextKeyClientScenairo, scenario)
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {

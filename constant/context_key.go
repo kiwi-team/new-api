@@ -58,6 +58,11 @@ const (
 	ContextKeyClientUserId   ContextKey = "client_user_id"
 	ContextKeyClientScenairo ContextKey = "client_scenairo"
 
+	/* project related keys */
+	ContextKeyProjectName         ContextKey = "project_name"
+	ContextKeyProjectId           ContextKey = "project_id"
+	ContextKeyProjectAllocationId ContextKey = "project_allocation_id"
+
 	ContextKeyLocalCountTokens ContextKey = "local_count_tokens"
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"

@@ -216,6 +216,9 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 				common.SysLog("error consuming token remain quota: " + err.Error())
 			}
 
+			// Track project consumption and get project name for logging
+			projectName, _ := service.TrackProjectConsumption(c, priceData.Quota)
+
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
 			clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
@@ -234,6 +237,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 				ClientUserId:   clientUserId,
 				ClientScenairo: clientScenairo,
 				RequestId:      requestId,
+				ProjectName:    projectName,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(info.ChannelId, priceData.Quota)
@@ -522,6 +526,10 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			if err != nil {
 				common.SysLog("error consuming token remain quota: " + err.Error())
 			}
+
+			// Track project consumption and get project name for logging
+			projectName, _ := service.TrackProjectConsumption(c, priceData.Quota)
+
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)
 			other := service.GenerateMjOtherInfo(relayInfo, priceData)
@@ -540,6 +548,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 				ClientUserId:   clientUserId,
 				ClientScenairo: clientScenairo,
 				RequestId:      requestId,
+				ProjectName:    projectName,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(relayInfo.ChannelId, priceData.Quota)

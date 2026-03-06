@@ -56,6 +56,7 @@ import ChannelByModel from './pages/Channel/ChannelByModel.js';
 import EditChannel from './pages/Channel/EditChannel.js';
 import QuotaStatistics from './pages/QuotaStatistics';
 import CliendUserQuotaPage from './pages/CliendUserQuota';
+import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
 
 // Debug module pages
@@ -103,7 +104,7 @@ function App() {
   return (
     <SetupCheck>
       {toioMode && (() => {
-        const allowed = ['/console/quota-statistics', '/console/cliend-user-quota'];
+        const allowed = ['/console/quota-statistics', '/console/client-user-quota','/console/project'];
         if (!allowed.includes(location.pathname)) {
           return <Navigate to='/console/quota-statistics' replace />;
         }
@@ -222,7 +223,7 @@ function App() {
           }
         />
         <Route
-          path='/console/cliend-user-quota'
+          path='/console/client-user-quota'
           element={
             toioMode ? (
               <PrivateRoute>
@@ -233,6 +234,14 @@ function App() {
                 <CliendUserQuotaPage />
               </AdminRoute>
             )
+          }
+        />
+        <Route
+          path='/console/project'
+          element={
+            <AdminRoute>
+              <ProjectPage />
+            </AdminRoute>
           }
         />
         <Route

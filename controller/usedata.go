@@ -155,8 +155,9 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
+	projectName := c.Query("project_name")
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -179,8 +180,9 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
+	projectName := c.Query("project_name")
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -271,5 +273,19 @@ func GetChannelQuotaStatistics(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    statistics,
+	})
+}
+
+// GetDistinctProjectNames 获取所有不重复的项目名称
+func GetDistinctProjectNames(c *gin.Context) {
+	names, err := model.GetDistinctProjectNames()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    names,
 	})
 }

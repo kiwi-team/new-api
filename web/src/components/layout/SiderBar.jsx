@@ -53,7 +53,8 @@ const routerMap = {
   playground: '/console/playground',
   personal: '/console/personal',
   quotaStatistics: '/console/quota-statistics',
-  cuquota: '/console/cliend-user-quota',
+  cuquota: '/console/client-user-quota',
+  project: '/console/project',
   // Debug module routes
   debugExecutor: '/console/debug/executor',
   debugTemplates: '/console/debug/templates',
@@ -149,7 +150,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     if (toioMode) {
       if (isAdmin()) {
         return [
-          { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: '' },
+          { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/client-user-quota', className: '' },
+          { text: t('项目预算管理'), itemKey: 'project', to: '/console/project', className: '' },
         ];
       }else if (isLeader()) {
         return [];
@@ -168,7 +170,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       { text: t('用户管理'), itemKey: 'user', to: '/user', className: isAdmin() ? '' : 'tableHiddle' },
-      { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/cliend-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/client-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('项目预算管理'), itemKey: 'project', to: '/console/project', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
 

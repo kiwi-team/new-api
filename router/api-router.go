@@ -301,6 +301,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/statistics", middleware.LeaderAuth(), controller.GetQuotaDataStatistics)
 		dataRoute.GET("/statistics/export", middleware.LeaderAuth(), controller.ExportQuotaDataStatistics)
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
+		dataRoute.GET("/project-names", middleware.LeaderAuth(), controller.GetDistinctProjectNames)
 		toioDataRoute := apiRouter.Group("/toio/data")
 		toioDataRoute.Use(middleware.ToioAuth())
 		{
@@ -407,11 +408,31 @@ func SetApiRouter(router *gin.Engine) {
 			cuQuotaRoute.GET("/search", controller.SearchCliendUserQuota)
 			cuQuotaRoute.GET("/export", controller.ExportCliendUserQuotaCSV)
 			cuQuotaRoute.GET("/logs", controller.GetCliendUserQuotaLogs)
+			cuQuotaRoute.GET("/project-allocations", controller.GetCliendUserProjectAllocations)
 			cuQuotaRoute.GET("/:id", controller.GetCliendUserQuota)
 			cuQuotaRoute.POST("/", controller.CreateCliendUserQuota)
 			cuQuotaRoute.PUT("/", controller.UpdateCliendUserQuota)
 			cuQuotaRoute.DELETE("/:id", controller.DeleteCliendUserQuota)
 		}
+
+		// Project budget management routes (admin only)
+		projectRoute := apiRouter.Group("/project")
+		projectRoute.Use(middleware.AdminAuth())
+		{
+			projectRoute.GET("/dashboard", controller.GetProjectDashboard)
+			projectRoute.GET("/:id/allocations", controller.GetProjectAllocations)
+			projectRoute.POST("/:id/allocation", controller.CreateOrUpdateAllocation)
+			projectRoute.GET("/:id/statistics", controller.GetProjectStatistics)
+			projectRoute.PUT("/:id/status", controller.UpdateProjectStatus)
+			projectRoute.PUT("/:id", controller.UpdateProject)
+		}
+		projectsRoute := apiRouter.Group("/projects")
+		projectsRoute.Use(middleware.AdminAuth())
+		{
+			projectsRoute.GET("/", controller.GetProjects)
+		}
+		// Single project creation route
+		apiRouter.POST("/project", middleware.AdminAuth(), controller.CreateProject)
 
 		// Root-only import/export
 		adminRootRoute := apiRouter.Group("/admin")

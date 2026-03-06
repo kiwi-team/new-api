@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
-import { Button, Table, Modal, Form, Input, Space, Typography } from '@douyinfe/semi-ui';
+import { Button, Table, Modal, Form, Input, Space, Typography, Tag } from '@douyinfe/semi-ui';
 
 const { Title } = Typography;
 
@@ -49,6 +49,33 @@ const CliendUserQuotaPage = () => {
     ...initFormValues, 
   });
   const [submitLoading, setSubmitLoading] = useState(false);
+
+  // 项目预算弹窗
+  const [projectModalVisible, setProjectModalVisible] = useState(false);
+  const [projectAllocations, setProjectAllocations] = useState([]);
+  const [projectModalLoading, setProjectModalLoading] = useState(false);
+  const [projectModalUid, setProjectModalUid] = useState('');
+
+  const fetchProjectAllocations = async (clientUserId) => {
+    setProjectModalUid(clientUserId);
+    setProjectModalVisible(true);
+    setProjectModalLoading(true);
+    try {
+      const res = await API.get('/api/cliend_user_quota/project-allocations', {
+        params: { client_user_id: clientUserId },
+      });
+      const { success, data } = res.data;
+      if (success) {
+        setProjectAllocations(Array.isArray(data) ? data : []);
+      } else {
+        setProjectAllocations([]);
+      }
+    } catch (e) {
+      setProjectAllocations([]);
+    } finally {
+      setProjectModalLoading(false);
+    }
+  };
 
   const fetchData = async (pageNum = page, size = pageSize, keyword = searchKeyword) => {
     setLoading(true);
@@ -191,6 +218,21 @@ const CliendUserQuotaPage = () => {
     },
     { title: '临时预算过期时间', dataIndex: 'expired_at', width: 200, render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-') },
     {
+      title: '项目预算',
+      dataIndex: 'project_budget',
+      width: 120,
+      render: (_, record) => (
+        <Button
+          theme='borderless'
+          type='primary'
+          size='small'
+          onClick={() => fetchProjectAllocations(record.client_user_id)}
+        >
+          查看
+        </Button>
+      ),
+    },
+    {
       title: '操作',
       dataIndex: 'op',
       width: 220,
@@ -299,6 +341,36 @@ const CliendUserQuotaPage = () => {
                 label='备注'
               />
             </Form>
+          </Modal>
+
+          <Modal
+            title={`项目预算详情 - ${projectModalUid}`}
+            visible={projectModalVisible}
+            onCancel={() => setProjectModalVisible(false)}
+            footer={null}
+            centered
+            width={600}
+          >
+            <Table
+              loading={projectModalLoading}
+              dataSource={projectAllocations}
+              pagination={false}
+              size='small'
+              columns={[
+                { title: '项目名称', dataIndex: 'project_name', key: 'project_name' },
+                { title: '分配预算($)', dataIndex: 'allocated_quota', key: 'allocated_quota' },
+                {
+                  title: '已消耗($)',
+                  dataIndex: 'used_quota_usd',
+                  key: 'used_quota_usd',
+                  render: (v) => {
+                    const val = parseFloat(v) || 0;
+                    return val.toFixed(6);
+                  },
+                },
+              ]}
+              empty={<span style={{ color: '#999' }}>暂无项目预算分配</span>}
+            />
           </Modal>
         
     </div>

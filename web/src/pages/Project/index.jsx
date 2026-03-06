@@ -1,0 +1,627 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+import React, { useEffect, useState, useMemo } from 'react';
+import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
+import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Switch, Descriptions, Card, Select } from '@douyinfe/semi-ui';
+import { useTranslation } from 'react-i18next';
+
+const { Title, Text } = Typography;
+
+const ProjectStatusEnabled = 1;
+const ProjectStatusPaused = 2;
+
+const ProjectPage = () => {
+  const { t } = useTranslation();
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [formApi, setFormApi] = useState(null);
+
+  const isAdminOrRoot = useMemo(() => isAdmin() || isRoot(), []);
+
+  const initFormValues = {
+    project_name: '',
+    total_budget: 0,
+  };
+  const [formValues, setFormValues] = useState({ ...initFormValues });
+  const [submitLoading, setSubmitLoading] = useState(false);
+
+  // Allocation management state
+  const [allocationModalVisible, setAllocationModalVisible] = useState(false);
+  const [currentProject, setCurrentProject] = useState(null);
+  const [allocations, setAllocations] = useState([]);
+  const [allocationPage, setAllocationPage] = useState(1);
+  const [allocationPageSize, setAllocationPageSize] = useState(10);
+  const [allocationTotal, setAllocationTotal] = useState(0);
+  const [allocationLoading, setAllocationLoading] = useState(false);
+  const [allocatedTotal, setAllocatedTotal] = useState(0);
+
+  // Allocation form state
+  const [allocationFormVisible, setAllocationFormVisible] = useState(false);
+  const [editingAllocation, setEditingAllocation] = useState(null);
+  const [allocationFormApi, setAllocationFormApi] = useState(null);
+  const [allocationSubmitLoading, setAllocationSubmitLoading] = useState(false);
+  const initAllocationFormValues = {
+    client_user_id: '',
+    allocated_quota: 0,
+  };
+  const [allocationFormValues, setAllocationFormValues] = useState({ ...initAllocationFormValues });
+
+  // Dashboard state
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+
+  // UID list for allocation form
+  const [uidOptions, setUidOptions] = useState([]);
+  const [uidSearchLoading, setUidSearchLoading] = useState(false);
+
+  const fetchUidOptions = async (keyword = '') => {
+    setUidSearchLoading(true);
+    try {
+      const params = { p: 1, page_size: 50 };
+      let url = '/api/cliend_user_quota/';
+      if (keyword && keyword.trim()) {
+        url = '/api/cliend_user_quota/search';
+        params.keyword = keyword.trim();
+      }
+      const res = await API.get(url, { params });
+      const { success, data } = res.data;
+      if (success && data?.items) {
+        setUidOptions(data.items.map((item) => ({
+          value: item.client_user_id,
+          label: item.client_name
+            ? `${item.client_user_id} (${item.client_name})`
+            : item.client_user_id,
+        })));
+      }
+    } catch (e) {
+      // silently fail
+    } finally {
+      setUidSearchLoading(false);
+    }
+  };
+
+  const fetchDashboard = async () => {
+    setDashboardLoading(true);
+    try {
+      const res = await API.get('/api/project/dashboard');
+      const { success, data } = res.data;
+      if (success) {
+        setDashboardData(data);
+      }
+    } catch (e) {
+      // Silently fail for dashboard
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
+  const fetchData = async (pageNum = page, size = pageSize, keyword = searchKeyword) => {
+    setLoading(true);
+    try {
+      const params = { p: pageNum, page_size: size };
+      if (keyword && keyword.trim()) {
+        params.keyword = keyword.trim();
+      }
+      const res = await API.get('/api/projects', { params });
+      const { success, message, data } = res.data;
+      if (success) {
+        setData(data.items || []);
+        setTotal(data.total || 0);
+        setPage(data.p || pageNum);
+        setPageSize(data.page_size || size);
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (e) {
+      showError(t('加载失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData(1, pageSize, '');
+    fetchDashboard();
+  }, []);
+
+  const openCreate = () => {
+    setEditing(null);
+    setFormValues({ ...initFormValues });
+    setModalVisible(true);
+  };
+
+  const openEdit = (record) => {
+    setEditing(record);
+    setFormValues({
+      project_name: record.project_name,
+      total_budget: record.total_budget,
+    });
+    setModalVisible(true);
+  };
+
+  const handleStatusToggle = async (record) => {
+    const newStatus = record.status === ProjectStatusEnabled ? ProjectStatusPaused : ProjectStatusEnabled;
+    try {
+      const res = await API.put(`/api/project/${record.id}/status`, { status: newStatus });
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('状态更新成功'));
+        fetchData(page, pageSize, searchKeyword);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    }
+  };
+
+  const handleSubmit = async () => {
+    setSubmitLoading(true);
+    try {
+      const payload = formApi ? formApi.getValues() : { ...formValues };
+      let res;
+      if (editing) {
+        res = await API.put(`/api/project/${editing.id}`, payload);
+      } else {
+        res = await API.post('/api/project', payload);
+      }
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(editing ? t('更新成功') : t('创建成功'));
+        setModalVisible(false);
+        fetchData(page, pageSize, searchKeyword);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
+  const handleCloseModal = () => {
+    setModalVisible(false);
+    formApi && formApi.reset();
+    setFormValues({ ...initFormValues });
+    setEditing(null);
+  };
+
+  useEffect(() => {
+    if (modalVisible && formApi) {
+      formApi.setValues(formValues);
+    }
+  }, [modalVisible, formValues, formApi]);
+
+  // ==================== Allocation Management Functions ====================
+
+  const fetchAllocations = async (projectId, pageNum = allocationPage, size = allocationPageSize) => {
+    setAllocationLoading(true);
+    try {
+      const params = { p: pageNum, page_size: size };
+      const res = await API.get(`/api/project/${projectId}/allocations`, { params });
+      const { success, message, data } = res.data;
+      if (success) {
+        setAllocations(data.items || []);
+        setAllocationTotal(data.total || 0);
+        setAllocationPage(data.p || pageNum);
+        setAllocationPageSize(data.page_size || size);
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (e) {
+      showError(t('加载失败'));
+    } finally {
+      setAllocationLoading(false);
+    }
+  };
+
+  // Fetch all allocations to calculate total allocated (for budget display)
+  const fetchAllocatedTotal = async (projectId) => {
+    try {
+      // Fetch all allocations with a large page size to get total
+      const res = await API.get(`/api/project/${projectId}/allocations`, { params: { p: 1, page_size: 10000 } });
+      const { success, data } = res.data;
+      if (success) {
+        const total = (data.items || []).reduce((sum, item) => sum + (item.allocated_quota || 0), 0);
+        setAllocatedTotal(total);
+      }
+    } catch (e) {
+      // Silently fail, allocated total will show 0
+    }
+  };
+
+  const openAllocationModal = (record) => {
+    setCurrentProject(record);
+    setAllocationPage(1);
+    setAllocationModalVisible(true);
+    fetchAllocations(record.id, 1, allocationPageSize);
+    fetchAllocatedTotal(record.id);
+  };
+
+  const closeAllocationModal = () => {
+    setAllocationModalVisible(false);
+    setCurrentProject(null);
+    setAllocations([]);
+    setAllocationTotal(0);
+    setAllocatedTotal(0);
+  };
+
+  const openAllocationForm = (allocation = null) => {
+    setEditingAllocation(allocation);
+    if (allocation) {
+      setAllocationFormValues({
+        client_user_id: allocation.client_user_id,
+        allocated_quota: allocation.allocated_quota,
+      });
+    } else {
+      setAllocationFormValues({ ...initAllocationFormValues });
+      fetchUidOptions();
+    }
+    setAllocationFormVisible(true);
+  };
+
+  const closeAllocationForm = () => {
+    setAllocationFormVisible(false);
+    setEditingAllocation(null);
+    allocationFormApi && allocationFormApi.reset();
+    setAllocationFormValues({ ...initAllocationFormValues });
+  };
+
+  const handleAllocationSubmit = async () => {
+    if (!currentProject) return;
+    setAllocationSubmitLoading(true);
+    try {
+      const payload = allocationFormApi ? allocationFormApi.getValues() : { ...allocationFormValues };
+      const res = await API.post(`/api/project/${currentProject.id}/allocation`, payload);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(editingAllocation ? t('更新成功') : t('创建成功'));
+        closeAllocationForm();
+        fetchAllocations(currentProject.id, allocationPage, allocationPageSize);
+        fetchAllocatedTotal(currentProject.id);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    } finally {
+      setAllocationSubmitLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (allocationFormVisible && allocationFormApi) {
+      allocationFormApi.setValues(allocationFormValues);
+    }
+  }, [allocationFormVisible, allocationFormValues, allocationFormApi]);
+
+  const allocationColumns = [
+    { title: 'ID', dataIndex: 'id', width: 80 },
+    { title: t('用户ID'), dataIndex: 'client_user_id', width: 200 },
+    {
+      title: t('分配额度'),
+      dataIndex: 'allocated_quota',
+      width: 120,
+      sorter: (a, b) => (parseInt(a.allocated_quota, 10) || 0) - (parseInt(b.allocated_quota, 10) || 0),
+    },
+    {
+      title: t('已使用'),
+      dataIndex: 'used_quota',
+      width: 120,
+      sorter: (a, b) => (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
+      render:(_,record)=>{
+        console.log({record});
+          return record.used_quota/500000;
+      },
+    },
+    {
+      title: t('剩余额度'),
+      dataIndex: 'remaining',
+      width: 120,
+      render: (_, record) => {
+        const remaining = (record.allocated_quota || 0) - (record.used_quota/500000 || 0);
+        return <Text type={remaining > 0 ? 'success' : 'danger'}>{remaining}</Text>;
+      },
+    },
+    {
+      title: t('创建时间'),
+      dataIndex: 'created_at',
+      width: 180,
+      render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-'),
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'op',
+      width: 100,
+      render: (_, record) => (
+        <Button size="small" onClick={() => openAllocationForm(record)}>{t('编辑')}</Button>
+      ),
+    },
+  ];
+
+  const getRemainingBudget = () => {
+    if (!currentProject) return 0;
+    return (currentProject.total_budget || 0) - allocatedTotal;
+  };
+
+  const columns = [
+    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: t('项目名称'), dataIndex: 'project_name', width: 120 },
+    {
+      title: t('总预算($)'),
+      dataIndex: 'total_budget',
+      width: 100,
+      sorter: (a, b) => (parseInt(a.total_budget, 10) || 0) - (parseInt(b.total_budget, 10) || 0),
+    },
+    {
+      title: t('已消耗($)'),
+      dataIndex: 'quota',
+      width: 100,
+      render:(_,record)=>{
+        return record.quota/500000;
+      },
+      sorter: (a, b) => (parseInt(a.quota, 10) || 0) - (parseInt(b.quota, 10) || 0),
+
+    },
+    {
+      title: t('已分配'),
+      dataIndex: 'allocations',
+      width: 180,
+      render: (_, record) => {
+        const allocs = record.allocations || [];
+        if (allocs.length === 0) return <Text type='tertiary'>-</Text>;
+        return (
+          <div style={{ lineHeight: '1.6' }}>
+            {allocs.map((a, i) => (
+              <div key={i}>
+                <Text type='success'>{a.client_user_id}:{a.allocated_quota}</Text>
+              </div>
+            ))}
+          </div>
+        );
+      },
+    },
+    {
+      title: t('剩余可分配'),
+      dataIndex: 'remaining_budget',
+      width: 100,
+      render: (_, record) => {
+        const remaining = (record.total_budget || 0) - (record.allocated_total || 0);
+        return <Text type={remaining > 0 ? 'success' : remaining < 0 ? 'danger' : undefined}>{remaining}</Text>;
+      },
+      sorter: (a, b) => ((a.total_budget || 0) - (a.allocated_total || 0)) - ((b.total_budget || 0) - (b.allocated_total || 0)),
+    },
+    {
+      title: t('状态'),
+      dataIndex: 'status',
+      width: 100,
+      render: (status, record) => (
+        <Space>
+          <Tag color={status === ProjectStatusEnabled ? 'green' : 'grey'}>
+            {status === ProjectStatusEnabled ? t('启用') : t('暂停')}
+          </Tag>
+          {isAdminOrRoot && (
+            <Switch
+              checked={status === ProjectStatusEnabled}
+              onChange={() => handleStatusToggle(record)}
+              size="small"
+            />
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'op',
+      width: 140,
+      fixed: 'right',
+      render: (_, record) => (
+        <Space>
+          <Button size='small' onClick={() => openEdit(record)}>{t('编辑')}</Button>
+          <Button size='small' onClick={() => openAllocationModal(record)}>{t('分配')}</Button>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div className='mt-[60px] px-2'>
+      {/* Dashboard Summary Cards */}
+      {isAdminOrRoot && dashboardData && (
+        <div className='grid grid-cols-2 md:grid-cols-4 gap-4 mb-4'>
+          <Card title={t('项目总数')} loading={dashboardLoading}>
+            <Text size='large' strong>{dashboardData.projects?.length || 0}</Text>
+          </Card>
+          <Card title={t('总预算')} loading={dashboardLoading}>
+            <Text size='large' strong>{dashboardData.projects?.reduce((sum, p) => sum + (p.total_budget || 0), 0) || 0}</Text>
+          </Card>
+          <Card title={t('已分配')} loading={dashboardLoading}>
+            <Text size='large' strong>{dashboardData.projects?.reduce((sum, p) => sum + (p.allocated_total || 0), 0) || 0}</Text>
+          </Card>
+          <Card title={t('已使用')} loading={dashboardLoading}>
+            <Text size='large' strong>{(dashboardData.projects?.reduce((sum, p) => sum + (p.used_total || 0), 0) || 0)/500000}</Text>
+          </Card>
+        </div>
+      )}
+      <div className='flex items-center justify-between mb-3'>
+        <Title heading={4}>{t('项目管理')}</Title>
+        <Space>
+          <Input
+            placeholder={t('搜索项目名称')}
+            value={searchKeyword}
+            onChange={(v) => setSearchKeyword(v)}
+          />
+          <Button onClick={() => fetchData(1, pageSize, searchKeyword)}>{t('搜索')}</Button>
+          {isAdminOrRoot && (
+            <Button type='primary' onClick={openCreate}>
+              {t('新建')}
+            </Button>
+          )}
+        </Space>
+      </div>
+      <Table
+        loading={loading}
+        columns={columns}
+        dataSource={data}
+        rowKey="id"
+        pagination={{
+          currentPage: page,
+          pageSize,
+          total,
+          onPageChange: (p) => {
+            setPage(p);
+            fetchData(p, pageSize, searchKeyword);
+          },
+          onPageSizeChange: (size) => {
+            setPageSize(size);
+            fetchData(1, size, searchKeyword);
+          },
+        }}
+      />
+
+      <Modal
+        title={editing ? t('编辑项目') : t('新建项目')}
+        visible={modalVisible}
+        onCancel={handleCloseModal}
+        onOk={handleSubmit}
+        okButtonProps={{ loading: submitLoading }}
+        centered
+      >
+        <Form getFormApi={setFormApi} initValues={formValues}>
+          <Form.Input
+            field='project_name'
+            label={t('项目名称')}
+            placeholder={t('请输入项目名称')}
+            disabled={!!editing}
+            rules={[{ required: true, message: t('请输入项目名称') }]}
+          />
+          <Form.InputNumber
+            field='total_budget'
+            label={t('总预算')}
+            min={0}
+            placeholder={t('请输入总预算')}
+          />
+        </Form>
+      </Modal>
+
+      {/* Allocation Management Modal */}
+      <Modal
+        title={currentProject ? `${t('预算分配')} - ${currentProject.project_name}` : t('预算分配')}
+        visible={allocationModalVisible}
+        onCancel={closeAllocationModal}
+        footer={null}
+        width={900}
+        centered
+      >
+        {currentProject && (
+          <>
+            <Descriptions
+              data={[
+                { key: t('总预算'), value: currentProject.total_budget || 0 },
+                { key: t('已分配'), value: allocatedTotal },
+                { key: t('剩余可分配'), value: <Text type={getRemainingBudget() >= 0 ? 'success' : 'danger'}>{getRemainingBudget()}</Text> },
+              ]}
+              row
+              style={{ marginBottom: 16 }}
+            />
+            <div className='flex items-center justify-between mb-3'>
+              <Text>{t('分配列表')}</Text>
+              {isAdminOrRoot && (
+                <Button type='primary' size='small' onClick={() => openAllocationForm()}>
+                  {t('新建分配')}
+                </Button>
+              )}
+            </div>
+            <Table
+              loading={allocationLoading}
+              columns={allocationColumns}
+              dataSource={allocations}
+              rowKey="id"
+              size="small"
+              pagination={{
+                currentPage: allocationPage,
+                pageSize: allocationPageSize,
+                total: allocationTotal,
+                onPageChange: (p) => {
+                  setAllocationPage(p);
+                  fetchAllocations(currentProject.id, p, allocationPageSize);
+                },
+                onPageSizeChange: (size) => {
+                  setAllocationPageSize(size);
+                  fetchAllocations(currentProject.id, 1, size);
+                },
+              }}
+            />
+          </>
+        )}
+      </Modal>
+
+      {/* Allocation Create/Edit Form Modal */}
+      <Modal
+        title={editingAllocation ? t('编辑分配') : t('新建分配')}
+        visible={allocationFormVisible}
+        onCancel={closeAllocationForm}
+        onOk={handleAllocationSubmit}
+        okButtonProps={{ loading: allocationSubmitLoading }}
+        centered
+      >
+        <Form getFormApi={setAllocationFormApi} initValues={allocationFormValues}>
+          {editingAllocation ? (
+            <Form.Input
+              field='client_user_id'
+              label={t('用户ID')}
+              disabled
+            />
+          ) : (
+            <Form.Select
+              field='client_user_id'
+              label={t('用户ID')}
+              placeholder={t('搜索UID')}
+              filter
+              remote
+              onSearch={(val) => fetchUidOptions(val)}
+              loading={uidSearchLoading}
+              optionList={uidOptions}
+              rules={[{ required: true, message: t('请选择用户ID') }]}
+              showClear
+              style={{ width: '100%' }}
+            />
+          )}
+          <Form.InputNumber
+            field='allocated_quota'
+            label={t('分配额度')}
+            min={0}
+            placeholder={t('请输入分配额度')}
+            extraText={currentProject ? `${t('剩余可分配')}: ${getRemainingBudget() + (editingAllocation?.allocated_quota || 0)}` : ''}
+          />
+        </Form>
+      </Modal>
+    </div>
+  );
+};
+
+export default ProjectPage;

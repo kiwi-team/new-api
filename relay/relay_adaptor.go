@@ -44,6 +44,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskLtx "github.com/QuantumNous/new-api/relay/channel/task/ltx"
 	taskPixverse "github.com/QuantumNous/new-api/relay/channel/task/pixverse"
+	taskReplicateTask "github.com/QuantumNous/new-api/relay/channel/task/replicatetask"
 	taskRunwayML "github.com/QuantumNous/new-api/relay/channel/task/runwayml"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
@@ -194,6 +195,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskWorldLabs.TaskAdaptor{}
 		case constant.ChannelTypeRunwayML:
 			return &taskRunwayML.TaskAdaptor{}
+		case constant.ChannelTypeReplicate:
+			return &taskReplicateTask.TaskAdaptor{}
 		}
 	}
 	return nil

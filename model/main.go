@@ -312,9 +312,18 @@ func migrateDB() error {
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
+		// Project budget management tables
+		&Project{},
+		&ProjectAllocation{},
 	)
 	if err != nil {
 		return err
+	}
+
+	// Create composite unique index for project_allocations (project_id, client_user_id)
+	// This ensures a user can only have one allocation per project
+	if err := createProjectAllocationUniqueIndex(); err != nil {
+		common.SysLog("Warning: failed to create project allocation unique index: " + err.Error())
 	}
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
@@ -545,6 +554,51 @@ func migrateSubscriptionPlanPriceAmount() {
 			common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to decimal(10,6)", tableName, columnName))
 		}
 	}
+}
+
+// createProjectAllocationUniqueIndex creates a composite unique index on project_allocations table
+// for (project_id, client_user_id) to ensure a user can only have one allocation per project.
+// This function is idempotent and handles cross-database compatibility (SQLite, MySQL, PostgreSQL).
+func createProjectAllocationUniqueIndex() error {
+	tableName := "project_allocations"
+	indexName := "idx_project_allocation_unique"
+
+	// Check if table exists first
+	if !DB.Migrator().HasTable(tableName) {
+		return nil // Table doesn't exist yet, index will be created when table is created
+	}
+
+	// Check if index already exists
+	if DB.Migrator().HasIndex(&ProjectAllocation{}, indexName) {
+		return nil // Index already exists
+	}
+
+	// Create the unique index with database-specific syntax
+	var createIndexSQL string
+	if common.UsingPostgreSQL {
+		// PostgreSQL syntax
+		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(project_id, client_user_id)`
+	} else if common.UsingMySQL {
+		// MySQL syntax - check if index exists first since MySQL doesn't support IF NOT EXISTS for indexes
+		var count int64
+		DB.Raw(`SELECT COUNT(*) FROM information_schema.statistics 
+			WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+			tableName, indexName).Scan(&count)
+		if count > 0 {
+			return nil // Index already exists
+		}
+		createIndexSQL = "CREATE UNIQUE INDEX `" + indexName + "` ON `" + tableName + "`(project_id, client_user_id)"
+	} else {
+		// SQLite syntax
+		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(project_id, client_user_id)`
+	}
+
+	if err := DB.Exec(createIndexSQL).Error; err != nil {
+		return fmt.Errorf("failed to create unique index %s: %v", indexName, err)
+	}
+
+	common.SysLog("Successfully created unique index " + indexName + " on " + tableName)
+	return nil
 }
 
 func closeDB(db *gorm.DB) error {

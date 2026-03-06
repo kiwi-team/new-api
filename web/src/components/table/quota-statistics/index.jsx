@@ -49,6 +49,9 @@ const QuotaStatisticsTable = () => {
   const [clientUserId, setClientUserId] = useState('');
   const [clientScenairos, setClientScenairos] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [projectName, setProjectName] = useState(null);
+  const [projectList, setProjectList] = useState([]);
+  const [projectListLoading, setProjectListLoading] = useState(false);
 
   const scenairoOptions = [
     { value: 'PersonalExperiment', label: '个人实验(含未标记)' },
@@ -90,6 +93,30 @@ const QuotaStatisticsTable = () => {
     if (isRoot()) {
       fetchUserList();
     }
+  }, []);
+
+  // 获取项目名称列表
+  const fetchProjectNames = async () => {
+    setProjectListLoading(true);
+    try {
+      const res = await API.get('/api/data/project-names');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data.map((name) => ({
+          value: name,
+          label: name,
+        }));
+        setProjectList(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch project names:', error);
+    } finally {
+      setProjectListLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProjectNames();
   }, []);
 
   const columns = (() => {
@@ -172,6 +199,9 @@ const QuotaStatisticsTable = () => {
       if (isRoot() && selectedUserId && selectedUserId > 0) {
         params.user_id = selectedUserId;
       }
+      if (projectName) {
+        params.project_name = projectName;
+      }
       const res = await API.get('/api/data/statistics', { params });
       const { success, message, data } = res.data;
       if (success) {
@@ -205,7 +235,7 @@ const QuotaStatisticsTable = () => {
 
   useEffect(() => {
     fetchData();
-  }, [selectedUserId]);
+  }, [selectedUserId, projectName]);
 
   useEffect(() => {
     if (toioMode) {
@@ -236,6 +266,9 @@ const QuotaStatisticsTable = () => {
       // 仅root用户可以传递user_id参数
       if (isRoot() && selectedUserId && selectedUserId > 0) {
         params.user_id = selectedUserId;
+      }
+      if (projectName) {
+        params.project_name = projectName;
       }
       const res = await API.get('/api/data/statistics/export', {
         params,
@@ -301,6 +334,16 @@ const QuotaStatisticsTable = () => {
                 value={clientUserId} 
                 onChange={setClientUserId} 
                 style={{ width: 150 }}
+            />
+            <Select
+                placeholder="项目名称"
+                style={{ width: 180 }}
+                optionList={projectList}
+                value={projectName}
+                onChange={setProjectName}
+                loading={projectListLoading}
+                filter
+                showClear
             />
             <Select
                 placeholder="Scenairo"

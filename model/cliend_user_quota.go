@@ -26,13 +26,13 @@ func (CliendUserQuota) TableName() string {
 	return "cliend_user_quota"
 }
 
-func CheckCliendUserQuota(clientUserId string) (bool, error) {
+func CheckCliendUserQuota(clientUserId string, projectQuota int) (bool, error) {
 	var row CliendUserQuota
 	err := DB.Where("client_user_id = ?", clientUserId).First(&row).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return false, err
 	}
-	return row.FixedQuota+row.TempQuota > int(float64(row.UsedQuota)/common.QuotaPerUnit), nil
+	return row.FixedQuota+row.TempQuota+projectQuota > int(float64(row.UsedQuota)/common.QuotaPerUnit), nil
 }
 
 func IncreaseCliendUserUsedQuota(clientUserId string, delta int) error {
