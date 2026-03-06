@@ -45,6 +45,16 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
 	}
+	// record user-level discounts
+	if relayInfo.PriceData.GroupRatioInfo.UserGroupDiscount > 0 || relayInfo.PriceData.GroupRatioInfo.UserModelExtraDiscount > 0 {
+		other["original_group_ratio"] = relayInfo.PriceData.GroupRatioInfo.OriginalGroupRatio
+	}
+	if relayInfo.PriceData.GroupRatioInfo.UserGroupDiscount > 0 {
+		other["user_group_discount"] = relayInfo.PriceData.GroupRatioInfo.UserGroupDiscount
+	}
+	if relayInfo.PriceData.GroupRatioInfo.UserModelExtraDiscount > 0 {
+		other["user_model_extra_discount"] = relayInfo.PriceData.GroupRatioInfo.UserModelExtraDiscount
+	}
 	if relayInfo.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = relayInfo.UpstreamModelName
@@ -212,6 +222,12 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PerCa
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	if priceData.GroupRatioInfo.UserGroupDiscount > 0 {
+		other["user_group_discount"] = priceData.GroupRatioInfo.UserGroupDiscount
+	}
+	if priceData.GroupRatioInfo.UserModelExtraDiscount > 0 {
+		other["user_model_extra_discount"] = priceData.GroupRatioInfo.UserModelExtraDiscount
 	}
 	appendRequestPath(nil, relayInfo, other)
 	return other

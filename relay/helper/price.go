@@ -89,6 +89,31 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
+	// save original group ratio before user-level discounts
+	groupRatioInfo.OriginalGroupRatio = groupRatioInfo.GroupRatio
+
+	// apply user-level group discount
+	if relayInfo.UserSetting.GroupDiscount != nil {
+		if discount, exists := relayInfo.UserSetting.GroupDiscount[relayInfo.UsingGroup]; exists && discount > 0 {
+			groupRatioInfo.UserGroupDiscount = discount
+			groupRatioInfo.GroupRatio *= discount
+		}
+	}
+
+	// apply user-level model extra discount
+	if relayInfo.UserSetting.ModelExtraDiscount != nil {
+		if modelDiscounts, exists := relayInfo.UserSetting.ModelExtraDiscount[relayInfo.UsingGroup]; exists {
+			modelName := ctx.GetString("original_model")
+			if modelName == "" && relayInfo != nil {
+				modelName = relayInfo.OriginModelName
+			}
+			if discount, ok := modelDiscounts[modelName]; ok && discount > 0 {
+				groupRatioInfo.UserModelExtraDiscount = discount
+				groupRatioInfo.GroupRatio *= discount
+			}
+		}
+	}
+
 	return groupRatioInfo
 }
 

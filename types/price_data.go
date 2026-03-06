@@ -3,9 +3,12 @@ package types
 import "fmt"
 
 type GroupRatioInfo struct {
-	GroupRatio        float64
-	GroupSpecialRatio float64
-	HasSpecialRatio   bool
+	GroupRatio             float64
+	GroupSpecialRatio      float64
+	HasSpecialRatio        bool
+	UserGroupDiscount      float64 // 用户分组折扣
+	UserModelExtraDiscount float64 // 用户模型额外折扣
+	OriginalGroupRatio     float64 // 折扣前的分组倍率
 }
 
 type PriceData struct {

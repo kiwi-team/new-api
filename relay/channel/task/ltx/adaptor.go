@@ -85,6 +85,22 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 				"2560x1440": 0.12,
 				"3840x2160": 0.24,
 			},
+			"ltx-2-3-fast": {
+				"1920x1080": 0.04,
+				"1080x1920": 0.04,
+				"2560x1440": 0.08,
+				"1440x2560": 0.08,
+				"3840x2160": 0.16,
+				"2160x3840": 0.16,
+			},
+			"ltx-2-3-pro": {
+				"1920x1080": 0.06,
+				"1080x1920": 0.06,
+				"2560x1440": 0.12,
+				"1440x2560": 0.12,
+				"3840x2160": 0.24,
+				"2160x3840": 0.24,
+			},
 		},
 		"i2v": {
 			"ltx-2-fast": {
@@ -97,6 +113,22 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 				"2560x1440": 0.12,
 				"3840x2160": 0.24,
 			},
+			"ltx-2-3-fast": {
+				"1920x1080": 0.04,
+				"1080x1920": 0.04,
+				"2560x1440": 0.08,
+				"1440x2560": 0.08,
+				"3840x2160": 0.16,
+				"2160x3840": 0.16,
+			},
+			"ltx-2-3-pro": {
+				"1920x1080": 0.06,
+				"1080x1920": 0.06,
+				"2560x1440": 0.12,
+				"1440x2560": 0.12,
+				"3840x2160": 0.24,
+				"2160x3840": 0.24,
+			},
 		},
 	}
 	if priceMap[taskType][modelName] == nil {
@@ -105,7 +137,7 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 	if priceMap[taskType][modelName][Resolution] == 0 {
 		return 0
 	}
-	return priceMap[taskType][modelName][Resolution] * 1.5 // 国外模型计费1.5 cover成本
+	return priceMap[taskType][modelName][Resolution] * 1.3 // 国外模型计费1.5 cover成本
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -280,7 +312,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"ltx-2-fast", "ltx-2-pro"}
+	return []string{"ltx-2-fast", "ltx-2-pro", "ltx-2-3-pro", "ltx-2-3-fast"}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {

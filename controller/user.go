@@ -612,6 +612,23 @@ func UpdateUser(c *gin.Context) {
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
+	// Merge discount settings into existing user setting
+	if updatedUser.Setting != "" {
+		// Parse the incoming setting to extract discount fields
+		var incomingSetting dto.UserSetting
+		if err := common.UnmarshalJsonStr(updatedUser.Setting, &incomingSetting); err == nil {
+			// Get existing setting from the original user
+			existingSetting := originUser.GetSetting()
+			// Merge discount fields
+			existingSetting.GroupDiscount = incomingSetting.GroupDiscount
+			existingSetting.ModelExtraDiscount = incomingSetting.ModelExtraDiscount
+			// Save merged setting back
+			updatedUser.SetSetting(existingSetting)
+		}
+	} else {
+		// No setting provided, preserve existing setting
+		updatedUser.Setting = originUser.Setting
+	}
 	// 仅 Root 用户允许修改 toio_registered；否则保持原值
 	if myRole != common.RoleRootUser {
 		updatedUser.ToioRegistered = originUser.ToioRegistered

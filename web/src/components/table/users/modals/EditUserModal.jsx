@@ -56,6 +56,7 @@ import {
   IconLink,
   IconUserGroup,
   IconPlus,
+  IconPriceTag,
 } from '@douyinfe/semi-icons';
 
 const { Text, Title } = Typography;
@@ -109,7 +110,28 @@ const EditUserModal = (props) => {
       if (typeof data.toio_registered !== 'undefined') {
         data.toio_registered = data.toio_registered === 1;
       }
-      formApiRef.current?.setValues({ ...getInitValues(), ...data });
+      // Parse setting to extract discount fields
+      let groupDiscount = '';
+      let modelExtraDiscount = '';
+      if (data.setting) {
+        try {
+          const settingObj = typeof data.setting === 'string' ? JSON.parse(data.setting) : data.setting;
+          if (settingObj.group_discount) {
+            groupDiscount = JSON.stringify(settingObj.group_discount, null, 2);
+          }
+          if (settingObj.model_extra_discount) {
+            modelExtraDiscount = JSON.stringify(settingObj.model_extra_discount, null, 2);
+          }
+        } catch (e) {
+          // ignore parse error
+        }
+      }
+      formApiRef.current?.setValues({
+        ...getInitValues(),
+        ...data,
+        group_discount: groupDiscount,
+        model_extra_discount: modelExtraDiscount,
+      });
     } else {
       showError(message);
     }
@@ -130,6 +152,32 @@ const EditUserModal = (props) => {
     if (typeof payload.toio_registered !== 'undefined') {
       payload.toio_registered = payload.toio_registered ? 1 : 0;
     }
+    // Build setting with discount fields
+    if (userId) {
+      const settingObj = {};
+      if (payload.group_discount && payload.group_discount.trim()) {
+        try {
+          settingObj.group_discount = JSON.parse(payload.group_discount);
+        } catch (e) {
+          showError(t('分组折扣JSON格式错误'));
+          setLoading(false);
+          return;
+        }
+      }
+      if (payload.model_extra_discount && payload.model_extra_discount.trim()) {
+        try {
+          settingObj.model_extra_discount = JSON.parse(payload.model_extra_discount);
+        } catch (e) {
+          showError(t('模型额外折扣JSON格式错误'));
+          setLoading(false);
+          return;
+        }
+      }
+      payload.setting = JSON.stringify(settingObj);
+    }
+    // Remove form-only fields
+    delete payload.group_discount;
+    delete payload.model_extra_discount;
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -330,6 +378,50 @@ const EditUserModal = (props) => {
                           />
                         </Col>
                       )}
+                    </Row>
+                  </Card>
+                )}
+
+                {/* 折扣设置 */}
+                {userId && (
+                  <Card className='!rounded-2xl shadow-sm border-0'>
+                    <div className='flex items-center mb-2'>
+                      <Avatar
+                        size='small'
+                        color='orange'
+                        className='mr-2 shadow-md'
+                      >
+                        <IconPriceTag size={16} />
+                      </Avatar>
+                      <div>
+                        <Text className='text-lg font-medium'>
+                          {t('折扣设置')}
+                        </Text>
+                        <div className='text-xs text-gray-600'>
+                          {t('用户专属分组折扣和模型额外折扣')}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Row gutter={12}>
+                      <Col span={24}>
+                        <Form.TextArea
+                          field='group_discount'
+                          label={t('分组折扣')}
+                          placeholder={'{"openai": 0.8, "anthropic": 0.9}'}
+                          autosize={{ minRows: 2, maxRows: 6 }}
+                          extraText={t('JSON格式，key为分组名，value为折扣倍率（0-1之间）。例如0.8表示打8折。')}
+                        />
+                      </Col>
+                      <Col span={24}>
+                        <Form.TextArea
+                          field='model_extra_discount'
+                          label={t('模型额外折扣')}
+                          placeholder={'{"openai": {"gpt-3.5-turbo": 0.9}}'}
+                          autosize={{ minRows: 2, maxRows: 6 }}
+                          extraText={t('JSON格式，第一层key为分组名，第二层key为模型名，value为折扣倍率。与分组折扣叠加计算。')}
+                        />
+                      </Col>
                     </Row>
                   </Card>
                 )}

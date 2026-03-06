@@ -524,6 +524,7 @@ func (user *User) Edit(updatePassword bool) error {
 		"quota":           newUser.Quota,
 		"remark":          newUser.Remark,
 		"toio_registered": newUser.ToioRegistered,
+		"setting":         newUser.Setting,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

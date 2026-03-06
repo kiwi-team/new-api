@@ -499,6 +499,9 @@ export const useLogsData = () => {
               other?.cache_ratio || 1.0,
               other?.video_input || 0,
               other?.video_ratio || 1.0,
+              other?.original_group_ratio,
+              other?.user_group_discount,
+              other?.user_model_extra_discount,
             );
           } else if (other?.claude) {
             content = renderClaudeModelPrice(
@@ -521,6 +524,9 @@ export const useLogsData = () => {
               other.cache_creation_ratio_1h ||
                 other.cache_creation_ratio ||
                 1.0,
+              other?.original_group_ratio,
+              other?.user_group_discount,
+              other?.user_model_extra_discount,
             );
           } else {
             content = renderModelPrice(
@@ -547,6 +553,9 @@ export const useLogsData = () => {
               other?.audio_input_price || 0,
               other?.image_generation_call || false,
               other?.image_generation_call_price || 0,
+              other?.original_group_ratio,
+              other?.user_group_discount,
+              other?.user_model_extra_discount,
             );
           }
           expandDataLocal.push({

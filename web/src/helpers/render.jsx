@@ -1120,6 +1120,24 @@ function getEffectiveRatio(groupRatio, user_group_ratio) {
   };
 }
 
+// Render discount breakdown for user-level group/model discounts
+function renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio) {
+  const parts = [];
+  if (originalGroupRatio > 0) {
+    parts.push(i18next.t('原始分组倍率') + `: ${originalGroupRatio}`);
+  }
+  if (userGroupDiscount > 0 && userGroupDiscount !== 1) {
+    parts.push(i18next.t('分组折扣') + `: ×${userGroupDiscount}`);
+  }
+  if (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1) {
+    parts.push(i18next.t('模型额外折扣') + `: ×${userModelExtraDiscount}`);
+  }
+  if (parts.length > 0) {
+    parts.push(i18next.t('最终倍率') + `: ${finalGroupRatio}`);
+  }
+  return parts.join(' → ');
+}
+
 // Shared core for simple price rendering (used by OpenAI-like and Claude-like variants)
 function renderPriceSimpleCore({
   modelRatio,
@@ -1137,6 +1155,9 @@ function renderPriceSimpleCore({
   image = false,
   imageRatio = 1.0,
   isSystemPromptOverride = false,
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
 }) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1144,15 +1165,21 @@ function renderPriceSimpleCore({
   );
   const finalGroupRatio = effectiveGroupRatio;
 
+  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+
   const { symbol, rate } = getCurrencyConfig();
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
-    return i18next.t('价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}', {
+    let priceText = i18next.t('价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}', {
       symbol: symbol,
       price: displayPrice,
       ratioType: ratioLabel,
       ratio: finalGroupRatio,
     });
+    if (hasDiscount) {
+      priceText += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+    }
+    return priceText;
   }
 
   const hasSplitCacheCreation =
@@ -1210,6 +1237,10 @@ function renderPriceSimpleCore({
     imageRatio: imageRatio,
   });
 
+  if (hasDiscount) {
+    result += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+  }
+
   if (isSystemPromptOverride) {
     result += '\n\r' + i18next.t('系统提示覆盖');
   }
@@ -1241,6 +1272,9 @@ export function renderModelPrice(
   audioInputPrice = 0,
   imageGenerationCall = false,
   imageGenerationCallPrice = 0,
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1248,13 +1282,16 @@ export function renderModelPrice(
   );
   groupRatio = effectiveGroupRatio;
 
+  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
 
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
     const displayTotal = (modelPrice * groupRatio * rate).toFixed(6);
-    return i18next.t(
+    let text = i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
         symbol: symbol,
@@ -1264,6 +1301,10 @@ export function renderModelPrice(
         ratioType: ratioLabel,
       },
     );
+    if (discountLine) {
+      text += '\n' + discountLine;
+    }
+    return text;
   } else {
     if (completionRatio === undefined) {
       completionRatio = 0;
@@ -1481,6 +1522,9 @@ export function renderModelPrice(
             })()}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
+          {discountLine && (
+            <p style={{ color: '#f5a623' }}>{discountLine}</p>
+          )}
         </article>
       </>
     );
@@ -1574,6 +1618,9 @@ export function renderModelPriceSimple(
   imageRatio = 1.0,
   isSystemPromptOverride = false,
   provider = 'openai',
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -1591,6 +1638,9 @@ export function renderModelPriceSimple(
     image,
     imageRatio,
     isSystemPromptOverride,
+    originalGroupRatio,
+    userGroupDiscount,
+    userModelExtraDiscount,
   });
 }
 
@@ -1610,6 +1660,9 @@ export function renderAudioModelPrice(
   cacheRatio = 1.0,
   videoInputTokens = 0,
   videoRatio = 1.0,
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1617,12 +1670,15 @@ export function renderAudioModelPrice(
   );
   groupRatio = effectiveGroupRatio;
 
+  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
 
   // 1 ratio = $0.002 / 1K tokens
   if (modelPrice !== -1) {
-    return i18next.t(
+    let text = i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
         symbol: symbol,
@@ -1632,6 +1688,10 @@ export function renderAudioModelPrice(
         ratioType: ratioLabel,
       },
     );
+    if (discountLine) {
+      text += '\n' + discountLine;
+    }
+    return text;
   } else {
     if (completionRatio === undefined) {
       completionRatio = 0;
@@ -1820,6 +1880,9 @@ export function renderAudioModelPrice(
                 )}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
+          {discountLine && (
+            <p style={{ color: '#f5a623' }}>{discountLine}</p>
+          )}
         </article>
       </>
     );
@@ -1850,6 +1913,9 @@ export function renderClaudeModelPrice(
   cacheCreationRatio5m = 1.0,
   cacheCreationTokens1h = 0,
   cacheCreationRatio1h = 1.0,
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1857,11 +1923,14 @@ export function renderClaudeModelPrice(
   );
   groupRatio = effectiveGroupRatio;
 
+  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
 
   if (modelPrice !== -1) {
-    return i18next.t(
+    let text = i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
         symbol: symbol,
@@ -1871,6 +1940,10 @@ export function renderClaudeModelPrice(
         total: (modelPrice * groupRatio * rate).toFixed(6),
       },
     );
+    if (discountLine) {
+      text += '\n' + discountLine;
+    }
+    return text;
   } else {
     if (completionRatio === undefined) {
       completionRatio = 0;
@@ -2100,6 +2173,9 @@ export function renderClaudeModelPrice(
             )}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
+          {discountLine && (
+            <p style={{ color: '#f5a623' }}>{discountLine}</p>
+          )}
         </article>
       </>
     );

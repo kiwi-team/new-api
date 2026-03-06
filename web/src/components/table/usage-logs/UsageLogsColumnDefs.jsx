@@ -937,6 +937,9 @@ export const getLogsColumns = ({
               1.0,
               other?.is_system_prompt_overwritten,
               'claude',
+              other?.original_group_ratio,
+              other?.user_group_discount,
+              other?.user_model_extra_discount,
             )
           : renderModelPriceSimple(
               other.model_ratio,
@@ -955,6 +958,9 @@ export const getLogsColumns = ({
               1.0,
               other?.is_system_prompt_overwritten,
               'openai',
+              other?.original_group_ratio,
+              other?.user_group_discount,
+              other?.user_model_extra_discount,
             );
         return (
             <Typography.Paragraph
