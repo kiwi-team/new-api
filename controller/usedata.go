@@ -158,6 +158,11 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
 
+	// 普通用户（通过 MixRouterAuth）只能查看自己的数据
+	if forceSelf, exists := c.Get("force_self_user_id"); exists && forceSelf.(bool) {
+		userId = c.GetInt("id")
+	}
+
 	var tokenIds []int
 	if tokenIdsStr != "" {
 		for _, idStr := range strings.Split(tokenIdsStr, ",") {
@@ -193,6 +198,11 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
+
+	// 普通用户（通过 MixRouterAuth）只能导出自己的数据
+	if forceSelf, exists := c.Get("force_self_user_id"); exists && forceSelf.(bool) {
+		userId = c.GetInt("id")
+	}
 
 	var tokenIds []int
 	if tokenIdsStr != "" {

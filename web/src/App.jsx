@@ -22,6 +22,7 @@ import { Route, Routes, useLocation, useNavigate, Navigate } from 'react-router-
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
 import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, RootRoute, isRoot } from './helpers';
+import { isMixRouter } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
 import ToioRegisterForm from './components/auth/ToioRegisterForm';
 import LoginForm from './components/auth/LoginForm';
@@ -211,7 +212,7 @@ function App() {
         <Route
           path='/console/quota-statistics'
           element={
-            toioMode ? (
+            toioMode || isMixRouter() ? (
               <PrivateRoute>
                 <QuotaStatistics />
               </PrivateRoute>

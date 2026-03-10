@@ -20,7 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useState, useEffect } from 'react';
 import CardPro from '../../common/ui/CardPro';
 import { Table, Button, DatePicker, Space, Input, Tag, Select } from '@douyinfe/semi-ui';
-import { showError, API, isRoot } from '../../../helpers';
+import { showError, API, isRoot, isMixRouter } from '../../../helpers';
 
 const QuotaStatisticsTable = () => {
   const [loading, setLoading] = useState(false);
@@ -108,6 +108,7 @@ const QuotaStatisticsTable = () => {
         const options = data.map((token) => ({
           value: token.id,
           label: `${token.name} (ID: ${token.id})`,
+          tokenKey: token.key || '',
         }));
         setTokenList(options);
       }
@@ -366,6 +367,7 @@ const QuotaStatisticsTable = () => {
                   style={{ width: 150 }}
               />
             )}
+            {!(isMixRouter()) && (<>
             <Input 
                 placeholder="UID(模糊)" 
                 value={clientUserId} 
@@ -391,6 +393,7 @@ const QuotaStatisticsTable = () => {
                 onChange={setClientScenairos}
                 showClear
             />
+            </>)}
             {isRoot() && (
               <Select
                 placeholder="选择用户"
@@ -411,7 +414,13 @@ const QuotaStatisticsTable = () => {
                 value={selectedTokenIds}
                 onChange={setSelectedTokenIds}
                 loading={tokenListLoading}
-                filter
+                filter={(input, option) => {
+                  if (!input) return true;
+                  const keyword = input.toLowerCase().replace("sk-","");
+                  const label = (option.label || '').toLowerCase();
+                  const tokenKey = (option.tokenKey || '').toLowerCase();
+                  return label.includes(keyword) || tokenKey.includes(keyword);
+                }}
                 showClear
                 maxTagCount={1}
             />

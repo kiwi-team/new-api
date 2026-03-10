@@ -25,7 +25,7 @@ import { ChevronLeft } from 'lucide-react';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { isAdmin, isLeader, isRoot, showError } from '../../helpers';
+import { isAdmin, isLeader, isRoot, isMixRouter, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
@@ -103,7 +103,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
-      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isLeader() ? 'tableHiddle' : 'tableHiddle' },
+      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: (isLeader() || isMixRouter()) ? '' : 'tableHiddle' },
     ];
 
     // 根据配置过滤项目

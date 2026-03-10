@@ -174,6 +174,135 @@ func RootAuth() func(c *gin.Context) {
 	}
 }
 
+// MixRouterAuth 允许 api.mixrouter.com 域名下的普通用户访问，
+// 同时保留 Leader 及以上用户在任何域名下的访问权限。
+// 普通用户访问时会设置 force_self_user_id 标记，控制器据此限制只能查看自己的数据。
+func MixRouterAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		// 先做用户认证（不调用 c.Next()，手动执行认证逻辑）
+		mixRouterAuthHelper(c, common.RoleCommonUser)
+	}
+}
+
+// mixRouterAuthHelper 复用 authHelper 的认证逻辑，但在 c.Next() 之前插入域名检查和 flag 设置
+func mixRouterAuthHelper(c *gin.Context, minRole int) {
+	session := sessions.Default(c)
+	username := session.Get("username")
+	role := session.Get("role")
+	id := session.Get("id")
+	status := session.Get("status")
+	useAccessToken := false
+	if username == nil {
+		accessToken := c.Request.Header.Get("Authorization")
+		if accessToken == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "无权进行此操作，未登录且未提供 access token",
+			})
+			c.Abort()
+			return
+		}
+		user := model.ValidateAccessToken(accessToken)
+		if user != nil && user.Username != "" {
+			if !validUserInfo(user.Username, user.Role) {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "无权进行此操作，用户信息无效",
+				})
+				c.Abort()
+				return
+			}
+			username = user.Username
+			role = user.Role
+			id = user.Id
+			status = user.Status
+			useAccessToken = true
+		} else {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无权进行此操作，access token 无效",
+			})
+			c.Abort()
+			return
+		}
+	}
+	apiUserIdStr := c.Request.Header.Get("New-Api-User")
+	if apiUserIdStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "无权进行此操作，未提供 New-Api-User",
+		})
+		c.Abort()
+		return
+	}
+	apiUserId, err := strconv.Atoi(apiUserIdStr)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "无权进行此操作，New-Api-User 格式错误",
+		})
+		c.Abort()
+		return
+	}
+	if id != apiUserId {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
+		})
+		c.Abort()
+		return
+	}
+	if status.(int) == common.UserStatusDisabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "用户已被封禁",
+		})
+		c.Abort()
+		return
+	}
+	// 认证通过后，检查角色权限
+	roleInt := role.(int)
+	if !validUserInfo(username.(string), roleInt) {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无权进行此操作，用户信息无效",
+		})
+		c.Abort()
+		return
+	}
+
+	// Leader 及以上用户在任何域名下都允许
+	if roleInt >= common.RoleLeaderUser {
+		// 正常设置上下文，继续执行
+	} else {
+		// 普通用户：仅在 api.mixrouter.com 域名下允许
+		host := c.Request.Host
+		if idx := strings.Index(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+		if host != "api.mixrouter.com" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无权进行此操作，权限不足",
+			})
+			c.Abort()
+			return
+		}
+		// 在 c.Next() 之前设置标记，控制器将强制只查看自己的数据
+		c.Set("force_self_user_id", true)
+	}
+
+	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
+	c.Set("username", username)
+	c.Set("role", role)
+	c.Set("id", id)
+	c.Set("group", session.Get("group"))
+	c.Set("user_group", session.Get("group"))
+	c.Set("use_access_token", useAccessToken)
+
+	c.Next()
+}
+
 func ToioAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleCommonUser)

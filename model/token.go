@@ -80,7 +80,7 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 // If userId > 0, only returns tokens belonging to that user; otherwise returns all tokens.
 func GetTokenListForDropdown(userId int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	tx := DB.Model(&Token{}).Select("id, name, user_id")
+	tx := DB.Model(&Token{}).Select("id, name, user_id, " + commonKeyCol)
 	if userId > 0 {
 		tx = tx.Where("user_id = ?", userId)
 	}
