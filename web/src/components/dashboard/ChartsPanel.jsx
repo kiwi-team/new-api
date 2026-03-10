@@ -22,6 +22,7 @@ import { Card, Tabs, TabPane, Select, Spin } from '@douyinfe/semi-ui';
 import { PieChart } from 'lucide-react';
 import { VChart } from '@visactor/react-vchart';
 import { renderQuota } from '../../helpers';
+import { isAdmin } from '../../helpers/utils';
 
 const ChartsPanel = ({
   activeChartTab,
@@ -60,7 +61,7 @@ const ChartsPanel = ({
             <TabPane tab={<span>{t('消耗趋势')}</span>} itemKey='2' />
             <TabPane tab={<span>{t('调用次数分布')}</span>} itemKey='3' />
             <TabPane tab={<span>{t('调用次数排行')}</span>} itemKey='4' />
-            <TabPane tab={<span>{t('渠道消耗统计')}</span>} itemKey='5' />
+           {isAdmin() && (<TabPane tab={<span>{t('渠道消耗统计')}</span>} itemKey='5' />)}
           </Tabs>
         </div>
       }

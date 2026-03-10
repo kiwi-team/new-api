@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useContext, useEffect } from 'react';
 import { getRelativeTime } from '../../helpers';
+import { isAdmin } from '../../helpers/utils';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 
@@ -98,10 +99,12 @@ const Dashboard = () => {
     const { start_timestamp, end_timestamp } = dashboardData.inputs;
     const localStartTimestamp = Date.parse(start_timestamp) / 1000;
     const localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    await dashboardCharts.loadChannelStatistics(
-      localStartTimestamp,
-      localEndTimestamp,
-    );
+    if (isAdmin()) {
+      await dashboardCharts.loadChannelStatistics(
+        localStartTimestamp,
+        localEndTimestamp,
+      );
+    }
   };
 
   const handleRefresh = async () => {
@@ -114,10 +117,12 @@ const Dashboard = () => {
     const { start_timestamp, end_timestamp } = dashboardData.inputs;
     const localStartTimestamp = Date.parse(start_timestamp) / 1000;
     const localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    await dashboardCharts.loadChannelStatistics(
-      localStartTimestamp,
-      localEndTimestamp,
-    );
+    if (isAdmin()) {
+      await dashboardCharts.loadChannelStatistics(
+        localStartTimestamp,
+        localEndTimestamp,
+      );
+    }
   };
 
   const handleSearchConfirm = async () => {
@@ -127,10 +132,12 @@ const Dashboard = () => {
     const { start_timestamp, end_timestamp } = dashboardData.inputs;
     const localStartTimestamp = Date.parse(start_timestamp) / 1000;
     const localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    await dashboardCharts.loadChannelStatistics(
-      localStartTimestamp,
-      localEndTimestamp,
-    );
+    if (isAdmin()) {
+      await dashboardCharts.loadChannelStatistics(
+        localStartTimestamp,
+        localEndTimestamp,
+      );
+    }
   };
 
   // ========== 数据准备 ==========

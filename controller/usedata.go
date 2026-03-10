@@ -154,6 +154,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	clientScenairos := c.Query("client_scenairos")
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
+	expandTokens := c.Query("expand_tokens") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
@@ -173,7 +174,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName, tokenIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -195,6 +196,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	clientScenairos := c.Query("client_scenairos")
 	expandModels := c.Query("expand_models") == "true"
 	expandDates := c.Query("expand_dates") == "true"
+	expandTokens := c.Query("expand_tokens") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
@@ -214,7 +216,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName, tokenIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -225,67 +227,47 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf("attachment;filename=quota_statistics_%d_%d.csv", startTimestamp, endTimestamp))
 
 	writer := csv.NewWriter(c.Writer)
-	// Header
+	// Build CSV header dynamically
+	header := []string{}
 	if expandDates {
-		if expandModels {
-			writer.Write([]string{"Date", "Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
-		} else {
-			writer.Write([]string{"Date", "Client User ID", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget"})
-		}
-	} else {
-		if expandModels {
-			writer.Write([]string{"Client User ID", "Model Name", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens"})
-		} else {
-			writer.Write([]string{"Client User ID", "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget"})
-		}
+		header = append(header, "Date")
 	}
+	header = append(header, "Client User ID")
+	if expandModels {
+		header = append(header, "Model Name")
+	}
+	if expandTokens {
+		header = append(header, "Token ID", "Token Name", "Token Key")
+	}
+	if !expandModels {
+		header = append(header, "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget")
+	} else {
+		header = append(header, "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens")
+	}
+	writer.Write(header)
 
 	for _, stat := range statistics {
+		row := []string{}
 		if expandDates {
-			if expandModels {
-				writer.Write([]string{
-					stat.Date,
-					stat.ClientUserId,
-					stat.ModelName,
-					strconv.FormatInt(stat.TotalCount, 10),
-					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
-					strconv.FormatInt(stat.TotalPrompt, 10),
-					strconv.FormatInt(stat.TotalCompletion, 10),
-				})
-			} else {
-				writer.Write([]string{
-					stat.Date,
-					stat.ClientUserId,
-					strconv.FormatInt(stat.TotalCount, 10),
-					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
-					strconv.FormatInt(stat.TotalPrompt, 10),
-					strconv.FormatInt(stat.TotalCompletion, 10),
-					strconv.Itoa(stat.FixedQuota),
-					strconv.Itoa(stat.TempQuota),
-				})
-			}
-		} else {
-			if expandModels {
-				writer.Write([]string{
-					stat.ClientUserId,
-					stat.ModelName,
-					strconv.FormatInt(stat.TotalCount, 10),
-					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
-					strconv.FormatInt(stat.TotalPrompt, 10),
-					strconv.FormatInt(stat.TotalCompletion, 10),
-				})
-			} else {
-				writer.Write([]string{
-					stat.ClientUserId,
-					strconv.FormatInt(stat.TotalCount, 10),
-					strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
-					strconv.FormatInt(stat.TotalPrompt, 10),
-					strconv.FormatInt(stat.TotalCompletion, 10),
-					strconv.Itoa(stat.FixedQuota),
-					strconv.Itoa(stat.TempQuota),
-				})
-			}
+			row = append(row, stat.Date)
 		}
+		row = append(row, stat.ClientUserId)
+		if expandModels {
+			row = append(row, stat.ModelName)
+		}
+		if expandTokens {
+			row = append(row, strconv.Itoa(stat.TokenId), stat.TokenName, stat.TokenKey)
+		}
+		row = append(row,
+			strconv.FormatInt(stat.TotalCount, 10),
+			strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
+			strconv.FormatInt(stat.TotalPrompt, 10),
+			strconv.FormatInt(stat.TotalCompletion, 10),
+		)
+		if !expandModels {
+			row = append(row, strconv.Itoa(stat.FixedQuota), strconv.Itoa(stat.TempQuota))
+		}
+		writer.Write(row)
 	}
 	writer.Flush()
 }

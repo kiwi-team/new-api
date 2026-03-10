@@ -36,6 +36,7 @@ const QuotaStatisticsTable = () => {
   const [modelName, setModelName] = useState('');
   const [expandModels, setExpandModels] = useState(false);
   const [expandDates, setExpandDates] = useState(false);
+  const [expandTokens, setExpandTokens] = useState(false);
   const toioMode = (() => {
     try {
       const u = localStorage.getItem('user');
@@ -176,6 +177,18 @@ const QuotaStatisticsTable = () => {
         },
       });
     }
+    if (expandTokens) {
+      base.push({
+        title: 'Token',
+        dataIndex: 'token_name',
+        key: 'token_info',
+        render: (_, record) => {
+          const name = record.token_name || '';
+          const id = record.token_id || '';
+          return `${name}(${id})`;
+        },
+      });
+    }
     // 消耗列，根据月总预算显示不同颜色
     base.push({
       title: '消耗($)',
@@ -222,6 +235,7 @@ const QuotaStatisticsTable = () => {
         client_scenairos: clientScenairos.join(','),
         expand_models: expandModels,
         expand_dates: expandDates,
+        expand_tokens: expandTokens,
       };
       // 仅root用户可以传递user_id参数
       if (isRoot() && selectedUserId && selectedUserId > 0) {
@@ -259,7 +273,7 @@ const QuotaStatisticsTable = () => {
 
   useEffect(() => {
     fetchData();
-  }, [expandModels, expandDates]);
+  }, [expandModels, expandDates, expandTokens]);
   useEffect(() => {
     fetchData();
   }, [clientUserId, modelName, clientScenairos]);
@@ -276,6 +290,7 @@ const QuotaStatisticsTable = () => {
     if (toioMode) {
       setExpandModels(false);
       setExpandDates(false);
+      setExpandTokens(false);
       setModelName('');
     }
   }, [toioMode]);
@@ -297,6 +312,7 @@ const QuotaStatisticsTable = () => {
         client_scenairos: clientScenairos.join(','),
         expand_models: expandModels,
         expand_dates: expandDates,
+        expand_tokens: expandTokens,
       };
       // 仅root用户可以传递user_id参数
       if (isRoot() && selectedUserId && selectedUserId > 0) {
@@ -354,6 +370,12 @@ const QuotaStatisticsTable = () => {
                   onClick={() => setExpandDates(!expandDates)}
                 >
                   {expandDates ? '按日期展开: 开' : '按日期展开: 关'}
+                </Button>
+                <Button
+                  type='tertiary'
+                  onClick={() => setExpandTokens(!expandTokens)}
+                >
+                  {expandTokens ? '按Token展开: 开' : '按Token展开: 关'}
                 </Button>
               </>
             )}

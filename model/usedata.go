@@ -152,6 +152,9 @@ type QuotaDataStatistics struct {
 	Date            string  `json:"date"`
 	ClientUserId    string  `json:"client_user_id"`
 	ModelName       string  `json:"model_name"`
+	TokenName       string  `json:"token_name"`
+	TokenId         int     `json:"token_id"`
+	TokenKey        string  `json:"token_key"`
 	TotalCount      int64   `json:"total_count"`
 	TotalQuota      float64 `json:"total_quota"`
 	TotalPrompt     int64   `json:"total_prompt"`
@@ -160,7 +163,7 @@ type QuotaDataStatistics struct {
 	TempQuota       int     `json:"temp_quota"`
 }
 
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, userId int, projectName string, tokenIds []int) ([]*QuotaDataStatistics, error) {
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -176,20 +179,20 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		dateField = "DATE(created_at)"
 	}
 
-	var selectFields string
+	// Build select fields
+	datePart := "'' as date"
 	if expandDates {
-		if expandModels {
-			selectFields = dateField + " as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
-		} else {
-			selectFields = dateField + " as date, client_user_id, '' as model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
-		}
-	} else {
-		if expandModels {
-			selectFields = "'' as date, client_user_id, model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
-		} else {
-			selectFields = "'' as date, client_user_id, '' as model_name, sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
-		}
+		datePart = dateField + " as date"
 	}
+	modelPart := "'' as model_name"
+	if expandModels {
+		modelPart = "model_name"
+	}
+	tokenPart := "'' as token_name, 0 as token_id"
+	if expandTokens {
+		tokenPart = "token_name, token_id"
+	}
+	selectFields := datePart + ", client_user_id, " + modelPart + ", " + tokenPart + ", sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
 	tx := DB.Model(&QuotaData{}).
 		Select(selectFields).
 		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
@@ -263,23 +266,51 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		tx = tx.Where("token_id IN ?", tokenIds)
 	}
 
+	// Build group-by clause dynamically
+	groupParts := []string{"client_user_id"}
 	if expandDates {
-		if expandModels {
-			err = tx.Group("date, client_user_id, model_name").
-				Order("date DESC").
-				Scan(&statistics).Error
-		} else {
-			err = tx.Group("date, client_user_id").
-				Order("date DESC").
-				Scan(&statistics).Error
-		}
+		groupParts = append([]string{"date"}, groupParts...)
+	}
+	if expandModels {
+		groupParts = append(groupParts, "model_name")
+	}
+	if expandTokens {
+		groupParts = append(groupParts, "token_name", "token_id")
+	}
+	groupClause := strings.Join(groupParts, ", ")
+
+	if expandDates {
+		err = tx.Group(groupClause).Order("date DESC").Scan(&statistics).Error
 	} else {
-		if expandModels {
-			err = tx.Group("client_user_id, model_name").
-				Scan(&statistics).Error
-		} else {
-			err = tx.Group("client_user_id").
-				Scan(&statistics).Error
+		err = tx.Group(groupClause).Scan(&statistics).Error
+	}
+
+	// 批量查询token key
+	if expandTokens {
+		tokenIdSet := make(map[int]bool)
+		for _, s := range statistics {
+			if s.TokenId > 0 {
+				tokenIdSet[s.TokenId] = true
+			}
+		}
+		if len(tokenIdSet) > 0 {
+			ids := make([]int, 0, len(tokenIdSet))
+			for id := range tokenIdSet {
+				ids = append(ids, id)
+			}
+			var tokens []struct {
+				Id  int    `gorm:"column:id"`
+				Key string `gorm:"column:key"`
+			}
+			if err := DB.Table("tokens").Select("id, "+commonKeyCol).Where("id IN ?", ids).Find(&tokens).Error; err == nil {
+				keyMap := make(map[int]string)
+				for _, t := range tokens {
+					keyMap[t.Id] = t.Key
+				}
+				for _, s := range statistics {
+					s.TokenKey = "sk-" + keyMap[s.TokenId]
+				}
+			}
 		}
 	}
 
