@@ -160,7 +160,7 @@ type QuotaDataStatistics struct {
 	TempQuota       int     `json:"temp_quota"`
 }
 
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, userId int, projectName string) ([]*QuotaDataStatistics, error) {
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, userId int, projectName string, tokenIds []int) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -258,6 +258,9 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	}
 	if userId > 0 {
 		tx = tx.Where("user_id = ?", userId)
+	}
+	if len(tokenIds) > 0 {
+		tx = tx.Where("token_id IN ?", tokenIds)
 	}
 
 	if expandDates {

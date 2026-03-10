@@ -156,8 +156,19 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	expandDates := c.Query("expand_dates") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
+	tokenIdsStr := c.Query("token_ids")
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName)
+	var tokenIds []int
+	if tokenIdsStr != "" {
+		for _, idStr := range strings.Split(tokenIdsStr, ",") {
+			idStr = strings.TrimSpace(idStr)
+			if id, err := strconv.Atoi(idStr); err == nil {
+				tokenIds = append(tokenIds, id)
+			}
+		}
+	}
+
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName, tokenIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -181,8 +192,19 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	expandDates := c.Query("expand_dates") == "true"
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
+	tokenIdsStr := c.Query("token_ids")
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName)
+	var tokenIds []int
+	if tokenIdsStr != "" {
+		for _, idStr := range strings.Split(tokenIdsStr, ",") {
+			idStr = strings.TrimSpace(idStr)
+			if id, err := strconv.Atoi(idStr); err == nil {
+				tokenIds = append(tokenIds, id)
+			}
+		}
+	}
+
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, userId, projectName, tokenIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -287,5 +309,33 @@ func GetDistinctProjectNames(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    names,
+	})
+}
+
+// GetTokenListForStatistics 获取token列表用于消耗统计页面的下拉筛选
+// root用户可以获取所有token，非root用户只能获取自己的token
+func GetTokenListForStatistics(c *gin.Context) {
+	role := c.GetInt("role")
+	userId := c.GetInt("id")
+
+	var queryUserId int
+	if role >= common.RoleRootUser {
+		// root用户：可以获取所有token
+		queryUserId = 0
+	} else {
+		// 非root用户：只能获取自己的token
+		queryUserId = userId
+	}
+
+	tokens, err := model.GetTokenListForDropdown(queryUserId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    tokens,
 	})
 }

@@ -103,7 +103,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
-      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isLeader() ? '' : 'tableHiddle' },
+      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: isLeader() ? 'tableHiddle' : 'tableHiddle' },
     ];
 
     // 根据配置过滤项目

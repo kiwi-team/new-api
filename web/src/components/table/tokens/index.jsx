@@ -350,6 +350,12 @@ function TokensPage() {
     compactMode,
     setCompactMode,
 
+    // Root user filter
+    selectedUserId,
+    setSelectedUserId,
+    userList,
+    userListLoading,
+
     // Translation
     t,
   } = tokensData;
@@ -392,6 +398,10 @@ function TokensPage() {
                 loading={loading}
                 searching={searching}
                 t={t}
+                selectedUserId={selectedUserId}
+                setSelectedUserId={setSelectedUserId}
+                userList={userList}
+                userListLoading={userListLoading}
               />
             </div>
           </div>

@@ -17,6 +17,14 @@ import (
 
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	// root用户可以通过user_id参数查看其他用户的token，user_id=0表示查看所有用户
+	if role >= common.RoleRootUser {
+		if qUserId := c.Query("user_id"); qUserId != "" {
+			uid, _ := strconv.Atoi(qUserId)
+			userId = uid // 0 means all users
+		}
+	}
 	p, _ := strconv.Atoi(c.Query("p"))
 	size, _ := strconv.Atoi(c.Query("size"))
 	if p < 1 {
@@ -69,6 +77,13 @@ func clearTokenInfo(c *gin.Context, token *model.Token) {
 
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	if role >= common.RoleRootUser {
+		if qUserId := c.Query("user_id"); qUserId != "" {
+			uid, _ := strconv.Atoi(qUserId)
+			userId = uid
+		}
+	}
 	keyword := c.Query("keyword")
 	token := c.Query("token")
 	modelName := c.Query("model")
@@ -98,11 +113,17 @@ func SearchTokens(c *gin.Context) {
 func GetToken(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	token, err := model.GetTokenByIds(id, userId)
+	// root用户可以查看任意token
+	queryUserId := userId
+	if role >= common.RoleRootUser {
+		queryUserId = 0
+	}
+	token, err := model.GetTokenByIds(id, queryUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -263,6 +284,11 @@ func AddToken(c *gin.Context) {
 func DeleteToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	// root用户可以删除任意token
+	if role >= common.RoleRootUser {
+		userId = 0
+	}
 	err := model.DeleteTokenById(id, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -277,6 +303,7 @@ func DeleteToken(c *gin.Context) {
 
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
 	statusOnly := c.Query("status_only")
 	token := model.Token{}
 	err := c.ShouldBindJSON(&token)
@@ -299,7 +326,12 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
-	cleanToken, err := model.GetTokenByIds(token.Id, userId)
+	// root用户可以编辑任意token
+	queryUserId := userId
+	if role >= common.RoleRootUser {
+		queryUserId = 0
+	}
+	cleanToken, err := model.GetTokenByIds(token.Id, queryUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -327,7 +359,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		isAdmin := model.IsAdmin(userId)
-		if isAdmin {
+		if isAdmin || role >= common.RoleRootUser {
 			cleanToken.ChannelRules = token.ChannelRules
 			cleanToken.ChannelRatios = token.ChannelRatios
 		}
@@ -356,6 +388,11 @@ func DeleteTokenBatch(c *gin.Context) {
 		return
 	}
 	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	// root用户可以批量删除任意token
+	if role >= common.RoleRootUser {
+		userId = 0
+	}
 	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId)
 	if err != nil {
 		common.ApiError(c, err)

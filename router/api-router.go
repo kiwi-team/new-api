@@ -302,6 +302,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/statistics/export", middleware.LeaderAuth(), controller.ExportQuotaDataStatistics)
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
 		dataRoute.GET("/project-names", middleware.LeaderAuth(), controller.GetDistinctProjectNames)
+		dataRoute.GET("/token-list", middleware.LeaderAuth(), controller.GetTokenListForStatistics)
 		toioDataRoute := apiRouter.Group("/toio/data")
 		toioDataRoute.Use(middleware.ToioAuth())
 		{

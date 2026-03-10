@@ -26,6 +26,7 @@ import {
   showError,
   showSuccess,
   encodeToBase64,
+  isRoot,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
@@ -55,6 +56,11 @@ export const useTokensData = (openFluentNotification) => {
   const [compactMode, setCompactMode] = useTableCompactMode('tokens');
   const [showKeys, setShowKeys] = useState({});
 
+  // Root user filter state
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [userList, setUserList] = useState([]);
+  const [userListLoading, setUserListLoading] = useState(false);
+
   // Form state
   const [formApi, setFormApi] = useState(null);
   const formInitValues = {
@@ -71,6 +77,29 @@ export const useTokensData = (openFluentNotification) => {
       model: formValues.model || '',
       channel: formValues.channel || '',
     };
+  };
+
+  // 获取用户列表（仅root用户可用）
+  const fetchUserList = async () => {
+    if (!isRoot()) return;
+    setUserListLoading(true);
+    try {
+      const res = await API.get('/api/user/', {
+        params: { page: 1, page_size: 1000 },
+      });
+      const { success, data } = res.data;
+      if (success && data?.items) {
+        const options = data.items.map((user) => ({
+          value: user.id,
+          label: `${user.username} (ID: ${user.id})`,
+        }));
+        setUserList([{ value: 0, label: t('全部用户') }, ...options]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch user list:', error);
+    } finally {
+      setUserListLoading(false);
+    }
   };
 
   // Close edit modal
@@ -95,7 +124,11 @@ export const useTokensData = (openFluentNotification) => {
   const loadTokens = async (page = 1, size = pageSize) => {
     setLoading(true);
     setSearchMode(false);
-    const res = await API.get(`/api/token/?p=${page}&size=${size}`);
+    let url = `/api/token/?p=${page}&size=${size}`;
+    if (isRoot() && selectedUserId !== null) {
+      url += `&user_id=${selectedUserId}`;
+    }
+    const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
       syncPageData(data);
@@ -216,9 +249,11 @@ export const useTokensData = (openFluentNotification) => {
       return;
     }
     setSearching(true);
-    const res = await API.get(
-      `/api/token/search?keyword=${encodeURIComponent(searchKeyword)}&token=${encodeURIComponent(searchToken)}&p=${normalizedPage}&size=${normalizedSize}&model=${model}&channel=${channel}`,
-    );
+    let searchUrl = `/api/token/search?keyword=${encodeURIComponent(searchKeyword)}&token=${encodeURIComponent(searchToken)}&p=${normalizedPage}&size=${normalizedSize}&model=${model}&channel=${channel}`;
+    if (isRoot() && selectedUserId !== null) {
+      searchUrl += `&user_id=${selectedUserId}`;
+    }
+    const res = await API.get(searchUrl);
     const { success, message, data } = res.data;
     if (success) {
       setSearchMode(true);
@@ -367,6 +402,21 @@ export const useTokensData = (openFluentNotification) => {
       });
   }, [pageSize]);
 
+  // 初始化时获取用户列表（仅root）
+  useEffect(() => {
+    if (isRoot()) {
+      fetchUserList();
+    }
+  }, []);
+
+  // 当选择的用户变化时重新加载token列表
+  useEffect(() => {
+    if (isRoot() && selectedUserId !== null) {
+      loadTokens(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUserId]);
+
   return {
     // Basic state
     tokens,
@@ -414,6 +464,12 @@ export const useTokensData = (openFluentNotification) => {
     batchDeleteTokens,
     batchCopyTokens,
     syncPageData,
+
+    // Root user filter
+    selectedUserId,
+    setSelectedUserId,
+    userList,
+    userListLoading,
 
     // Translation
     t,

@@ -52,6 +52,9 @@ const QuotaStatisticsTable = () => {
   const [projectName, setProjectName] = useState(null);
   const [projectList, setProjectList] = useState([]);
   const [projectListLoading, setProjectListLoading] = useState(false);
+  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+  const [tokenList, setTokenList] = useState([]);
+  const [tokenListLoading, setTokenListLoading] = useState(false);
 
   const scenairoOptions = [
     { value: 'PersonalExperiment', label: '个人实验(含未标记)' },
@@ -93,6 +96,30 @@ const QuotaStatisticsTable = () => {
     if (isRoot()) {
       fetchUserList();
     }
+  }, []);
+
+  // 获取token列表用于下拉筛选
+  const fetchTokenList = async () => {
+    setTokenListLoading(true);
+    try {
+      const res = await API.get('/api/data/token-list');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data.map((token) => ({
+          value: token.id,
+          label: `${token.name} (ID: ${token.id})`,
+        }));
+        setTokenList(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch token list:', error);
+    } finally {
+      setTokenListLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTokenList();
   }, []);
 
   // 获取项目名称列表
@@ -202,6 +229,9 @@ const QuotaStatisticsTable = () => {
       if (projectName) {
         params.project_name = projectName;
       }
+      if (selectedTokenIds.length > 0) {
+        params.token_ids = selectedTokenIds.join(',');
+      }
       const res = await API.get('/api/data/statistics', { params });
       const { success, message, data } = res.data;
       if (success) {
@@ -238,6 +268,10 @@ const QuotaStatisticsTable = () => {
   }, [selectedUserId, projectName]);
 
   useEffect(() => {
+    fetchData();
+  }, [selectedTokenIds]);
+
+  useEffect(() => {
     if (toioMode) {
       setExpandModels(false);
       setExpandDates(false);
@@ -269,6 +303,9 @@ const QuotaStatisticsTable = () => {
       }
       if (projectName) {
         params.project_name = projectName;
+      }
+      if (selectedTokenIds.length > 0) {
+        params.token_ids = selectedTokenIds.join(',');
       }
       const res = await API.get('/api/data/statistics/export', {
         params,
@@ -366,6 +403,18 @@ const QuotaStatisticsTable = () => {
                 showClear
               />
             )}
+            <Select
+                placeholder="选择Token"
+                multiple
+                style={{ width: 220 }}
+                optionList={tokenList}
+                value={selectedTokenIds}
+                onChange={setSelectedTokenIds}
+                loading={tokenListLoading}
+                filter
+                showClear
+                maxTagCount={1}
+            />
             <Button theme='solid' onClick={fetchData} loading={loading}>Search</Button>
             <Button onClick={handleExport}>Export CSV</Button>
         </Space>

@@ -68,8 +68,24 @@ func (token *Token) GetIpLimits() []string {
 func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	var tokens []*Token
 	var err error
-	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
+	tx := DB.Order("id desc").Limit(num).Offset(startIdx)
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err = tx.Find(&tokens).Error
 	return tokens, err
+}
+
+// GetTokenListForDropdown returns a lightweight token list (id + name) for dropdown selection.
+// If userId > 0, only returns tokens belonging to that user; otherwise returns all tokens.
+func GetTokenListForDropdown(userId int) ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+	tx := DB.Model(&Token{}).Select("id, name, user_id")
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err := tx.Order("id desc").Find(&results).Error
+	return results, err
 }
 
 func SearchUserTokens1(userId int, keyword string, token string, modelName string, channel string) (tokens []*Token, err error) {
@@ -197,7 +213,10 @@ func SearchUserTokens(userId int, keyword string, token string, modelName string
 		}
 	}
 
-	baseQuery := DB.Model(&Token{}).Where("user_id = ?", userId)
+	baseQuery := DB.Model(&Token{})
+	if userId > 0 {
+		baseQuery = baseQuery.Where("user_id = ?", userId)
+	}
 
 	// 非空才加 LIKE 条件，空则跳过（不过滤该字段）
 	if keyword != "" {
@@ -281,13 +300,16 @@ func ValidateUserToken(key string) (token *Token, err error) {
 }
 
 func GetTokenByIds(id int, userId int) (*Token, error) {
-	if id == 0 || userId == 0 {
-		return nil, errors.New("id 或 userId 为空！")
+	if id == 0 {
+		return nil, errors.New("id 为空！")
 	}
-	token := Token{Id: id, UserId: userId}
-	var err error = nil
-	err = DB.First(&token, "id = ? and user_id = ?", id, userId).Error
-	return &token, err
+	token := &Token{}
+	tx := DB.Where("id = ?", id)
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err := tx.First(token).Error
+	return token, err
 }
 
 func GetTokenById(id int) (*Token, error) {
@@ -448,12 +470,17 @@ func DisableModelLimits(tokenId int) error {
 }
 
 func DeleteTokenById(id int, userId int) (err error) {
-	// Why we need userId here? In case user want to delete other's token.
-	if id == 0 || userId == 0 {
-		return errors.New("id 或 userId 为空！")
+	// userId > 0: normal user can only delete own tokens
+	// userId == 0: root user can delete any token
+	if id == 0 {
+		return errors.New("id 为空！")
 	}
-	token := Token{Id: id, UserId: userId}
-	err = DB.Where(token).First(&token).Error
+	token := Token{}
+	tx := DB.Where("id = ?", id)
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err = tx.First(&token).Error
 	if err != nil {
 		return err
 	}
@@ -523,7 +550,11 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 // CountUserTokens returns total number of tokens for the given user, used for pagination
 func CountUserTokens(userId int) (int64, error) {
 	var total int64
-	err := DB.Model(&Token{}).Where("user_id = ?", userId).Count(&total).Error
+	tx := DB.Model(&Token{})
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err := tx.Count(&total).Error
 	return total, err
 }
 
@@ -536,12 +567,20 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	tx := DB.Begin()
 
 	var tokens []Token
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+	query := tx.Where("id IN (?)", ids)
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	if err := query.Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
 
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {
+	delQuery := tx.Where("id IN (?)", ids)
+	if userId > 0 {
+		delQuery = delQuery.Where("user_id = ?", userId)
+	}
+	if err := delQuery.Delete(&Token{}).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
