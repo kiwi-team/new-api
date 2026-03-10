@@ -106,6 +106,11 @@ func main() {
 		go controller.FeishuQuotaAlerts()
 	}
 
+	// Key维度消耗告警/停用
+	if os.Getenv("KEY_QUOTA_WARNING") == "true" {
+		go controller.FeishuQuotaKeyAlerts()
+	}
+
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
 		if err != nil {

@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -36,7 +35,7 @@ func initQuotaAlertStateFromOptions() {
 	}
 	if v := common.OptionMap[optKeyUidMap]; v != "" {
 		tmp := make(map[string]int64)
-		_ = json.Unmarshal([]byte(v), &tmp)
+		_ = common.Unmarshal([]byte(v), &tmp)
 		if len(tmp) > 0 {
 			uidDayAlerted = tmp
 		}
@@ -44,7 +43,7 @@ func initQuotaAlertStateFromOptions() {
 	// month threshold map
 	if v := common.OptionMap[optKeyUidMonth]; v != "" {
 		tmp := make(map[string]map[string]int64)
-		_ = json.Unmarshal([]byte(v), &tmp)
+		_ = common.Unmarshal([]byte(v), &tmp)
 		if len(tmp) > 0 {
 			uidMonthThresholdMap = tmp
 		}
@@ -58,14 +57,14 @@ func persistLastDay(dayStart int64) {
 	_ = model.UpdateOption(optKeyLastDay, strconv.FormatInt(dayStart, 10))
 }
 func persistUidMap() {
-	b, _ := json.Marshal(uidDayAlerted)
+	b, _ := common.Marshal(uidDayAlerted)
 	_ = model.UpdateOption(optKeyUidMap, string(b))
 }
 
 var uidMonthThresholdMap = make(map[string]map[string]int64)
 
 func persistUidMonthMap() {
-	b, _ := json.Marshal(uidMonthThresholdMap)
+	b, _ := common.Marshal(uidMonthThresholdMap)
 	_ = model.UpdateOption(optKeyUidMonth, string(b))
 }
 
@@ -213,5 +212,197 @@ func FeishuQuotaAlerts() {
 		}
 
 		time.Sleep(time.Minute * 5)
+	}
+}
+
+// KeyQuotaRule defines a single threshold rule for key-level quota alerts
+type KeyQuotaRule struct {
+	QuotaUSD float64 `json:"quota_usd"`
+	Action   string  `json:"action"` // "warn" or "disable_key"
+}
+
+// KeyQuotaUserConfig defines per-user key quota alert configuration
+type KeyQuotaUserConfig struct {
+	FeishuRobotURL string         `json:"feishu_robot_url"`
+	OneHour        []KeyQuotaRule `json:"one_hour"`
+	OneDay         []KeyQuotaRule `json:"one_day"`
+}
+
+const optKeyKeyQuotaConfig = "key_quota_warning_config"
+const optKeyKeyQuotaAlerted = "key_quota_warning_alerted"
+
+// keyQuotaAlertedState tracks which (tokenId, ruleKey) combos have already been alerted
+// format: map[tokenId_string] -> map[ruleKey] -> windowStart
+var keyQuotaAlertedState = make(map[string]map[string]int64)
+
+func loadKeyQuotaAlertedState() {
+	if v := common.OptionMap[optKeyKeyQuotaAlerted]; v != "" {
+		tmp := make(map[string]map[string]int64)
+		_ = common.Unmarshal([]byte(v), &tmp)
+		if len(tmp) > 0 {
+			keyQuotaAlertedState = tmp
+		}
+	}
+}
+
+func persistKeyQuotaAlertedState() {
+	b, _ := common.Marshal(keyQuotaAlertedState)
+	_ = model.UpdateOption(optKeyKeyQuotaAlerted, string(b))
+}
+
+func isKeyQuotaAlerted(tokenIdStr string, ruleKey string, windowStart int64) bool {
+	entry, ok := keyQuotaAlertedState[tokenIdStr]
+	if !ok {
+		return false
+	}
+	return entry[ruleKey] == windowStart
+}
+
+func markKeyQuotaAlerted(tokenIdStr string, ruleKey string, windowStart int64) {
+	if _, ok := keyQuotaAlertedState[tokenIdStr]; !ok {
+		keyQuotaAlertedState[tokenIdStr] = make(map[string]int64)
+	}
+	keyQuotaAlertedState[tokenIdStr][ruleKey] = windowStart
+}
+
+func FeishuQuotaKeyAlerts() {
+	loadKeyQuotaAlertedState()
+	for {
+		// Read config from options
+		configStr := common.OptionMap[optKeyKeyQuotaConfig]
+		if configStr == "" {
+			time.Sleep(time.Minute * 5)
+			continue
+		}
+
+		// Parse config: map[user_id_string] -> KeyQuotaUserConfig
+		userConfigs := make(map[string]*KeyQuotaUserConfig)
+		if err := common.Unmarshal([]byte(configStr), &userConfigs); err != nil {
+			common.SysError("FeishuQuotaKeyAlerts: failed to parse config: " + err.Error())
+			time.Sleep(time.Minute * 5)
+			continue
+		}
+
+		loc, _ := time.LoadLocation("Asia/Shanghai")
+		now := time.Now().In(loc)
+
+		hourStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, loc).Unix()
+		hourEnd := hourStart + 3600 - 1
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Unix()
+		dayEnd := dayStart + 86400 - 1
+
+		dirty := false
+
+		for userIdStr, cfg := range userConfigs {
+			if cfg.FeishuRobotURL == "" {
+				continue
+			}
+
+			userId, err := strconv.Atoi(userIdStr)
+			if err != nil {
+				continue
+			}
+
+			// Process one_hour rules
+			if len(cfg.OneHour) > 0 {
+				var hourRows []struct {
+					TokenId    int
+					TotalQuota int
+				}
+				err := model.DB.Table("quota_data").
+					Select("token_id, COALESCE(sum(quota),0) as total_quota").
+					Where("user_id = ? AND created_at >= ? AND created_at <= ? AND token_id > 0", userId, hourStart, hourEnd).
+					Group("token_id").
+					Scan(&hourRows).Error
+				if err == nil {
+					for _, row := range hourRows {
+						usd := float64(row.TotalQuota) / common.QuotaPerUnit
+						tokenIdStr := strconv.Itoa(row.TokenId)
+						for _, rule := range cfg.OneHour {
+							if usd >= rule.QuotaUSD {
+								ruleKey := fmt.Sprintf("1h_%d_%d_%s", hourStart, hourEnd, rule.Action)
+								if !isKeyQuotaAlerted(tokenIdStr, ruleKey, hourStart) {
+									processKeyQuotaAction(cfg.FeishuRobotURL, rule.Action, row.TokenId, usd, rule.QuotaUSD, "1小时", now)
+									markKeyQuotaAlerted(tokenIdStr, ruleKey, hourStart)
+									dirty = true
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Process one_day rules
+			if len(cfg.OneDay) > 0 {
+				var dayRows []struct {
+					TokenId    int
+					TotalQuota int
+				}
+				err := model.DB.Table("quota_data").
+					Select("token_id, COALESCE(sum(quota),0) as total_quota").
+					Where("user_id = ? AND created_at >= ? AND created_at <= ? AND token_id > 0", userId, dayStart, dayEnd).
+					Group("token_id").
+					Scan(&dayRows).Error
+				if err == nil {
+					for _, row := range dayRows {
+						usd := float64(row.TotalQuota) / common.QuotaPerUnit
+						tokenIdStr := strconv.Itoa(row.TokenId)
+						for _, rule := range cfg.OneDay {
+							if usd >= rule.QuotaUSD {
+								ruleKey := fmt.Sprintf("1d_%d_%d_%s", dayStart, dayEnd, rule.Action)
+								if !isKeyQuotaAlerted(tokenIdStr, ruleKey, dayStart) {
+									processKeyQuotaAction(cfg.FeishuRobotURL, rule.Action, row.TokenId, usd, rule.QuotaUSD, "当日", now)
+									markKeyQuotaAlerted(tokenIdStr, ruleKey, dayStart)
+									dirty = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if dirty {
+			persistKeyQuotaAlertedState()
+		}
+
+		time.Sleep(time.Minute * 1)
+	}
+}
+
+func processKeyQuotaAction(webhook string, action string, tokenId int, currentUSD float64, thresholdUSD float64, window string, now time.Time) {
+	token, err := model.GetTokenById(tokenId)
+	if err != nil {
+		common.SysError(fmt.Sprintf("FeishuQuotaKeyAlerts: failed to get token %d: %s", tokenId, err.Error()))
+		return
+	}
+
+	tokenName := token.Name
+	if tokenName == "" {
+		tokenName = fmt.Sprintf("ID:%d", tokenId)
+	}
+
+	switch action {
+	case "warn":
+		content := fmt.Sprintf("Key消耗预警：Key[%s] %s消耗约 $%.2f，阈值 $%.0f", tokenName, window, currentUSD, thresholdUSD)
+		_ = service.SendFeishuNotify(webhook, "", dto.FeishuNotify{
+			MsgType: "text",
+			Content: dto.FeishuContent{Text: content},
+		})
+		common.SysLog(content)
+
+	case "disable_key":
+		// Disable the token
+		err := model.DB.Model(&model.Token{}).Where("id = ?", tokenId).Update("status", common.TokenStatusDisabled).Error
+		if err != nil {
+			common.SysError(fmt.Sprintf("FeishuQuotaKeyAlerts: failed to disable token %d: %s", tokenId, err.Error()))
+			return
+		}
+		content := fmt.Sprintf("Key已停用：Key[%s] %s消耗约 $%.2f，阈值 $%.0f，已自动停用", tokenName, window, currentUSD, thresholdUSD)
+		_ = service.SendFeishuNotify(webhook, "", dto.FeishuNotify{
+			MsgType: "text",
+			Content: dto.FeishuContent{Text: content},
+		})
+		common.SysLog(content)
 	}
 }
