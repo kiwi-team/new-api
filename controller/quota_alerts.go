@@ -366,7 +366,7 @@ func FeishuQuotaKeyAlerts() {
 			persistKeyQuotaAlertedState()
 		}
 
-		time.Sleep(time.Minute * 1)
+		time.Sleep(time.Minute * 5)
 	}
 }
 

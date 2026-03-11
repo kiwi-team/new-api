@@ -299,16 +299,22 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 				ids = append(ids, id)
 			}
 			var tokens []struct {
-				Id  int    `gorm:"column:id"`
-				Key string `gorm:"column:key"`
+				Id   int    `gorm:"column:id"`
+				Key  string `gorm:"column:key"`
+				Name string `gorm:"column:name"`
 			}
-			if err := DB.Table("tokens").Select("id, "+commonKeyCol).Where("id IN ?", ids).Find(&tokens).Error; err == nil {
+			if err := DB.Table("tokens").Select("id, "+commonKeyCol+", name").Where("id IN ?", ids).Find(&tokens).Error; err == nil {
 				keyMap := make(map[int]string)
+				nameMap := make(map[int]string)
 				for _, t := range tokens {
 					keyMap[t.Id] = t.Key
+					nameMap[t.Id] = t.Name
 				}
 				for _, s := range statistics {
 					s.TokenKey = "sk-" + keyMap[s.TokenId]
+					if name, ok := nameMap[s.TokenId]; ok {
+						s.TokenName = name
+					}
 				}
 			}
 		}
