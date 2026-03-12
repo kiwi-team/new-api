@@ -163,6 +163,23 @@ func Register(c *gin.Context) {
 			return
 		}
 	}
+	// 注册时uid检查
+	if common.RegisterUidCheckEnabled {
+		if user.Uid == "" {
+			common.ApiErrorI18n(c, i18n.MsgUserUidRequired)
+			return
+		}
+		uidExists, err := model.CheckCliendUserIdExists(user.Uid)
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			common.SysLog(fmt.Sprintf("CheckCliendUserIdExists error: %v", err))
+			return
+		}
+		if !uidExists {
+			common.ApiErrorI18n(c, i18n.MsgUserUidNotFound)
+			return
+		}
+	}
 	exist, err := model.CheckUserExistOrDeleted(user.Username, user.Email)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
@@ -182,6 +199,10 @@ func Register(c *gin.Context) {
 		InviterId:      inviterId,
 		Role:           common.RoleCommonUser, // 明确设置角色为普通用户
 		ToioRegistered: 1,                     // 标记为已注册Toio
+	}
+	// 开启uid检查注册的用户默认为Leader角色
+	if common.RegisterUidCheckEnabled {
+		cleanUser.Role = common.RoleLeaderUser
 	}
 	if strings.Contains(c.Request.URL.Path, "/toio/register") {
 		cleanUser.ToioRegistered = 1

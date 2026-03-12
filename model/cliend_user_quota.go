@@ -26,6 +26,16 @@ func (CliendUserQuota) TableName() string {
 	return "cliend_user_quota"
 }
 
+// CheckCliendUserIdExists 检查 client_user_id 是否在 cliend_user_quota 表中存在
+func CheckCliendUserIdExists(clientUserId string) (bool, error) {
+	var count int64
+	err := DB.Model(&CliendUserQuota{}).Where("client_user_id = ?", clientUserId).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func CheckCliendUserQuota(clientUserId string, projectQuota int) (bool, error) {
 	var row CliendUserQuota
 	err := DB.Where("client_user_id = ?", clientUserId).First(&row).Error

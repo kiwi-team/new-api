@@ -78,6 +78,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
+    uid: '',
   });
   const { username, password, password2 } = inputs;
   const [userState, userDispatch] = useContext(UserContext);
@@ -128,9 +129,11 @@ const RegisterForm = () => {
   }, [statusState?.status]);
 
   const [showEmailVerification, setShowEmailVerification] = useState(false);
+  const [showUidField, setShowUidField] = useState(false);
 
   useEffect(() => {
     setShowEmailVerification(!!status?.email_verification);
+    setShowUidField(!!status?.register_uid_check_enabled);
     if (status?.turnstile_check) {
       setTurnstileEnabled(true);
       setTurnstileSiteKey(status.turnstile_site_key);
@@ -559,6 +562,17 @@ const RegisterForm = () => {
                   onChange={(value) => handleChange('password2', value)}
                   prefix={<IconLock />}
                 />
+
+                {showUidField && (
+                  <Form.Input
+                    field='uid'
+                    label='UID'
+                    placeholder={t('请输入您的 UID')}
+                    name='uid'
+                    onChange={(value) => handleChange('uid', value)}
+                    prefix={<IconKey />}
+                  />
+                )}
 
                 {showEmailVerification && (
                   <>
