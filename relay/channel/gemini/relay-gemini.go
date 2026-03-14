@@ -805,6 +805,28 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 							FileUri:  uploadedFile.URI,
 						},
 					})
+				} else if strings.Contains(info.ChannelBaseUrl, "theapi") {
+					// theapi已支持fileUri传递视频url
+					videoFileUrl := ""
+					if videoUrl, ok := part.VideoUrl.(string); ok {
+						videoFileUrl = videoUrl
+					} else if videoMap, ok := part.VideoUrl.(*dto.MessageVideoUrl); ok {
+						videoFileUrl = videoMap.Url
+					}
+					if videoFileUrl == "" {
+						continue
+					}
+					mimeType, err := GetFileMimeType(videoFileUrl)
+					if err != nil {
+						continue
+					}
+					parts = append(parts, dto.GeminiPart{
+						FileData: &dto.GeminiFileData{
+							MimeType: mimeType,
+							FileUri:  videoFileUrl,
+						},
+					})
+
 				}
 			}
 		}

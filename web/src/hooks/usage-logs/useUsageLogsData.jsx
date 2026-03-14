@@ -444,6 +444,10 @@ export const useLogsData = () => {
                 other.web_search_call_count || 0,
                 other.file_search || false,
                 other.file_search_call_count || 0,
+                other?.use_tiered_price || false,
+                other?.tiered_input_price || 0,
+                other?.tiered_output_price || 0,
+                other?.tiered_max_tokens || 0,
               ),
         });
         if (logs[i]?.content) {
@@ -556,6 +560,10 @@ export const useLogsData = () => {
               other?.original_group_ratio,
               other?.user_group_discount,
               other?.user_model_extra_discount,
+              other?.use_tiered_price || false,
+              other?.tiered_input_price || 0,
+              other?.tiered_output_price || 0,
+              other?.tiered_max_tokens || 0,
             );
           }
           expandDataLocal.push({

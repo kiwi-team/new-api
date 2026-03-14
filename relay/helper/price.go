@@ -118,9 +118,40 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
-	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
-
 	groupRatioInfo := HandleGroupRatio(c, info)
+
+	// 优先检查阶梯价格（tiered price takes priority over ModelPrice and ModelRatio）
+	tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(info.OriginModelName)
+	if useTiered && len(tieredPriceTiers) > 0 {
+		firstTier := tieredPriceTiers[0]
+		preConsumedQuota := int(firstTier.InputPrice / 1_000_000 * float64(promptTokens) * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+
+		var freeModel bool
+		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
+			if groupRatioInfo.GroupRatio == 0 || (firstTier.InputPrice == 0 && firstTier.OutputPrice == 0) {
+				preConsumedQuota = 0
+				freeModel = true
+			}
+		}
+
+		priceData := types.PriceData{
+			FreeModel:         freeModel,
+			GroupRatioInfo:    groupRatioInfo,
+			UseTieredPrice:    true,
+			TieredInputPrice:  firstTier.InputPrice,
+			TieredOutputPrice: firstTier.OutputPrice,
+			TieredMaxTokens:   firstTier.MaxTokens,
+			QuotaToPreConsume: preConsumedQuota,
+		}
+
+		if common.DebugEnabled {
+			println(fmt.Sprintf("model_price_helper result (tiered): %s", priceData.ToSetting()))
+		}
+		info.PriceData = priceData
+		return priceData, nil
+	}
+
+	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	var preConsumedQuota int
 	var modelRatio float64
@@ -240,6 +271,10 @@ func ContainPriceOrRatio(modelName string) bool {
 		return true
 	}
 	_, ok, _ = ratio_setting.GetModelRatio(modelName)
+	if ok {
+		return true
+	}
+	_, ok = ratio_setting.GetTieredPrice(modelName)
 	if ok {
 		return true
 	}

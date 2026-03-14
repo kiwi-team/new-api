@@ -2758,6 +2758,15 @@
     "项目统计": "Statistiques du projet",
     "历史消耗": "Consommation historique",
     "选择时间范围": "Sélectionner la période",
+    "模型阶梯价格": "Tarification par paliers du modèle",
+    "按输入 Token 数量分档计费，优先级高于固定价格和倍率": "Facturation par paliers selon le nombre de tokens en entrée, prioritaire sur le prix fixe et le ratio",
+    "为一个 JSON 文本，键为模型名称，值为价格档位数组，例如 {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}": "Un texte JSON avec le nom du modèle comme clé et un tableau de paliers de prix comme valeur, ex : {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}",
+    "阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}": "Prix par paliers (≤{{maxTokens}} tokens) : Entrée {{symbol}}{{inputPrice}} / Sortie {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}} : {{ratio}}",
+    "阶梯定价（≤{{maxTokens}} tokens）": "Tarification par paliers (≤{{maxTokens}} tokens)",
+    "输入价格：{{symbol}}{{price}} / 1M tokens": "Prix d'entrée : {{symbol}}{{price}} / 1M tokens",
+    "输出价格：{{symbol}}{{price}} / 1M tokens": "Prix de sortie : {{symbol}}{{price}} / 1M tokens",
+    "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Entrée {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Sortie {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
+    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Tarification par paliers (≤{{maxTokens}} tokens) : Entrée {{symbol}}{{inputPrice}} / Sortie {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

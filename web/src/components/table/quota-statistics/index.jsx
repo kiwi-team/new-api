@@ -452,7 +452,21 @@ const QuotaStatisticsTable = () => {
       </div>
         }
     >
-      <Table columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
+      <Table
+        columns={columns}
+        dataSource={data}
+        loading={loading}
+        pagination={{ pageSize: 20 }}
+        rowKey={(record) => {
+          const parts = [
+            record.client_user_id || '',
+            record.date || '',
+            record.model_name || '',
+            record.token_id || '',
+          ];
+          return parts.join('_');
+        }}
+      />
     </CardPro>
   );
 };

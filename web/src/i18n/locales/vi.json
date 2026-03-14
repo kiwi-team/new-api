@@ -3318,6 +3318,15 @@
     "项目统计": "Thống kê dự án",
     "历史消耗": "Lịch sử tiêu thụ",
     "选择时间范围": "Chọn khoảng thời gian",
+    "模型阶梯价格": "Giá theo bậc của mô hình",
+    "按输入 Token 数量分档计费，优先级高于固定价格和倍率": "Tính phí theo bậc dựa trên số lượng token đầu vào, ưu tiên cao hơn giá cố định và tỷ lệ",
+    "为一个 JSON 文本，键为模型名称，值为价格档位数组，例如 {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}": "Văn bản JSON với tên mô hình là khóa và mảng bậc giá là giá trị, ví dụ: {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}",
+    "阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}": "Giá theo bậc (≤{{maxTokens}} tokens): Đầu vào {{symbol}}{{inputPrice}} / Đầu ra {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}: {{ratio}}",
+    "阶梯定价（≤{{maxTokens}} tokens）": "Giá theo bậc (≤{{maxTokens}} tokens)",
+    "输入价格：{{symbol}}{{price}} / 1M tokens": "Giá đầu vào: {{symbol}}{{price}} / 1M tokens",
+    "输出价格：{{symbol}}{{price}} / 1M tokens": "Giá đầu ra: {{symbol}}{{price}} / 1M tokens",
+    "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Đầu vào {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Đầu ra {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
+    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Giá theo bậc (≤{{maxTokens}} tokens): Đầu vào {{symbol}}{{inputPrice}} / Đầu ra {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

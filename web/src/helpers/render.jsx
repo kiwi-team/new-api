@@ -1158,6 +1158,10 @@ function renderPriceSimpleCore({
   originalGroupRatio,
   userGroupDiscount,
   userModelExtraDiscount,
+  useTieredPrice = false,
+  tieredInputPrice = 0,
+  tieredOutputPrice = 0,
+  tieredMaxTokens = 0,
 }) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1168,6 +1172,24 @@ function renderPriceSimpleCore({
   const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
 
   const { symbol, rate } = getCurrencyConfig();
+
+  if (useTieredPrice) {
+    const displayInput = (tieredInputPrice * rate).toFixed(6);
+    const displayOutput = (tieredOutputPrice * rate).toFixed(6);
+    let priceText = i18next.t('阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}', {
+      maxTokens: tieredMaxTokens,
+      symbol: symbol,
+      inputPrice: displayInput,
+      outputPrice: displayOutput,
+      ratioType: ratioLabel,
+      ratio: finalGroupRatio,
+    });
+    if (hasDiscount) {
+      priceText += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+    }
+    return priceText;
+  }
+
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
     let priceText = i18next.t('价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}', {
@@ -1275,6 +1297,10 @@ export function renderModelPrice(
   originalGroupRatio,
   userGroupDiscount,
   userModelExtraDiscount,
+  useTieredPrice = false,
+  tieredInputPrice = 0,
+  tieredOutputPrice = 0,
+  tieredMaxTokens = 0,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1287,6 +1313,63 @@ export function renderModelPrice(
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
+
+  if (useTieredPrice && tieredInputPrice > 0) {
+    const displayInputPrice = (tieredInputPrice * rate).toFixed(6);
+    const displayOutputPrice = (tieredOutputPrice * rate).toFixed(6);
+    const inputCost = (inputTokens / 1000000) * tieredInputPrice * groupRatio;
+    const outputCost = (completionTokens / 1000000) * tieredOutputPrice * groupRatio;
+    const totalCost = inputCost + outputCost;
+
+    return (
+      <>
+        <article>
+          <p>
+            {i18next.t('阶梯定价（≤{{maxTokens}} tokens）', {
+              maxTokens: tieredMaxTokens,
+            })}
+          </p>
+          <p>
+            {i18next.t(
+              '输入价格：{{symbol}}{{price}} / 1M tokens',
+              {
+                symbol: symbol,
+                price: displayInputPrice,
+              },
+            )}
+          </p>
+          <p>
+            {i18next.t(
+              '输出价格：{{symbol}}{{price}} / 1M tokens',
+              {
+                symbol: symbol,
+                price: displayOutputPrice,
+              },
+            )}
+          </p>
+          <p>
+            {i18next.t(
+              '(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}',
+              {
+                input: inputTokens,
+                output: completionTokens,
+                symbol: symbol,
+                inputPrice: displayInputPrice,
+                outputPrice: displayOutputPrice,
+                ratio: groupRatio,
+                ratioType: ratioLabel,
+                total: (totalCost * rate).toFixed(6),
+              },
+            )}
+          </p>
+          <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
+          {discountLine && (
+            <p style={{ color: '#f5a623' }}>{discountLine}</p>
+          )}
+        </article>
+      </>
+    );
+  }
 
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
@@ -1544,6 +1627,10 @@ export function renderLogContent(
   webSearchCallCount = 0,
   fileSearch = false,
   fileSearchCallCount = 0,
+  useTieredPrice = false,
+  tieredInputPrice = 0,
+  tieredOutputPrice = 0,
+  tieredMaxTokens = 0,
 ) {
   const {
     ratio,
@@ -1553,6 +1640,20 @@ export function renderLogContent(
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
+
+  if (useTieredPrice) {
+    return i18next.t(
+      '阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}',
+      {
+        maxTokens: tieredMaxTokens,
+        symbol: symbol,
+        inputPrice: (tieredInputPrice * rate).toFixed(6),
+        outputPrice: (tieredOutputPrice * rate).toFixed(6),
+        ratioType: ratioLabel,
+        ratio,
+      },
+    );
+  }
 
   if (modelPrice !== -1) {
     return i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
@@ -1621,6 +1722,10 @@ export function renderModelPriceSimple(
   originalGroupRatio,
   userGroupDiscount,
   userModelExtraDiscount,
+  useTieredPrice = false,
+  tieredInputPrice = 0,
+  tieredOutputPrice = 0,
+  tieredMaxTokens = 0,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -1641,6 +1746,10 @@ export function renderModelPriceSimple(
     originalGroupRatio,
     userGroupDiscount,
     userModelExtraDiscount,
+    useTieredPrice,
+    tieredInputPrice,
+    tieredOutputPrice,
+    tieredMaxTokens,
   });
 }
 

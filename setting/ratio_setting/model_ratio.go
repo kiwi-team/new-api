@@ -1,6 +1,8 @@
 package ratio_setting
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -326,12 +328,130 @@ var modelPriceMap = types.NewRWMap[string, float64]()
 var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
+// PriceTier 单个价格档位
+type PriceTier struct {
+	MaxTokens   int     `json:"max_tokens"`   // 输入 Token 上限阈值
+	InputPrice  float64 `json:"input_price"`  // 输入价格（每百万 Token，单位：美元）
+	OutputPrice float64 `json:"output_price"` // 输出价格（每百万 Token，单位：美元）
+}
+
+// tieredPriceMap 存储模型名称 → 阶梯价格列表的映射
+// 键为模型名称（支持通配符如 "qwen*"），值为按 MaxTokens 升序排列的 PriceTier 切片
+var tieredPriceMap = types.NewRWMap[string, []PriceTier]()
+
+// ValidateTieredPriceConfig validates a list of PriceTier entries.
+// Returns nil if valid. Empty list is considered valid (not configured).
+func ValidateTieredPriceConfig(tiers []PriceTier) error {
+	if len(tiers) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(tiers))
+	for _, t := range tiers {
+		if t.MaxTokens <= 0 {
+			return fmt.Errorf("max_tokens must be positive, got %d", t.MaxTokens)
+		}
+		if t.InputPrice < 0 {
+			return fmt.Errorf("input_price must not be negative, got %v", t.InputPrice)
+		}
+		if t.OutputPrice < 0 {
+			return fmt.Errorf("output_price must not be negative, got %v", t.OutputPrice)
+		}
+		if _, exists := seen[t.MaxTokens]; exists {
+			return fmt.Errorf("duplicate max_tokens: %d", t.MaxTokens)
+		}
+		seen[t.MaxTokens] = struct{}{}
+	}
+	return nil
+}
+
 var defaultCompletionRatio = map[string]float64{
 	"gpt-4-gizmo-*":             2,
 	"gpt-4o-gizmo-*":            3,
 	"gpt-4-all":                 2,
 	"gpt-image-1":               8,
 	"qwen3-omni-flash-realtime": 7.06, // multimodal output ￥12.7 / text input ￥1.8 = 7.06
+}
+
+// UpdateTieredPriceByJSONString parses a JSON string into tiered price config,
+// validates each model's tiers, sorts them by MaxTokens ascending, and stores them.
+// On invalid JSON or validation failure, returns error and keeps original config unchanged.
+func UpdateTieredPriceByJSONString(jsonStr string) error {
+	var parsed map[string][]PriceTier
+	if err := common.UnmarshalJsonStr(jsonStr, &parsed); err != nil {
+		return fmt.Errorf("invalid tiered price JSON: %w", err)
+	}
+	for model, tiers := range parsed {
+		if err := ValidateTieredPriceConfig(tiers); err != nil {
+			return fmt.Errorf("invalid tiered price config for model %s: %w", model, err)
+		}
+	}
+	// All validations passed — sort and store
+	tieredPriceMap.Clear()
+	for model, tiers := range parsed {
+		sort.Slice(tiers, func(i, j int) bool {
+			return tiers[i].MaxTokens < tiers[j].MaxTokens
+		})
+		tieredPriceMap.Set(model, tiers)
+	}
+	InvalidateExposedDataCache()
+	return nil
+}
+
+// GetTieredPrice returns the tiered price tiers for a model.
+// It first tries an exact match, then falls back to wildcard matching (keys ending with "*").
+// Returns ([]PriceTier, bool) — the tier list and whether it was found.
+func GetTieredPrice(name string) ([]PriceTier, bool) {
+	name = FormatMatchingModelName(name)
+
+	// Exact match
+	if tiers, ok := tieredPriceMap.Get(name); ok {
+		return tiers, true
+	}
+
+	// Wildcard match: iterate over all keys, find keys ending with "*"
+	// where the model name starts with the prefix (key minus trailing "*").
+	// Pick the longest matching prefix for best specificity.
+	allTiered := tieredPriceMap.ReadAll()
+	bestKey := ""
+	for key := range allTiered {
+		if strings.HasSuffix(key, "*") {
+			prefix := strings.TrimSuffix(key, "*")
+			if strings.HasPrefix(name, prefix) && len(key) > len(bestKey) {
+				bestKey = key
+			}
+		}
+	}
+	if bestKey != "" {
+		return allTiered[bestKey], true
+	}
+
+	return nil, false
+}
+
+// MatchPriceTier returns the PriceTier matching the given inputTokens count.
+// The tiers slice must be non-empty and sorted by MaxTokens in ascending order.
+// Matching rules:
+//   - inputTokens <= tiers[0].MaxTokens → tiers[0]
+//   - tiers[i].MaxTokens < inputTokens <= tiers[i+1].MaxTokens → tiers[i+1]
+//   - inputTokens > tiers[len-1].MaxTokens → tiers[len-1] (fallback/catch-all)
+func MatchPriceTier(tiers []PriceTier, inputTokens int) PriceTier {
+	for _, tier := range tiers {
+		if inputTokens <= tier.MaxTokens {
+			return tier
+		}
+	}
+	// inputTokens exceeds all thresholds — return the last tier as catch-all
+	return tiers[len(tiers)-1]
+}
+
+// TieredPrice2JSONString serializes the current tiered price configuration to a JSON string.
+func TieredPrice2JSONString() string {
+	return tieredPriceMap.MarshalJSONString()
+}
+
+// GetTieredPriceCopy returns a deep copy of the tiered price map for API exposure.
+func GetTieredPriceCopy() map[string][]PriceTier {
+	return tieredPriceMap.ReadAll()
 }
 
 // InitRatioSettings initializes all model related settings maps

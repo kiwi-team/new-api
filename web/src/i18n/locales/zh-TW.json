@@ -2816,6 +2816,15 @@
     "项目总数": "專案總數",
     "项目统计": "專案統計",
     "历史消耗": "歷史消耗",
-    "选择时间范围": "選擇時間範圍"
+    "选择时间范围": "選擇時間範圍",
+    "模型阶梯价格": "模型階梯價格",
+    "按输入 Token 数量分档计费，优先级高于固定价格和倍率": "按輸入 Token 數量分檔計費，優先級高於固定價格和倍率",
+    "为一个 JSON 文本，键为模型名称，值为价格档位数组，例如 {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}": "為一個 JSON 文本，鍵為模型名稱，值為價格檔位陣列，例如 {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}",
+    "阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}": "階梯價格（≤{{maxTokens}} tokens）：輸入 {{symbol}}{{inputPrice}} / 輸出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}",
+    "阶梯定价（≤{{maxTokens}} tokens）": "階梯定價（≤{{maxTokens}} tokens）",
+    "输入价格：{{symbol}}{{price}} / 1M tokens": "輸入價格：{{symbol}}{{price}} / 1M tokens",
+    "输出价格：{{symbol}}{{price}} / 1M tokens": "輸出價格：{{symbol}}{{price}} / 1M tokens",
+    "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(輸入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 輸出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
+    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "階梯定價（≤{{maxTokens}} tokens）：輸入 {{symbol}}{{inputPrice}} / 輸出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}"
   }
 }

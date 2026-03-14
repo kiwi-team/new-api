@@ -2884,6 +2884,15 @@
     "项目统计": "Project Statistics",
     "历史消耗": "Historical Consumption",
     "选择时间范围": "Select time range",
+    "模型阶梯价格": "Model Tiered Pricing",
+    "按输入 Token 数量分档计费，优先级高于固定价格和倍率": "Tiered billing based on input token count, takes priority over fixed price and ratio",
+    "为一个 JSON 文本，键为模型名称，值为价格档位数组，例如 {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}": "A JSON text with model name as key and price tier array as value, e.g.: {\"qwen-long\": [{\"max_tokens\": 500000, \"input_price\": 0.5, \"output_price\": 2.0}, {\"max_tokens\": 1000000, \"input_price\": 1.0, \"output_price\": 4.0}]}",
+    "阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}": "Tiered price (≤{{maxTokens}} tokens): Input {{symbol}}{{inputPrice}} / Output {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}: {{ratio}}",
+    "阶梯定价（≤{{maxTokens}} tokens）": "Tiered pricing (≤{{maxTokens}} tokens)",
+    "输入价格：{{symbol}}{{price}} / 1M tokens": "Input price: {{symbol}}{{price}} / 1M tokens",
+    "输出价格：{{symbol}}{{price}} / 1M tokens": "Output price: {{symbol}}{{price}} / 1M tokens",
+    "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Input {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Output {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
+    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Tiered pricing (≤{{maxTokens}} tokens): Input {{symbol}}{{inputPrice}} / Output {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

@@ -190,7 +190,7 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	}
 	tokenPart := "'' as token_name, 0 as token_id"
 	if expandTokens {
-		tokenPart = "token_name, token_id"
+		tokenPart = "MAX(token_name) as token_name, token_id"
 	}
 	selectFields := datePart + ", client_user_id, " + modelPart + ", " + tokenPart + ", sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
 	tx := DB.Model(&QuotaData{}).
@@ -275,7 +275,7 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		groupParts = append(groupParts, "model_name")
 	}
 	if expandTokens {
-		groupParts = append(groupParts, "token_name", "token_id")
+		groupParts = append(groupParts, "token_id")
 	}
 	groupClause := strings.Join(groupParts, ", ")
 

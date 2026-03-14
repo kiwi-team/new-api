@@ -875,7 +875,19 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	var audioInputQuota decimal.Decimal
 	var audioInputPrice float64
 	isClaudeUsageSemantic := relayInfo.FinalRequestRelayFormat == types.RelayFormatClaude
-	if !relayInfo.PriceData.UsePrice {
+	if relayInfo.PriceData.UseTieredPrice {
+		// 阶梯价格计费：根据实际 promptTokens 重新匹配档位
+		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
+		if useTiered && len(tieredPriceTiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
+			dTieredInputPrice := decimal.NewFromFloat(tier.InputPrice)
+			dTieredOutputPrice := decimal.NewFromFloat(tier.OutputPrice)
+			dMillion := decimal.NewFromInt(1_000_000)
+			inputQuota := dPromptTokens.Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+			outputQuota := dCompletionTokens.Mul(dTieredOutputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+			quotaCalculateDecimal = inputQuota.Add(outputQuota)
+		}
+	} else if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
 		// 减去 cached tokens
 		// Anthropic API 的 input_tokens 已经不包含缓存 tokens，不需要减去
@@ -1027,6 +1039,12 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	if !dImageGenerationCallQuota.IsZero() {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = imageGenerationCallPrice
+	}
+	if relayInfo.PriceData.UseTieredPrice {
+		other["use_tiered_price"] = true
+		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
+		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
+		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
 	}
 
 	// 记录请求体读取耗时（毫秒）

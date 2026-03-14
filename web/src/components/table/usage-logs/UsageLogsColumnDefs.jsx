@@ -940,6 +940,10 @@ export const getLogsColumns = ({
               other?.original_group_ratio,
               other?.user_group_discount,
               other?.user_model_extra_discount,
+              other?.use_tiered_price || false,
+              other?.tiered_input_price || 0,
+              other?.tiered_output_price || 0,
+              other?.tiered_max_tokens || 0,
             )
           : renderModelPriceSimple(
               other.model_ratio,
@@ -961,6 +965,10 @@ export const getLogsColumns = ({
               other?.original_group_ratio,
               other?.user_group_discount,
               other?.user_model_extra_discount,
+              other?.use_tiered_price || false,
+              other?.tiered_input_price || 0,
+              other?.tiered_output_price || 0,
+              other?.tiered_max_tokens || 0,
             );
         return (
             <Typography.Paragraph

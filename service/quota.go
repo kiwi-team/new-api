@@ -38,6 +38,10 @@ type QuotaInfo struct {
 	ModelPrice    float64
 	ModelRatio    float64
 	GroupRatio    float64
+	// 阶梯价格相关字段
+	UseTieredPrice    bool
+	TieredInputPrice  float64
+	TieredOutputPrice float64
 }
 
 func hasCustomModelRatio(modelName string, currentRatio float64) bool {
@@ -49,6 +53,20 @@ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 }
 
 func calculateAudioQuota(info QuotaInfo) int {
+	if info.UseTieredPrice {
+		// 阶梯价格计费：使用已匹配的档位价格
+		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		groupRatio := decimal.NewFromFloat(info.GroupRatio)
+		inputTokens := decimal.NewFromInt(int64(info.InputDetails.TextTokens + info.InputDetails.AudioTokens + info.InputDetails.VideoTokens))
+		outputTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens + info.OutputDetails.AudioTokens))
+		inputPrice := decimal.NewFromFloat(info.TieredInputPrice).Div(decimal.NewFromInt(1_000_000))
+		outputPrice := decimal.NewFromFloat(info.TieredOutputPrice).Div(decimal.NewFromInt(1_000_000))
+		inputQuota := inputTokens.Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio)
+		outputQuota := outputTokens.Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio)
+		quota := inputQuota.Add(outputQuota)
+		return int(quota.Round(0).IntPart())
+	}
+
 	if info.UsePrice {
 		modelPrice := decimal.NewFromFloat(info.ModelPrice)
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -136,10 +154,20 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   relayInfo.UsePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: actualGroupRatio,
+		ModelName:      modelName,
+		UsePrice:       relayInfo.UsePrice,
+		ModelRatio:     modelRatio,
+		GroupRatio:     actualGroupRatio,
+		UseTieredPrice: relayInfo.PriceData.UseTieredPrice,
+	}
+	if relayInfo.PriceData.UseTieredPrice {
+		// 阶梯价格：根据实际 inputTokens 重新匹配档位
+		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
+		if useTiered && len(tieredPriceTiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens+videoInputTokens)
+			quotaInfo.TieredInputPrice = tier.InputPrice
+			quotaInfo.TieredOutputPrice = tier.OutputPrice
+		}
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -192,10 +220,20 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:      modelName,
+		UsePrice:       usePrice,
+		ModelRatio:     modelRatio,
+		GroupRatio:     groupRatio,
+		UseTieredPrice: relayInfo.PriceData.UseTieredPrice,
+	}
+	if relayInfo.PriceData.UseTieredPrice {
+		// 阶梯价格：根据实际 inputTokens 重新匹配档位
+		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
+		if useTiered && len(tieredPriceTiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens+videoInputTokens)
+			quotaInfo.TieredInputPrice = tier.InputPrice
+			quotaInfo.TieredOutputPrice = tier.OutputPrice
+		}
 	}
 
 	quota := calculateAudioQuota(quotaInfo)
@@ -293,7 +331,16 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 
 	calculateQuota := 0.0
-	if !relayInfo.PriceData.UsePrice {
+	if relayInfo.PriceData.UseTieredPrice {
+		// 阶梯价格计费：根据实际 inputTokens 重新匹配档位
+		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
+		if useTiered && len(tieredPriceTiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
+			inputQuota := float64(promptTokens) * (tier.InputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+			outputQuota := float64(completionTokens) * (tier.OutputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+			calculateQuota = inputQuota + outputQuota
+		}
+	} else if !relayInfo.PriceData.UsePrice {
 		calculateQuota = float64(promptTokens)
 		calculateQuota += float64(cacheTokens) * cacheRatio
 		calculateQuota += float64(cacheCreationTokens5m) * cacheCreationRatio5m
@@ -308,7 +355,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		calculateQuota = modelPrice * common.QuotaPerUnit * groupRatio
 	}
 
-	if modelRatio != 0 && calculateQuota <= 0 {
+	if !relayInfo.PriceData.UseTieredPrice && modelRatio != 0 && calculateQuota <= 0 {
 		calculateQuota = 1
 	}
 
@@ -418,10 +465,20 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  relayInfo.OriginModelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:      relayInfo.OriginModelName,
+		UsePrice:       usePrice,
+		ModelRatio:     modelRatio,
+		GroupRatio:     groupRatio,
+		UseTieredPrice: relayInfo.PriceData.UseTieredPrice,
+	}
+	if relayInfo.PriceData.UseTieredPrice {
+		// 阶梯价格：根据实际 inputTokens 重新匹配档位
+		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(relayInfo.OriginModelName)
+		if useTiered && len(tieredPriceTiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens)
+			quotaInfo.TieredInputPrice = tier.InputPrice
+			quotaInfo.TieredOutputPrice = tier.OutputPrice
+		}
 	}
 
 	quota := calculateAudioQuota(quotaInfo)

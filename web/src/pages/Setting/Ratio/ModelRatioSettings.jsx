@@ -41,6 +41,7 @@ export default function ModelRatioSettings(props) {
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
     ModelPrice: '',
+    TieredPrice: '',
     ModelRatio: '',
     CacheRatio: '',
     CreateCacheRatio: '',
@@ -160,6 +161,28 @@ export default function ModelRatioSettings(props) {
                 },
               ]}
               onChange={(value) => setInputs({ ...inputs, ModelPrice: value })}
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('模型阶梯价格')}
+              extraText={t('按输入 Token 数量分档计费，优先级高于固定价格和倍率')}
+              placeholder={t(
+                '为一个 JSON 文本，键为模型名称，值为价格档位数组，例如 {"qwen-long": [{"max_tokens": 500000, "input_price": 0.5, "output_price": 2.0}, {"max_tokens": 1000000, "input_price": 1.0, "output_price": 4.0}]}',
+              )}
+              field={'TieredPrice'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) => setInputs({ ...inputs, TieredPrice: value })}
             />
           </Col>
         </Row>
