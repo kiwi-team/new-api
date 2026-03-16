@@ -886,6 +886,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			inputQuota := dPromptTokens.Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
 			outputQuota := dCompletionTokens.Mul(dTieredOutputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
 			quotaCalculateDecimal = inputQuota.Add(outputQuota)
+			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
+			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
+			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 		}
 	} else if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
