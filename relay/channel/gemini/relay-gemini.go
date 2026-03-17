@@ -49,6 +49,15 @@ var geminiSupportedMimeTypes = map[string]bool{
 	"video/flv":       true,
 }
 
+func resetMimeType(mimeType string) string {
+	switch mimeType {
+	case "audio/x-wav":
+		return "audio/wav"
+	default:
+		return mimeType
+	}
+}
+
 const thoughtSignatureBypassValue = "context_engineering_is_the_way_to_go"
 
 // Gemini 允许的思考预算范围
@@ -692,6 +701,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				if _, ok := geminiSupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
 					return nil, fmt.Errorf("mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", mimeType, source.GetIdentifier(), getSupportedMimeTypesList())
 				}
+				mimeType = resetMimeType(mimeType)
 
 				parts = append(parts, dto.GeminiPart{
 					InlineData: &dto.GeminiInlineData{
@@ -725,7 +735,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 				parts = append(parts, dto.GeminiPart{
 					InlineData: &dto.GeminiInlineData{
-						MimeType: mimeType,
+						MimeType: resetMimeType(mimeType),
 						Data:     base64Data,
 					},
 				})
@@ -756,7 +766,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					}
 					parts = append(parts, dto.GeminiPart{
 						FileData: &dto.GeminiFileData{
-							MimeType: uploadedFile.MIMEType,
+							MimeType: resetMimeType(uploadedFile.MIMEType),
 							FileUri:  uploadedFile.URI,
 						},
 					})
@@ -768,7 +778,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					}
 					parts = append(parts, dto.GeminiPart{
 						InlineData: &dto.GeminiInlineData{
-							MimeType: fileData.MimeType,
+							MimeType: resetMimeType(fileData.MimeType),
 							Data:     fileData.Base64Data,
 						},
 					})
@@ -822,7 +832,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					}
 					parts = append(parts, dto.GeminiPart{
 						FileData: &dto.GeminiFileData{
-							MimeType: mimeType,
+							MimeType: resetMimeType(mimeType),
 							FileUri:  videoFileUrl,
 						},
 					})
