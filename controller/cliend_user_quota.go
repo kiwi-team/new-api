@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -89,6 +90,7 @@ func CreateCliendUserQuota(c *gin.Context) {
 		})
 		return
 	}
+	req.ClientUserId = strings.TrimSpace(req.ClientUserId)
 	row := model.CliendUserQuota{
 		ClientUserId: req.ClientUserId,
 		ClientName:   req.ClientName,
@@ -136,6 +138,7 @@ func UpdateCliendUserQuota(c *gin.Context) {
 		})
 		return
 	}
+	req.ClientUserId = strings.TrimSpace(req.ClientUserId)
 	var cur model.CliendUserQuota
 	if err := model.DB.First(&cur, "client_user_id = ?", req.ClientUserId).Error; err != nil {
 		common.ApiError(c, err)
@@ -264,6 +267,31 @@ func GetCliendUserQuotaLogs(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(rows)
 	common.ApiSuccess(c, pageInfo)
+}
+
+// GetBatchProjectBudgetSummary 批量获取多个UID的项目预算汇总
+func GetBatchProjectBudgetSummary(c *gin.Context) {
+	uids := c.Query("uids")
+	if uids == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    map[string]interface{}{},
+		})
+		return
+	}
+	uidList := strings.Split(uids, ",")
+	for i := range uidList {
+		uidList[i] = strings.TrimSpace(uidList[i])
+	}
+	result, err := model.GetBatchProjectBudgetSummary(uidList)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+	})
 }
 
 // GetCliendUserProjectAllocations 获取某个UID的项目预算分配详情

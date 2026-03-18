@@ -383,6 +383,19 @@ func GetQuotaByTime(userId int, startTime int64, endTime int64) (int, error) {
 	return quota, err
 }
 
+// GetCachedQuotaByUser 获取内存缓存中尚未落库的用户消耗额度
+func GetCachedQuotaByUser(userId int, startTime int64, endTime int64) int {
+	CacheQuotaDataLock.Lock()
+	defer CacheQuotaDataLock.Unlock()
+	var total int
+	for _, qd := range CacheQuotaData {
+		if qd.UserID == userId && qd.CreatedAt >= startTime && qd.CreatedAt <= endTime {
+			total += qd.Quota
+		}
+	}
+	return total
+}
+
 // ChannelQuotaStatistics 渠道消耗统计
 type ChannelQuotaStatistics struct {
 	ChannelId   int     `json:"channel_id"`

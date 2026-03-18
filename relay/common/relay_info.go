@@ -57,6 +57,13 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+// GCSObjectRef holds the info needed to delete a GCS object after the request.
+type GCSObjectRef struct {
+	Bucket      string
+	Object      string
+	Credentials string
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -159,6 +166,14 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+
+	// UploadedGeminiFileNames tracks file names uploaded to the Gemini Files API
+	// so they can be deleted after the request completes.
+	UploadedGeminiFileNames []string
+
+	// UploadedGCSObjects tracks objects uploaded to Google Cloud Storage
+	// so they can be deleted after the request completes.
+	UploadedGCSObjects []GCSObjectRef
 
 	// WsRequestMessages collects non-binary client→upstream WebSocket messages for logging.
 	WsRequestMessages []string

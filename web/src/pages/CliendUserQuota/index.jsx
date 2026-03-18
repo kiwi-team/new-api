@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
-import { Button, Table, Modal, Form, Input, Space, Typography, Tag } from '@douyinfe/semi-ui';
+import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Tooltip } from '@douyinfe/semi-ui';
 
 const { Title } = Typography;
 
@@ -55,6 +55,24 @@ const CliendUserQuotaPage = () => {
   const [projectAllocations, setProjectAllocations] = useState([]);
   const [projectModalLoading, setProjectModalLoading] = useState(false);
   const [projectModalUid, setProjectModalUid] = useState('');
+  // 项目预算汇总（列表内联显示）
+  const [projectBudgetMap, setProjectBudgetMap] = useState({});
+
+  const fetchBatchProjectBudget = useCallback(async (items) => {
+    if (!items || items.length === 0) return;
+    const uids = items.map((r) => r.client_user_id).join(',');
+    try {
+      const res = await API.get('/api/cliend_user_quota/batch-project-budget', {
+        params: { uids },
+      });
+      const { success, data } = res.data;
+      if (success && data) {
+        setProjectBudgetMap(data);
+      }
+    } catch (e) {
+      // silent
+    }
+  }, []);
 
   const fetchProjectAllocations = async (clientUserId) => {
     setProjectModalUid(clientUserId);
@@ -89,10 +107,12 @@ const CliendUserQuotaPage = () => {
       const res = await API.get(url, { params });
       const { success, message, data } = res.data;
       if (success) {
-        setData(data.items || []);
+        const items = data.items || [];
+        setData(items);
         setTotal(data.total || 0);
         setPage(data.p || pageNum);
         setPageSize(data.page_size || size);
+        fetchBatchProjectBudget(items);
       } else {
         showError(message || '加载失败');
       }
@@ -157,6 +177,9 @@ const CliendUserQuotaPage = () => {
     setSubmitLoading(true);
     try {
       const payload = formApi ? formApi.getValues() : { ...formValues };
+      if (payload.client_user_id) {
+        payload.client_user_id = payload.client_user_id.trim();
+      }
       if (payload.expired_at instanceof Date) {
         payload.expired_at = Math.floor(payload.expired_at.getTime() / 1000);
       }
@@ -220,17 +243,34 @@ const CliendUserQuotaPage = () => {
     {
       title: '项目预算',
       dataIndex: 'project_budget',
-      width: 120,
-      render: (_, record) => (
-        <Button
-          theme='borderless'
-          type='primary'
-          size='small'
-          onClick={() => fetchProjectAllocations(record.client_user_id)}
-        >
-          查看
-        </Button>
-      ),
+      width: 200,
+      render: (_, record) => {
+        const summary = projectBudgetMap[record.client_user_id];
+        if (!summary || !summary.projects || summary.projects.length === 0) {
+          return <span style={{ color: '#999' }}>-</span>;
+        }
+        const tooltipContent = (
+          <div>
+            {summary.projects.map((p) => (
+              <div key={p.project_id}>
+                {p.project_name}: ${p.allocated_quota}
+              </div>
+            ))}
+          </div>
+        );
+        return (
+          <Tooltip content={tooltipContent} position='top'>
+            <Button
+              theme='borderless'
+              type='primary'
+              size='small'
+              onClick={() => fetchProjectAllocations(record.client_user_id)}
+            >
+              ${summary.total_allocated}（{summary.projects.length}个项目）
+            </Button>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '操作',

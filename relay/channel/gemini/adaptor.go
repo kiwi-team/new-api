@@ -257,6 +257,18 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	// Clean up uploaded Gemini files after response is fully handled
+	if len(info.UploadedGeminiFileNames) > 0 {
+		apiKey := info.ApiKey
+		fileNames := info.UploadedGeminiFileNames
+		defer CleanupGeminiFiles(apiKey, fileNames)
+	}
+	// Clean up uploaded GCS objects after response is fully handled
+	if len(info.UploadedGCSObjects) > 0 {
+		gcsObjects := info.UploadedGCSObjects
+		defer CleanupGCSObjects(gcsObjects)
+	}
+
 	if info.RelayMode == constant.RelayModeGemini {
 		if strings.Contains(info.RequestURLPath, ":embedContent") ||
 			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {

@@ -410,6 +410,7 @@ func SetApiRouter(router *gin.Engine) {
 			cuQuotaRoute.GET("/export", controller.ExportCliendUserQuotaCSV)
 			cuQuotaRoute.GET("/logs", controller.GetCliendUserQuotaLogs)
 			cuQuotaRoute.GET("/project-allocations", controller.GetCliendUserProjectAllocations)
+			cuQuotaRoute.GET("/batch-project-budget", controller.GetBatchProjectBudgetSummary)
 			cuQuotaRoute.GET("/:id", controller.GetCliendUserQuota)
 			cuQuotaRoute.POST("/", controller.CreateCliendUserQuota)
 			cuQuotaRoute.PUT("/", controller.UpdateCliendUserQuota)

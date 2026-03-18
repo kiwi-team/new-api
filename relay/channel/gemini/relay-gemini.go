@@ -58,6 +58,16 @@ func resetMimeType(mimeType string) string {
 	}
 }
 
+// extractGCSObjectName extracts the object name from a gs:// URI.
+// e.g. "gs://mybucket/path/to/object" with bucket "mybucket" returns "path/to/object".
+func extractGCSObjectName(bucket string, uri string) string {
+	prefix := fmt.Sprintf("gs://%s/", bucket)
+	if strings.HasPrefix(uri, prefix) {
+		return strings.TrimPrefix(uri, prefix)
+	}
+	return ""
+}
+
 const thoughtSignatureBypassValue = "context_engineering_is_the_way_to_go"
 
 // Gemini 允许的思考预算范围
@@ -656,6 +666,17 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						if err != nil {
 							return nil, fmt.Errorf("upload image file to google failed: %s", err.Error())
 						}
+						if uploadedFile.Name != "" {
+							info.UploadedGeminiFileNames = append(info.UploadedGeminiFileNames, uploadedFile.Name)
+						} else if bukect != "" {
+							if objName := extractGCSObjectName(bukect, uploadedFile.URI); objName != "" {
+								info.UploadedGCSObjects = append(info.UploadedGCSObjects, relaycommon.GCSObjectRef{
+									Bucket:      bukect,
+									Object:      objName,
+									Credentials: key.(string),
+								})
+							}
+						}
 						parts = append(parts, dto.GeminiPart{
 							FileData: &dto.GeminiFileData{
 								MimeType: uploadedFile.MIMEType,
@@ -764,6 +785,17 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if err != nil {
 						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
 					}
+					if uploadedFile.Name != "" {
+						info.UploadedGeminiFileNames = append(info.UploadedGeminiFileNames, uploadedFile.Name)
+					} else if bukect != "" {
+						if objName := extractGCSObjectName(bukect, uploadedFile.URI); objName != "" {
+							info.UploadedGCSObjects = append(info.UploadedGCSObjects, relaycommon.GCSObjectRef{
+								Bucket:      bukect,
+								Object:      objName,
+								Credentials: key.(string),
+							})
+						}
+					}
 					parts = append(parts, dto.GeminiPart{
 						FileData: &dto.GeminiFileData{
 							MimeType: resetMimeType(uploadedFile.MIMEType),
@@ -808,6 +840,17 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
+					}
+					if uploadedFile.Name != "" {
+						info.UploadedGeminiFileNames = append(info.UploadedGeminiFileNames, uploadedFile.Name)
+					} else if bukect != "" {
+						if objName := extractGCSObjectName(bukect, uploadedFile.URI); objName != "" {
+							info.UploadedGCSObjects = append(info.UploadedGCSObjects, relaycommon.GCSObjectRef{
+								Bucket:      bukect,
+								Object:      objName,
+								Credentials: key.(string),
+							})
+						}
 					}
 					parts = append(parts, dto.GeminiPart{
 						FileData: &dto.GeminiFileData{

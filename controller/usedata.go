@@ -117,6 +117,9 @@ func WarningUserQuota() {
 				logger.LogError(ctx, "error getting quota: "+err.Error())
 				continue
 			}
+			// 加上内存缓存中尚未落库的消耗
+			cachedQuota := model.GetCachedQuotaByUser(userId, prevWarningTime, now)
+			quota += cachedQuota
 			dollerQuota := int(float64(quota) / common.QuotaPerUnit)
 			if dollerQuota >= common.QuotaWarningThreshold {
 				content := fmt.Sprintf("用户 %d 在%s ~ %s 内消耗了 %d 美元额度", userId, startTimeStr, endTimeStr, dollerQuota)

@@ -100,7 +100,7 @@ func FeishuQuotaAlerts() {
 			if err == nil {
 				usd := float64(hourSum) / common.QuotaPerUnit
 				if usd >= 5000 {
-					content := fmt.Sprintf("平台整体消耗预警：%s 内消耗约 $%.0f，阈值 $5000，@管理员", now.Format("2006-01-02 15:04"))
+					content := fmt.Sprintf("平台整体消耗预警：%s 内消耗约 $%.0f，阈值 $5000，@管理员", now.Format("2006-01-02 15"), usd)
 					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
 						MsgType: "text",
 						Content: dto.FeishuContent{Text: content},

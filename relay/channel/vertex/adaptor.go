@@ -365,6 +365,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	// Clean up uploaded GCS objects after response is fully handled
+	if len(info.UploadedGCSObjects) > 0 {
+		gcsObjects := info.UploadedGCSObjects
+		defer gemini.CleanupGCSObjects(gcsObjects)
+	}
+
 	claudeAdaptor := claude.Adaptor{}
 	if info.IsStream {
 		switch a.RequestMode {

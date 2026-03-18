@@ -448,3 +448,69 @@ func GetProjectAllocationDetails(clientUserId string) ([]*ProjectAllocationDetai
 	}
 	return details, nil
 }
+
+// ProjectBudgetSummary 某个UID的项目预算汇总
+type ProjectBudgetSummary struct {
+	ClientUserId   string                     `json:"client_user_id"`
+	TotalAllocated int                        `json:"total_allocated"`
+	Projects       []*ProjectAllocationDetail `json:"projects"`
+}
+
+// GetBatchProjectBudgetSummary 批量获取多个UID的项目预算汇总
+func GetBatchProjectBudgetSummary(clientUserIds []string) (map[string]*ProjectBudgetSummary, error) {
+	if len(clientUserIds) == 0 {
+		return map[string]*ProjectBudgetSummary{}, nil
+	}
+
+	var allocations []*ProjectAllocation
+	err := DB.Where("client_user_id IN ?", clientUserIds).Find(&allocations).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect unique project IDs
+	projectIdSet := make(map[int]bool)
+	for _, a := range allocations {
+		projectIdSet[a.ProjectId] = true
+	}
+	projectIds := make([]int, 0, len(projectIdSet))
+	for id := range projectIdSet {
+		projectIds = append(projectIds, id)
+	}
+
+	// Batch load projects
+	projectMap := make(map[int]*Project)
+	if len(projectIds) > 0 {
+		var projects []*Project
+		if err := DB.Where("id IN ?", projectIds).Find(&projects).Error; err == nil {
+			for _, p := range projects {
+				projectMap[p.Id] = p
+			}
+		}
+	}
+
+	// Build summaries
+	result := make(map[string]*ProjectBudgetSummary)
+	for _, a := range allocations {
+		project, ok := projectMap[a.ProjectId]
+		if !ok {
+			continue
+		}
+		summary, exists := result[a.ClientUserId]
+		if !exists {
+			summary = &ProjectBudgetSummary{
+				ClientUserId: a.ClientUserId,
+				Projects:     make([]*ProjectAllocationDetail, 0),
+			}
+			result[a.ClientUserId] = summary
+		}
+		summary.TotalAllocated += a.AllocatedQuota
+		summary.Projects = append(summary.Projects, &ProjectAllocationDetail{
+			ProjectId:      a.ProjectId,
+			ProjectName:    project.ProjectName,
+			AllocatedQuota: a.AllocatedQuota,
+		})
+	}
+
+	return result, nil
+}

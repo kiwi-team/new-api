@@ -13,6 +13,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
 	"google.golang.org/genai"
@@ -144,6 +146,30 @@ func UploadByConfigAPI(ctx context.Context, fileUri string) (*genai.File, error)
 		MIMEType:    respBody.MIMEType,
 	}, nil
 
+}
+
+// DeleteGCSObject deletes an object from Google Cloud Storage.
+func DeleteGCSObject(credentials string, bucket string, object string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(credentials)))
+	if err != nil {
+		fmt.Printf("failed to create GCS client for object deletion, err: %v\n", err)
+		return
+	}
+	defer client.Close()
+
+	if err := client.Bucket(bucket).Object(object).Delete(ctx); err != nil {
+		fmt.Printf("failed to delete GCS object %s/%s, err: %v\n", bucket, object, err)
+	}
+}
+
+// CleanupGCSObjects deletes all uploaded GCS objects in the background.
+func CleanupGCSObjects(objects []relaycommon.GCSObjectRef) {
+	for _, obj := range objects {
+		go DeleteGCSObject(obj.Credentials, obj.Bucket, obj.Object)
+	}
 }
 
 func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string, retryTimes int) (*genai.File, error) {
