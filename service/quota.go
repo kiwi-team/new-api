@@ -54,16 +54,39 @@ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 
 func calculateAudioQuota(info QuotaInfo) int {
 	if info.UseTieredPrice {
-		// 阶梯价格计费：使用已匹配的档位价格
+		// 阶梯价格计费：文本 tokens 使用阶梯价格，音频/视频 tokens 使用原始倍率
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		groupRatio := decimal.NewFromFloat(info.GroupRatio)
-		inputTokens := decimal.NewFromInt(int64(info.InputDetails.TextTokens + info.InputDetails.AudioTokens + info.InputDetails.VideoTokens))
-		outputTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens + info.OutputDetails.AudioTokens))
-		inputPrice := decimal.NewFromFloat(info.TieredInputPrice).Div(decimal.NewFromInt(1_000_000))
-		outputPrice := decimal.NewFromFloat(info.TieredOutputPrice).Div(decimal.NewFromInt(1_000_000))
-		inputQuota := inputTokens.Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio)
-		outputQuota := outputTokens.Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio)
-		quota := inputQuota.Add(outputQuota)
+		dMillion := decimal.NewFromInt(1_000_000)
+		inputPrice := decimal.NewFromFloat(info.TieredInputPrice).Div(dMillion)
+		outputPrice := decimal.NewFromFloat(info.TieredOutputPrice).Div(dMillion)
+
+		// 文本 tokens 使用阶梯价格
+		inputTextTokens := decimal.NewFromInt(int64(info.InputDetails.TextTokens))
+		outputTextTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens))
+		textInputQuota := inputTextTokens.Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio)
+		textOutputQuota := outputTextTokens.Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio)
+		quota := textInputQuota.Add(textOutputQuota)
+
+		// 音频/视频 tokens 使用原始倍率 * 阶梯输入价格
+		audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(info.ModelName))
+		audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(info.ModelName))
+		videoRatio := decimal.NewFromFloat(ratio_setting.GetVideoRatio(info.ModelName))
+
+		inputAudioTokens := decimal.NewFromInt(int64(info.InputDetails.AudioTokens))
+		outputAudioTokens := decimal.NewFromInt(int64(info.OutputDetails.AudioTokens))
+		inputVideoTokens := decimal.NewFromInt(int64(info.InputDetails.VideoTokens))
+
+		if !inputAudioTokens.IsZero() {
+			quota = quota.Add(inputAudioTokens.Mul(audioRatio).Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio))
+		}
+		if !outputAudioTokens.IsZero() {
+			quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio).Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio))
+		}
+		if !inputVideoTokens.IsZero() {
+			quota = quota.Add(inputVideoTokens.Mul(videoRatio).Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio))
+		}
+
 		return int(quota.Round(0).IntPart())
 	}
 
@@ -333,12 +356,29 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	calculateQuota := 0.0
 	if relayInfo.PriceData.UseTieredPrice {
 		// 阶梯价格计费：根据实际 inputTokens 重新匹配档位
+		// 阶梯价格只覆盖文本 input/output，缓存 tokens 仍使用原始倍率
 		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
 		if useTiered && len(tieredPriceTiers) > 0 {
 			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
-			inputQuota := float64(promptTokens) * (tier.InputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+			tieredInputPricePerToken := tier.InputPrice / 1_000_000
+			// 文本 input/output 使用阶梯价格
+			inputQuota := float64(promptTokens) * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
 			outputQuota := float64(completionTokens) * (tier.OutputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
 			calculateQuota = inputQuota + outputQuota
+			// 缓存 tokens 使用阶梯输入价格 * 缓存倍率
+			if cacheTokens > 0 {
+				calculateQuota += float64(cacheTokens) * cacheRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+			}
+			if cacheCreationTokens5m > 0 {
+				calculateQuota += float64(cacheCreationTokens5m) * cacheCreationRatio5m * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+			}
+			if cacheCreationTokens1h > 0 {
+				calculateQuota += float64(cacheCreationTokens1h) * cacheCreationRatio1h * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+			}
+			remainingCacheCreationTokens := cacheCreationTokens - cacheCreationTokens5m - cacheCreationTokens1h
+			if remainingCacheCreationTokens > 0 {
+				calculateQuota += float64(remainingCacheCreationTokens) * cacheCreationRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+			}
 		}
 	} else if !relayInfo.PriceData.UsePrice {
 		calculateQuota = float64(promptTokens)

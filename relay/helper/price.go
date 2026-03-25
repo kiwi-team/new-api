@@ -134,14 +134,32 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			}
 		}
 
+		// 阶梯价格只覆盖文本 input/output，其他类型（缓存、图片、音频等）仍使用原始倍率
+		completionRatio := ratio_setting.GetCompletionRatio(info.OriginModelName)
+		cacheRatio, _ := ratio_setting.GetCacheRatio(info.OriginModelName)
+		cacheCreationRatio, _ := ratio_setting.GetCreateCacheRatio(info.OriginModelName)
+		cacheCreationRatio5m := cacheCreationRatio
+		cacheCreationRatio1h := cacheCreationRatio * claudeCacheCreation1hMultiplier
+		imageRatio, _ := ratio_setting.GetImageRatio(info.OriginModelName)
+		audioRatio := ratio_setting.GetAudioRatio(info.OriginModelName)
+		audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+
 		priceData := types.PriceData{
-			FreeModel:         freeModel,
-			GroupRatioInfo:    groupRatioInfo,
-			UseTieredPrice:    true,
-			TieredInputPrice:  firstTier.InputPrice,
-			TieredOutputPrice: firstTier.OutputPrice,
-			TieredMaxTokens:   firstTier.MaxTokens,
-			QuotaToPreConsume: preConsumedQuota,
+			FreeModel:            freeModel,
+			GroupRatioInfo:       groupRatioInfo,
+			UseTieredPrice:       true,
+			TieredInputPrice:     firstTier.InputPrice,
+			TieredOutputPrice:    firstTier.OutputPrice,
+			TieredMaxTokens:      firstTier.MaxTokens,
+			QuotaToPreConsume:    preConsumedQuota,
+			CompletionRatio:      completionRatio,
+			CacheRatio:           cacheRatio,
+			CacheCreationRatio:   cacheCreationRatio,
+			CacheCreation5mRatio: cacheCreationRatio5m,
+			CacheCreation1hRatio: cacheCreationRatio1h,
+			ImageRatio:           imageRatio,
+			AudioRatio:           audioRatio,
+			AudioCompletionRatio: audioCompletionRatio,
 		}
 
 		if common.DebugEnabled {

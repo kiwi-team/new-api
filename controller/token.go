@@ -378,7 +378,8 @@ func UpdateToken(c *gin.Context) {
 }
 
 type TokenBatch struct {
-	Ids []int `json:"ids"`
+	Ids   []int  `json:"ids"`
+	Group string `json:"group"`
 }
 
 func DeleteTokenBatch(c *gin.Context) {
@@ -394,6 +395,52 @@ func DeleteTokenBatch(c *gin.Context) {
 		userId = 0
 	}
 	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
+}
+
+func BatchSetTokenGroup(c *gin.Context) {
+	tokenBatch := TokenBatch{}
+	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	if role >= common.RoleRootUser {
+		userId = 0
+	}
+	count, err := model.BatchSetTokenGroup(tokenBatch.Ids, tokenBatch.Group, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
+}
+
+type BatchAppendModelsRequest struct {
+	Group  string   `json:"group"`
+	Models []string `json:"models"`
+}
+
+func BatchAppendTokenModels(c *gin.Context) {
+	req := BatchAppendModelsRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Group == "" || len(req.Models) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	count, err := model.BatchAppendTokenModelsByGroup(req.Group, req.Models)
 	if err != nil {
 		common.ApiError(c, err)
 		return

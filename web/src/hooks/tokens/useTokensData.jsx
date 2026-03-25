@@ -348,6 +348,49 @@ export const useTokensData = (openFluentNotification) => {
     }
   };
 
+  // Batch set group for selected tokens
+  const batchSetGroup = async (group) => {
+    if (selectedKeys.length === 0) {
+      showError(t('请至少选择一个令牌！'));
+      return;
+    }
+    setLoading(true);
+    try {
+      const ids = selectedKeys.map((token) => token.id);
+      const res = await API.post('/api/token/batch/group', { ids, group });
+      if (res?.data?.success) {
+        const count = res.data.data || 0;
+        showSuccess(t('已为 {{count}} 个令牌设置分组', { count }));
+        await refresh();
+      } else {
+        showError(res?.data?.message || t('操作失败'));
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Batch append models to tokens by group
+  const batchAppendModels = async (group, models) => {
+    setLoading(true);
+    try {
+      const res = await API.post('/api/token/batch/models', { group, models });
+      if (res?.data?.success) {
+        const count = res.data.data || 0;
+        showSuccess(t('已为 {{count}} 个令牌添加模型', { count }));
+        await refresh();
+      } else {
+        showError(res?.data?.message || t('操作失败'));
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Batch copy tokens
   const batchCopyTokens = (copyType) => {
     if (selectedKeys.length === 0) {
@@ -462,6 +505,8 @@ export const useTokensData = (openFluentNotification) => {
     rowSelection,
     handleRow,
     batchDeleteTokens,
+    batchSetGroup,
+    batchAppendModels,
     batchCopyTokens,
     syncPageData,
 

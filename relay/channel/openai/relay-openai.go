@@ -344,7 +344,36 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
+	// 检查 finish_reason 是否表示上游错误（如 model_context_window_exceeded）
+	// 这类响应虽然格式上是正常的 SSE，但实际上表示请求失败
+	if errFinishReason := checkErrorFinishReason(lastStreamData); errFinishReason != "" {
+		logger.LogError(c, fmt.Sprintf("upstream returned error finish_reason: %s", errFinishReason))
+		return usage, types.NewError(
+			fmt.Errorf("upstream error finish_reason: %s", errFinishReason),
+			types.ErrorCodeBadResponse,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+
 	return usage, nil
+}
+
+// checkErrorFinishReason 检查最后的流式数据中是否包含表示错误的 finish_reason
+func checkErrorFinishReason(lastStreamData string) string {
+	if lastStreamData == "" {
+		return ""
+	}
+	var resp dto.ChatCompletionsStreamResponseSimple
+	if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &resp); err != nil {
+		return ""
+	}
+	if len(resp.Choices) > 0 && resp.Choices[0].FinishReason != nil {
+		fr := *resp.Choices[0].FinishReason
+		if constant.ErrorFinishReasons[fr] {
+			return fr
+		}
+	}
+	return ""
 }
 
 // ParseTextAndImageURL 解析包含文本和图片URL的字符串
@@ -501,6 +530,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		if choice.FinishReason == constant.FinishReasonContentFilter {
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "openai_finish_reason=content_filter")
 			break
+		}
+		if constant.ErrorFinishReasons[choice.FinishReason] {
+			return nil, types.NewError(
+				fmt.Errorf("upstream error finish_reason: %s", choice.FinishReason),
+				types.ErrorCodeBadResponse,
+				types.ErrOptionWithSkipRetry(),
+			)
 		}
 	}
 

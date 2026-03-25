@@ -599,3 +599,86 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 
 	return len(tokens), nil
 }
+
+func BatchSetTokenGroup(ids []int, group string, userId int) (int, error) {
+	if len(ids) == 0 {
+		return 0, errors.New("ids 不能为空！")
+	}
+
+	query := DB.Model(&Token{}).Where("id IN (?)", ids)
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	result := query.Update(commonGroupCol, group)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+
+	if common.RedisEnabled {
+		var tokens []Token
+		q := DB.Where("id IN (?)", ids)
+		if userId > 0 {
+			q = q.Where("user_id = ?", userId)
+		}
+		if err := q.Find(&tokens).Error; err == nil {
+			gopool.Go(func() {
+				for _, t := range tokens {
+					_ = cacheDeleteToken(t.Key)
+				}
+			})
+		}
+	}
+
+	return int(result.RowsAffected), nil
+}
+
+func BatchAppendTokenModelsByGroup(group string, newModels []string) (int, error) {
+	if len(newModels) == 0 {
+		return 0, errors.New("models 不能为空！")
+	}
+
+	var tokens []Token
+	err := DB.Where(commonGroupCol+" = ?", group).Find(&tokens).Error
+	if err != nil {
+		return 0, err
+	}
+	if len(tokens) == 0 {
+		return 0, nil
+	}
+
+	updated := 0
+	for i := range tokens {
+		token := &tokens[i]
+		existingMap := token.GetModelLimitsMap()
+		var toAdd []string
+		for _, m := range newModels {
+			m = strings.TrimSpace(m)
+			if m != "" && !existingMap[m] {
+				toAdd = append(toAdd, m)
+			}
+		}
+		if len(toAdd) == 0 {
+			continue
+		}
+		newLimits := token.ModelLimits
+		if newLimits != "" {
+			newLimits += ","
+		}
+		newLimits += strings.Join(toAdd, ",")
+
+		updates := map[string]interface{}{
+			"model_limits":         newLimits,
+			"model_limits_enabled": true,
+		}
+		if err := DB.Model(&Token{}).Where("id = ?", token.Id).Updates(updates).Error; err != nil {
+			return updated, err
+		}
+		updated++
+
+		if common.RedisEnabled {
+			_ = cacheDeleteToken(token.Key)
+		}
+	}
+
+	return updated, nil
+}

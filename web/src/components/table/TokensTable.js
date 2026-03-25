@@ -18,6 +18,7 @@ import {
   Empty,
   Form,
   Modal,
+  Select,
   Space,
   SplitButtonGroup,
   Table,
@@ -480,6 +481,13 @@ const TokensTable = () => {
   });
   const [compactMode, setCompactMode] = useTableCompactMode('tokens');
   const [showKeys, setShowKeys] = useState({});
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [groupOptions, setGroupOptions] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [showAppendModelsModal, setShowAppendModelsModal] = useState(false);
+  const [appendModelsGroup, setAppendModelsGroup] = useState('');
+  const [appendModels, setAppendModels] = useState([]);
+  const [modelOptions, setModelOptions] = useState([]);
 
   // Form 初始值
   const formInitValues = {
@@ -720,6 +728,124 @@ const TokensTable = () => {
     }
   };
 
+  const fetchGroups = async () => {
+    try {
+      const res = await API.get('/api/user/self/groups');
+      const { success, data } = res.data;
+      if (success) {
+        const options = Object.entries(data).map(([group, info]) => ({
+          label: info.desc || group,
+          value: group,
+        }));
+        setGroupOptions(options);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const openBatchGroupModal = () => {
+    if (selectedKeys.length === 0) {
+      showError(t('请至少选择一个令牌！'));
+      return;
+    }
+    fetchGroups();
+    setSelectedGroup('');
+    setShowGroupModal(true);
+  };
+
+  const batchSetGroup = async () => {
+    setLoading(true);
+    try {
+      const ids = selectedKeys.map((token) => token.id);
+      const res = await API.post('/api/token/batch/group', {
+        ids,
+        group: selectedGroup,
+      });
+      if (res?.data?.success) {
+        const count = res.data.data || 0;
+        showSuccess(
+          t('已为 {{count}} 个令牌设置分组', { count }),
+        );
+        setShowGroupModal(false);
+        await refresh();
+      } else {
+        showError(res?.data?.message || t('操作失败'));
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchModels = async () => {
+    try {
+      const res = await API.get('/api/user/models');
+      const { success, data } = res.data;
+      if (success) {
+        const categories = getModelCategories(t);
+        const options = data.map((model) => {
+          let icon = null;
+          for (const [key, category] of Object.entries(categories)) {
+            if (key !== 'all' && category.filter({ model_name: model })) {
+              icon = category.icon;
+              break;
+            }
+          }
+          return {
+            label: (
+              <span className='flex items-center gap-1'>
+                {icon}
+                {model}
+              </span>
+            ),
+            value: model,
+          };
+        });
+        setModelOptions(options);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const openAppendModelsModal = () => {
+    fetchGroups();
+    fetchModels();
+    setAppendModelsGroup('');
+    setAppendModels([]);
+    setShowAppendModelsModal(true);
+  };
+
+  const batchAppendModels = async () => {
+    if (!appendModelsGroup || appendModels.length === 0) {
+      showError(t('请选择分组和模型'));
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await API.post('/api/token/batch/models', {
+        group: appendModelsGroup,
+        models: appendModels,
+      });
+      if (res?.data?.success) {
+        const count = res.data.data || 0;
+        showSuccess(
+          t('已为 {{count}} 个令牌添加模型', { count }),
+        );
+        setShowAppendModelsModal(false);
+        await refresh();
+      } else {
+        showError(res?.data?.message || t('操作失败'));
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const renderHeader = () => (
     <div className='flex flex-col w-full'>
       <div className='mb-2'>
@@ -808,6 +934,22 @@ const TokensTable = () => {
             size='small'
           >
             {t('复制所选令牌')}
+          </Button>
+          <Button
+            type='tertiary'
+            className='flex-1 md:flex-initial'
+            onClick={openBatchGroupModal}
+            size='small'
+          >
+            {t('设置分组')}
+          </Button>
+          <Button
+            type='tertiary'
+            className='flex-1 md:flex-initial'
+            onClick={openAppendModelsModal}
+            size='small'
+          >
+            {t('批量添加模型')}
           </Button>
           <Button
             type='danger'
@@ -908,6 +1050,70 @@ const TokensTable = () => {
         visiable={showEdit}
         handleClose={closeEdit}
       ></EditToken>
+
+      <Modal
+        title={t('批量设置分组')}
+        visible={showGroupModal}
+        onOk={batchSetGroup}
+        onCancel={() => setShowGroupModal(false)}
+        okButtonProps={{ disabled: selectedGroup === '' }}
+      >
+        <p style={{ marginBottom: 12 }}>
+          {t('为所选的 {{count}} 个令牌设置分组', {
+            count: selectedKeys.length,
+          })}
+        </p>
+        <Select
+          style={{ width: '100%' }}
+          placeholder={t('请选择分组')}
+          value={selectedGroup}
+          onChange={(value) => setSelectedGroup(value)}
+          optionList={groupOptions}
+          filter
+        />
+      </Modal>
+
+      <Modal
+        title={t('批量添加模型')}
+        visible={showAppendModelsModal}
+        onOk={batchAppendModels}
+        onCancel={() => setShowAppendModelsModal(false)}
+        okButtonProps={{
+          disabled: !appendModelsGroup || appendModels.length === 0,
+        }}
+      >
+        <p style={{ marginBottom: 12 }}>
+          {t('为指定分组下的所有令牌追加可用模型（不会覆盖已有模型）')}
+        </p>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>
+            {t('选择分组')}
+          </label>
+          <Select
+            style={{ width: '100%' }}
+            placeholder={t('请选择分组')}
+            value={appendModelsGroup}
+            onChange={(value) => setAppendModelsGroup(value)}
+            optionList={groupOptions}
+            filter
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: 4 }}>
+            {t('选择模型')}
+          </label>
+          <Select
+            style={{ width: '100%' }}
+            placeholder={t('请选择要添加的模型')}
+            value={appendModels}
+            onChange={(value) => setAppendModels(value)}
+            optionList={modelOptions}
+            multiple
+            filter
+            maxTagCount={3}
+          />
+        </div>
+      </Modal>
 
       <Card
         className='!rounded-2xl'

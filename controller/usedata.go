@@ -80,7 +80,7 @@ func WarningUserQuota() {
 	secret := common.OptionMap["FeishuRobotSecret"]
 	for {
 		time.Sleep(time.Duration(common.QuotaWarningInterval) * time.Minute)
-		now := time.Now().Unix()
+		now := time.Now().Unix() - int64(common.DataExportInterval)*3*60 // 3分钟之前
 		ctx := context.TODO()
 
 		userIds := strings.Split(common.QuotaWarningUserIds, ",")
@@ -118,8 +118,8 @@ func WarningUserQuota() {
 				continue
 			}
 			// 加上内存缓存中尚未落库的消耗
-			cachedQuota := model.GetCachedQuotaByUser(userId, prevWarningTime, now)
-			quota += cachedQuota
+			//cachedQuota := model.GetCachedQuotaByUser(userId, prevWarningTime, now)
+			//quota += cachedQuota
 			dollerQuota := int(float64(quota) / common.QuotaPerUnit)
 			if dollerQuota >= common.QuotaWarningThreshold {
 				content := fmt.Sprintf("用户 %d 在%s ~ %s 内消耗了 %d 美元额度", userId, startTimeStr, endTimeStr, dollerQuota)

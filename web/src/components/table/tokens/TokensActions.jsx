@@ -23,6 +23,8 @@ import { showError } from '../../../helpers';
 import { API, showSuccess, isRoot } from '../../../helpers';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
+import BatchSetGroupModal from './modals/BatchSetGroupModal';
+import BatchAppendModelsModal from './modals/BatchAppendModelsModal';
 
 const TokensActions = ({
   selectedKeys,
@@ -30,12 +32,16 @@ const TokensActions = ({
   setShowEdit,
   batchCopyTokens,
   batchDeleteTokens,
+  batchSetGroup,
+  batchAppendModels,
   copyText,
   t,
 }) => {
   // Modal states
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [showAppendModelsModal, setShowAppendModelsModal] = useState(false);
   const fileInputRef = useRef(null);
 
   // Handle copy selected tokens with options
@@ -60,6 +66,26 @@ const TokensActions = ({
   const handleConfirmDelete = () => {
     batchDeleteTokens();
     setShowDeleteModal(false);
+  };
+
+  // Handle batch set group
+  const handleSetGroup = () => {
+    if (selectedKeys.length === 0) {
+      showError(t('请至少选择一个令牌！'));
+      return;
+    }
+    setShowGroupModal(true);
+  };
+
+  const handleConfirmSetGroup = (group) => {
+    batchSetGroup(group);
+    setShowGroupModal(false);
+  };
+
+  // Handle batch append models
+  const handleConfirmAppendModels = (group, models) => {
+    batchAppendModels(group, models);
+    setShowAppendModelsModal(false);
   };
 
   return (
@@ -154,6 +180,24 @@ const TokensActions = ({
         >
           {t('删除所选令牌')}
         </Button>
+
+        <Button
+          type='tertiary'
+          className='flex-1 md:flex-initial'
+          onClick={handleSetGroup}
+          size='small'
+        >
+          {t('设置分组')}
+        </Button>
+
+        <Button
+          type='tertiary'
+          className='flex-1 md:flex-initial'
+          onClick={() => setShowAppendModelsModal(true)}
+          size='small'
+        >
+          {t('批量添加模型')}
+        </Button>
       </div>
 
       <CopyTokensModal
@@ -170,6 +214,20 @@ const TokensActions = ({
         onConfirm={handleConfirmDelete}
         selectedKeys={selectedKeys}
         t={t}
+      />
+
+      <BatchSetGroupModal
+        visible={showGroupModal}
+        onCancel={() => setShowGroupModal(false)}
+        onConfirm={handleConfirmSetGroup}
+        selectedKeys={selectedKeys}
+        t={t}
+      />
+
+      <BatchAppendModelsModal
+        visible={showAppendModelsModal}
+        onCancel={() => setShowAppendModelsModal(false)}
+        onConfirm={handleConfirmAppendModels}
       />
     </>
   );

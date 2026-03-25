@@ -877,15 +877,58 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	isClaudeUsageSemantic := relayInfo.FinalRequestRelayFormat == types.RelayFormatClaude
 	if relayInfo.PriceData.UseTieredPrice {
 		// 阶梯价格计费：根据实际 promptTokens 重新匹配档位
+		// 阶梯价格只覆盖文本 input/output，缓存、图片、音频等仍使用原始倍率
 		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
 		if useTiered && len(tieredPriceTiers) > 0 {
 			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
 			dTieredInputPrice := decimal.NewFromFloat(tier.InputPrice)
 			dTieredOutputPrice := decimal.NewFromFloat(tier.OutputPrice)
 			dMillion := decimal.NewFromInt(1_000_000)
-			inputQuota := dPromptTokens.Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+
+			// 计算文本 base tokens（减去缓存、图片、音频等非文本 tokens）
+			baseTokens := dPromptTokens
+			if !dCacheTokens.IsZero() {
+				if !isClaudeUsageSemantic {
+					baseTokens = baseTokens.Sub(dCacheTokens)
+				}
+			}
+			if !dCachedCreationTokens.IsZero() {
+				if !isClaudeUsageSemantic {
+					baseTokens = baseTokens.Sub(dCachedCreationTokens)
+				}
+			}
+			if !dImageTokens.IsZero() {
+				baseTokens = baseTokens.Sub(dImageTokens)
+			}
+			if !dAudioTokens.IsZero() {
+				audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
+				if audioInputPrice > 0 {
+					baseTokens = baseTokens.Sub(dAudioTokens)
+					audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(dMillion).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+					extraContent = append(extraContent, fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String()))
+				}
+			}
+
+			// 文本 input/output 使用阶梯价格
+			inputQuota := baseTokens.Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
 			outputQuota := dCompletionTokens.Mul(dTieredOutputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
 			quotaCalculateDecimal = inputQuota.Add(outputQuota)
+
+			// 缓存 tokens 使用阶梯输入价格 * 缓存倍率
+			if !dCacheTokens.IsZero() {
+				cachedQuota := dCacheTokens.Mul(dCacheRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedQuota)
+			}
+			if !dCachedCreationTokens.IsZero() {
+				cachedCreationQuota := dCachedCreationTokens.Mul(dCachedCreationRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedCreationQuota)
+			}
+			// 图片 tokens 使用阶梯输入价格 * 图片倍率
+			if !dImageTokens.IsZero() {
+				imageQuota := dImageTokens.Mul(dImageRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				quotaCalculateDecimal = quotaCalculateDecimal.Add(imageQuota)
+			}
+
 			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
 			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
 			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice

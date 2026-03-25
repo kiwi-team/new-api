@@ -337,6 +337,8 @@ function TokensPage() {
     setShowEdit,
     batchCopyTokens,
     batchDeleteTokens,
+    batchSetGroup,
+    batchAppendModels,
     copyText,
 
     // Filters state
@@ -386,6 +388,8 @@ function TokensPage() {
               setShowEdit={setShowEdit}
               batchCopyTokens={batchCopyTokens}
               batchDeleteTokens={batchDeleteTokens}
+              batchSetGroup={batchSetGroup}
+              batchAppendModels={batchAppendModels}
               copyText={copyText}
               t={t}
             />
