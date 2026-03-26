@@ -448,6 +448,18 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			if textRequest.THINKING != nil && thinking.Type == "disabled" {
 				textRequest.EnableThinking = false
 			}
+		} else if strings.Contains(textRequest.Model, "kimi") {
+			if textRequest.THINKING != nil && thinking.Type == "disabled" {
+				textRequest.EnableThinking = false
+			} else if textRequest.THINKING != nil && thinking.Type == "enabled" {
+				textRequest.EnableThinking = true
+			} else {
+				// 和官方的kimi-2.5的行为保持一一致，默认是开启thinking的
+				textRequest.EnableThinking = true
+			}
+		} else if strings.Contains(strings.ToLower(textRequest.Model), "minimax") {
+			// 阿里云的minimax 只能开启thinking
+			textRequest.EnableThinking = true
 		}
 	}
 

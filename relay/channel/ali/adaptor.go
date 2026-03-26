@@ -158,7 +158,8 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		info.IsStream = true
 	}
 	// fix: ali parameter.enable_thinking must be set to false for non-streaming calls
-	if !info.IsStream {
+	// aliyun现在还有其他的类型的模型，比如kimi-k2.5,minimax等,这些模型，就不受这个逻辑限制
+	if !info.IsStream && strings.Contains(request.Model, "qwen") {
 		request.EnableThinking = false
 	}
 
