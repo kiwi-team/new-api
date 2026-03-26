@@ -443,6 +443,12 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			// 默认是要开启思考的，和官方保持一致的行为
 			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
 		}
+	} else if info.ChannelType == common.ChannelTypeAli {
+		if strings.Contains(textRequest.Model, "glm") {
+			if textRequest.THINKING != nil && thinking.Type == "disabled" {
+				textRequest.EnableThinking = false
+			}
+		}
 	}
 
 	if isSiliconflow {
