@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -197,8 +198,8 @@ func Register(c *gin.Context) {
 		Password:       user.Password,
 		DisplayName:    user.Username,
 		InviterId:      inviterId,
-		Role:           common.RoleCommonUser, // 明确设置角色为普通用户
-		ToioRegistered: 1,                     // 标记为已注册Toio
+		Role:           common.RoleCommonUser,                              // 明确设置角色为普通用户
+		ToioRegistered: common.String2Int(os.Getenv("IS_TOIO_REGISTERED")), // 标记为已注册Toio
 	}
 	// 开启uid检查注册的用户默认为Leader角色
 	if common.RegisterUidCheckEnabled {
