@@ -27,6 +27,7 @@ import (
 type TokenDetails struct {
 	TextTokens  int
 	AudioTokens int
+	ImageTokens int
 	VideoTokens int
 }
 
@@ -68,20 +69,26 @@ func calculateAudioQuota(info QuotaInfo) int {
 		textOutputQuota := outputTextTokens.Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio)
 		quota := textInputQuota.Add(textOutputQuota)
 
-		// 音频/视频 tokens 使用原始倍率 * 阶梯输入价格
+		// 音频/视频/图片 tokens 使用原始倍率 * 阶梯输入价格
 		audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(info.ModelName))
 		audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(info.ModelName))
+		imageRatio, _ := ratio_setting.GetImageRatio(info.ModelName)
+		dImageRatio := decimal.NewFromFloat(imageRatio)
 		videoRatio := decimal.NewFromFloat(ratio_setting.GetVideoRatio(info.ModelName))
 
 		inputAudioTokens := decimal.NewFromInt(int64(info.InputDetails.AudioTokens))
 		outputAudioTokens := decimal.NewFromInt(int64(info.OutputDetails.AudioTokens))
+		inputImageTokens := decimal.NewFromInt(int64(info.InputDetails.ImageTokens))
 		inputVideoTokens := decimal.NewFromInt(int64(info.InputDetails.VideoTokens))
 
 		if !inputAudioTokens.IsZero() {
 			quota = quota.Add(inputAudioTokens.Mul(audioRatio).Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio))
 		}
 		if !outputAudioTokens.IsZero() {
-			quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio).Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio))
+			quota = quota.Add(outputAudioTokens.Mul(audioCompletionRatio).Mul(outputPrice).Mul(quotaPerUnit).Mul(groupRatio))
+		}
+		if !inputImageTokens.IsZero() {
+			quota = quota.Add(inputImageTokens.Mul(dImageRatio).Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio))
 		}
 		if !inputVideoTokens.IsZero() {
 			quota = quota.Add(inputVideoTokens.Mul(videoRatio).Mul(inputPrice).Mul(quotaPerUnit).Mul(groupRatio))
@@ -102,6 +109,8 @@ func calculateAudioQuota(info QuotaInfo) int {
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(info.ModelName))
 	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(info.ModelName))
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(info.ModelName))
+	imgRatio, _ := ratio_setting.GetImageRatio(info.ModelName)
+	dImageRatio := decimal.NewFromFloat(imgRatio)
 	videoRatio := decimal.NewFromFloat(ratio_setting.GetVideoRatio(info.ModelName))
 
 	groupRatio := decimal.NewFromFloat(info.GroupRatio)
@@ -112,13 +121,15 @@ func calculateAudioQuota(info QuotaInfo) int {
 	outputTextTokens := decimal.NewFromInt(int64(info.OutputDetails.TextTokens))
 	inputAudioTokens := decimal.NewFromInt(int64(info.InputDetails.AudioTokens))
 	outputAudioTokens := decimal.NewFromInt(int64(info.OutputDetails.AudioTokens))
+	inputImageTokens := decimal.NewFromInt(int64(info.InputDetails.ImageTokens))
 	inputVideoTokens := decimal.NewFromInt(int64(info.InputDetails.VideoTokens))
 
 	quota := decimal.Zero
 	quota = quota.Add(inputTextTokens)
 	quota = quota.Add(outputTextTokens.Mul(completionRatio))
 	quota = quota.Add(inputAudioTokens.Mul(audioRatio))
-	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio))
+	quota = quota.Add(outputAudioTokens.Mul(audioCompletionRatio))
+	quota = quota.Add(inputImageTokens.Mul(dImageRatio))
 	quota = quota.Add(inputVideoTokens.Mul(videoRatio))
 
 	quota = quota.Mul(ratio)
@@ -256,6 +267,10 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens+videoInputTokens)
 			quotaInfo.TieredInputPrice = tier.InputPrice
 			quotaInfo.TieredOutputPrice = tier.OutputPrice
+			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
+			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
+			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 		}
 	}
 
@@ -263,7 +278,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	totalTokens := usage.TotalTokens
 	var logContent string
-	if !usePrice {
+	if relayInfo.PriceData.UseTieredPrice {
+		logContent = fmt.Sprintf("阶梯价格（≤%d tokens）：输入 %.6f / 输出 %.6f /1M tokens，音频倍率 %.2f，音频补全倍率 %.2f，视频倍率 %.2f，分组倍率 %.2f",
+			relayInfo.PriceData.TieredMaxTokens,
+			quotaInfo.TieredInputPrice, quotaInfo.TieredOutputPrice,
+			audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), videoRatio.InexactFloat64(), groupRatio)
+	} else if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，视频倍率 %.2f，分组倍率 %.2f",
 			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), videoRatio.InexactFloat64(), groupRatio)
 	} else {
@@ -292,6 +312,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), videoRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	if relayInfo.PriceData.UseTieredPrice {
+		other["use_tiered_price"] = true
+		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
+		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
+		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
@@ -485,6 +511,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	audioInputTokens := usage.PromptTokensDetails.AudioTokens
 	audioOutTokens := usage.CompletionTokenDetails.AudioTokens
+	imageInputTokens := usage.PromptTokensDetails.ImageTokens
+	videoInputTokens := usage.PromptTokensDetails.VideoTokens
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(relayInfo.OriginModelName))
@@ -500,6 +528,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
 			AudioTokens: audioInputTokens,
+			ImageTokens: imageInputTokens,
+			VideoTokens: videoInputTokens,
 		},
 		OutputDetails: TokenDetails{
 			TextTokens:  textOutTokens,
@@ -515,9 +545,13 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		// 阶梯价格：根据实际 inputTokens 重新匹配档位
 		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(relayInfo.OriginModelName)
 		if useTiered && len(tieredPriceTiers) > 0 {
-			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens)
+			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, textInputTokens+audioInputTokens+imageInputTokens+videoInputTokens)
 			quotaInfo.TieredInputPrice = tier.InputPrice
 			quotaInfo.TieredOutputPrice = tier.OutputPrice
+			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
+			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
+			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 		}
 	}
 
@@ -525,7 +559,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	totalTokens := usage.TotalTokens
 	var logContent string
-	if !usePrice {
+	if relayInfo.PriceData.UseTieredPrice {
+		logContent = fmt.Sprintf("阶梯价格（≤%d tokens）：输入 %.6f / 输出 %.6f /1M tokens，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
+			relayInfo.PriceData.TieredMaxTokens,
+			quotaInfo.TieredInputPrice, quotaInfo.TieredOutputPrice,
+			audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), groupRatio)
+	} else if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
 			modelRatio, completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), groupRatio)
 	} else {
@@ -558,6 +597,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	if relayInfo.PriceData.UseTieredPrice {
+		other["use_tiered_price"] = true
+		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
+		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
+		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
