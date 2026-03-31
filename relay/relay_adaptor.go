@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
+	ppioImage "github.com/QuantumNous/new-api/relay/channel/ppio"
 	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/sensenova"
@@ -148,6 +149,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &codex.Adaptor{}
 	case constant.APITypeQwenRealtime:
 		return &qwen_realtime.Adaptor{}
+	case constant.APITypePPIO:
+		return &ppioImage.Adaptor{}
 	}
 	return nil
 }

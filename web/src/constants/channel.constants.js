@@ -242,6 +242,10 @@ export const CHANNEL_OPTIONS = [
     value: 69,
     color: 'purple',
     label: 'RunwayML',
+  }, {
+    value: 70,
+    color: 'blue',
+    label: 'ppio',
   }
 ];
 

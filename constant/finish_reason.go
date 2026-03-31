@@ -13,4 +13,5 @@ var (
 // Requests with these finish_reasons should be treated as failures.
 var ErrorFinishReasons = map[string]bool{
 	"model_context_window_exceeded": true,
+	"sensitive":                     true,
 }

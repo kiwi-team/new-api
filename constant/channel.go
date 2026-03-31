@@ -67,6 +67,7 @@ const (
 	ChannelTypeFALSync          = 67
 	ChannelTypeCodex            = 68
 	ChannelTypeRunwayML         = 69
+	ChannelTypePPIO             = 70
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -143,6 +144,7 @@ var ChannelBaseURLs = []string{
 	"https://queue.fal.run",             //67 fal_sync
 	"https://chatgpt.com",               // 68 codex
 	"https://api.dev.runwayml.com",      // 69 runwayml
+	"https://api.ppio.com",              // 70 ppio
 }
 
 var ChannelTypeNames = map[int]string{
@@ -209,6 +211,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeFALSync:        "FAL Sync",
 	ChannelTypeCodex:          "Codex",
 	ChannelTypeRunwayML:       "RunwayML",
+	ChannelTypePPIO:           "PPIO",
 }
 
 func GetChannelTypeName(channelType int) string {
