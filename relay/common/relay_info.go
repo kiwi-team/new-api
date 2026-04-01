@@ -213,6 +213,9 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if (channelType == constant.ChannelTypeAli || channelType == constant.ChannelTypeAliDashScope) && info.RelayMode == relayconstant.RelayModeRealtime {
 		channelMeta.ApiType = constant.APITypeQwenRealtime
 	}
+	if channelType == constant.ChannelTypeGemini && info.RelayMode == relayconstant.RelayModeRealtime {
+		channelMeta.ApiType = constant.APITypeGeminiRealtime
+	}
 
 	channelSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 	if ok {
