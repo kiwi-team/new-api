@@ -9,6 +9,7 @@ var ModelList = []string{
 	// preview version
 	"gemini-2.0-flash-lite-preview",
 	"gemini-3-pro-preview",
+	"gemini-3.1-pro-preview",
 	// gemini exp
 	"gemini-exp-1206",
 	// flash exp

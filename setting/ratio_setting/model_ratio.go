@@ -664,7 +664,7 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 			return 2.5 / 0.3, false
 		} else if strings.HasPrefix(name, "gemini-robotics-er-1.5") {
 			return 2.5 / 0.3, false
-		} else if strings.HasPrefix(name, "gemini-3-pro") {
+		} else if strings.HasPrefix(name, "gemini-3-pro") || strings.HasPrefix(name, "gemini-3.1-pro") {
 			if strings.HasPrefix(name, "gemini-3-pro-image") {
 				return 60, false
 			}

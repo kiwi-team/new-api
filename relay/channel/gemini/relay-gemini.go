@@ -90,7 +90,8 @@ func is25FlashLiteModel(modelName string) bool {
 }
 
 func isNew3ProModel(modelName string) bool {
-	return strings.HasPrefix(modelName, "gemini-3-pro")
+	return strings.HasPrefix(modelName, "gemini-3-pro") ||
+		strings.HasPrefix(modelName, "gemini-3.1-pro")
 }
 
 // clampThinkingBudget 根据模型名称将预算限制在允许的范围内
@@ -922,7 +923,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			return nil, err
 		}
 		if thinking.Type == "enabled" {
-			if strings.Contains(textRequest.Model, "gemini-3-pro") {
+			if strings.Contains(textRequest.Model, "gemini-3-pro") || strings.Contains(textRequest.Model, "gemini-3.1-pro") {
 				//The model does not support setting thinking_budget to 0. (
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
 					IncludeThoughts: true,
