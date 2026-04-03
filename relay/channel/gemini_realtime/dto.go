@@ -44,7 +44,7 @@ type ModalityTokenCount struct {
 
 // toRealtimeUsage converts a GeminiUsageMetadata to the standard dto.RealtimeUsage
 // used by the billing system.
-func (u *GeminiUsageMetadata) toRealtimeUsage() *dto.RealtimeUsage {
+func (u *GeminiUsageMetadata) ToRealtimeUsage() *dto.RealtimeUsage {
 	usage := &dto.RealtimeUsage{
 		TotalTokens:  u.TotalTokenCount,
 		InputTokens:  u.PromptTokenCount,

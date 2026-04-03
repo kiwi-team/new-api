@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	gemini_realtime "github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -655,6 +656,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	// For detecting Gemini-format upstream responses (e.g. when proxying through another new-api instance
+	// that has a Gemini channel and passes through Gemini protocol transparently)
+	geminiLastUsage := &dto.RealtimeUsage{}
+	isGeminiProtocol := false
 
 	gopool.Go(func() {
 		defer func() {
@@ -743,7 +748,36 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
-				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
+				// Detect Gemini protocol: upstream may be another new-api instance with a Gemini
+			// channel that passes through Gemini Live protocol transparently (no "type" field).
+			if !isGeminiProtocol && realtimeEvent.Type == "" {
+				geminiEvent := &gemini_realtime.GeminiLiveEvent{}
+				if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil {
+					if geminiEvent.SetupComplete != nil || geminiEvent.ServerContent != nil || geminiEvent.UsageMetadata != nil || geminiEvent.GoAway != nil {
+						isGeminiProtocol = true
+						logger.LogInfo(c, "detected Gemini protocol from upstream, switching to Gemini usage extraction")
+					}
+				}
+			}
+
+			if isGeminiProtocol {
+				// Handle Gemini-format messages: extract usageMetadata for billing
+				geminiEvent := &gemini_realtime.GeminiLiveEvent{}
+				if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil && geminiEvent.UsageMetadata != nil {
+					currentUsage := geminiEvent.UsageMetadata.ToRealtimeUsage()
+					deltaUsage := gemini_realtime.ComputeDelta(geminiLastUsage, currentUsage)
+					if deltaUsage.TotalTokens > 0 {
+						consumeErr := preConsumeUsage(c, info, deltaUsage, sumUsage)
+						if consumeErr != nil {
+							errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
+							return
+						}
+					}
+					geminiLastUsage = currentUsage
+					logger.LogInfo(c, fmt.Sprintf("gemini upstream usage: input=%d, output=%d, total=%d",
+						currentUsage.InputTokens, currentUsage.OutputTokens, currentUsage.TotalTokens))
+				}
+			} else if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {
 						usage.TotalTokens += realtimeUsage.TotalTokens

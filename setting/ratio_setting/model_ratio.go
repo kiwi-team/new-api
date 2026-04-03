@@ -203,8 +203,10 @@ var defaultModelRatio = map[string]float64{
 	"glm-4-long":                                0.001 * RMB,
 	"glm-4-flash":                               0,
 	"glm-4v-plus":                               0.01 * RMB,
-	"qwen-turbo":                                0.8572, // ￥0.012 / 1k tokens
-	"qwen-plus":                                 10,     // ￥0.14 / 1k tokens
+	"qwen-turbo":                                0.8572,       // ￥0.012 / 1k tokens
+	"qwen-plus":                                 10,          // ￥0.14 / 1k tokens
+	"qwen-deep-research":                        0.054 * RMB, // ￥0.054 / 1k tokens
+	"qwen-deep-research-2025-12-15":             0.079 * RMB, // ￥0.079 / 1k tokens
 	"qwen3-omni-flash-realtime":                 0.1286, // ￥1.8 / 1M tokens (text input)
 	"text-embedding-v1":                         0.05,   // ￥0.0007 / 1k tokens
 	"SparkDesk-v1.1":                            1.2858, // ￥0.018 / 1k tokens
@@ -369,7 +371,9 @@ var defaultCompletionRatio = map[string]float64{
 	"gpt-4o-gizmo-*":            3,
 	"gpt-4-all":                 2,
 	"gpt-image-1":               8,
-	"qwen3-omni-flash-realtime": 7.06, // multimodal output ￥12.7 / text input ￥1.8 = 7.06
+	"qwen3-omni-flash-realtime":      7.06,  // multimodal output ￥12.7 / text input ￥1.8 = 7.06
+	"qwen-deep-research":             3.019, // ￥0.163 / ￥0.054
+	"qwen-deep-research-2025-12-15":  2.987, // ￥0.236 / ￥0.079
 }
 
 // UpdateTieredPriceByJSONString parses a JSON string into tiered price config,

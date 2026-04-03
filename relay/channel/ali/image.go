@@ -61,15 +61,18 @@ func oaiImage2AliImageRequest(info *relaycommon.RelayInfo, request dto.ImageRequ
 	// 同步图片模型和异步图片模型请求格式不一样
 	if isSync {
 		if imageRequest.Input == nil {
+			var contentParts []AliMediaContent
+			// 提取 image/images 字段中的图片（支持通过 generations/edits 接口传入图片）
+			imageURLs, _ := request.GetImageURLs()
+			for _, url := range imageURLs {
+				contentParts = append(contentParts, AliMediaContent{Image: url})
+			}
+			contentParts = append(contentParts, AliMediaContent{Text: request.Prompt})
 			imageRequest.Input = AliImageInput{
 				Messages: []AliMessage{
 					{
-						Role: "user",
-						Content: []AliMediaContent{
-							{
-								Text: request.Prompt,
-							},
-						},
+						Role:    "user",
+						Content: contentParts,
 					},
 				},
 			}

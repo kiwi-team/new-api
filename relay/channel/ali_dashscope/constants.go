@@ -24,11 +24,14 @@ var ModelList = []string{
 	"qwen2.5-coder-32b-instruct", "qwen2.5-coder-14b-instruct", "qwen2.5-coder-7b-instruct", "qwen2.5-coder-3b-instruct", "qwen2.5-coder-1.5b-instruct", "qwen2.5-coder-0.5b-instruct",
 	"text-embedding-v1", "text-embedding-v3", "text-embedding-v2", "text-embedding-async-v2", "text-embedding-async-v1",
 	"ali-stable-diffusion-xl", "ali-stable-diffusion-v1.5", "wanx-v1",
+	"wan2.7-image", "wan2.7-image-pro",
 	"qwen-mt-plus", "qwen-mt-turbo",
 	"deepseek-r1", "deepseek-v3", "deepseek-r1-distill-qwen-1.5b", "deepseek-r1-distill-qwen-7b", "deepseek-r1-distill-qwen-14b", "deepseek-r1-distill-qwen-32b", "deepseek-r1-distill-llama-8b", "deepseek-r1-distill-llama-70b",
+	"qwen-deep-research", "qwen-deep-research-2025-12-15",
 }
 
 // "qwen-vl-max",
 var StreamOnlyModelList = []string{
 	"qwq-32b",
+	"qwen-deep-research", "qwen-deep-research-2025-12-15",
 }

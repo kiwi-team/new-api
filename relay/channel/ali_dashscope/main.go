@@ -77,6 +77,134 @@ func ConvertRequest(request dto.GeneralOpenAIRequest) *ChatRequest {
 	}
 }
 
+func IsDeepResearchModel(model string) bool {
+	return strings.HasPrefix(model, "qwen-deep-research")
+}
+
+func ConvertDeepResearchRequest(request dto.GeneralOpenAIRequest) *DeepResearchChatRequest {
+	messages := make([]Message, 0, len(request.Messages))
+	for i := 0; i < len(request.Messages); i++ {
+		message := request.Messages[i]
+		messages = append(messages, Message{
+			Content: message.StringContent(),
+			Role:    strings.ToLower(message.Role),
+		})
+	}
+	params := DeepResearchParameters{
+		Stream:            true,
+		IncrementalOutput: true,
+		EnableFeedback:    false,
+		MaxTokens:         int(request.MaxTokens),
+		Temperature:       request.Temperature,
+	}
+	if params.MaxTokens == 0 {
+		params.MaxTokens = 32768
+	}
+	return &DeepResearchChatRequest{
+		Model: request.Model,
+		Input: Input{
+			Messages: messages,
+		},
+		Parameters: params,
+	}
+}
+
+func deepResearchStreamResponseToOpenAI(response *DeepResearchChatResponse, info *relaycommon.RelayInfo) *dto.ChatCompletionsStreamResponse {
+	// Skip KeepAlive phase
+	if response.Output.Message.Phase == "KeepAlive" {
+		return nil
+	}
+
+	content := response.Output.Message.Content
+	if content == "" {
+		return nil
+	}
+
+	var choice dto.ChatCompletionsStreamResponseChoice
+	phase := response.Output.Message.Phase
+
+	if phase == "answer" {
+		// Answer phase -> regular content
+		choice.Delta.Content = &content
+	} else {
+		// ResearchPlanning, WebResearch -> reasoning_content
+		choice.Delta.ReasoningContent = &content
+	}
+
+	if response.Output.Message.Status == "finished" && phase == "answer" {
+		finishReason := "stop"
+		choice.FinishReason = &finishReason
+	}
+
+	return &dto.ChatCompletionsStreamResponse{
+		Id:      response.RequestId,
+		Object:  "chat.completion.chunk",
+		Created: common.GetTimestamp(),
+		Model:   info.UpstreamModelName,
+		Choices: []dto.ChatCompletionsStreamResponseChoice{choice},
+	}
+}
+
+func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*types.NewAPIError, *dto.Usage) {
+	var usage dto.Usage
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		if atEOF && len(data) == 0 {
+			return 0, nil, nil
+		}
+		if i := strings.Index(string(data), "\n"); i >= 0 {
+			return i + 1, data[0:i], nil
+		}
+		if atEOF {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
+
+	helper.SetEventStreamHeaders(c)
+
+	for scanner.Scan() {
+		data := scanner.Text()
+		if len(data) < 5 || data[:5] != "data:" {
+			continue
+		}
+		data = data[5:]
+
+		var aliResponse DeepResearchChatResponse
+		err := json.Unmarshal([]byte(data), &aliResponse)
+		if err != nil {
+			common.SysError("error unmarshalling deep research stream response: " + err.Error())
+			continue
+		}
+		if aliResponse.Usage.OutputTokens != 0 {
+			usage.PromptTokens = aliResponse.Usage.InputTokens
+			usage.CompletionTokens = aliResponse.Usage.OutputTokens
+			usage.TotalTokens = aliResponse.Usage.InputTokens + aliResponse.Usage.OutputTokens
+		}
+		response := deepResearchStreamResponseToOpenAI(&aliResponse, info)
+		if response == nil {
+			continue
+		}
+		response.Usage = &usage
+		err = helper.ObjectData(c, response)
+		if err != nil {
+			common.SysError(err.Error())
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		common.SysError("error reading deep research stream: " + err.Error())
+	}
+
+	helper.Done(c)
+
+	err := resp.Body.Close()
+	if err != nil {
+		return types.NewOpenAIError(fmt.Errorf("close_response_body_failed"), types.ErrorCodeBadResponse, http.StatusInternalServerError), nil
+	}
+	return nil, &usage
+}
+
 func ConvertEmbeddingRequest(request dto.GeneralOpenAIRequest) *EmbeddingRequest {
 	return &EmbeddingRequest{
 		Model: request.Model,

@@ -112,8 +112,8 @@ func GeminiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					logger.LogWarn(c, fmt.Sprintf("gemini_realtime: failed to parse downstream message: %v", parseErr))
 				} else if event.UsageMetadata != nil {
 					// Gemini reports cumulative usage; compute incremental delta
-					currentUsage := event.UsageMetadata.toRealtimeUsage()
-					deltaUsage := computeDelta(lastUsage, currentUsage)
+					currentUsage := event.UsageMetadata.ToRealtimeUsage()
+					deltaUsage := ComputeDelta(lastUsage, currentUsage)
 					if deltaUsage.TotalTokens > 0 {
 						consumeErr := geminiPreConsumeUsage(c, info, deltaUsage, sumUsage)
 						if consumeErr != nil {
@@ -150,7 +150,7 @@ func GeminiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 
 // computeDelta computes the incremental usage between the last reported cumulative usage
 // and the current cumulative usage. Gemini Live API reports cumulative totals.
-func computeDelta(last, current *dto.RealtimeUsage) *dto.RealtimeUsage {
+func ComputeDelta(last, current *dto.RealtimeUsage) *dto.RealtimeUsage {
 	delta := &dto.RealtimeUsage{}
 	delta.TotalTokens = max(0, current.TotalTokens-last.TotalTokens)
 	delta.InputTokens = max(0, current.InputTokens-last.InputTokens)

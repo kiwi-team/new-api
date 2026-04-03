@@ -51,6 +51,60 @@ type ImageRequest struct {
 	ResponseFormat string `json:"response_format,omitempty"`
 }
 
+// Wan2.7 image generation/editing request (synchronous, messages-based)
+type Wan27ImageRequest struct {
+	Model      string               `json:"model"`
+	Input      Wan27ImageInput      `json:"input"`
+	Parameters Wan27ImageParameters `json:"parameters,omitempty"`
+}
+
+type Wan27ImageInput struct {
+	Messages []Wan27Message `json:"messages"`
+}
+
+type Wan27Message struct {
+	Role    string         `json:"role"`
+	Content []Wan27Content `json:"content"`
+}
+
+type Wan27Content struct {
+	Text  string `json:"text,omitempty"`
+	Image string `json:"image,omitempty"`
+}
+
+type Wan27ImageParameters struct {
+	N                int              `json:"n,omitempty"`
+	Size             string           `json:"size,omitempty"`
+	Watermark        *bool            `json:"watermark,omitempty"`
+	Seed             int              `json:"seed,omitempty"`
+	ThinkingMode     *bool            `json:"thinking_mode,omitempty"`
+	EnableSequential *bool            `json:"enable_sequential,omitempty"`
+	BboxList         json.RawMessage  `json:"bbox_list,omitempty"`
+	ColorPalette     json.RawMessage  `json:"color_palette,omitempty"`
+}
+
+// Wan2.7 synchronous image response
+type Wan27ImageResponse struct {
+	Output struct {
+		Choices []Wan27Choice `json:"choices"`
+	} `json:"output"`
+	Usage struct {
+		ImageCount int    `json:"image_count"`
+		Size       string `json:"size"`
+	} `json:"usage"`
+	RequestId string `json:"request_id"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+}
+
+type Wan27Choice struct {
+	FinishReason string `json:"finish_reason"`
+	Message      struct {
+		Role    string         `json:"role"`
+		Content []Wan27Content `json:"content"`
+	} `json:"message"`
+}
+
 type TaskResponse struct {
 	StatusCode int    `json:"status_code,omitempty"`
 	RequestId  string `json:"request_id,omitempty"`
@@ -136,6 +190,40 @@ type Error struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	RequestId string `json:"request_id"`
+}
+
+// DeepResearch specific types
+
+type DeepResearchParameters struct {
+	Stream            bool     `json:"stream"`
+	IncrementalOutput bool     `json:"incremental_output"`
+	EnableFeedback    bool     `json:"enable_feedback"`
+	MaxTokens         int      `json:"max_tokens,omitempty"`
+	Temperature       *float64 `json:"temperature,omitempty"`
+}
+
+type DeepResearchChatRequest struct {
+	Model      string                 `json:"model"`
+	Input      Input                  `json:"input"`
+	Parameters DeepResearchParameters `json:"parameters"`
+}
+
+type DeepResearchMessage struct {
+	Phase   string          `json:"phase"`
+	Status  string          `json:"status"`
+	Content string          `json:"content"`
+	Extra   json.RawMessage `json:"extra,omitempty"`
+}
+
+type DeepResearchOutput struct {
+	Message DeepResearchMessage `json:"message"`
+}
+
+type DeepResearchChatResponse struct {
+	Output    DeepResearchOutput `json:"output"`
+	Usage     Usage              `json:"usage"`
+	RequestId string             `json:"request_id"`
+	Error
 }
 
 type Usage struct {

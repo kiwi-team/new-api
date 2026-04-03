@@ -40,8 +40,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	switch info.RelayMode {
 	case constant.RelayModeEmbeddings:
 		fullRequestURL = fmt.Sprintf("%s/api/v1/services/embeddings/text-embedding/text-embedding", info.ChannelBaseUrl)
-	case constant.RelayModeImagesGenerations:
-		fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+		if isWan27Model(info.UpstreamModelName) {
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
+		} else {
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
+		}
 	default:
 		fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text-generation/generation", info.ChannelBaseUrl)
 	}
@@ -51,7 +55,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	if info.IsStream {
+	if info.IsStream || IsDeepResearchModel(info.UpstreamModelName) {
 		req.Set("Accept", "text/event-stream")
 		req.Set("X-DashScope-SSE", "enable")
 	}
@@ -60,11 +64,14 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if c.GetString("plugin") != "" {
 		req.Set("X-DashScope-Plugin", c.GetString("plugin"))
 	}
-	if info.RelayMode == constant.RelayModeImagesGenerations {
-		req.Set("X-DashScope-Async", "enable")
-	}
-	if info.RelayMode == constant.RelayModeImagesEdits {
-		req.Set("Content-Type", "application/json")
+	if info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits {
+		if isWan27Model(info.UpstreamModelName) {
+			// wan2.7 使用同步接口
+			req.Set("Content-Type", "application/json")
+		} else {
+			req.Set("X-DashScope-Async", "enable")
+			req.Set("Content-Type", "application/json")
+		}
 	}
 	return nil
 }
@@ -78,13 +85,21 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		aliEmbeddingRequest := ConvertEmbeddingRequest(*request)
 		return aliEmbeddingRequest, nil
 	default:
+		if IsDeepResearchModel(info.UpstreamModelName) {
+			aliRequest := ConvertDeepResearchRequest(*request)
+			return aliRequest, nil
+		}
 		aliRequest := ConvertRequest(*request)
 		return aliRequest, nil
 	}
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	return nil, errors.New("not implemented")
+	if isWan27Model(info.UpstreamModelName) {
+		return convertWan27ImageRequest(c, info, request)
+	}
+	imageRequest := ConvertImageRequest(request)
+	return imageRequest, nil
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -116,11 +131,18 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 
 // func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *meta.Meta) (usage *model.Usage, err *model.ErrorWithStatusCode) {
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if info.IsStream {
-		err, usage = StreamHandler(c, info, resp)
-	} else {
-		switch info.RelayMode {
-		default:
+	if IsDeepResearchModel(info.UpstreamModelName) {
+		err, usage = DeepResearchStreamHandler(c, info, resp)
+		return
+	}
+	switch info.RelayMode {
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+		err, usage = wan27ImageHandler(c, info, resp)
+		return
+	default:
+		if info.IsStream {
+			err, usage = StreamHandler(c, info, resp)
+		} else {
 			err, usage = Handler(c, info, resp)
 		}
 	}

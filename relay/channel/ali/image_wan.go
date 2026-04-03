@@ -39,9 +39,10 @@ func oaiFormEdit2WanxImageEdit(c *gin.Context, info *relaycommon.RelayInfo, requ
 }
 
 func isOldWanModel(modelName string) bool {
-	return strings.Contains(modelName, "wan") && !strings.Contains(modelName, "wan2.6")
+	return strings.Contains(modelName, "wan") && !strings.Contains(modelName, "wan2.6") && !strings.Contains(modelName, "wan2.7")
 }
 
 func isWanModel(modelName string) bool {
-	return strings.Contains(modelName, "wan")
+	// wan2.7 使用同步 multimodal-generation 接口，不走异步 wan 路径
+	return strings.Contains(modelName, "wan") && !strings.Contains(modelName, "wan2.7")
 }
