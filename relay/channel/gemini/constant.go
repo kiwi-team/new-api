@@ -1,5 +1,7 @@
 package gemini
 
+import "strings"
+
 var ModelList = []string{
 	// stable version
 	"gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8b",
@@ -25,6 +27,8 @@ var ModelList = []string{
 	"gemini-3.1-flash-live-preview",
 	// imagen models
 	"imagen-3.0-generate-002",
+	// deep research models
+	"deep-research-pro-preview-12-2025",
 	// embedding models
 	"gemini-embedding-exp-03-07",
 	"text-embedding-004",
@@ -37,6 +41,11 @@ var SafetySettingList = []string{
 	"HARM_CATEGORY_SEXUALLY_EXPLICIT",
 	"HARM_CATEGORY_DANGEROUS_CONTENT",
 	//"HARM_CATEGORY_CIVIC_INTEGRITY", This item is deprecated!
+}
+
+// IsDeepResearchModel checks if the model is a deep research model
+func IsDeepResearchModel(modelName string) bool {
+	return strings.HasPrefix(modelName, "deep-research")
 }
 
 var ChannelName = "google gemini"

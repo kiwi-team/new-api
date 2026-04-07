@@ -466,6 +466,44 @@ type GeminiPromptTokensDetails struct {
 	TokenCount int    `json:"tokenCount"`
 }
 
+// Deep Research related structs
+type GeminiDeepResearchRequest struct {
+	Input       string                        `json:"input"`
+	Agent       string                        `json:"agent"`
+	Background  bool                          `json:"background"`
+	Stream      bool                          `json:"stream"`
+	AgentConfig *GeminiDeepResearchAgentConfig `json:"agent_config,omitempty"`
+}
+
+type GeminiDeepResearchAgentConfig struct {
+	Type              string `json:"type,omitempty"`
+	ThinkingSummaries string `json:"thinking_summaries,omitempty"`
+}
+
+// GeminiDeepResearchSSEEvent represents a parsed SSE event from deep research streaming
+type GeminiDeepResearchSSEEvent struct {
+	Event string `json:"-"` // event type from "event:" line
+	// For interaction.start
+	Interaction *GeminiDeepResearchInteraction `json:"interaction,omitempty"`
+	EventID     string                         `json:"event_id,omitempty"`
+	// For content.delta
+	Delta *GeminiDeepResearchDelta `json:"delta,omitempty"`
+}
+
+type GeminiDeepResearchInteraction struct {
+	ID string `json:"id"`
+}
+
+type GeminiDeepResearchDelta struct {
+	Type    string                              `json:"type"`
+	Text    string                              `json:"text,omitempty"`
+	Content *GeminiDeepResearchDeltaContent     `json:"content,omitempty"`
+}
+
+type GeminiDeepResearchDeltaContent struct {
+	Text string `json:"text"`
+}
+
 // Imagen related structs
 type GeminiImageRequest struct {
 	Instances  []GeminiImageInstance `json:"instances"`

@@ -46,6 +46,9 @@ type responseTask struct {
 	Seconds            string `json:"seconds,omitempty"`
 	Size               string `json:"size,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
+	VideoUrl           string `json:"video_url,omitempty"`
+	Url                string `json:"url,omitempty"`
+	ResultUrl          string `json:"result_url,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
@@ -192,7 +195,15 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		taskResult.Url = fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, resTask.ID)
+		if len(resTask.VideoUrl) > 0 {
+			taskResult.Url = resTask.VideoUrl
+		} else if len(resTask.ResultUrl) > 0 {
+			taskResult.Url = resTask.ResultUrl
+		} else if len(resTask.Url) > 0 {
+			taskResult.Url = resTask.Url
+		} else {
+			taskResult.Url = fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, resTask.ID)
+		}
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {

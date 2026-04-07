@@ -151,8 +151,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 			platform = constant.TaskPlatformYunwuVeo
 			adaptor = &yunwu.TaskAdaptor{}
 		} else {
-			platform = constant.TaskPlatformYunwuSora
-			adaptor = &yunwu_sora.TaskAdaptor{}
+			// 这个方式是云雾逆向的方法。现在不支持了。
+			if info.ChannelType == constant.ChannelTypeOpenAI {
+				platform = constant.TaskPlatformYunwuSora
+				adaptor = &yunwu_sora.TaskAdaptor{}
+			} else if info.ChannelType == constant.ChannelTypeSora {
+				adaptor = GetTaskAdaptor(platform)
+			}
 		}
 	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
 		if strings.Contains(info.UpstreamModelName, "hunyuan") {

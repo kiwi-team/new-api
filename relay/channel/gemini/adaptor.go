@@ -143,6 +143,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		}
 	}
 
+	// Deep research models use the interactions endpoint
+	if IsDeepResearchModel(info.UpstreamModelName) {
+		info.IsStream = true // deep research only supports streaming
+		return fmt.Sprintf("%s/v1beta/interactions?alt=sse", info.ChannelBaseUrl), nil
+	}
+
 	version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
 
 	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
@@ -190,7 +196,11 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	//geminiRequest, err := CovertGemini2OpenAI(*request, info)
+
+	// Deep research models use the interactions API format
+	if IsDeepResearchModel(info.UpstreamModelName) {
+		return ConvertOpenAI2DeepResearch(request, info)
+	}
 
 	geminiRequest, err := CovertOpenAI2Gemini(c, *request, info)
 	if err != nil {
@@ -267,6 +277,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if len(info.UploadedGCSObjects) > 0 {
 		gcsObjects := info.UploadedGCSObjects
 		defer CleanupGCSObjects(gcsObjects)
+	}
+
+	// Deep research models have their own SSE format
+	if IsDeepResearchModel(info.UpstreamModelName) {
+		return DeepResearchStreamHandler(c, info, resp)
 	}
 
 	if info.RelayMode == constant.RelayModeGemini {
