@@ -52,6 +52,7 @@ func ConvertOpenAI2DeepResearch(request *dto.GeneralOpenAIRequest, info *relayco
 		Background: true,
 		Stream:     true,
 		AgentConfig: &dto.GeminiDeepResearchAgentConfig{
+			Type:              "deep-research",
 			ThinkingSummaries: "auto",
 		},
 	}
@@ -65,6 +66,7 @@ func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	id := helper.GetResponseID(c)
 	createdAt := common.GetTimestamp()
 	responseText := strings.Builder{}
+	var deepResearchUsage *dto.GeminiDeepResearchUsage
 
 	// SSE headers are already set by doRequest when info.IsStream is true
 
@@ -89,20 +91,25 @@ func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			if event.Delta == nil {
 				return
 			}
-			var text string
+
+			var delta dto.ChatCompletionsStreamResponseChoiceDelta
 			switch event.Delta.Type {
 			case "text":
-				text = event.Delta.Text
-			case "thought_summary":
-				if event.Delta.Content != nil {
-					// Map thought summaries to reasoning content (thinking)
-					text = event.Delta.Content.Text
+				text := event.Delta.Text
+				if text == "" {
+					return
 				}
-			}
-			if text == "" {
+				delta.Content = &text
+				responseText.WriteString(text)
+			case "thought_summary":
+				if event.Delta.Content == nil || event.Delta.Content.Text == "" {
+					return
+				}
+				text := event.Delta.Content.Text
+				delta.ReasoningContent = &text
+			default:
 				return
 			}
-			responseText.WriteString(text)
 
 			response := &dto.ChatCompletionsStreamResponse{
 				Id:      id,
@@ -110,11 +117,7 @@ func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				Created: createdAt,
 				Model:   info.UpstreamModelName,
 				Choices: []dto.ChatCompletionsStreamResponseChoice{
-					{
-						Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
-							Content: &text,
-						},
-					},
+					{Delta: delta},
 				},
 			}
 			if err := deepResearchHandleStream(c, info, response); err != nil {
@@ -122,6 +125,11 @@ func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 
 		case "interaction.complete":
+			// Extract usage from the interaction.complete event
+			if event.Interaction != nil && event.Interaction.Usage != nil {
+				deepResearchUsage = event.Interaction.Usage
+			}
+
 			// Send stop response
 			finishReason := constant.FinishReasonStop
 			stopResponse := helper.GenerateStopResponse(id, createdAt, info.UpstreamModelName, finishReason)
@@ -131,8 +139,22 @@ func DeepResearchStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 
-	// Calculate usage - deep research doesn't return token counts, so estimate
-	usage := service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+	// Build usage from real token counts if available, otherwise estimate
+	var usage *dto.Usage
+	if deepResearchUsage != nil {
+		promptTokens := deepResearchUsage.TotalInputTokens
+		// CompletionTokens = output + tool_use (internal browsing/searching)
+		completionTokens := deepResearchUsage.TotalOutputTokens + deepResearchUsage.TotalToolUseTokens
+		usage = &dto.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      deepResearchUsage.TotalTokens,
+		}
+		usage.CompletionTokenDetails.ReasoningTokens = deepResearchUsage.TotalThoughtTokens
+		usage.PromptTokensDetails.CachedTokens = deepResearchUsage.TotalCachedTokens
+	} else {
+		usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+	}
 
 	// Send final usage response
 	finalResponse := helper.GenerateFinalUsageResponse(id, createdAt, info.UpstreamModelName, *usage)

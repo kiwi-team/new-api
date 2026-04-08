@@ -491,7 +491,18 @@ type GeminiDeepResearchSSEEvent struct {
 }
 
 type GeminiDeepResearchInteraction struct {
-	ID string `json:"id"`
+	ID     string                        `json:"id"`
+	Status string                        `json:"status,omitempty"`
+	Usage  *GeminiDeepResearchUsage      `json:"usage,omitempty"`
+}
+
+type GeminiDeepResearchUsage struct {
+	TotalTokens       int `json:"total_tokens"`
+	TotalInputTokens  int `json:"total_input_tokens"`
+	TotalOutputTokens int `json:"total_output_tokens"`
+	TotalCachedTokens int `json:"total_cached_tokens"`
+	TotalToolUseTokens int `json:"total_tool_use_tokens"`
+	TotalThoughtTokens int `json:"total_thought_tokens"`
 }
 
 type GeminiDeepResearchDelta struct {
