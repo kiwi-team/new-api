@@ -319,7 +319,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				}
 
 				// Track project consumption and get project name for logging
-				projectName, _ := service.TrackProjectConsumption(c, quota)
+				projectName, planId, _ := service.TrackProjectConsumption(c, quota)
 
 				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 				clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
@@ -339,6 +339,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 					Response:       responseStr,
 					RequestId:      requestId,
 					ProjectName:    projectName,
+					PlanId:         planId,
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)

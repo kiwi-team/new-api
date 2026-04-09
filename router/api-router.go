@@ -428,7 +428,16 @@ func SetApiRouter(router *gin.Engine) {
 			projectRoute.POST("/:id/allocation", controller.CreateOrUpdateAllocation)
 			projectRoute.GET("/:id/statistics", controller.GetProjectStatistics)
 			projectRoute.PUT("/:id/status", controller.UpdateProjectStatus)
+			projectRoute.PUT("/:id/active-plan", controller.SetActivePlan)
 			projectRoute.PUT("/:id", controller.UpdateProject)
+			// Allocation plan routes
+			projectRoute.GET("/:id/plans", controller.GetProjectPlans)
+			projectRoute.POST("/:id/plan", controller.CreateProjectPlan)
+			projectRoute.PUT("/plan/:planId", controller.UpdateProjectPlan)
+			projectRoute.DELETE("/plan/:planId", controller.DeleteProjectPlan)
+			projectRoute.GET("/plan/:planId/allocations", controller.GetPlanAllocations)
+			projectRoute.POST("/plan/:planId/allocation", controller.CreateOrUpdatePlanAllocation)
+			projectRoute.POST("/allocation/:allocationId/clear", controller.ClearAllocationBudget)
 		}
 		projectsRoute := apiRouter.Group("/projects")
 		projectsRoute.Use(middleware.AdminAuth())

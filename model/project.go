@@ -2,6 +2,10 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 // Project status constants
@@ -12,12 +16,21 @@ const (
 
 // Project represents a project entity for budget management
 type Project struct {
-	Id          int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	ProjectName string `json:"project_name" gorm:"uniqueIndex;size:100;not null"`
-	TotalBudget int    `json:"total_budget" gorm:"type:int;default:0"`
-	Status      int    `json:"status" gorm:"type:int;default:1"` // 1=enabled, 2=paused
-	CreatedAt   int64  `json:"created_at" gorm:"type:bigint;autoCreateTime"`
-	UpdatedAt   int64  `json:"updated_at" gorm:"type:bigint;autoUpdateTime"`
+	Id           int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	ProjectName  string `json:"project_name" gorm:"uniqueIndex;size:100;not null"`
+	TotalBudget  int    `json:"total_budget" gorm:"type:int;default:0"`
+	ActivePlanId int    `json:"active_plan_id" gorm:"type:int;default:0"` // currently active plan, 0=none
+	Status       int    `json:"status" gorm:"type:int;default:1"`         // 1=enabled, 2=paused
+	CreatedAt    int64  `json:"created_at" gorm:"type:bigint;autoCreateTime"`
+	UpdatedAt    int64  `json:"updated_at" gorm:"type:bigint;autoUpdateTime"`
+}
+
+// SetActivePlanId sets the active plan for a project
+func SetActivePlanId(projectId int, planId int) error {
+	if projectId == 0 {
+		return errors.New("project id is empty")
+	}
+	return DB.Model(&Project{}).Where("id = ?", projectId).Update("active_plan_id", planId).Error
 }
 
 // TableName returns the table name for Project
@@ -25,10 +38,34 @@ func (Project) TableName() string {
 	return "projects"
 }
 
+// ProjectAllocationPlan represents a time-bound allocation plan within a project.
+// When the plan expires (end_date passes), all quotas under this plan become invalid.
+type ProjectAllocationPlan struct {
+	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	ProjectId int    `json:"project_id" gorm:"index;not null"`
+	PlanName  string `json:"plan_name" gorm:"size:200;not null"`
+	StartDate string `json:"start_date" gorm:"size:10;not null"` // format: 20260101
+	EndDate   string `json:"end_date" gorm:"size:10;not null"`   // format: 20260430
+	CreatedAt int64  `json:"created_at" gorm:"type:bigint;autoCreateTime"`
+	UpdatedAt int64  `json:"updated_at" gorm:"type:bigint;autoUpdateTime"`
+}
+
+// TableName returns the table name for ProjectAllocationPlan
+func (ProjectAllocationPlan) TableName() string {
+	return "project_allocation_plans"
+}
+
+// IsExpired checks if the plan has passed its end_date
+func (p *ProjectAllocationPlan) IsExpired() bool {
+	now := time.Now().Format("20060102")
+	return now > p.EndDate
+}
+
 // ProjectAllocation represents budget allocation for a user within a project
 type ProjectAllocation struct {
 	Id             int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	ProjectId      int    `json:"project_id" gorm:"index;not null"`
+	PlanId         int    `json:"plan_id" gorm:"index;default:0"` // FK to ProjectAllocationPlan
 	ClientUserId   string `json:"client_user_id" gorm:"index;size:200;not null"`
 	AllocatedQuota int    `json:"allocated_quota" gorm:"type:int;default:0"`
 	UsedQuota      int    `json:"used_quota" gorm:"type:int;default:0"`
@@ -39,6 +76,46 @@ type ProjectAllocation struct {
 // TableName returns the table name for ProjectAllocation
 func (ProjectAllocation) TableName() string {
 	return "project_allocations"
+}
+
+// MigrateProjectAllocationPlans migrates existing allocations into a default plan per project.
+// Called during DB migration. Creates plans with date range 20260101-20260415.
+func MigrateProjectAllocationPlans() {
+	// Check if any allocations exist without a plan
+	var count int64
+	DB.Model(&ProjectAllocation{}).Where("plan_id = 0 OR plan_id IS NULL").Count(&count)
+	if count == 0 {
+		return
+	}
+
+	// Get distinct project IDs that have allocations without plans
+	var projectIds []int
+	DB.Model(&ProjectAllocation{}).
+		Where("plan_id = 0 OR plan_id IS NULL").
+		Distinct("project_id").
+		Pluck("project_id", &projectIds)
+
+	for _, projectId := range projectIds {
+		// Create a default plan for this project
+		plan := &ProjectAllocationPlan{
+			ProjectId: projectId,
+			PlanName:  "历史数据迁移",
+			StartDate: "20260101",
+			EndDate:   "20260415",
+		}
+		if err := DB.Create(plan).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to create default allocation plan for project %d: %s", projectId, err.Error()))
+			continue
+		}
+		// Update all allocations without a plan to use this plan
+		DB.Model(&ProjectAllocation{}).
+			Where("project_id = ? AND (plan_id = 0 OR plan_id IS NULL)", projectId).
+			Update("plan_id", plan.Id)
+		// Set this plan as the active plan for the project
+		DB.Model(&Project{}).Where("id = ? AND (active_plan_id = 0 OR active_plan_id IS NULL)", projectId).
+			Update("active_plan_id", plan.Id)
+	}
+	common.SysLog("Migrated existing allocations to default plans")
 }
 
 // ==================== Project CRUD Operations ====================
@@ -145,14 +222,88 @@ func GetProjectCount() (int64, error) {
 	return count, err
 }
 
+// ==================== ProjectAllocationPlan CRUD Operations ====================
+
+// CreateAllocationPlan creates a new allocation plan
+func CreateAllocationPlan(plan *ProjectAllocationPlan) error {
+	if plan.ProjectId == 0 {
+		return errors.New("project id is empty")
+	}
+	if plan.PlanName == "" {
+		return errors.New("plan name is empty")
+	}
+	if plan.StartDate == "" || plan.EndDate == "" {
+		return errors.New("start date and end date are required")
+	}
+	if plan.StartDate > plan.EndDate {
+		return errors.New("start date must be before end date")
+	}
+	return DB.Create(plan).Error
+}
+
+// GetAllocationPlanById retrieves an allocation plan by ID
+func GetAllocationPlanById(id int) (*ProjectAllocationPlan, error) {
+	if id == 0 {
+		return nil, errors.New("plan id is empty")
+	}
+	var plan ProjectAllocationPlan
+	err := DB.First(&plan, "id = ?", id).Error
+	return &plan, err
+}
+
+// GetAllocationPlansByProjectId retrieves all allocation plans for a project
+func GetAllocationPlansByProjectId(projectId int) ([]*ProjectAllocationPlan, error) {
+	if projectId == 0 {
+		return nil, errors.New("project id is empty")
+	}
+	var plans []*ProjectAllocationPlan
+	err := DB.Where("project_id = ?", projectId).Order("id desc").Find(&plans).Error
+	return plans, err
+}
+
+// UpdateAllocationPlan updates plan name, start_date, end_date
+func UpdateAllocationPlan(plan *ProjectAllocationPlan) error {
+	if plan.Id == 0 {
+		return errors.New("plan id is empty")
+	}
+	if plan.StartDate > plan.EndDate {
+		return errors.New("start date must be before end date")
+	}
+	return DB.Model(plan).Select("plan_name", "start_date", "end_date").Updates(plan).Error
+}
+
+// DeleteAllocationPlan deletes a plan and all its allocations
+func DeleteAllocationPlan(planId int) error {
+	if planId == 0 {
+		return errors.New("plan id is empty")
+	}
+	// Delete allocations under this plan first
+	if err := DB.Where("plan_id = ?", planId).Delete(&ProjectAllocation{}).Error; err != nil {
+		return err
+	}
+	return DB.Delete(&ProjectAllocationPlan{}, planId).Error
+}
+
+// GetActivePlanIdForProject returns the active plan ID for a project (from project.active_plan_id)
+func GetActivePlanIdForProject(projectId int) (int, error) {
+	project, err := GetProjectById(projectId)
+	if err != nil {
+		return 0, err
+	}
+	return project.ActivePlanId, nil
+}
+
 // ==================== ProjectAllocation CRUD Operations ====================
 
 // CreateOrUpdateAllocation creates a new allocation or updates an existing one
-// If an allocation for the given project and user already exists, it updates the allocated_quota
+// If an allocation for the given plan, project and user already exists, it updates the allocated_quota
 // Otherwise, it creates a new allocation record
 func CreateOrUpdateAllocation(allocation *ProjectAllocation) error {
 	if allocation.ProjectId == 0 {
 		return errors.New("project id is empty")
+	}
+	if allocation.PlanId == 0 {
+		return errors.New("plan id is empty")
 	}
 	if allocation.ClientUserId == "" {
 		return errors.New("client user id is empty")
@@ -161,9 +312,9 @@ func CreateOrUpdateAllocation(allocation *ProjectAllocation) error {
 		return errors.New("allocated quota cannot be negative")
 	}
 
-	// Check if allocation already exists
+	// Check if allocation already exists for this plan + user
 	var existing ProjectAllocation
-	err := DB.Where("project_id = ? AND client_user_id = ?", allocation.ProjectId, allocation.ClientUserId).First(&existing).Error
+	err := DB.Where("plan_id = ? AND project_id = ? AND client_user_id = ?", allocation.PlanId, allocation.ProjectId, allocation.ClientUserId).First(&existing).Error
 	if err == nil {
 		// Update existing allocation
 		existing.AllocatedQuota = allocation.AllocatedQuota
@@ -184,7 +335,17 @@ func CreateOrUpdateAllocation(allocation *ProjectAllocation) error {
 	return DB.Create(allocation).Error
 }
 
-// GetAllocationByProjectAndUser retrieves an allocation by project ID and client user ID
+// ClearAllocationUsedQuota resets used_quota to 0 for a specific allocation (clear remaining budget)
+func ClearAllocationUsedQuota(allocationId int) error {
+	if allocationId == 0 {
+		return errors.New("allocation id is empty")
+	}
+	return DB.Model(&ProjectAllocation{}).Where("id = ?", allocationId).
+		Update("allocated_quota", 0).Error
+}
+
+// GetAllocationByProjectAndUser retrieves the allocation for the active plan by project ID and client user ID.
+// Only looks at the project's ActivePlanId. UsedQuota is plan-scoped from quota_data.
 func GetAllocationByProjectAndUser(projectId int, clientUserId string) (*ProjectAllocation, error) {
 	if projectId == 0 {
 		return nil, errors.New("project id is empty")
@@ -193,11 +354,87 @@ func GetAllocationByProjectAndUser(projectId int, clientUserId string) (*Project
 		return nil, errors.New("client user id is empty")
 	}
 
+	activePlanId, err := GetActivePlanIdForProject(projectId)
+	if err != nil {
+		return nil, err
+	}
+	if activePlanId == 0 {
+		return nil, errors.New("no active allocation plan")
+	}
+
+	// Check if the active plan has expired
+	plan, err := GetAllocationPlanById(activePlanId)
+	if err != nil {
+		return nil, errors.New("no active allocation plan")
+	}
+	if plan.IsExpired() {
+		return nil, errors.New("active allocation plan has expired")
+	}
+
 	var allocation ProjectAllocation
-	err := DB.Where("project_id = ? AND client_user_id = ?", projectId, clientUserId).First(&allocation).Error
-	quota, _ := GetQuotaByProjectIdUid(projectId, clientUserId)
+	err = DB.Where("project_id = ? AND client_user_id = ? AND plan_id = ?", projectId, clientUserId, activePlanId).First(&allocation).Error
+	if err != nil {
+		return nil, err
+	}
+	// UsedQuota scoped to this plan
+	quota, _ := GetQuotaByPlanIdUid(activePlanId, clientUserId)
 	allocation.UsedQuota = quota
-	return &allocation, err
+	return &allocation, nil
+}
+
+// GetAllocationsByPlanId retrieves all allocations for a plan with pagination
+func GetAllocationsByPlanId(planId int, startIdx int, num int) ([]*ProjectAllocation, error) {
+	if planId == 0 {
+		return nil, errors.New("plan id is empty")
+	}
+
+	var allocations []*ProjectAllocation
+	err := DB.Where("plan_id = ?", planId).Order("id desc").Limit(num).Offset(startIdx).Find(&allocations).Error
+	for _, item := range allocations {
+		item.UsedQuota, _ = GetQuotaByPlanIdUid(planId, item.ClientUserId)
+	}
+	return allocations, err
+}
+
+// GetAllocationsByPlanIdWithTotal retrieves all allocations for a plan with pagination and total count
+func GetAllocationsByPlanIdWithTotal(planId int, startIdx int, num int) ([]*ProjectAllocation, int64, error) {
+	if planId == 0 {
+		return nil, 0, errors.New("plan id is empty")
+	}
+
+	var allocations []*ProjectAllocation
+	var total int64
+
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	err := tx.Model(&ProjectAllocation{}).Where("plan_id = ?", planId).Count(&total).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	err = tx.Where("plan_id = ?", planId).Order("id desc").Limit(num).Offset(startIdx).Find(&allocations).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+	for _, item := range allocations {
+		item.UsedQuota, _ = GetQuotaByPlanIdUid(planId, item.ClientUserId)
+	}
+
+	return allocations, total, nil
 }
 
 // GetAllocationsByProjectId retrieves all allocations for a project with pagination
@@ -223,7 +460,6 @@ func GetAllocationsByProjectIdWithTotal(projectId int, startIdx int, num int) ([
 	var allocations []*ProjectAllocation
 	var total int64
 
-	// Start transaction for consistent count and list
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -234,21 +470,18 @@ func GetAllocationsByProjectIdWithTotal(projectId int, startIdx int, num int) ([
 		}
 	}()
 
-	// Get total count
 	err := tx.Model(&ProjectAllocation{}).Where("project_id = ?", projectId).Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	// Get paginated allocations
 	err = tx.Where("project_id = ?", projectId).Order("id desc").Limit(num).Offset(startIdx).Find(&allocations).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	// Commit transaction
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
@@ -278,6 +511,17 @@ func GetProjectAllocatedTotal(projectId int) (int, error) {
 
 	var total int64
 	err := DB.Model(&ProjectAllocation{}).Where("project_id = ?", projectId).Select("COALESCE(SUM(allocated_quota), 0)").Scan(&total).Error
+	return int(total), err
+}
+
+// GetPlanAllocatedTotal returns the sum of all allocated quotas for a specific plan
+func GetPlanAllocatedTotal(planId int) (int, error) {
+	if planId == 0 {
+		return 0, errors.New("plan id is empty")
+	}
+
+	var total int64
+	err := DB.Model(&ProjectAllocation{}).Where("plan_id = ?", planId).Select("COALESCE(SUM(allocated_quota), 0)").Scan(&total).Error
 	return int(total), err
 }
 
@@ -366,19 +610,33 @@ func GetAllocationCount(projectId int) (int64, error) {
 	return count, err
 }
 
-// GetUserProjectRemainingQuota calculates the remaining quota for a user across all their project allocations
-// Returns the sum of (allocated_quota - used_quota) for all allocations belonging to the user
+// GetUserProjectRemainingQuota calculates the remaining quota for a user across all their project allocations.
+// Only counts allocations under the currently active plan per project.
+// remaining = allocated_quota - plan-scoped consumption from quota_data
 func GetUserProjectRemainingQuota(clientUserId string) (int, error) {
 	if clientUserId == "" {
 		return 0, errors.New("client user id is empty")
 	}
 
-	var total int64
+	// Get allocations that are under an active plan (join projects on active_plan_id)
+	var allocations []ProjectAllocation
 	err := DB.Model(&ProjectAllocation{}).
-		Where("client_user_id = ?", clientUserId).
-		Select("COALESCE(SUM(allocated_quota - used_quota), 0)").
-		Scan(&total).Error
-	return int(total), err
+		Joins("JOIN projects ON projects.id = project_allocations.project_id AND projects.active_plan_id = project_allocations.plan_id").
+		Where("project_allocations.client_user_id = ? AND projects.active_plan_id > 0", clientUserId).
+		Find(&allocations).Error
+	if err != nil {
+		return 0, err
+	}
+
+	totalRemaining := 0
+	for _, a := range allocations {
+		used, _ := GetQuotaByPlanIdUid(a.PlanId, clientUserId)
+		remaining := a.AllocatedQuota - used/500000
+		if remaining > 0 {
+			totalRemaining += remaining
+		}
+	}
+	return totalRemaining, err
 }
 
 // DeleteAllocationsByProjectId deletes all allocations for a project
@@ -407,6 +665,15 @@ func GetQuotaByProjectIdUid(projectId int, uid string) (int, error) {
 	}
 	var quota int64
 	err = DB.Model(&QuotaData{}).Where("project_name = ? AND client_user_id = ?", project.ProjectName, uid).
+		Select("COALESCE(SUM(quota), 0)").
+		Scan(&quota).Error
+	return int(quota), err
+}
+
+// GetQuotaByPlanIdUid returns consumption for a specific plan + uid
+func GetQuotaByPlanIdUid(planId int, uid string) (int, error) {
+	var quota int64
+	err := DB.Model(&QuotaData{}).Where("plan_id = ? AND client_user_id = ?", planId, uid).
 		Select("COALESCE(SUM(quota), 0)").
 		Scan(&quota).Error
 	return int(quota), err

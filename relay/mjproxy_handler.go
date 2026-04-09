@@ -217,7 +217,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			}
 
 			// Track project consumption and get project name for logging
-			projectName, _ := service.TrackProjectConsumption(c, priceData.Quota)
+			projectName, planId, _ := service.TrackProjectConsumption(c, priceData.Quota)
 
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
@@ -238,6 +238,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 				ClientScenairo: clientScenairo,
 				RequestId:      requestId,
 				ProjectName:    projectName,
+				PlanId:         planId,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(info.ChannelId, priceData.Quota)
@@ -528,7 +529,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			}
 
 			// Track project consumption and get project name for logging
-			projectName, _ := service.TrackProjectConsumption(c, priceData.Quota)
+			projectName, planId, _ := service.TrackProjectConsumption(c, priceData.Quota)
 
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)
@@ -549,6 +550,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 				ClientScenairo: clientScenairo,
 				RequestId:      requestId,
 				ProjectName:    projectName,
+				PlanId:         planId,
 			})
 			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(relayInfo.ChannelId, priceData.Quota)

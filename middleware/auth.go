@@ -534,6 +534,7 @@ func TokenAuth() func(c *gin.Context) {
 			projectQuota = allocation.AllocatedQuota
 			common.SetContextKey(c, constant.ContextKeyProjectName, projectName)
 			common.SetContextKey(c, constant.ContextKeyProjectId, allocation.ProjectId)
+			common.SetContextKey(c, constant.ContextKeyProjectPlanId, allocation.PlanId)
 			common.SetContextKey(c, constant.ContextKeyProjectAllocationId, allocation.Id)
 		}
 

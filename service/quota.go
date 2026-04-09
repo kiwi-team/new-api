@@ -304,7 +304,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 
 	// Track project consumption and get project name for logging
-	projectName, _ := TrackProjectConsumption(ctx, quota)
+	projectName, planId, _ := TrackProjectConsumption(ctx, quota)
 
 	logModel := modelName
 	if extraContent != "" {
@@ -340,6 +340,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
 		ProjectName:      projectName,
+		PlanId:           planId,
 	})
 }
 
@@ -448,7 +449,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 
 	// Track project consumption and get project name for logging
-	projectName, _ := TrackProjectConsumption(ctx, quota)
+	projectName, planId, _ := TrackProjectConsumption(ctx, quota)
 
 	other := GenerateClaudeOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio,
 		cacheTokens, cacheRatio,
@@ -478,6 +479,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
 		ProjectName:      projectName,
+		PlanId:           planId,
 	})
 
 }
@@ -589,7 +591,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 
 	// Track project consumption and get project name for logging
-	projectName, _ := TrackProjectConsumption(ctx, quota)
+	projectName, planId, _ := TrackProjectConsumption(ctx, quota)
 
 	logModel := relayInfo.OriginModelName
 	if extraContent != "" {
@@ -625,6 +627,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
 		ProjectName:      projectName,
+		PlanId:           planId,
 	})
 }
 

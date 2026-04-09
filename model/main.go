@@ -314,6 +314,7 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		// Project budget management tables
 		&Project{},
+		&ProjectAllocationPlan{},
 		&ProjectAllocation{},
 	)
 	if err != nil {
@@ -325,6 +326,9 @@ func migrateDB() error {
 	if err := createProjectAllocationUniqueIndex(); err != nil {
 		common.SysLog("Warning: failed to create project allocation unique index: " + err.Error())
 	}
+
+	// Migrate existing allocations without plans into default plans
+	MigrateProjectAllocationPlans()
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -557,47 +561,57 @@ func migrateSubscriptionPlanPriceAmount() {
 }
 
 // createProjectAllocationUniqueIndex creates a composite unique index on project_allocations table
-// for (project_id, client_user_id) to ensure a user can only have one allocation per project.
+// for (plan_id, project_id, client_user_id) to ensure a user can only have one allocation per plan per project.
 // This function is idempotent and handles cross-database compatibility (SQLite, MySQL, PostgreSQL).
 func createProjectAllocationUniqueIndex() error {
 	tableName := "project_allocations"
-	indexName := "idx_project_allocation_unique"
+	oldIndexName := "idx_project_allocation_unique"
+	newIndexName := "idx_project_allocation_plan_unique"
 
 	// Check if table exists first
 	if !DB.Migrator().HasTable(tableName) {
-		return nil // Table doesn't exist yet, index will be created when table is created
+		return nil
 	}
 
-	// Check if index already exists
-	if DB.Migrator().HasIndex(&ProjectAllocation{}, indexName) {
-		return nil // Index already exists
+	// Drop the old index (project_id, client_user_id) if it exists
+	if DB.Migrator().HasIndex(&ProjectAllocation{}, oldIndexName) {
+		common.SysLog("Dropping old unique index " + oldIndexName + " to recreate with plan_id")
+		if common.UsingPostgreSQL {
+			DB.Exec(`DROP INDEX IF EXISTS ` + oldIndexName)
+		} else if common.UsingMySQL {
+			DB.Exec("DROP INDEX `" + oldIndexName + "` ON `" + tableName + "`")
+		} else {
+			DB.Exec(`DROP INDEX IF EXISTS ` + oldIndexName)
+		}
 	}
 
-	// Create the unique index with database-specific syntax
+	// Check if new index already exists
+	if DB.Migrator().HasIndex(&ProjectAllocation{}, newIndexName) {
+		return nil
+	}
+
+	// Create the new unique index with plan_id
 	var createIndexSQL string
 	if common.UsingPostgreSQL {
-		// PostgreSQL syntax
-		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(project_id, client_user_id)`
+		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + newIndexName + ` ON ` + tableName + `(plan_id, project_id, client_user_id)`
 	} else if common.UsingMySQL {
-		// MySQL syntax - check if index exists first since MySQL doesn't support IF NOT EXISTS for indexes
 		var count int64
-		DB.Raw(`SELECT COUNT(*) FROM information_schema.statistics 
+		DB.Raw(`SELECT COUNT(*) FROM information_schema.statistics
 			WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
-			tableName, indexName).Scan(&count)
+			tableName, newIndexName).Scan(&count)
 		if count > 0 {
-			return nil // Index already exists
+			return nil
 		}
-		createIndexSQL = "CREATE UNIQUE INDEX `" + indexName + "` ON `" + tableName + "`(project_id, client_user_id)"
+		createIndexSQL = "CREATE UNIQUE INDEX `" + newIndexName + "` ON `" + tableName + "`(plan_id, project_id, client_user_id)"
 	} else {
-		// SQLite syntax
-		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(project_id, client_user_id)`
+		createIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + newIndexName + ` ON ` + tableName + `(plan_id, project_id, client_user_id)`
 	}
 
 	if err := DB.Exec(createIndexSQL).Error; err != nil {
-		return fmt.Errorf("failed to create unique index %s: %v", indexName, err)
+		return fmt.Errorf("failed to create unique index %s: %v", newIndexName, err)
 	}
 
-	common.SysLog("Successfully created unique index " + indexName + " on " + tableName)
+	common.SysLog("Successfully created unique index " + newIndexName + " on " + tableName)
 	return nil
 }
 

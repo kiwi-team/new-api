@@ -17,10 +17,29 @@ type UpdateProjectStatusRequest struct {
 	Status int `json:"status" binding:"oneof=1 2"`
 }
 
+// CreateAllocationPlanRequest represents the request for creating an allocation plan
+type CreateAllocationPlanRequest struct {
+	PlanName  string `json:"plan_name" binding:"required,max=200"`
+	StartDate string `json:"start_date" binding:"required"` // format: 20260101
+	EndDate   string `json:"end_date" binding:"required"`   // format: 20260430
+}
+
+// UpdateAllocationPlanRequest represents the request for updating an allocation plan
+type UpdateAllocationPlanRequest struct {
+	PlanName  string `json:"plan_name" binding:"max=200"`
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
+}
+
 // AllocationRequest represents the request body for creating or updating a budget allocation
 type AllocationRequest struct {
 	ClientUserId   string `json:"client_user_id" binding:"required"`
 	AllocatedQuota int    `json:"allocated_quota" binding:"gte=0"`
+}
+
+// ClearAllocationRequest represents the request to clear a user's remaining budget
+type ClearAllocationRequest struct {
+	AllocationId int `json:"allocation_id" binding:"required"`
 }
 
 // ProjectDashboardResponse represents the response for the project budget dashboard

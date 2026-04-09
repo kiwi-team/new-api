@@ -18,6 +18,8 @@ var (
 	ErrProjectQuotaExceeded    = errors.New("project quota exceeded")
 	ErrAllocationExceedsBudget = errors.New("allocation exceeds project budget")
 	ErrInvalidAllocationQuota  = errors.New("invalid allocation quota")
+	ErrNoActivePlan            = errors.New("no active allocation plan for this project")
+	ErrActivePlanExpired       = errors.New("active allocation plan has expired")
 )
 
 // ValidateProjectRequest validates an API request with a project header.
@@ -55,11 +57,17 @@ func ValidateProjectRequest(projectName string, clientUserId string) (*model.Pro
 		return nil, ErrProjectPaused
 	}
 
-	// Step 3: Check if user has allocation for this project
+	// Step 3: Check if there's an active plan
 	allocation, err := model.GetAllocationByProjectAndUser(project.Id, clientUserId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotAllocatedProject
+		}
+		if err.Error() == "no active allocation plan" {
+			return nil, ErrNoActivePlan
+		}
+		if err.Error() == "active allocation plan has expired" {
+			return nil, ErrActivePlanExpired
 		}
 		return nil, err
 	}
@@ -157,17 +165,18 @@ func IncreaseProjectUsedQuota(projectId int, clientUserId string, delta int) err
 //
 // The function is safe to call even if no project is specified in the request.
 // If no project context is found, it returns empty string and nil error.
-func TrackProjectConsumption(ctx *gin.Context, quota int) (string, error) {
+func TrackProjectConsumption(ctx *gin.Context, quota int) (string, int, error) {
 	// Get project context from request
 	projectName := common.GetContextKeyString(ctx, constant.ContextKeyProjectName)
+	planId := common.GetContextKeyInt(ctx, constant.ContextKeyProjectPlanId)
 	if projectName == "" {
 		// No project specified, nothing to track
-		return "", nil
+		return "", 0, nil
 	}
 
 	// Skip if quota is zero or negative
 	if quota <= 0 {
-		return projectName, nil
+		return projectName, planId, nil
 	}
 
 	// Get project ID and client user ID from context
@@ -177,17 +186,17 @@ func TrackProjectConsumption(ctx *gin.Context, quota int) (string, error) {
 	if projectId == 0 || clientUserId == "" {
 		// Missing required context, log warning but don't fail
 		common.SysLog("TrackProjectConsumption: missing project_id or client_user_id in context")
-		return projectName, nil
+		return projectName, planId, nil
 	}
 
 	// Atomically update the project allocation's used_quota
 	err := IncreaseProjectUsedQuota(projectId, clientUserId, quota)
 	if err != nil {
 		common.SysError("TrackProjectConsumption: failed to update project used quota: " + err.Error())
-		return projectName, err
+		return projectName, planId, err
 	}
 
-	return projectName, nil
+	return projectName, planId, nil
 }
 
 // ValidateAllocation validates that a new or updated allocation does not exceed the project's total budget.
@@ -268,11 +277,56 @@ func ValidateAllocationForUser(projectId int, clientUserId string, newAllocatedQ
 	existingAllocation, err := model.GetAllocationByProjectAndUser(projectId, clientUserId)
 	if err == nil {
 		existingAllocationId = existingAllocation.Id
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) && err.Error() != "no active allocation plan" {
 		return err
 	}
 
 	return ValidateAllocation(projectId, newAllocatedQuota, existingAllocationId)
+}
+
+// ValidateAllocationForPlan validates allocation for a user within a specific plan.
+func ValidateAllocationForPlan(projectId int, planId int, clientUserId string, newAllocatedQuota int) error {
+	if projectId == 0 {
+		return errors.New("project id is empty")
+	}
+	if planId == 0 {
+		return errors.New("plan id is empty")
+	}
+	if clientUserId == "" {
+		return errors.New("client user id is empty")
+	}
+	if newAllocatedQuota < 0 {
+		return ErrInvalidAllocationQuota
+	}
+
+	// Get the project to check total budget
+	project, err := model.GetProjectById(projectId)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrProjectNotFound
+		}
+		return err
+	}
+
+	// Get current total allocated quota for the project (across all plans)
+	currentAllocatedTotal, err := model.GetProjectAllocatedTotal(projectId)
+	if err != nil {
+		return err
+	}
+
+	// Subtract existing allocation for this user in this plan if updating
+	var existingAllocation model.ProjectAllocation
+	err = model.DB.Where("plan_id = ? AND project_id = ? AND client_user_id = ?", planId, projectId, clientUserId).First(&existingAllocation).Error
+	if err == nil {
+		currentAllocatedTotal -= existingAllocation.AllocatedQuota
+	}
+
+	// Check if new allocation would exceed total budget
+	if currentAllocatedTotal+newAllocatedQuota > project.TotalBudget {
+		return ErrAllocationExceedsBudget
+	}
+
+	return nil
 }
 
 // CheckProjectQuotaAvailable checks if a user has available quota in a specific project.

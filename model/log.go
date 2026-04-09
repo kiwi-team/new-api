@@ -166,6 +166,7 @@ type RecordConsumeLogParams struct {
 	ClientScenairo   string                 `json:"client_scenairo"`
 	RequestId        string                 `json:"request_id"`
 	ProjectName      string                 `json:"project_name"`
+	PlanId           int                    `json:"plan_id"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -230,6 +231,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 				ClientUserId:     params.ClientUserId,
 				ClientScenairo:   params.ClientScenairo,
 				ProjectName:      params.ProjectName,
+				PlanId:           params.PlanId,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})

@@ -61,6 +61,7 @@ const (
 	/* project related keys */
 	ContextKeyProjectName         ContextKey = "project_name"
 	ContextKeyProjectId           ContextKey = "project_id"
+	ContextKeyProjectPlanId       ContextKey = "project_plan_id"
 	ContextKeyProjectAllocationId ContextKey = "project_allocation_id"
 
 	ContextKeyLocalCountTokens ContextKey = "local_count_tokens"

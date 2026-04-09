@@ -147,7 +147,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	}
 
 	// Track project consumption and get project name for logging
-	projectName, _ := TrackProjectConsumption(ctx, feeQuota)
+	projectName, planId, _ := TrackProjectConsumption(ctx, feeQuota)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:      relayInfo.ChannelId,
@@ -161,6 +161,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		Group:          relayInfo.UsingGroup,
 		Other:          other,
 		ProjectName:    projectName,
+		PlanId:         planId,
 	})
 
 	return true

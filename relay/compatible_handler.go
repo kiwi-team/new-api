@@ -1125,7 +1125,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	}
 
 	// Track project consumption and get project name for logging
-	projectName, _ := service.TrackProjectConsumption(ctx, quota)
+	projectName, planId, _ := service.TrackProjectConsumption(ctx, quota)
 
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
@@ -1149,5 +1149,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		ClientScenairo:   clientScenairo,
 		RequestId:        requestId,
 		ProjectName:      projectName,
+		PlanId:           planId,
 	})
 }

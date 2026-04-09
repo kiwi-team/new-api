@@ -23,40 +23,62 @@ func GetProjects(c *gin.Context) {
 		return
 	}
 
-	// Enrich each project with allocations, allocated_total and used_total
+	// Enrich each project with plan-grouped allocations
 	type AllocationInfo struct {
 		ClientUserId   string `json:"client_user_id"`
 		AllocatedQuota int    `json:"allocated_quota"`
 		UsedQuota      int    `json:"used_quota"`
 	}
+	type PlanAllocationInfo struct {
+		PlanId     int              `json:"plan_id"`
+		PlanName   string           `json:"plan_name"`
+		StartDate  string           `json:"start_date"`
+		EndDate    string           `json:"end_date"`
+		IsActive   bool             `json:"is_active"`
+		Allocations []AllocationInfo `json:"allocations"`
+	}
 	type ProjectWithBudget struct {
 		*model.Project
-		AllocatedTotal int              `json:"allocated_total"`
-		UsedTotal      int              `json:"used_total"`
-		Allocations    []AllocationInfo `json:"allocations"`
-		Quota          int64            `json:"quota"`
+		AllocatedTotal int                `json:"allocated_total"`
+		UsedTotal      int                `json:"used_total"`
+		Plans          []PlanAllocationInfo `json:"plans"`
+		Quota          int64              `json:"quota"`
 	}
 	enriched := make([]ProjectWithBudget, 0, len(projects))
 	for _, p := range projects {
 		allocated, _ := model.GetProjectAllocatedTotal(p.Id)
 		used, _ := model.GetProjectUsedTotal(p.Id)
 		quota, _ := model.GetQuotaByProjectName(p.ProjectName)
-		// Fetch all allocations for this project
-		allocs, _ := model.GetAllocationsByProjectId(p.Id, 0, 1000)
-		allocInfos := make([]AllocationInfo, 0, len(allocs))
-		for _, a := range allocs {
-			allocInfos = append(allocInfos, AllocationInfo{
-				ClientUserId:   a.ClientUserId,
-				AllocatedQuota: a.AllocatedQuota,
-				UsedQuota:      a.UsedQuota,
+
+		// Fetch plans for this project
+		plans, _ := model.GetAllocationPlansByProjectId(p.Id)
+		planInfos := make([]PlanAllocationInfo, 0, len(plans))
+		for _, plan := range plans {
+			allocs, _ := model.GetAllocationsByPlanId(plan.Id, 0, 1000)
+			allocInfos := make([]AllocationInfo, 0, len(allocs))
+			for _, a := range allocs {
+				allocInfos = append(allocInfos, AllocationInfo{
+					ClientUserId:   a.ClientUserId,
+					AllocatedQuota: a.AllocatedQuota,
+					UsedQuota:      a.UsedQuota,
+				})
+			}
+			planInfos = append(planInfos, PlanAllocationInfo{
+				PlanId:      plan.Id,
+				PlanName:    plan.PlanName,
+				StartDate:   plan.StartDate,
+				EndDate:     plan.EndDate,
+				IsActive:    p.ActivePlanId == plan.Id,
+				Allocations: allocInfos,
 			})
 		}
+
 		enriched = append(enriched, ProjectWithBudget{
 			Project:        p,
-			Quota:          quota, // 这个项目已消耗的总额
+			Quota:          quota,
 			AllocatedTotal: allocated,
 			UsedTotal:      used,
-			Allocations:    allocInfos,
+			Plans:          planInfos,
 		})
 	}
 
@@ -204,6 +226,334 @@ func UpdateProjectStatus(c *gin.Context) {
 	})
 }
 
+// SetActivePlan handles PUT /api/project/:id/active-plan - sets the active plan for a project
+func SetActivePlan(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+
+	var req struct {
+		PlanId int `json:"plan_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	_, err = model.GetProjectById(id)
+	if err != nil {
+		common.ApiErrorMsg(c, "project not found")
+		return
+	}
+
+	// plan_id=0 means deactivate
+	if req.PlanId > 0 {
+		plan, err := model.GetAllocationPlanById(req.PlanId)
+		if err != nil {
+			common.ApiErrorMsg(c, "plan not found")
+			return
+		}
+		if plan.ProjectId != id {
+			common.ApiErrorMsg(c, "plan does not belong to this project")
+			return
+		}
+		if plan.IsExpired() {
+			common.ApiErrorMsg(c, "cannot activate an expired plan")
+			return
+		}
+	}
+
+	err = model.SetActivePlanId(id, req.PlanId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+// ==================== Allocation Plan Endpoints ====================
+
+// GetProjectPlans handles GET /api/project/:id/plans - retrieves allocation plans for a project
+func GetProjectPlans(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+
+	project, err := model.GetProjectById(id)
+	if err != nil {
+		common.ApiErrorMsg(c, "project not found")
+		return
+	}
+
+	plans, err := model.GetAllocationPlansByProjectId(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	// Enrich plans with allocation details
+	type AllocationInfo struct {
+		ClientUserId   string `json:"client_user_id"`
+		AllocatedQuota int    `json:"allocated_quota"`
+		UsedQuota      int    `json:"used_quota"`
+	}
+	type PlanWithStats struct {
+		*model.ProjectAllocationPlan
+		AllocationCount int              `json:"allocation_count"`
+		AllocatedTotal  int              `json:"allocated_total"`
+		IsActive        bool             `json:"is_active"`
+		IsExpired       bool             `json:"is_expired"`
+		Allocations     []AllocationInfo `json:"allocations"`
+	}
+	enriched := make([]PlanWithStats, 0, len(plans))
+	for _, p := range plans {
+		allocs, _ := model.GetAllocationsByPlanId(p.Id, 0, 1000)
+		allocInfos := make([]AllocationInfo, 0, len(allocs))
+		allocatedTotal := 0
+		for _, a := range allocs {
+			allocatedTotal += a.AllocatedQuota
+			allocInfos = append(allocInfos, AllocationInfo{
+				ClientUserId:   a.ClientUserId,
+				AllocatedQuota: a.AllocatedQuota,
+				UsedQuota:      a.UsedQuota,
+			})
+		}
+		enriched = append(enriched, PlanWithStats{
+			ProjectAllocationPlan: p,
+			AllocationCount:       len(allocs),
+			AllocatedTotal:        allocatedTotal,
+			IsActive:              project.ActivePlanId == p.Id,
+			IsExpired:             p.IsExpired(),
+			Allocations:           allocInfos,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    enriched,
+	})
+}
+
+// CreateProjectPlan handles POST /api/project/:id/plan - creates a new allocation plan
+func CreateProjectPlan(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+
+	var req dto.CreateAllocationPlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	_, err = model.GetProjectById(id)
+	if err != nil {
+		common.ApiErrorMsg(c, "project not found")
+		return
+	}
+
+	plan := &model.ProjectAllocationPlan{
+		ProjectId: id,
+		PlanName:  req.PlanName,
+		StartDate: req.StartDate,
+		EndDate:   req.EndDate,
+	}
+
+	err = model.CreateAllocationPlan(plan)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    plan,
+	})
+}
+
+// UpdateProjectPlan handles PUT /api/project/plan/:planId - updates a plan
+func UpdateProjectPlan(c *gin.Context) {
+	planId, err := strconv.Atoi(c.Param("planId"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+
+	var req dto.UpdateAllocationPlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	plan, err := model.GetAllocationPlanById(planId)
+	if err != nil {
+		common.ApiErrorMsg(c, "plan not found")
+		return
+	}
+
+	if req.PlanName != "" {
+		plan.PlanName = req.PlanName
+	}
+	if req.StartDate != "" {
+		plan.StartDate = req.StartDate
+	}
+	if req.EndDate != "" {
+		plan.EndDate = req.EndDate
+	}
+
+	err = model.UpdateAllocationPlan(plan)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    plan,
+	})
+}
+
+// DeleteProjectPlan handles DELETE /api/project/plan/:planId - deletes a plan and its allocations
+func DeleteProjectPlan(c *gin.Context) {
+	planId, err := strconv.Atoi(c.Param("planId"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+
+	_, err = model.GetAllocationPlanById(planId)
+	if err != nil {
+		common.ApiErrorMsg(c, "plan not found")
+		return
+	}
+
+	err = model.DeleteAllocationPlan(planId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+// ==================== Allocation Endpoints (Plan-scoped) ====================
+
+// GetPlanAllocations handles GET /api/project/plan/:planId/allocations - retrieves allocations for a plan
+func GetPlanAllocations(c *gin.Context) {
+	planId, err := strconv.Atoi(c.Param("planId"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+
+	_, err = model.GetAllocationPlanById(planId)
+	if err != nil {
+		common.ApiErrorMsg(c, "plan not found")
+		return
+	}
+
+	pageInfo := common.GetPageQuery(c)
+
+	allocations, total, err := model.GetAllocationsByPlanIdWithTotal(planId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(allocations)
+	common.ApiSuccess(c, pageInfo)
+}
+
+// CreateOrUpdatePlanAllocation handles POST /api/project/plan/:planId/allocation
+func CreateOrUpdatePlanAllocation(c *gin.Context) {
+	planId, err := strconv.Atoi(c.Param("planId"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+
+	var req dto.AllocationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	plan, err := model.GetAllocationPlanById(planId)
+	if err != nil {
+		common.ApiErrorMsg(c, "plan not found")
+		return
+	}
+
+	// Validate allocation doesn't exceed project budget
+	err = service.ValidateAllocationForPlan(plan.ProjectId, planId, req.ClientUserId, req.AllocatedQuota)
+	if err != nil {
+		if err == service.ErrAllocationExceedsBudget {
+			common.ApiErrorMsg(c, "allocation exceeds project budget")
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+
+	allocation := &model.ProjectAllocation{
+		ProjectId:      plan.ProjectId,
+		PlanId:         planId,
+		ClientUserId:   req.ClientUserId,
+		AllocatedQuota: req.AllocatedQuota,
+	}
+
+	err = model.CreateOrUpdateAllocation(allocation)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    allocation,
+	})
+}
+
+// ClearAllocationBudget handles POST /api/project/allocation/:allocationId/clear - clears remaining budget
+func ClearAllocationBudget(c *gin.Context) {
+	allocationId, err := strconv.Atoi(c.Param("allocationId"))
+	if err != nil {
+		common.ApiErrorMsg(c, "invalid allocation id")
+		return
+	}
+
+	err = model.ClearAllocationUsedQuota(allocationId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+// ==================== Legacy Allocation Endpoints (kept for backward compatibility) ====================
+
 // GetProjectAllocations handles GET /api/project/:id/allocations - retrieves allocations for a project
 func GetProjectAllocations(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
@@ -212,7 +562,6 @@ func GetProjectAllocations(c *gin.Context) {
 		return
 	}
 
-	// Check if project exists
 	_, err = model.GetProjectById(id)
 	if err != nil {
 		common.ApiErrorMsg(c, "project not found")
@@ -246,7 +595,6 @@ func CreateOrUpdateAllocation(c *gin.Context) {
 		return
 	}
 
-	// Check if project exists
 	_, err = model.GetProjectById(id)
 	if err != nil {
 		common.ApiErrorMsg(c, "project not found")

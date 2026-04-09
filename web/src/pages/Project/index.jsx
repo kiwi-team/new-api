@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
-import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Switch, Descriptions, Card, Select } from '@douyinfe/semi-ui';
+import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Switch, Descriptions, Card, Popconfirm, Select } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 
 const { Title, Text } = Typography;
@@ -48,25 +48,34 @@ const ProjectPage = () => {
   const [formValues, setFormValues] = useState({ ...initFormValues });
   const [submitLoading, setSubmitLoading] = useState(false);
 
-  // Allocation management state
-  const [allocationModalVisible, setAllocationModalVisible] = useState(false);
+  // Plan management state
+  const [planModalVisible, setPlanModalVisible] = useState(false);
   const [currentProject, setCurrentProject] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [planFormVisible, setPlanFormVisible] = useState(false);
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [planFormApi, setPlanFormApi] = useState(null);
+  const [planSubmitLoading, setPlanSubmitLoading] = useState(false);
+  const initPlanFormValues = { plan_name: '', start_date: '', end_date: '' };
+  const [planFormValues, setPlanFormValues] = useState({ ...initPlanFormValues });
+
+  // Allocation management state (within a plan)
+  const [allocationModalVisible, setAllocationModalVisible] = useState(false);
+  const [currentPlan, setCurrentPlan] = useState(null);
   const [allocations, setAllocations] = useState([]);
   const [allocationPage, setAllocationPage] = useState(1);
   const [allocationPageSize, setAllocationPageSize] = useState(10);
   const [allocationTotal, setAllocationTotal] = useState(0);
   const [allocationLoading, setAllocationLoading] = useState(false);
-  const [allocatedTotal, setAllocatedTotal] = useState(0);
+  const [planAllocatedTotal, setPlanAllocatedTotal] = useState(0);
 
   // Allocation form state
   const [allocationFormVisible, setAllocationFormVisible] = useState(false);
   const [editingAllocation, setEditingAllocation] = useState(null);
   const [allocationFormApi, setAllocationFormApi] = useState(null);
   const [allocationSubmitLoading, setAllocationSubmitLoading] = useState(false);
-  const initAllocationFormValues = {
-    client_user_id: '',
-    allocated_quota: 0,
-  };
+  const initAllocationFormValues = { client_user_id: '', allocated_quota: 0 };
   const [allocationFormValues, setAllocationFormValues] = useState({ ...initAllocationFormValues });
 
   // Dashboard state
@@ -178,6 +187,21 @@ const ProjectPage = () => {
     }
   };
 
+  const handleSetActivePlan = async (projectId, planId) => {
+    try {
+      const res = await API.put(`/api/project/${projectId}/active-plan`, { plan_id: planId || 0 });
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('切换成功'));
+        fetchData(page, pageSize, searchKeyword);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    }
+  };
+
   const handleSubmit = async () => {
     setSubmitLoading(true);
     try {
@@ -216,13 +240,183 @@ const ProjectPage = () => {
     }
   }, [modalVisible, formValues, formApi]);
 
-  // ==================== Allocation Management Functions ====================
+  // ==================== Plan Management Functions ====================
 
-  const fetchAllocations = async (projectId, pageNum = allocationPage, size = allocationPageSize) => {
+  const fetchPlans = async (projectId) => {
+    setPlansLoading(true);
+    try {
+      const res = await API.get(`/api/project/${projectId}/plans`);
+      const { success, data } = res.data;
+      if (success) {
+        setPlans(data || []);
+      }
+    } catch (e) {
+      showError(t('加载失败'));
+    } finally {
+      setPlansLoading(false);
+    }
+  };
+
+  const openPlanModal = (record) => {
+    setCurrentProject(record);
+    setPlanModalVisible(true);
+    fetchPlans(record.id);
+  };
+
+  const closePlanModal = () => {
+    setPlanModalVisible(false);
+    setCurrentProject(null);
+    setPlans([]);
+  };
+
+  const openPlanForm = (plan = null) => {
+    setEditingPlan(plan);
+    if (plan) {
+      setPlanFormValues({
+        plan_name: plan.plan_name,
+        start_date: plan.start_date,
+        end_date: plan.end_date,
+      });
+    } else {
+      setPlanFormValues({ ...initPlanFormValues });
+    }
+    setPlanFormVisible(true);
+  };
+
+  const closePlanForm = () => {
+    setPlanFormVisible(false);
+    setEditingPlan(null);
+    planFormApi && planFormApi.reset();
+    setPlanFormValues({ ...initPlanFormValues });
+  };
+
+  const handlePlanSubmit = async () => {
+    if (!currentProject) return;
+    setPlanSubmitLoading(true);
+    try {
+      const payload = planFormApi ? planFormApi.getValues() : { ...planFormValues };
+      let res;
+      if (editingPlan) {
+        res = await API.put(`/api/project/plan/${editingPlan.id}`, payload);
+      } else {
+        res = await API.post(`/api/project/${currentProject.id}/plan`, payload);
+      }
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(editingPlan ? t('更新成功') : t('创建成功'));
+        closePlanForm();
+        fetchPlans(currentProject.id);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    } finally {
+      setPlanSubmitLoading(false);
+    }
+  };
+
+  const handleDeletePlan = async (planId) => {
+    try {
+      const res = await API.delete(`/api/project/plan/${planId}`);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('删除成功'));
+        fetchPlans(currentProject.id);
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    }
+  };
+
+  useEffect(() => {
+    if (planFormVisible && planFormApi) {
+      planFormApi.setValues(planFormValues);
+    }
+  }, [planFormVisible, planFormValues, planFormApi]);
+
+  // Format date string like 20260408 -> 2026-04-08
+  const formatDate = (dateStr) => {
+    if (!dateStr || dateStr.length !== 8) return dateStr;
+    return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
+  };
+
+  const planColumns = [
+    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: t('计划名称'), dataIndex: 'plan_name', width: 160 },
+    {
+      title: t('生效日期'),
+      dataIndex: 'start_date',
+      width: 120,
+      render: (v) => formatDate(v),
+    },
+    {
+      title: t('截止日期'),
+      dataIndex: 'end_date',
+      width: 120,
+      render: (v) => formatDate(v),
+    },
+    {
+      title: t('状态'),
+      dataIndex: 'is_active',
+      width: 100,
+      render: (_, record) => {
+        if (record.is_active) return <Tag color='green'>{t('启用中')}</Tag>;
+        if (record.is_expired) return <Tag color='red'>{t('已过期')}</Tag>;
+        return <Tag color='grey'>{t('未启用')}</Tag>;
+      },
+    },
+    {
+      title: t('分配详情'),
+      dataIndex: 'allocations',
+      width: 220,
+      render: (_, record) => {
+        const allocs = record.allocations || [];
+        if (allocs.length === 0) return <Text type='tertiary'>-</Text>;
+        return (
+          <div style={{ lineHeight: '1.6' }}>
+            {allocs.map((a, i) => (
+              <div key={i}>
+                <Text type='success'>{a.client_user_id}: {a.allocated_quota}</Text>
+              </div>
+            ))}
+          </div>
+        );
+      },
+    },
+    {
+      title: t('已分配总额'),
+      dataIndex: 'allocated_total',
+      width: 100,
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'op',
+      width: 220,
+      render: (_, record) => (
+        <Space>
+          <Button size='small' onClick={() => openAllocationModalForPlan(record)}>{t('分配')}</Button>
+          <Button size='small' onClick={() => openPlanForm(record)}>{t('编辑')}</Button>
+          <Popconfirm
+            title={t('确认删除此计划及其所有分配？')}
+            onConfirm={() => handleDeletePlan(record.id)}
+          >
+            <Button size='small' type='danger'>{t('删除')}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  // ==================== Allocation Management Functions (Plan-scoped) ====================
+
+  const fetchAllocations = async (planId, pageNum = 1, size = allocationPageSize) => {
     setAllocationLoading(true);
     try {
       const params = { p: pageNum, page_size: size };
-      const res = await API.get(`/api/project/${projectId}/allocations`, { params });
+      const res = await API.get(`/api/project/plan/${planId}/allocations`, { params });
       const { success, message, data } = res.data;
       if (success) {
         setAllocations(data.items || []);
@@ -239,35 +433,33 @@ const ProjectPage = () => {
     }
   };
 
-  // Fetch all allocations to calculate total allocated (for budget display)
-  const fetchAllocatedTotal = async (projectId) => {
+  const fetchPlanAllocatedTotal = async (planId) => {
     try {
-      // Fetch all allocations with a large page size to get total
-      const res = await API.get(`/api/project/${projectId}/allocations`, { params: { p: 1, page_size: 10000 } });
+      const res = await API.get(`/api/project/plan/${planId}/allocations`, { params: { p: 1, page_size: 10000 } });
       const { success, data } = res.data;
       if (success) {
         const total = (data.items || []).reduce((sum, item) => sum + (item.allocated_quota || 0), 0);
-        setAllocatedTotal(total);
+        setPlanAllocatedTotal(total);
       }
     } catch (e) {
-      // Silently fail, allocated total will show 0
+      // Silently fail
     }
   };
 
-  const openAllocationModal = (record) => {
-    setCurrentProject(record);
+  const openAllocationModalForPlan = (plan) => {
+    setCurrentPlan(plan);
     setAllocationPage(1);
     setAllocationModalVisible(true);
-    fetchAllocations(record.id, 1, allocationPageSize);
-    fetchAllocatedTotal(record.id);
+    fetchAllocations(plan.id, 1, allocationPageSize);
+    fetchPlanAllocatedTotal(plan.id);
   };
 
   const closeAllocationModal = () => {
     setAllocationModalVisible(false);
-    setCurrentProject(null);
+    setCurrentPlan(null);
     setAllocations([]);
     setAllocationTotal(0);
-    setAllocatedTotal(0);
+    setPlanAllocatedTotal(0);
   };
 
   const openAllocationForm = (allocation = null) => {
@@ -292,17 +484,17 @@ const ProjectPage = () => {
   };
 
   const handleAllocationSubmit = async () => {
-    if (!currentProject) return;
+    if (!currentPlan) return;
     setAllocationSubmitLoading(true);
     try {
       const payload = allocationFormApi ? allocationFormApi.getValues() : { ...allocationFormValues };
-      const res = await API.post(`/api/project/${currentProject.id}/allocation`, payload);
+      const res = await API.post(`/api/project/plan/${currentPlan.id}/allocation`, payload);
       const { success, message } = res.data;
       if (success) {
         showSuccess(editingAllocation ? t('更新成功') : t('创建成功'));
         closeAllocationForm();
-        fetchAllocations(currentProject.id, allocationPage, allocationPageSize);
-        fetchAllocatedTotal(currentProject.id);
+        fetchAllocations(currentPlan.id, allocationPage, allocationPageSize);
+        fetchPlanAllocatedTotal(currentPlan.id);
       } else {
         showError(message || t('操作失败'));
       }
@@ -310,6 +502,24 @@ const ProjectPage = () => {
       showError(t('操作失败'));
     } finally {
       setAllocationSubmitLoading(false);
+    }
+  };
+
+  const handleClearBudget = async (allocationId) => {
+    try {
+      const res = await API.post(`/api/project/allocation/${allocationId}/clear`);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('已清空'));
+        if (currentPlan) {
+          fetchAllocations(currentPlan.id, allocationPage, allocationPageSize);
+          fetchPlanAllocatedTotal(currentPlan.id);
+        }
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
     }
   };
 
@@ -333,9 +543,8 @@ const ProjectPage = () => {
       dataIndex: 'used_quota',
       width: 120,
       sorter: (a, b) => (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
-      render:(_,record)=>{
-        console.log({record});
-          return record.used_quota/500000;
+      render: (_, record) => {
+        return record.used_quota / 500000;
       },
     },
     {
@@ -343,7 +552,7 @@ const ProjectPage = () => {
       dataIndex: 'remaining',
       width: 120,
       render: (_, record) => {
-        const remaining = (record.allocated_quota || 0) - (record.used_quota/500000 || 0);
+        const remaining = (record.allocated_quota || 0) - (record.used_quota / 500000 || 0);
         return <Text type={remaining > 0 ? 'success' : 'danger'}>{remaining}</Text>;
       },
     },
@@ -356,17 +565,20 @@ const ProjectPage = () => {
     {
       title: t('操作'),
       dataIndex: 'op',
-      width: 100,
+      width: 160,
       render: (_, record) => (
-        <Button size="small" onClick={() => openAllocationForm(record)}>{t('编辑')}</Button>
+        <Space>
+          <Button size="small" onClick={() => openAllocationForm(record)}>{t('编辑')}</Button>
+          <Popconfirm
+            title={t('确认清空该用户剩余预算？将把分配额度设为0')}
+            onConfirm={() => handleClearBudget(record.id)}
+          >
+            <Button size="small" type='danger'>{t('清空')}</Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
-
-  const getRemainingBudget = () => {
-    if (!currentProject) return 0;
-    return (currentProject.total_budget || 0) - allocatedTotal;
-  };
 
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 60 },
@@ -381,26 +593,45 @@ const ProjectPage = () => {
       title: t('已消耗($)'),
       dataIndex: 'quota',
       width: 100,
-      render:(_,record)=>{
-        return record.quota/500000;
+      render: (_, record) => {
+        return record.quota / 500000;
       },
       sorter: (a, b) => (parseInt(a.quota, 10) || 0) - (parseInt(b.quota, 10) || 0),
-
     },
     {
       title: t('已分配'),
-      dataIndex: 'allocations',
-      width: 180,
+      dataIndex: 'plans',
+      width: 280,
       render: (_, record) => {
-        const allocs = record.allocations || [];
-        if (allocs.length === 0) return <Text type='tertiary'>-</Text>;
+        const plans = record.plans || [];
+        if (plans.length === 0) return <Text type='tertiary'>-</Text>;
         return (
           <div style={{ lineHeight: '1.6' }}>
-            {allocs.map((a, i) => (
-              <div key={i}>
-                <Text type='success'>{a.client_user_id}:{a.allocated_quota}</Text>
-              </div>
-            ))}
+            {plans.map((plan, pi) => {
+              const allocs = plan.allocations || [];
+              if (allocs.length === 0) return null;
+              return (
+                <div key={plan.plan_id} style={{
+                  marginBottom: pi < plans.length - 1 ? 8 : 0,
+                  paddingBottom: pi < plans.length - 1 ? 8 : 0,
+                  borderBottom: pi < plans.length - 1 ? '1px dashed var(--semi-color-border)' : 'none',
+                }}>
+                  <div style={{ marginBottom: 2 }}>
+                    <Tag size='small' color={plan.is_active ? 'green' : 'grey'} style={{ marginRight: 4 }}>
+                      {plan.plan_name}
+                    </Tag>
+                    <Text type='tertiary' size='small'>
+                      {formatDate(plan.start_date)}~{formatDate(plan.end_date)}
+                    </Text>
+                  </div>
+                  {allocs.map((a, i) => (
+                    <div key={i} style={{ paddingLeft: 8 }}>
+                      <Text type='success'>{a.client_user_id}: {a.allocated_quota}</Text>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         );
       },
@@ -435,14 +666,43 @@ const ProjectPage = () => {
       ),
     },
     {
+      title: t('启用计划'),
+      dataIndex: 'active_plan_id',
+      width: 180,
+      render: (_, record) => {
+        const plans = record.plans || [];
+        const activePlans = plans.filter((p) => {
+          // Non-expired plans: end_date >= today (YYYYMMDD)
+          const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          return p.end_date >= today;
+        });
+        const options = [
+          { value: 0, label: t('未启用') },
+          ...activePlans.map((p) => ({
+            value: p.plan_id,
+            label: `${p.plan_name} (${formatDate(p.start_date)}~${formatDate(p.end_date)})`,
+          })),
+        ];
+        return (
+          <Select
+            size='small'
+            value={record.active_plan_id || 0}
+            optionList={options}
+            onChange={(val) => handleSetActivePlan(record.id, val)}
+            style={{ width: '100%' }}
+          />
+        );
+      },
+    },
+    {
       title: t('操作'),
       dataIndex: 'op',
-      width: 140,
+      width: 160,
       fixed: 'right',
       render: (_, record) => (
         <Space>
           <Button size='small' onClick={() => openEdit(record)}>{t('编辑')}</Button>
-          <Button size='small' onClick={() => openAllocationModal(record)}>{t('分配')}</Button>
+          <Button size='small' onClick={() => openPlanModal(record)}>{t('分配计划')}</Button>
         </Space>
       ),
     },
@@ -463,7 +723,7 @@ const ProjectPage = () => {
             <Text size='large' strong>{dashboardData.projects?.reduce((sum, p) => sum + (p.allocated_total || 0), 0) || 0}</Text>
           </Card>
           <Card title={t('已使用')} loading={dashboardLoading}>
-            <Text size='large' strong>{(dashboardData.projects?.reduce((sum, p) => sum + (p.used_total || 0), 0) || 0)/500000}</Text>
+            <Text size='large' strong>{(dashboardData.projects?.reduce((sum, p) => sum + (p.used_total || 0), 0) || 0) / 500000}</Text>
           </Card>
         </div>
       )}
@@ -503,6 +763,7 @@ const ProjectPage = () => {
         }}
       />
 
+      {/* Project Create/Edit Modal */}
       <Modal
         title={editing ? t('编辑项目') : t('新建项目')}
         visible={modalVisible}
@@ -528,13 +789,13 @@ const ProjectPage = () => {
         </Form>
       </Modal>
 
-      {/* Allocation Management Modal */}
+      {/* Plan Management Modal */}
       <Modal
-        title={currentProject ? `${t('预算分配')} - ${currentProject.project_name}` : t('预算分配')}
-        visible={allocationModalVisible}
-        onCancel={closeAllocationModal}
+        title={currentProject ? `${t('分配计划')} - ${currentProject.project_name}` : t('分配计划')}
+        visible={planModalVisible}
+        onCancel={closePlanModal}
         footer={null}
-        width={900}
+        width={1000}
         centered
       >
         {currentProject && (
@@ -542,8 +803,88 @@ const ProjectPage = () => {
             <Descriptions
               data={[
                 { key: t('总预算'), value: currentProject.total_budget || 0 },
-                { key: t('已分配'), value: allocatedTotal },
-                { key: t('剩余可分配'), value: <Text type={getRemainingBudget() >= 0 ? 'success' : 'danger'}>{getRemainingBudget()}</Text> },
+                { key: t('已分配'), value: currentProject.allocated_total || 0 },
+                { key: t('剩余可分配'), value: <Text type={(currentProject.total_budget || 0) - (currentProject.allocated_total || 0) >= 0 ? 'success' : 'danger'}>{(currentProject.total_budget || 0) - (currentProject.allocated_total || 0)}</Text> },
+              ]}
+              row
+              style={{ marginBottom: 16 }}
+            />
+            <div className='flex items-center justify-between mb-3'>
+              <Text strong>{t('分配计划列表')}</Text>
+              {isAdminOrRoot && (
+                <Button type='primary' size='small' onClick={() => openPlanForm()}>
+                  {t('新建计划')}
+                </Button>
+              )}
+            </div>
+            <Table
+              loading={plansLoading}
+              columns={planColumns}
+              dataSource={plans}
+              rowKey="id"
+              size="small"
+              pagination={false}
+            />
+          </>
+        )}
+      </Modal>
+
+      {/* Plan Create/Edit Form Modal */}
+      <Modal
+        title={editingPlan ? t('编辑计划') : t('新建计划')}
+        visible={planFormVisible}
+        onCancel={closePlanForm}
+        onOk={handlePlanSubmit}
+        okButtonProps={{ loading: planSubmitLoading }}
+        centered
+      >
+        <Form getFormApi={setPlanFormApi} initValues={planFormValues}>
+          <Form.Input
+            field='plan_name'
+            label={t('计划名称')}
+            placeholder={t('请输入计划名称')}
+            rules={[{ required: true, message: t('请输入计划名称') }]}
+          />
+          <Form.Input
+            field='start_date'
+            label={t('生效日期')}
+            placeholder='20260408'
+            rules={[{ required: true, message: t('请输入生效日期') }]}
+            extraText={t('格式：YYYYMMDD，如 20260408')}
+          />
+          <Form.Input
+            field='end_date'
+            label={t('截止日期')}
+            placeholder='20260430'
+            rules={[{ required: true, message: t('请输入截止日期') }]}
+            extraText={t('格式：YYYYMMDD，如 20260430')}
+          />
+        </Form>
+      </Modal>
+
+      {/* Allocation Management Modal (within a plan) */}
+      <Modal
+        title={currentPlan ? `${t('预算分配')} - ${currentPlan.plan_name} (${formatDate(currentPlan.start_date)} ~ ${formatDate(currentPlan.end_date)})` : t('预算分配')}
+        visible={allocationModalVisible}
+        onCancel={closeAllocationModal}
+        footer={null}
+        width={1000}
+        centered
+      >
+        {currentPlan && currentProject && (
+          <>
+            <Descriptions
+              data={[
+                { key: t('项目总预算'), value: currentProject.total_budget || 0 },
+                { key: t('本计划已分配'), value: planAllocatedTotal },
+                {
+                  key: t('计划状态'),
+                  value: currentPlan.is_active
+                    ? <Tag color='green'>{t('启用中')}</Tag>
+                    : currentPlan.is_expired
+                      ? <Tag color='red'>{t('已过期')}</Tag>
+                      : <Tag color='grey'>{t('未启用')}</Tag>,
+                },
               ]}
               row
               style={{ marginBottom: 16 }}
@@ -568,11 +909,11 @@ const ProjectPage = () => {
                 total: allocationTotal,
                 onPageChange: (p) => {
                   setAllocationPage(p);
-                  fetchAllocations(currentProject.id, p, allocationPageSize);
+                  fetchAllocations(currentPlan.id, p, allocationPageSize);
                 },
                 onPageSizeChange: (size) => {
                   setAllocationPageSize(size);
-                  fetchAllocations(currentProject.id, 1, size);
+                  fetchAllocations(currentPlan.id, 1, size);
                 },
               }}
             />
@@ -616,7 +957,6 @@ const ProjectPage = () => {
             label={t('分配额度')}
             min={0}
             placeholder={t('请输入分配额度')}
-            extraText={currentProject ? `${t('剩余可分配')}: ${getRemainingBudget() + (editingAllocation?.allocated_quota || 0)}` : ''}
           />
         </Form>
       </Modal>
