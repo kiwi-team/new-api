@@ -858,7 +858,11 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		if common.DebugEnabled {
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
-		claudeInfo.Usage = service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
+		// 仅补估 completion tokens，保留已从 message_start 解析到的 prompt / cache 相关字段，
+		// 避免上游只回了 message_start 就断流时，cache_creation_input_tokens 等计费字段被整体丢弃。
+		estimated := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
+		claudeInfo.Usage.CompletionTokens = estimated.CompletionTokens
+		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
 	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
