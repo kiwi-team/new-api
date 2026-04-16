@@ -1130,6 +1130,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
+
+	var usageStr string
+	if usage != nil {
+		if usageBytes, err := common.Marshal(usage); err == nil {
+			usageStr = string(usageBytes)
+		}
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -1150,5 +1158,6 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,
+		Usage:            usageStr,
 	})
 }

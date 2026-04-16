@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,9 +102,19 @@ func (c *SyncClient) TestConnection() error {
 	return err
 }
 
+// getFirstKey 从可能包含多个key的字符串中提取第一个key用于搜索
+func getFirstKey(key string) string {
+	if idx := strings.Index(key, "\n"); idx > 0 {
+		return strings.TrimSpace(key[:idx])
+	}
+	return key
+}
+
 // SearchChannelByKeyAndType 在目标环境按key和type查询渠道
 func (c *SyncClient) SearchChannelByKeyAndType(key string, channelType int) (*model.Channel, error) {
-	respBody, err := c.doRequest("GET", fmt.Sprintf("/api/channel/search?keyword=%s", key), nil)
+	// 使用第一个key进行搜索，避免多key场景下URL中包含换行符
+	searchKey := getFirstKey(key)
+	respBody, err := c.doRequest("GET", fmt.Sprintf("/api/channel/search?keyword=%s", url.QueryEscape(searchKey)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +142,42 @@ func (c *SyncClient) SearchChannelByKeyAndType(key string, channelType int) (*mo
 	}
 
 	return nil, nil
+}
+
+// SearchAllChannelsByKeyAndType 在目标环境按key和type查询所有匹配的渠道
+func (c *SyncClient) SearchAllChannelsByKeyAndType(key string, channelType int) ([]*model.Channel, error) {
+	fmt.Printf("key: %s \n", key)
+	searchKey := getFirstKey(key)
+	fmt.Printf("searchKey: %s \n", searchKey)
+	respBody, err := c.doRequest("GET", fmt.Sprintf("/api/channel/search?keyword=%s", url.QueryEscape(searchKey)), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []*model.Channel `json:"items"`
+			Total int              `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if !result.Success {
+		return nil, nil
+	}
+
+	// 按key和type精确匹配，返回所有匹配的渠道
+	var matched []*model.Channel
+	for _, ch := range result.Data.Items {
+		if ch.Key == key && ch.Type == channelType {
+			matched = append(matched, ch)
+		}
+	}
+
+	return matched, nil
 }
 
 // AddChannelRequest 创建渠道请求
@@ -220,8 +267,76 @@ func PrepareChannelForSync(channel *model.Channel) *model.Channel {
 	return syncChannel
 }
 
+// ChannelMatchInfo 目标环境中匹配到的渠道信息
+type ChannelMatchInfo struct {
+	Id     int    `json:"id"`
+	Name   string `json:"name"`
+	Models string `json:"models"`
+	Type   int    `json:"type"`
+}
+
+// ChannelPreviewItem 单个渠道的预览信息
+type ChannelPreviewItem struct {
+	ChannelId   int                `json:"channel_id"`
+	ChannelName string             `json:"channel_name"`
+	Models      string             `json:"models"`
+	Matches     []ChannelMatchInfo `json:"matches"` // 目标环境中匹配到的渠道列表
+}
+
+// EnvironmentPreview 单个环境的预览结果
+type EnvironmentPreview struct {
+	EnvironmentId   int                  `json:"environment_id"`
+	EnvironmentName string               `json:"environment_name"`
+	Channels        []ChannelPreviewItem `json:"channels"`
+	Error           string               `json:"error,omitempty"`
+}
+
+// PreviewChannelSync 预览渠道同步匹配情况
+func PreviewChannelSync(channels []*model.Channel, env *model.SyncEnvironment) *EnvironmentPreview {
+	preview := &EnvironmentPreview{
+		EnvironmentId:   env.Id,
+		EnvironmentName: env.Name,
+		Channels:        make([]ChannelPreviewItem, 0, len(channels)),
+	}
+
+	client := NewSyncClient(env)
+
+	for _, channel := range channels {
+		item := ChannelPreviewItem{
+			ChannelId:   channel.Id,
+			ChannelName: channel.Name,
+			Models:      channel.Models,
+			Matches:     make([]ChannelMatchInfo, 0),
+		}
+
+		matched, err := client.SearchAllChannelsByKeyAndType(channel.Key, channel.Type)
+		if err != nil {
+			preview.Error = fmt.Sprintf("查询渠道 %s 失败: %v", channel.Name, err)
+			preview.Channels = append(preview.Channels, item)
+			continue
+		}
+
+		for _, m := range matched {
+			item.Matches = append(item.Matches, ChannelMatchInfo{
+				Id:     m.Id,
+				Name:   m.Name,
+				Models: m.Models,
+				Type:   m.Type,
+			})
+		}
+
+		preview.Channels = append(preview.Channels, item)
+	}
+
+	return preview
+}
+
+// ChannelMapping 渠道映射关系: source_channel_id -> target_channel_id (0表示创建新渠道)
+type ChannelMapping map[int]int
+
 // SyncChannelsToEnvironment 同步渠道到指定环境
-func SyncChannelsToEnvironment(channels []*model.Channel, env *model.SyncEnvironment) *SyncResult {
+// channelMapping 可选：指定源渠道到目标渠道的映射关系，nil时使用自动匹配（兼容旧逻辑）
+func SyncChannelsToEnvironment(channels []*model.Channel, env *model.SyncEnvironment, channelMapping ChannelMapping) *SyncResult {
 	result := &SyncResult{
 		EnvironmentId:   env.Id,
 		EnvironmentName: env.Name,
@@ -238,34 +353,67 @@ func SyncChannelsToEnvironment(channels []*model.Channel, env *model.SyncEnviron
 			Success:     true,
 		}
 
-		// 查询目标环境是否存在该渠道（按key+type匹配）
-		existingChannel, err := client.SearchChannelByKeyAndType(channel.Key, channel.Type)
-		if err != nil {
-			detail.Success = false
-			detail.Error = fmt.Sprintf("查询渠道失败: %v", err)
-			result.Details = append(result.Details, detail)
-			continue
-		}
-
 		// 准备同步数据
 		syncChannel := PrepareChannelForSync(channel)
 
-		if existingChannel != nil {
-			// 存在则更新
-			syncChannel.Id = existingChannel.Id
-			err = client.UpdateChannel(syncChannel)
-			detail.Action = "updated"
-		} else {
-			// 不存在则创建
-			err = client.CreateChannel(syncChannel)
-			detail.Action = "created"
+		var targetChannelId int
+		hasMapping := false
+
+		if channelMapping != nil {
+			if tid, ok := channelMapping[channel.Id]; ok {
+				targetChannelId = tid
+				hasMapping = true
+			}
 		}
 
-		if err != nil {
-			detail.Success = false
-			detail.Error = err.Error()
+		if hasMapping {
+			if targetChannelId > 0 {
+				// 用户指定了目标渠道，直接更新
+				syncChannel.Id = targetChannelId
+				err := client.UpdateChannel(syncChannel)
+				detail.Action = "updated"
+				if err != nil {
+					detail.Success = false
+					detail.Error = err.Error()
+				} else {
+					result.SyncedCount++
+				}
+			} else {
+				// targetChannelId == 0，创建新渠道
+				err := client.CreateChannel(syncChannel)
+				detail.Action = "created"
+				if err != nil {
+					detail.Success = false
+					detail.Error = err.Error()
+				} else {
+					result.SyncedCount++
+				}
+			}
 		} else {
-			result.SyncedCount++
+			// 无映射，使用旧的自动匹配逻辑
+			existingChannel, err := client.SearchChannelByKeyAndType(channel.Key, channel.Type)
+			if err != nil {
+				detail.Success = false
+				detail.Error = fmt.Sprintf("查询渠道失败: %v", err)
+				result.Details = append(result.Details, detail)
+				continue
+			}
+
+			if existingChannel != nil {
+				syncChannel.Id = existingChannel.Id
+				err = client.UpdateChannel(syncChannel)
+				detail.Action = "updated"
+			} else {
+				err = client.CreateChannel(syncChannel)
+				detail.Action = "created"
+			}
+
+			if err != nil {
+				detail.Success = false
+				detail.Error = err.Error()
+			} else {
+				result.SyncedCount++
+			}
 		}
 
 		result.Details = append(result.Details, detail)

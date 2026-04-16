@@ -527,6 +527,7 @@ func SetApiRouter(router *gin.Engine) {
 			syncRoute.POST("/environments/:id/test", controller.TestSyncEnvironment)
 
 			// 渠道同步
+			syncRoute.POST("/channels/preview", controller.PreviewSyncChannels)
 			syncRoute.POST("/channels", controller.SyncChannels)
 
 			// 模型价格同步

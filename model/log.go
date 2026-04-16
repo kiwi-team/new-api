@@ -43,6 +43,7 @@ type Log struct {
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 	ProjectName      string `json:"project_name" gorm:"index;size:100;default:''"`
+	Usage            string `json:"usage" gorm:"type:text"`
 }
 
 // don't use iota, avoid change log type value
@@ -167,6 +168,7 @@ type RecordConsumeLogParams struct {
 	RequestId        string                 `json:"request_id"`
 	ProjectName      string                 `json:"project_name"`
 	PlanId           int                    `json:"plan_id"`
+	Usage            string                 `json:"usage"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -205,6 +207,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ClientScenairo:   params.ClientScenairo,
 		RequestId:        params.RequestId,
 		ProjectName:      params.ProjectName,
+		Usage:            params.Usage,
 	}
 	// 异步写入日志，避免大请求体（如 base64 图片）阻塞请求响应
 	gopool.Go(func() {
@@ -282,7 +285,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		return nil, 0, err
 	}
 	if !export {
-		tx = tx.Omit("request", "response")
+		tx = tx.Omit("request", "response", "usage")
 	}
 	if export {
 		//err = tx.Order("logs.id asc").Omit("request", "response").Find(&logs).Error
@@ -359,7 +362,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		common.SysError("failed to count user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
 	}
-	tx = tx.Omit("request", "response")
+	tx = tx.Omit("request", "response", "usage")
 	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError("failed to search user logs: " + err.Error())
@@ -374,7 +377,7 @@ func SearchAllLogs(keyword string, isAdmin bool) (logs []*Log, err error) {
 	var tx *gorm.DB
 	tx = LOG_DB.Where("type = ? or content LIKE ?", keyword, keyword+"%")
 	if !isAdmin {
-		tx = tx.Omit("request", "response")
+		tx = tx.Omit("request", "response", "usage")
 	}
 	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	return logs, err
@@ -384,7 +387,7 @@ func SearchUserLogs(userId int, keyword string, isAdmin bool) (logs []*Log, err 
 	var tx *gorm.DB
 	tx = LOG_DB.Where("user_id = ? and type = ?", userId, keyword)
 	if !isAdmin {
-		tx = tx.Omit("request", "response")
+		tx = tx.Omit("request", "response", "usage")
 	}
 	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)

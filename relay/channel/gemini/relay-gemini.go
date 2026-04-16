@@ -578,6 +578,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 		imageNum := 0
 		//source := &types.FileSource{}
 		//imageUrl := ""
+		isBaiduVODGemini := channel.Type == constant.ChannelTypeGemini && strings.Contains(info.ChannelBaseUrl, "baidubce")
 		for _, part := range openaiContent {
 			if part.Type == dto.ContentTypeText {
 				if part.Text == "" {
@@ -650,8 +651,23 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				if constant.GeminiVisionMaxImageNum != -1 && imageNum > constant.GeminiVisionMaxImageNum {
 					return nil, fmt.Errorf("too many images in the message, max allowed is %d", constant.GeminiVisionMaxImageNum)
 				}
-				// 判断是否是url
-				if strings.HasPrefix(part.GetImageMedia().Url, "http") {
+
+				if strings.HasPrefix(imageUrl, "http") {
+					if isBaiduVODGemini {
+						// baidu vod gemini 可以支持直接传递image_url
+						mimeType, err := GetFileMimeType(imageUrl)
+						if err != nil {
+							continue
+						}
+						parts = append(parts, dto.GeminiPart{
+							FileData: &dto.GeminiFileData{
+								FileUri:  imageUrl,
+								MimeType: mimeType,
+							},
+						})
+						continue
+					}
+					// 判断是否是url
 					channelConfig := channel.GetSetting()
 					bukect := channelConfig.GoogleFileBucket
 					isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
@@ -686,30 +702,6 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						})
 						continue
 					}
-					/*
-						// 是url，获取文件的类型和base64编码的数据
-						fileData, err := service.GetFileBase64FromUrl(c, part.GetImageMedia().Url, "formatting image for Gemini")
-						if err != nil {
-							return nil, fmt.Errorf("get file base64 from url '%s' failed: %w", part.GetImageMedia().Url, err)
-						}
-
-						// 校验 MimeType 是否在 Gemini 支持的白名单中
-						if _, ok := geminiSupportedMimeTypes[strings.ToLower(fileData.MimeType)]; !ok {
-							url := part.GetImageMedia().Url
-							return nil, fmt.Errorf("the mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", fileData.MimeType, url, getSupportedMimeTypesList())
-						}
-
-						parts = append(parts, dto.GeminiPart{
-							InlineData: &dto.GeminiInlineData{
-								MimeType: fileData.MimeType, // 使用原始的 MimeType，因为大小写可能对API有意义
-								Data:     fileData.Base64Data,
-							},
-						})
-					*/
-					// // 使用统一的文件服务获取图片数据
-					// var source *types.FileSource
-					// imageUrl := part.GetImageMedia().Url
-					// if strings.HasPrefix(imageUrl, "http") {
 					source = types.NewURLFileSource(imageUrl)
 				} else {
 					source = types.NewBase64FileSource(imageUrl, "")
@@ -774,6 +766,20 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				channelConfig := channel.GetSetting()
 				bukect := channelConfig.GoogleFileBucket
 				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
+				if isBaiduVODGemini && strings.HasPrefix(audioFileUrl, "http") {
+					// baidu vod gemini 可以支持直接传递audio_url
+					mimeType, err := GetFileMimeType(audioFileUrl)
+					if err != nil {
+						continue
+					}
+					parts = append(parts, dto.GeminiPart{
+						FileData: &dto.GeminiFileData{
+							MimeType: mimeType,
+							FileUri:  audioFileUrl,
+						},
+					})
+					continue
+				}
 				if channel.Type == constant.ChannelTypeVertexAi || isGenai {
 					if isGenai {
 						bukect = ""
@@ -859,8 +865,8 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 							FileUri:  uploadedFile.URI,
 						},
 					})
-				} else if strings.Contains(info.ChannelBaseUrl, "theapi") {
-					// theapi已支持fileUri传递视频url
+				} else if isBaiduVODGemini {
+					// baidu vod gemini 可以支持直接传递video_url
 					videoFileUrl := ""
 					if videoUrl, ok := part.VideoUrl.(string); ok {
 						videoFileUrl = videoUrl
@@ -876,11 +882,10 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					}
 					parts = append(parts, dto.GeminiPart{
 						FileData: &dto.GeminiFileData{
-							MimeType: resetMimeType(mimeType),
+							MimeType: mimeType,
 							FileUri:  videoFileUrl,
 						},
 					})
-
 				}
 			}
 		}

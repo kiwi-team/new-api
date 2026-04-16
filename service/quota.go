@@ -321,6 +321,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
+
+	var usageStr string
+	if usage != nil {
+		if usageBytes, err := common.Marshal(usage); err == nil {
+			usageStr = string(usageBytes)
+		}
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -341,6 +349,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,
+		Usage:            usageStr,
 	})
 }
 
@@ -460,6 +469,14 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
+
+	var usageStr string
+	if usage != nil {
+		if usageBytes, err := common.Marshal(usage); err == nil {
+			usageStr = string(usageBytes)
+		}
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     promptTokens,
@@ -480,6 +497,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,
+		Usage:            usageStr,
 	})
 
 }
@@ -608,6 +626,14 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	requestId := ctx.GetString(common.RequestIdKey)
+
+	var usageStr string
+	if usage != nil {
+		if usageBytes, err := common.Marshal(usage); err == nil {
+			usageStr = string(usageBytes)
+		}
+	}
+
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
@@ -628,6 +654,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,
+		Usage:            usageStr,
 	})
 }
 

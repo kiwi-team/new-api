@@ -497,6 +497,14 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 			quota, "模型测试", 0, quota, int(consumedTime), false, info.Group, other, string(requestJson), string(respBody))
 	*/
 	requestId := c.GetString(common.RequestIdKey)
+
+	var usageStr string
+	if usage != nil {
+		if usageBytes, err := common.Marshal(usage); err == nil {
+			usageStr = string(usageBytes)
+		}
+	}
+
 	model.RecordConsumeLog(c, 1, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -512,6 +520,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		Request:          string(requestStr),
 		Response:         string(respBody),
 		RequestId:        requestId,
+		Usage:            usageStr,
 	})
 	//common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{

@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +20,14 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/genai"
 )
+
+// urlExt extracts the file extension from a URL, stripping query parameters and fragments.
+func urlExt(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return filepath.Ext(u.Path)
+	}
+	return filepath.Ext(rawURL)
+}
 
 func GetFileMimeType(fileUri string) (string, error) {
 	response, err := http.Get(fileUri)
@@ -33,7 +42,7 @@ func GetFileMimeType(fileUri string) (string, error) {
 	}
 	mimeType := response.Header.Get("Content-Type")
 	if mimeType == "" || mimeType == "application/octet-stream" {
-		mimeType = mime.TypeByExtension(filepath.Ext(fileUri))
+		mimeType = mime.TypeByExtension(urlExt(fileUri))
 	}
 	return mimeType, nil
 }
@@ -71,9 +80,9 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 	}
 	mimeType := response.Header.Get("Content-Type")
 	if mimeType == "" || mimeType == "application/octet-stream" {
-		mimeType = mime.TypeByExtension(filepath.Ext(fileUri))
+		mimeType = mime.TypeByExtension(urlExt(fileUri))
 	}
-	object := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), common.GetRandomString(10), filepath.Ext(fileUri))
+	object := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), common.GetRandomString(10), urlExt(fileUri))
 	obj := client.Bucket(bucket).Object(object)
 
 	// 获取对象的写入器
