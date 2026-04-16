@@ -146,9 +146,7 @@ func (c *SyncClient) SearchChannelByKeyAndType(key string, channelType int) (*mo
 
 // SearchAllChannelsByKeyAndType 在目标环境按key和type查询所有匹配的渠道
 func (c *SyncClient) SearchAllChannelsByKeyAndType(key string, channelType int) ([]*model.Channel, error) {
-	fmt.Printf("key: %s \n", key)
 	searchKey := getFirstKey(key)
-	fmt.Printf("searchKey: %s \n", searchKey)
 	respBody, err := c.doRequest("GET", fmt.Sprintf("/api/channel/search?keyword=%s", url.QueryEscape(searchKey)), nil)
 	if err != nil {
 		return nil, err

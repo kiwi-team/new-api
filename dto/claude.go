@@ -544,17 +544,38 @@ type ClaudeCacheCreationUsage struct {
 }
 
 func (u *ClaudeUsage) GetCacheCreation5mTokens() int {
-	if u == nil || u.CacheCreation == nil {
+	if u == nil {
 		return 0
 	}
-	return u.CacheCreation.Ephemeral5mInputTokens
+	// Priority 1: nested cache_creation sub-object
+	if u.CacheCreation != nil && u.CacheCreation.Ephemeral5mInputTokens > 0 {
+		return u.CacheCreation.Ephemeral5mInputTokens
+	}
+	// Priority 2: flat top-level claude_cache_creation_5_m_tokens field
+	if u.ClaudeCacheCreation5mTokens > 0 {
+		return u.ClaudeCacheCreation5mTokens
+	}
+	// Priority 3: when no sub-object and no flat field, treat the entire
+	// cache_creation_input_tokens as 5m tokens (upstream didn't split by TTL)
+	if u.CacheCreation == nil && u.CacheCreationInputTokens > 0 {
+		return u.CacheCreationInputTokens
+	}
+	return 0
 }
 
 func (u *ClaudeUsage) GetCacheCreation1hTokens() int {
-	if u == nil || u.CacheCreation == nil {
+	if u == nil {
 		return 0
 	}
-	return u.CacheCreation.Ephemeral1hInputTokens
+	// Priority 1: nested cache_creation sub-object
+	if u.CacheCreation != nil && u.CacheCreation.Ephemeral1hInputTokens > 0 {
+		return u.CacheCreation.Ephemeral1hInputTokens
+	}
+	// Priority 2: flat top-level claude_cache_creation_1_h_tokens field
+	if u.ClaudeCacheCreation1hTokens > 0 {
+		return u.ClaudeCacheCreation1hTokens
+	}
+	return 0
 }
 
 func (u *ClaudeUsage) GetCacheCreationTotalTokens() int {

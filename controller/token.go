@@ -250,6 +250,9 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	if token.AlertThreshold < 0 {
+		token.AlertThreshold = 0
+	}
 	cleanToken := model.Token{
 		UserId:             c.GetInt("id"),
 		Name:               token.Name,
@@ -264,6 +267,7 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+		AlertThreshold:     token.AlertThreshold,
 	}
 	if model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId)) {
 		cleanToken.ChannelRules = token.ChannelRules
@@ -364,6 +368,26 @@ func UpdateToken(c *gin.Context) {
 			cleanToken.ChannelRatios = token.ChannelRatios
 		}
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if token.AlertThreshold < 0 {
+			token.AlertThreshold = 0
+		}
+		// 告警阈值变化时重置告警基线，避免改小阈值后立即补发大量历史告警
+		if cleanToken.AlertThreshold != token.AlertThreshold {
+			var currentUsed int
+			_ = model.DB.Table("quota_data").
+				Select("COALESCE(sum(quota),0)").
+				Where("token_id = ?", cleanToken.Id).
+				Scan(&currentUsed).Error
+			cleanToken.AlertNotifiedQuota = currentUsed
+			cleanToken.AlertLastNotifiedTime = common.GetTimestamp()
+			// 直接写入不走 Update() 的 Select 白名单
+			_ = model.DB.Model(&model.Token{}).Where("id = ?", cleanToken.Id).
+				Updates(map[string]interface{}{
+					"alert_notified_quota":     cleanToken.AlertNotifiedQuota,
+					"alert_last_notified_time": cleanToken.AlertLastNotifiedTime,
+				}).Error
+		}
+		cleanToken.AlertThreshold = token.AlertThreshold
 	}
 	err = cleanToken.Update()
 	if err != nil {

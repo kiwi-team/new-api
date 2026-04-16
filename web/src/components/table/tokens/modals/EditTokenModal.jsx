@@ -298,6 +298,7 @@ const EditTokenModal = (props) => {
     tokenCount: 1,
     channel_rules: '',
     channel_ratios: '',
+    alert_threshold: 0,
   });
 
   const handleCancel = () => {
@@ -532,6 +533,7 @@ const EditTokenModal = (props) => {
     if (isEdit) {
       let { tokenCount: _tc, ...localInputs } = values;
       localInputs.remain_quota = parseInt(localInputs.remain_quota);
+      localInputs.alert_threshold = Number(localInputs.alert_threshold) || 0;
       if (localInputs.expired_time !== -1) {
         let time = Date.parse(localInputs.expired_time);
         if (isNaN(time)) {
@@ -569,6 +571,7 @@ const EditTokenModal = (props) => {
           localInputs.name = baseName;
         }
         localInputs.remain_quota = parseInt(localInputs.remain_quota);
+        localInputs.alert_threshold = Number(localInputs.alert_threshold) || 0;
 
         if (localInputs.expired_time !== -1) {
           let time = Date.parse(localInputs.expired_time);
@@ -843,6 +846,20 @@ const EditTokenModal = (props) => {
                       extraText={t(
                         '令牌的额度仅用于限制令牌本身的最大额度使用量，实际的使用受到账户的剩余额度限制',
                       )}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='alert_threshold'
+                      label={t('消耗告警阈值（美元）')}
+                      placeholder={t('0 表示不告警，每消耗该金额发送一次预警')}
+                      min={0}
+                      step={10}
+                      precision={2}
+                      extraText={t(
+                        '告警通过"个人设置 - 其他设置 - 通知配置"中的 Webhook 地址发送（飞书机器人）。可能存在少量延迟（例如 $100 阈值可能在 $103 时才触发）',
+                      )}
+                      style={{ width: '100%' }}
                     />
                   </Col>
                 </Row>

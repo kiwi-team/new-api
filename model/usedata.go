@@ -12,41 +12,47 @@ import (
 
 // QuotaData 柱状图数据
 type QuotaData struct {
-	Id               int    `json:"id"`
-	UserID           int    `json:"user_id" gorm:"index"`
-	Username         string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName        string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
-	TokenUsed        int    `json:"token_used" gorm:"default:0"`
-	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
-	TokenName        string `json:"token_name" gorm:"size:64;default:''"`
-	Count            int    `json:"count" gorm:"default:0"`
-	Quota            int    `json:"quota" gorm:"default:0"`
-	TokenId          int    `json:"token_id" gorm:"index"`
-	ChannelId        int    `json:"channel_id" gorm:"index"`
-	ClientUserId     string `json:"client_user_id" gorm:"index;size:200;default:''"`
-	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	ProjectName      string `json:"project_name" gorm:"index;size:200;default:''"`
-	PlanId           int    `json:"plan_id" gorm:"index;default:0"`
+	Id                          int    `json:"id"`
+	UserID                      int    `json:"user_id" gorm:"index"`
+	Username                    string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
+	ModelName                   string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
+	CreatedAt                   int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
+	TokenUsed                   int    `json:"token_used" gorm:"default:0"`
+	PromptTokens                int    `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens            int    `json:"completion_tokens" gorm:"default:0"`
+	CachedTokens                int    `json:"cached_tokens" gorm:"default:0"`
+	ClaudeCacheCreation5mTokens int    `json:"claude_cache_creation_5_m_tokens" gorm:"default:0"`
+	ClaudeCacheCreation1hTokens int    `json:"claude_cache_creation_1_h_tokens" gorm:"default:0"`
+	TokenName                   string `json:"token_name" gorm:"size:64;default:''"`
+	Count                       int    `json:"count" gorm:"default:0"`
+	Quota                       int    `json:"quota" gorm:"default:0"`
+	TokenId                     int    `json:"token_id" gorm:"index"`
+	ChannelId                   int    `json:"channel_id" gorm:"index"`
+	ClientUserId                string `json:"client_user_id" gorm:"index;size:200;default:''"`
+	ClientScenairo              string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName                 string `json:"project_name" gorm:"index;size:200;default:''"`
+	PlanId                      int    `json:"plan_id" gorm:"index;default:0"`
 }
 
 type LogQuotaDataCache struct {
-	UserId           int
-	Username         string
-	ModelName        string
-	CreatedAt        int64
-	TokenUsed        int
-	PromptTokens     int
-	CompletionTokens int
-	Quota            int
-	TokenName        string
-	TokenId          int
-	ChannelId        int
-	ClientUserId     string
-	ClientScenairo   string
-	ProjectName      string
-	PlanId           int
+	UserId                      int
+	Username                    string
+	ModelName                   string
+	CreatedAt                   int64
+	TokenUsed                   int
+	PromptTokens                int
+	CompletionTokens            int
+	CachedTokens                int
+	ClaudeCacheCreation5mTokens int
+	ClaudeCacheCreation1hTokens int
+	Quota                       int
+	TokenName                   string
+	TokenId                     int
+	ChannelId                   int
+	ClientUserId                string
+	ClientScenairo              string
+	ProjectName                 string
+	PlanId                      int
 }
 
 func UpdateQuotaData() {
@@ -68,7 +74,7 @@ func UpdateQuotaData() {
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
-func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int) {
+func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%d", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo, projectName, planId)
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
@@ -77,24 +83,30 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 		quotaData.TokenUsed += tokenUsed
 		quotaData.PromptTokens += promptTokens
 		quotaData.CompletionTokens += completionTokens
+		quotaData.CachedTokens += cachedTokens
+		quotaData.ClaudeCacheCreation5mTokens += claudeCacheCreation5mTokens
+		quotaData.ClaudeCacheCreation1hTokens += claudeCacheCreation1hTokens
 	} else {
 		quotaData = &QuotaData{
-			UserID:           userId,
-			Username:         username,
-			ModelName:        modelName,
-			CreatedAt:        createdAt,
-			Count:            1,
-			Quota:            quota,
-			TokenUsed:        tokenUsed,
-			TokenName:        tokenName,
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TokenId:          tokenId,
-			ChannelId:        channelId,
-			ClientUserId:     clientUserId,
-			ClientScenairo:   clientScenairo,
-			ProjectName:      projectName,
-			PlanId:           planId,
+			UserID:                      userId,
+			Username:                    username,
+			ModelName:                   modelName,
+			CreatedAt:                   createdAt,
+			Count:                       1,
+			Quota:                       quota,
+			TokenUsed:                   tokenUsed,
+			TokenName:                   tokenName,
+			PromptTokens:                promptTokens,
+			CompletionTokens:            completionTokens,
+			CachedTokens:                cachedTokens,
+			ClaudeCacheCreation5mTokens: claudeCacheCreation5mTokens,
+			ClaudeCacheCreation1hTokens: claudeCacheCreation1hTokens,
+			TokenId:                     tokenId,
+			ChannelId:                   channelId,
+			ClientUserId:                clientUserId,
+			ClientScenairo:              clientScenairo,
+			ProjectName:                 projectName,
+			PlanId:                      planId,
 		}
 	}
 	CacheQuotaData[key] = quotaData
@@ -110,6 +122,9 @@ func LogQuotaData(logQuotaData *LogQuotaDataCache) {
 	tokenName := logQuotaData.TokenName
 	promptTokens := logQuotaData.PromptTokens
 	completionTokens := logQuotaData.CompletionTokens
+	cachedTokens := logQuotaData.CachedTokens
+	claudeCacheCreation5mTokens := logQuotaData.ClaudeCacheCreation5mTokens
+	claudeCacheCreation1hTokens := logQuotaData.ClaudeCacheCreation1hTokens
 	quota := logQuotaData.Quota
 	tokenId := logQuotaData.TokenId
 	channelId := logQuotaData.ChannelId
@@ -122,7 +137,7 @@ func LogQuotaData(logQuotaData *LogQuotaDataCache) {
 
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
-	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId)
+	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, cachedTokens, claudeCacheCreation5mTokens, claudeCacheCreation1hTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId)
 }
 
 func SaveQuotaDataCache() {
@@ -138,7 +153,7 @@ func SaveQuotaDataCache() {
 		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
-			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
+			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
@@ -337,14 +352,17 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, clientUserId string, clientScenairo string, projectName string, planId int) {
+func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName, planId).Updates(map[string]interface{}{
-		"count":             gorm.Expr("count + ?", count),
-		"quota":             gorm.Expr("quota + ?", quota),
-		"token_used":        gorm.Expr("token_used + ?", tokenUsed),
-		"prompt_tokens":     gorm.Expr("prompt_tokens + ?", promptTokens),
-		"completion_tokens": gorm.Expr("completion_tokens + ?", completionTokens),
+		"count":                           gorm.Expr("count + ?", count),
+		"quota":                           gorm.Expr("quota + ?", quota),
+		"token_used":                      gorm.Expr("token_used + ?", tokenUsed),
+		"prompt_tokens":                   gorm.Expr("prompt_tokens + ?", promptTokens),
+		"completion_tokens":               gorm.Expr("completion_tokens + ?", completionTokens),
+		"cached_tokens":                   gorm.Expr("cached_tokens + ?", cachedTokens),
+		"claude_cache_creation_5_m_tokens": gorm.Expr("claude_cache_creation_5_m_tokens + ?", claudeCacheCreation5mTokens),
+		"claude_cache_creation_1_h_tokens": gorm.Expr("claude_cache_creation_1_h_tokens + ?", claudeCacheCreation1hTokens),
 	}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())

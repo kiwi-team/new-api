@@ -234,6 +234,9 @@ type Usage struct {
 	OutputTokens           int                `json:"output_tokens"`
 	InputTokensDetails     *InputTokenDetails `json:"input_tokens_details"`
 
+	// claude native cache fields (mirrors upstream naming; value also lives in PromptTokensDetails.CachedTokens)
+	CacheReadInputTokens int `json:"cache_read_input_tokens,omitempty"`
+
 	// claude cache 1h
 	ClaudeCacheCreation5mTokens int `json:"claude_cache_creation_5_m_tokens"`
 	ClaudeCacheCreation1hTokens int `json:"claude_cache_creation_1_h_tokens"`

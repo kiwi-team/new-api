@@ -434,6 +434,10 @@ func TokenAuth() func(c *gin.Context) {
 		aiceKeyArr := strings.Split(aiceKey, ",")
 		isAiceKey := false
 		for _, item := range aiceKeyArr {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
 			if strings.Contains(key, item) {
 				isAiceKey = true
 				break
@@ -538,7 +542,13 @@ func TokenAuth() func(c *gin.Context) {
 			common.SetContextKey(c, constant.ContextKeyProjectAllocationId, allocation.Id)
 		}
 
-		if common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
+		// 是否对当前令牌所属用户强制进行 uid 鉴权：
+		// 优先读取用户级设置（用户管理里勾选），兼容旧的全局开关 CKECK_CLIENT_USER_ID。
+		requireUidCheck := userCache.GetSetting().CheckUid
+		if !requireUidCheck && common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
+			requireUidCheck = true
+		}
+		if requireUidCheck {
 			if len(clientUserId) <= 8 && !isAiceKey {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
 				return

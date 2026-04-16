@@ -644,6 +644,8 @@ func UpdateUser(c *gin.Context) {
 			// Merge discount fields
 			existingSetting.GroupDiscount = incomingSetting.GroupDiscount
 			existingSetting.ModelExtraDiscount = incomingSetting.ModelExtraDiscount
+			// Merge uid 鉴权开关
+			existingSetting.CheckUid = incomingSetting.CheckUid
 			// Save merged setting back
 			updatedUser.SetSetting(existingSetting)
 		}

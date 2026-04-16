@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -63,6 +64,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	anthropicVersion := c.Request.Header.Get("anthropic-version")
 	if anthropicVersion == "" {
 		anthropicVersion = "2023-06-01"
+	}
+	if strings.Contains(info.ChannelBaseUrl, "vod.bj.baidubce.com") {
+		req.Set("Authorization", "Bearer "+info.ApiKey)
 	}
 	req.Set("anthropic-version", anthropicVersion)
 	CommonClaudeHeadersOperation(c, req, info)

@@ -111,6 +111,9 @@ func main() {
 		go controller.FeishuQuotaKeyAlerts()
 	}
 
+	// Key维度阈值预警：基于令牌上的 alert_threshold 与用户 UserSetting.WebhookUrl
+	go controller.TokenKeyAlertLoop()
+
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
 		if err != nil {

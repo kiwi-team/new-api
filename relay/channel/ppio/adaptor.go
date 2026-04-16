@@ -62,18 +62,36 @@ type Adaptor struct {
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {}
 
-func (a *Adaptor) GetChannelName() string  { return "PPIO" }
-func (a *Adaptor) GetModelList() []string  { return []string{"gemini-3-pro-image-preview"} }
+func (a *Adaptor) GetChannelName() string { return "PPIO" }
+func (a *Adaptor) GetModelList() []string { return []string{"gemini-3-pro-image-preview"} }
+
+func getPathByModel(model string, hasImage bool) string {
+	if model == "gemini-3-pro-image-preview" {
+		if hasImage {
+			return "/v3/gemini-3-pro-image-edit"
+		}
+		return "/v3/gemini-3-pro-image-text-to-image"
+	} else if model == "gemini-3.1-flash-image-preview" {
+		if hasImage {
+			return "/v3/gemini-3.1-flash-image-edit"
+		}
+		return "/v3/gemini-3.1-flash-image-text-to-image"
+	}
+	return ""
+}
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelBaseUrl, "/")
 	if baseURL == "" {
 		baseURL = "https://api.ppio.com"
 	}
-	if a.hasImageInput {
-		return baseURL + "/v3/gemini-3-pro-image-edit", nil
-	}
-	return baseURL + "/v3/gemini-3-pro-image-text-to-image", nil
+	return baseURL + getPathByModel(info.OriginModelName, a.hasImageInput), nil
+	/*
+		if a.hasImageInput {
+			return baseURL + "/v3/gemini-3-pro-image-edit", nil
+		}
+		return baseURL + "/v3/gemini-3-pro-image-text-to-image", nil
+	*/
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {

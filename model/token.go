@@ -36,7 +36,13 @@ type Token struct {
 	ChannelRatios      string         `json:"channel_ratios" gorm:"default:'{}'"` // 这个key下面，配置渠道的倍率
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	// Key维度消耗预警：每消耗 AlertThreshold 美元，通过用户设置的 WebhookUrl 发送告警。
+	// AlertThreshold = 0 表示关闭告警。AlertNotifiedQuota 记录上次告警时累计消耗（quota 单位），
+	// AlertLastNotifiedTime 记录上次告警时间戳（用于展示告警时间范围）。
+	AlertThreshold        float64        `json:"alert_threshold" gorm:"default:0"`
+	AlertNotifiedQuota    int            `json:"alert_notified_quota" gorm:"default:0"`
+	AlertLastNotifiedTime int64          `json:"alert_last_notified_time" gorm:"bigint;default:0"`
+	DeletedAt             gorm.DeletedAt `gorm:"index"`
 }
 
 func (token *Token) Clean() {
@@ -372,7 +378,7 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_ratios", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_ratios", "cross_group_retry", "alert_threshold").Updates(token).Error
 	//"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
 	return err
 }

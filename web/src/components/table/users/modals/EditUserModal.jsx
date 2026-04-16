@@ -113,6 +113,7 @@ const EditUserModal = (props) => {
       // Parse setting to extract discount fields
       let groupDiscount = '';
       let modelExtraDiscount = '';
+      let checkUid = false;
       if (data.setting) {
         try {
           const settingObj = typeof data.setting === 'string' ? JSON.parse(data.setting) : data.setting;
@@ -122,6 +123,7 @@ const EditUserModal = (props) => {
           if (settingObj.model_extra_discount) {
             modelExtraDiscount = JSON.stringify(settingObj.model_extra_discount, null, 2);
           }
+          checkUid = Boolean(settingObj.check_uid);
         } catch (e) {
           // ignore parse error
         }
@@ -131,6 +133,7 @@ const EditUserModal = (props) => {
         ...data,
         group_discount: groupDiscount,
         model_extra_discount: modelExtraDiscount,
+        check_uid: checkUid,
       });
     } else {
       showError(message);
@@ -173,11 +176,13 @@ const EditUserModal = (props) => {
           return;
         }
       }
+      settingObj.check_uid = Boolean(payload.check_uid);
       payload.setting = JSON.stringify(settingObj);
     }
     // Remove form-only fields
     delete payload.group_discount;
     delete payload.model_extra_discount;
+    delete payload.check_uid;
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -378,6 +383,17 @@ const EditUserModal = (props) => {
                           />
                         </Col>
                       )}
+                      <Col span={24}>
+                        <Form.Switch
+                          field='check_uid'
+                          label={t('UID鉴权')}
+                          checkedText={t('开')}
+                          uncheckedText={t('关')}
+                          extraText={t(
+                            '开启后，该用户创建的所有令牌在请求时必须携带 uid（通过 Header "uid" 或 key 中以 "_uid" 形式传入），否则拒绝访问',
+                          )}
+                        />
+                      </Col>
                     </Row>
                   </Card>
                 )}

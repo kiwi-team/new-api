@@ -149,26 +149,29 @@ func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens in
 	common.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, 用户调用前余额=%d, channelId=%d, promptTokens=%d, completionTokens=%d, modelName=%s, tokenName=%s, quota=%d, content=%s", userId, userQuota, channelId, promptTokens, completionTokens, modelName, tokenName, quota, content))
 */
 type RecordConsumeLogParams struct {
-	ChannelId        int                    `json:"channel_id"`
-	PromptTokens     int                    `json:"prompt_tokens"`
-	CompletionTokens int                    `json:"completion_tokens"`
-	ModelName        string                 `json:"model_name"`
-	TokenName        string                 `json:"token_name"`
-	Quota            int                    `json:"quota"`
-	Content          string                 `json:"content"`
-	TokenId          int                    `json:"token_id"`
-	UseTimeSeconds   int                    `json:"use_time_seconds"`
-	IsStream         bool                   `json:"is_stream"`
-	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
-	Request          string                 `json:"request"`
-	Response         string                 `json:"response"`
-	ClientUserId     string                 `json:"client_user_id"`
-	ClientScenairo   string                 `json:"client_scenairo"`
-	RequestId        string                 `json:"request_id"`
-	ProjectName      string                 `json:"project_name"`
-	PlanId           int                    `json:"plan_id"`
-	Usage            string                 `json:"usage"`
+	ChannelId                   int                    `json:"channel_id"`
+	PromptTokens                int                    `json:"prompt_tokens"`
+	CompletionTokens            int                    `json:"completion_tokens"`
+	CachedTokens                int                    `json:"cached_tokens"`
+	ClaudeCacheCreation5mTokens int                    `json:"claude_cache_creation_5_m_tokens"`
+	ClaudeCacheCreation1hTokens int                    `json:"claude_cache_creation_1_h_tokens"`
+	ModelName                   string                 `json:"model_name"`
+	TokenName                   string                 `json:"token_name"`
+	Quota                       int                    `json:"quota"`
+	Content                     string                 `json:"content"`
+	TokenId                     int                    `json:"token_id"`
+	UseTimeSeconds              int                    `json:"use_time_seconds"`
+	IsStream                    bool                   `json:"is_stream"`
+	Group                       string                 `json:"group"`
+	Other                       map[string]interface{} `json:"other"`
+	Request                     string                 `json:"request"`
+	Response                    string                 `json:"response"`
+	ClientUserId                string                 `json:"client_user_id"`
+	ClientScenairo              string                 `json:"client_scenairo"`
+	RequestId                   string                 `json:"request_id"`
+	ProjectName                 string                 `json:"project_name"`
+	PlanId                      int                    `json:"plan_id"`
+	Usage                       string                 `json:"usage"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -220,21 +223,24 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		gopool.Go(func() {
 			//LogQuotaData(userId, username, modelName, quota, common.GetTimestamp(), promptTokens+completionTokens)
 			LogQuotaData(&LogQuotaDataCache{
-				UserId:           userId,
-				Username:         username,
-				ModelName:        params.ModelName,
-				Quota:            params.Quota,
-				CreatedAt:        common.GetTimestamp(),
-				TokenUsed:        params.PromptTokens + params.CompletionTokens,
-				TokenName:        params.TokenName,
-				PromptTokens:     params.PromptTokens,
-				CompletionTokens: params.CompletionTokens,
-				ChannelId:        params.ChannelId,
-				TokenId:          params.TokenId,
-				ClientUserId:     params.ClientUserId,
-				ClientScenairo:   params.ClientScenairo,
-				ProjectName:      params.ProjectName,
-				PlanId:           params.PlanId,
+				UserId:                      userId,
+				Username:                    username,
+				ModelName:                   params.ModelName,
+				Quota:                       params.Quota,
+				CreatedAt:                   common.GetTimestamp(),
+				TokenUsed:                   params.PromptTokens + params.CompletionTokens,
+				TokenName:                   params.TokenName,
+				PromptTokens:                params.PromptTokens,
+				CompletionTokens:            params.CompletionTokens,
+				CachedTokens:                params.CachedTokens,
+				ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
+				ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
+				ChannelId:                   params.ChannelId,
+				TokenId:                     params.TokenId,
+				ClientUserId:                params.ClientUserId,
+				ClientScenairo:              params.ClientScenairo,
+				ProjectName:                 params.ProjectName,
+				PlanId:                      params.PlanId,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
