@@ -152,6 +152,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &qwen_realtime.Adaptor{}
 	case constant.APITypeGeminiRealtime:
 		return &gemini_realtime.Adaptor{}
+	case constant.APITypeVolcEngineRealtime:
+		return &volcengine.RealtimeAdaptor{}
 	case constant.APITypePPIO:
 		return &ppioImage.Adaptor{}
 	}

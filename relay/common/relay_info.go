@@ -216,6 +216,9 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if channelType == constant.ChannelTypeGemini && info.RelayMode == relayconstant.RelayModeRealtime {
 		channelMeta.ApiType = constant.APITypeGeminiRealtime
 	}
+	if channelType == constant.ChannelTypeVolcEngine && info.RelayMode == relayconstant.RelayModeRealtime {
+		channelMeta.ApiType = constant.APITypeVolcEngineRealtime
+	}
 
 	channelSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 	if ok {

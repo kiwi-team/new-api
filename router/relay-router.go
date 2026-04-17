@@ -73,6 +73,11 @@ func SetRelayRouter(router *gin.Engine) {
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
+		// 豆包端到端实时语音大模型（与 Doubao 原生 WebSocket 协议一致）
+		// 客户端通过 ?model=xxx 指定渠道路由依据
+		wsRouter.GET("/realtime/volcengine/dialogue", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIRealtime)
+		})
 	}
 	{
 		// Moonshot Formulas 路由

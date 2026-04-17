@@ -565,10 +565,11 @@ const SyncChannelsModal = ({ visible, onCancel, selectedChannels, t }) => {
     <Modal
       title={getTitle()}
       visible={visible}
-      onCancel={step === 'result' ? onCancel : undefined}
+      onCancel={syncing ? undefined : onCancel}
       footer={getFooter()}
       width={700}
-      closable={(step !== 'confirm' && step !== 'mapping') || !syncing}
+      maskClosable={false}
+      closable={!syncing}
     >
       {step === 'select' && renderSelectStep()}
       {step === 'mapping' && renderMappingStep()}
