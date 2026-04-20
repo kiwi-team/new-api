@@ -43,6 +43,7 @@ type Log struct {
 	ClientUserId     string `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo   string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 	ProjectName      string `json:"project_name" gorm:"index;size:100;default:''"`
+	PlanId           int    `json:"plan_id" gorm:"default:0;index"`
 	Usage            string `json:"usage" gorm:"type:text"`
 }
 
@@ -210,6 +211,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ClientScenairo:   params.ClientScenairo,
 		RequestId:        params.RequestId,
 		ProjectName:      params.ProjectName,
+		PlanId:           params.PlanId,
 		Usage:            params.Usage,
 	}
 	// 异步写入日志，避免大请求体（如 base64 图片）阻塞请求响应
@@ -219,9 +221,11 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			common.SysError("failed to record consume log: " + err.Error())
 		}
 	})
+	if !common.DataExportEnabled {
+		common.SysLog(fmt.Sprintf("[DIAG] DataExportEnabled=false, skipping LogQuotaData for model=%s", params.ModelName))
+	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
-			//LogQuotaData(userId, username, modelName, quota, common.GetTimestamp(), promptTokens+completionTokens)
 			LogQuotaData(&LogQuotaDataCache{
 				UserId:                      userId,
 				Username:                    username,

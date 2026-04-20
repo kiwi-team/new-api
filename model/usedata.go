@@ -114,6 +114,8 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 
 // func LogQuotaData(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string) {
 func LogQuotaData(logQuotaData *LogQuotaDataCache) {
+	common.SysLog(fmt.Sprintf("[DIAG] LogQuotaData called: model=%s, userId=%d, tokenId=%d, channelId=%d",
+		logQuotaData.ModelName, logQuotaData.UserId, logQuotaData.TokenId, logQuotaData.ChannelId))
 	userId := logQuotaData.UserId
 	username := logQuotaData.Username
 	modelName := logQuotaData.ModelName
@@ -361,8 +363,8 @@ func increaseQuotaData(userId int, username string, modelName string, count int,
 		"prompt_tokens":                   gorm.Expr("prompt_tokens + ?", promptTokens),
 		"completion_tokens":               gorm.Expr("completion_tokens + ?", completionTokens),
 		"cached_tokens":                   gorm.Expr("cached_tokens + ?", cachedTokens),
-		"claude_cache_creation_5_m_tokens": gorm.Expr("claude_cache_creation_5_m_tokens + ?", claudeCacheCreation5mTokens),
-		"claude_cache_creation_1_h_tokens": gorm.Expr("claude_cache_creation_1_h_tokens + ?", claudeCacheCreation1hTokens),
+		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", claudeCacheCreation5mTokens),
+		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", claudeCacheCreation1hTokens),
 	}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())

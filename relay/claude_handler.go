@@ -112,8 +112,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		request.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 	}
 
+	isOpus47 := strings.HasPrefix(request.Model, "claude-opus-4-7")
+	isOpus46 := strings.HasPrefix(request.Model, "claude-opus-4-6")
+
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
-		strings.HasPrefix(request.Model, "claude-opus-4-6") {
+		(isOpus46 || isOpus47) {
 		request.Model = baseModel
 		request.Thinking = &dto.Thinking{
 			Type: "adaptive",
@@ -143,6 +146,25 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
 			request.Model = strings.TrimSuffix(request.Model, "-thinking")
 		}
+		info.UpstreamModelName = request.Model
+	}
+
+	// claude-opus-4-7 breaking changes:
+	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
+	// 2. temperature/top_p/top_k non-default values return 400
+	if isOpus47 {
+		if request.Thinking != nil && request.Thinking.Type == "enabled" {
+			request.Thinking = &dto.Thinking{
+				Type: "adaptive",
+			}
+			if request.OutputConfig == nil {
+				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+			}
+		}
+		request.Temperature = nil
+		request.TopP = 0
+		request.TopK = 0
+		request.Model = strings.TrimSuffix(request.Model, "-thinking")
 		info.UpstreamModelName = request.Model
 	}
 

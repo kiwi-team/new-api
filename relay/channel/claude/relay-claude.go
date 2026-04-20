@@ -149,8 +149,11 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		claudeRequest.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(textRequest.Model))
 	}
 
+	isOpus47 := strings.HasPrefix(textRequest.Model, "claude-opus-4-7")
+	isOpus46 := strings.HasPrefix(textRequest.Model, "claude-opus-4-6")
+
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		strings.HasPrefix(textRequest.Model, "claude-opus-4-6") {
+		(isOpus46 || isOpus47) {
 		claudeRequest.Model = baseModel
 		claudeRequest.Thinking = &dto.Thinking{
 			Type: "adaptive",
@@ -453,7 +456,24 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
-	if claudeRequest.Thinking != nil {
+
+	// claude-opus-4-7 breaking changes:
+	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
+	// 2. temperature/top_p/top_k non-default values return 400
+	if isOpus47 {
+		if claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled" {
+			claudeRequest.Thinking = &dto.Thinking{
+				Type: "adaptive",
+			}
+			if claudeRequest.OutputConfig == nil {
+				claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+			}
+		}
+		claudeRequest.Temperature = nil
+		claudeRequest.TopP = 0
+		claudeRequest.TopK = 0
+		claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
+	} else if claudeRequest.Thinking != nil {
 		if claudeRequest.Thinking.Type == "enabled" {
 			//https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility
 			claudeRequest.TopK = 0
