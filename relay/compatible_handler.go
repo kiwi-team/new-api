@@ -394,7 +394,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 					}
 				}
 			}
-		} else {
+		} else if thinking.Type != "adaptive" {
 			//if strings.Contains(strings.ToLower(textRequest.Model), "gemini") {
 			if textRequest.Model == "gemini-2.5-flash" {
 				textRequest.Model = textRequest.Model + "-nothinking"
@@ -416,7 +416,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking") + "-thinking"
 				info.UpstreamModelName = textRequest.Model
 			}
-		} else {
+		} else if thinking.Type != "adaptive" {
 			if textRequest.Model == "gemini-2.5-flash" {
 				textRequest.Model = textRequest.Model + "-nothinking"
 				info.UpstreamModelName = textRequest.Model

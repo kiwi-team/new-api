@@ -156,7 +156,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		(isOpus46 || isOpus47) {
 		claudeRequest.Model = baseModel
 		claudeRequest.Thinking = &dto.Thinking{
-			Type: "adaptive",
+			Type:    "adaptive",
+			Display: "summarized",
 		}
 		claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
 		claudeRequest.TopP = 0
@@ -253,6 +254,11 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		case "disabled":
 			claudeRequest.Thinking = &dto.Thinking{
 				Type: "disabled",
+			}
+		case "adaptive":
+			claudeRequest.Thinking = &dto.Thinking{
+				Type:    "adaptive",
+				Display: "summarized",
 			}
 		}
 	}
@@ -463,7 +469,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	if isOpus47 {
 		if claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled" {
 			claudeRequest.Thinking = &dto.Thinking{
-				Type: "adaptive",
+				Type:    "adaptive",
+				Display: "summarized",
 			}
 			if claudeRequest.OutputConfig == nil {
 				claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
@@ -641,6 +648,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 			})
 		case "thinking":
 			// 加密的不管， 只输出明文的推理过程
+			signature = message.Signature
 			if message.Thinking != nil {
 				thinkingContent = *message.Thinking
 			}
