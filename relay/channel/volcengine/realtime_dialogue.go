@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -118,7 +119,12 @@ func collectRealtimeWsMessage(c *gin.Context, info *relaycommon.RelayInfo, mu *s
 				if len(msg.payload) > 0 && len(msg.payload) <= 500 {
 					summary = fmt.Sprintf("[%s] %s: %s", direction, evtName, string(msg.payload))
 				} else if len(msg.payload) > 500 {
-					summary = fmt.Sprintf("[%s] %s: %s...(truncated, total %d)", direction, evtName, string(msg.payload[:500]), len(msg.payload))
+					// Truncate at a valid UTF-8 boundary to avoid broken sequences in DB
+					truncated := msg.payload[:500]
+					for len(truncated) > 0 && !utf8.Valid(truncated) {
+						truncated = truncated[:len(truncated)-1]
+					}
+					summary = fmt.Sprintf("[%s] %s: %s...(truncated, total %d)", direction, evtName, string(truncated), len(msg.payload))
 				} else {
 					summary = fmt.Sprintf("[%s] %s", direction, evtName)
 				}
