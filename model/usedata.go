@@ -142,6 +142,30 @@ func LogQuotaData(logQuotaData *LogQuotaDataCache) {
 	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, cachedTokens, claudeCacheCreation5mTokens, claudeCacheCreation1hTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId)
 }
 
+// RefundQuotaData writes a negative quota entry to offset the original quota_data record
+// written at task submission time. Called when an async task fails and quota is refunded.
+func RefundQuotaData(task *Task) {
+	if task == nil || task.Quota == 0 {
+		return
+	}
+	username, _ := GetUsernameById(task.UserId, false)
+	p := task.Properties
+	LogQuotaData(&LogQuotaDataCache{
+		UserId:         task.UserId,
+		Username:       username,
+		ModelName:      p.OriginModelName,
+		Quota:          -task.Quota,
+		CreatedAt:      common.GetTimestamp(),
+		TokenId:        p.TokenId,
+		TokenName:      p.TokenName,
+		ChannelId:      task.ChannelId,
+		ClientUserId:   p.ClientUserId,
+		ClientScenairo: p.ClientScenairo,
+		ProjectName:    p.ProjectName,
+		PlanId:         p.PlanId,
+	})
+}
+
 func SaveQuotaDataCache() {
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()

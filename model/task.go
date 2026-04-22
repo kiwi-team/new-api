@@ -81,6 +81,13 @@ type Properties struct {
 	Input             string `json:"input"`
 	UpstreamModelName string `json:"upstream_model_name,omitempty"`
 	OriginModelName   string `json:"origin_model_name,omitempty"`
+	// Billing metadata stored at submission time for accurate quota_data refund on failure
+	TokenId        int    `json:"token_id,omitempty"`
+	TokenName      string `json:"token_name,omitempty"`
+	ClientUserId   string `json:"client_user_id,omitempty"`
+	ClientScenairo string `json:"client_scenairo,omitempty"`
+	ProjectName    string `json:"project_name,omitempty"`
+	PlanId         int    `json:"plan_id,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {

@@ -296,8 +296,22 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
 			logger.LogWarn(ctx, "Failed to increase user quota: "+err.Error())
 		}
+		// Restore token remain_quota / used_quota
+		if tokenId := task.Properties.TokenId; tokenId != 0 {
+			if token, err := model.GetTokenById(tokenId); err == nil {
+				if refundErr := model.IncreaseTokenQuota(token.Id, token.Key, quota); refundErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("Failed to increase token quota for task %s: %s", task.TaskID, refundErr.Error()))
+				}
+			} else {
+				logger.LogWarn(ctx, fmt.Sprintf("Failed to get token %d for task %s refund: %s", tokenId, task.TaskID, err.Error()))
+			}
+		}
 		logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
 		model.RecordLog(task.UserId, model.LogTypeSystem, logContent, quota)
+		// Offset the quota_data entry that was written at submission time
+		if common.DataExportEnabled {
+			model.RefundQuotaData(task)
+		}
 	}
 
 	return nil

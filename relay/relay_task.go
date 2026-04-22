@@ -277,6 +277,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		requestBytes, _ = requestStorage.Bytes()
 	}
 	var responseStr string
+	var task *model.Task // declared here so the defer closure can access it after Insert
 	defer func() {
 		// release quota
 		if info.ConsumeQuota && taskErr == nil {
@@ -343,6 +344,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				})
 				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)
+
+				// Store billing metadata in task.Properties so that if the async task later
+				// fails, the refund path can accurately reverse the quota_data entry.
+				if task != nil && common.DataExportEnabled {
+					task.Properties.TokenId = info.TokenId
+					task.Properties.TokenName = tokenName
+					task.Properties.ClientUserId = clientUserId
+					task.Properties.ClientScenairo = clientScenairo
+					task.Properties.ProjectName = projectName
+					task.Properties.PlanId = planId
+					if updateErr := task.Update(); updateErr != nil {
+						common.SysLog("failed to update task billing metadata: " + updateErr.Error())
+					}
+				}
 			}
 		}
 	}()
@@ -354,7 +369,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	responseStr = string(taskData)
 	info.ConsumeQuota = true
 	// insert task
-	task := model.InitTask(platform, info)
+	task = model.InitTask(platform, info)
 	task.TaskID = taskID
 	task.Quota = quota
 	task.Data = taskData
