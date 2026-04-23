@@ -68,6 +68,8 @@ const (
 	ChannelTypeCodex            = 68
 	ChannelTypeRunwayML         = 69
 	ChannelTypePPIO             = 70
+	ChannelTypeHedra            = 71
+	ChannelTypeHeyGen           = 72
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -145,6 +147,8 @@ var ChannelBaseURLs = []string{
 	"https://chatgpt.com",               // 68 codex
 	"https://api.dev.runwayml.com",      // 69 runwayml
 	"https://api.ppio.com",              // 70 ppio
+	"https://api.hedra.com/web-app/public", // 71 hedra
+	"https://api.heygen.com",               // 72 heygen
 }
 
 var ChannelTypeNames = map[int]string{
@@ -212,6 +216,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeCodex:          "Codex",
 	ChannelTypeRunwayML:       "RunwayML",
 	ChannelTypePPIO:           "PPIO",
+	ChannelTypeHedra:          "Hedra",
+	ChannelTypeHeyGen:         "HeyGen",
 }
 
 func GetChannelTypeName(channelType int) string {

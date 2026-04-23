@@ -241,11 +241,19 @@ export const CHANNEL_OPTIONS = [
   }, {
     value: 69,
     color: 'purple',
-    label: 'RunwayML',
+    label: 'RunwayML'
   }, {
     value: 70,
     color: 'blue',
-    label: 'ppio',
+    label: 'ppio'
+  },{
+    value: 71,
+    color: 'red',
+    label: 'hedra'
+  }, {
+    value: 72,
+    color: 'green',
+    label: 'heygen'
   }
 ];
 

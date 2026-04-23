@@ -47,6 +47,8 @@ import (
 	taskLtx "github.com/QuantumNous/new-api/relay/channel/task/ltx"
 	taskPixverse "github.com/QuantumNous/new-api/relay/channel/task/pixverse"
 	taskReplicateTask "github.com/QuantumNous/new-api/relay/channel/task/replicatetask"
+	taskHedra "github.com/QuantumNous/new-api/relay/channel/task/hedra"
+	taskHeyGen "github.com/QuantumNous/new-api/relay/channel/task/heygen"
 	taskRunwayML "github.com/QuantumNous/new-api/relay/channel/task/runwayml"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
@@ -205,6 +207,10 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskRunwayML.TaskAdaptor{}
 		case constant.ChannelTypeReplicate:
 			return &taskReplicateTask.TaskAdaptor{}
+		case constant.ChannelTypeHedra:
+			return &taskHedra.TaskAdaptor{}
+		case constant.ChannelTypeHeyGen:
+			return &taskHeyGen.TaskAdaptor{}
 		}
 	}
 	return nil

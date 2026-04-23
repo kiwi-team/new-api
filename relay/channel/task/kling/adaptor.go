@@ -159,6 +159,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	req := v.(relaycommon.TaskSubmitReq)
 
+	//if strings.Contains(req.Model, "avatar") {
 	if req.Model == "klingai_avatar" {
 		body, err := a.convertToAvatarRequestPayload(&req)
 		if err != nil {
