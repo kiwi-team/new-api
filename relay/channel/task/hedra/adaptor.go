@@ -295,6 +295,30 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	// Upstream may return an error envelope (e.g. {"error":{"code":"unauthorized","message":"..."}})
+	// instead of a normal status payload. Treat that as a task failure so we surface the reason
+	// and trigger refund, rather than silently marking the task as submitted.
+	var errResp struct {
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(respBody, &errResp); err == nil && errResp.Error != nil &&
+		(errResp.Error.Message != "" || errResp.Error.Code != "") {
+		reason := errResp.Error.Message
+		if errResp.Error.Code != "" && reason != "" {
+			reason = fmt.Sprintf("%s: %s", errResp.Error.Code, reason)
+		} else if reason == "" {
+			reason = errResp.Error.Code
+		}
+		return &relaycommon.TaskInfo{
+			Status:   model.TaskStatusFailure,
+			Progress: "100%",
+			Reason:   reason,
+		}, nil
+	}
+
 	var statusResp generationStatusResp
 	if err := common.Unmarshal(respBody, &statusResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result")
