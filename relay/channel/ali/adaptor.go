@@ -157,6 +157,18 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		request.Stream = true
 		info.IsStream = true
 	}
+	if request.THINKING != nil {
+		thinking := &dto.AnthropicThinking{}
+		err := json.Unmarshal(request.THINKING, thinking)
+		if err != nil {
+			// 对于阿里云的kimi-模型来说，关闭thinking
+			if thinking.Type == "disabled" {
+				request.EnableThinking = false
+			} else if thinking.Type == "enabled" {
+				request.EnableThinking = true
+			}
+		}
+	}
 	// fix: ali parameter.enable_thinking must be set to false for non-streaming calls
 	// aliyun现在还有其他的类型的模型，比如kimi-k2.5,minimax等,这些模型，就不受这个逻辑限制
 	if !info.IsStream && strings.Contains(request.Model, "qwen") {
@@ -175,6 +187,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request.Model == "qwen3-235b-a22b-thinking-2507" {
 		request.EnableThinking = true
 	}
+	//common.PrintJson("req", request)
 	switch info.RelayMode {
 	default:
 		aliReq := requestOpenAI2Ali(*request)
