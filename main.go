@@ -43,6 +43,12 @@ var buildFS embed.FS
 //go:embed web/dist/index.html
 var indexPage []byte
 
+//go:embed customer-portal/dist
+var portalFS embed.FS
+
+//go:embed customer-portal/dist/index.html
+var portalIndexPage []byte
+
 func main() {
 	startTime := time.Now()
 
@@ -209,8 +215,11 @@ func main() {
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
 
+	// 检查 Customer Portal 构建产物是否存在
+	portalIndexPageLoaded := len(portalIndexPage) > 0
+
 	// 设置路由
-	router.SetRouter(server, buildFS, indexPage)
+	router.SetRouter(server, buildFS, indexPage, portalFS, portalIndexPage, portalIndexPageLoaded)
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)

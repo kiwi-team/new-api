@@ -2833,6 +2833,12 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "输入价格：{{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "输出价格：{{symbol}}{{price}} / 1M tokens",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
-    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}"
+    "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}",
+    "结算价格管理": "结算价格管理",
+    "结算价格": "结算价格",
+    "批量导入": "批量导入",
+    "导入成功": "导入成功",
+    "未配置结算价格": "未配置结算价格",
+    "请输入JSON格式的配置数据": "请输入JSON格式的配置数据"
   }
 }

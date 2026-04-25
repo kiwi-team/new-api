@@ -243,6 +243,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	}
 
 	token, err := a.createJWTTokenWithKey(key)
+	//fmt.Printf("token:%s\n", token)
 	if err != nil {
 		token = key
 	}
@@ -446,6 +447,18 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: klingResp.Message,
 			Code:    fmt.Sprintf("%d", klingResp.Code),
+		}
+	} else if originTask.Status == model.TaskStatusFailure || klingResp.Data.TaskStatus == "failed" {
+		msg := klingResp.Data.TaskStatusMsg
+		if msg == "" {
+			msg = originTask.FailReason
+		}
+		if msg == "" {
+			msg = "task failed"
+		}
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message: msg,
+			Code:    "task_failed",
 		}
 	}
 	jsonData, _ := common.Marshal(openAIVideo)

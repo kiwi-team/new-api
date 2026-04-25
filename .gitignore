@@ -36,3 +36,5 @@ data/
 
 
 docs/
+customer-portal/dist
+customer-portal/node_modules

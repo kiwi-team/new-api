@@ -59,6 +59,7 @@ import QuotaStatistics from './pages/QuotaStatistics';
 import CliendUserQuotaPage from './pages/CliendUserQuota';
 import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
+import SettlementConfig from './pages/SettlementConfig';
 
 // Debug module pages
 import DebugExecutor from './pages/Debug/Executor';
@@ -385,6 +386,14 @@ function App() {
           }
         />
         {/* Sync Module Routes - Root Only */}
+        <Route
+          path='/console/settlement-config'
+          element={
+            <RootRoute>
+              <SettlementConfig />
+            </RootRoute>
+          }
+        />
         <Route
           path='/console/sync'
           element={

@@ -71,6 +71,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       cuquota: true,
       project: true,
       setting: true,
+      settlementConfig: true,
     },
   });
 

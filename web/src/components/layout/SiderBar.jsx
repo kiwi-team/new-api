@@ -55,6 +55,8 @@ const routerMap = {
   quotaStatistics: '/console/quota-statistics',
   cuquota: '/console/client-user-quota',
   project: '/console/project',
+  // Settlement config route
+  settlementConfig: '/console/settlement-config',
   // Debug module routes
   debugExecutor: '/console/debug/executor',
   debugTemplates: '/console/debug/templates',
@@ -174,6 +176,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('项目预算管理'), itemKey: 'project', to: '/console/project', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
+      { text: t('结算价格管理'), itemKey: 'settlementConfig', to: '/console/settlement-config', className: isRoot() ? '' : 'tableHiddle' },
 
     ];
 

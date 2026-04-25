@@ -2893,6 +2893,12 @@
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Output price: {{symbol}}{{price}} / 1M tokens",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Input {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Output {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
     "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Tiered pricing (≤{{maxTokens}} tokens): Input {{symbol}}{{inputPrice}} / Output {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
+    "结算价格管理": "Settlement Price Management",
+    "结算价格": "Settlement Price",
+    "批量导入": "Batch Import",
+    "导入成功": "Import successful",
+    "未配置结算价格": "No settlement price configured",
+    "请输入JSON格式的配置数据": "Please enter configuration data in JSON format",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

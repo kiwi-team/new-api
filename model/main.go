@@ -316,6 +316,8 @@ func migrateDB() error {
 		&Project{},
 		&ProjectAllocationPlan{},
 		&ProjectAllocation{},
+		// Settlement pricing tables
+		&SettlementConfig{},
 	)
 	if err != nil {
 		return err

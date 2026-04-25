@@ -536,5 +536,32 @@ func SetApiRouter(router *gin.Engine) {
 			// 同步历史
 			syncRoute.GET("/logs", controller.GetSyncLogs)
 		}
+
+		// Settlement pricing routes
+		settlementRoute := apiRouter.Group("/settlement")
+		{
+			// Admin config endpoints (RootAuth)
+			adminSettlementConfig := settlementRoute.Group("/config")
+			adminSettlementConfig.Use(middleware.RootAuth())
+			{
+				adminSettlementConfig.GET("", controller.GetSettlementConfigs)
+				adminSettlementConfig.POST("", controller.CreateSettlementConfigHandler)
+				adminSettlementConfig.PUT("", controller.UpdateSettlementConfigHandler)
+				adminSettlementConfig.DELETE("/:id", controller.DeleteSettlementConfigHandler)
+				adminSettlementConfig.POST("/batch", controller.BatchImportSettlementConfigs)
+			}
+
+			// User query endpoints (UserAuth)
+			settlementRoute.GET("/config/self", middleware.UserAuth(), controller.GetSelfSettlementConfigs)
+			settlementRoute.GET("/bill/self", middleware.UserAuth(), controller.GetSelfSettlementBill)
+
+			// Admin bill endpoints (RootAuth)
+			adminBill := settlementRoute.Group("/bill/admin")
+			adminBill.Use(middleware.RootAuth())
+			{
+				adminBill.GET("", controller.AdminGetSettlementBill)
+				adminBill.GET("/export", controller.AdminExportSettlementBillCSV)
+			}
+		}
 	}
 }

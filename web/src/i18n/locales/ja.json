@@ -2750,6 +2750,12 @@
     "输出价格：{{symbol}}{{price}} / 1M tokens": "出力価格：{{symbol}}{{price}} / 1M tokens",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(入力 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 出力 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
     "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "段階料金（≤{{maxTokens}} tokens）：入力 {{symbol}}{{inputPrice}} / 出力 {{symbol}}{{outputPrice}} /1M tokens、{{ratioType}} {{ratio}}",
+    "结算价格管理": "決済価格管理",
+    "结算价格": "決済価格",
+    "批量导入": "一括インポート",
+    "导入成功": "インポート成功",
+    "未配置结算价格": "決済価格が設定されていません",
+    "请输入JSON格式的配置数据": "JSON形式の設定データを入力してください",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

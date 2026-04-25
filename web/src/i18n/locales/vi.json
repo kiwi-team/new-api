@@ -3327,6 +3327,12 @@
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Giá đầu ra: {{symbol}}{{price}} / 1M tokens",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Đầu vào {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Đầu ra {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
     "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Giá theo bậc (≤{{maxTokens}} tokens): Đầu vào {{symbol}}{{inputPrice}} / Đầu ra {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
+    "结算价格管理": "Quản lý giá thanh toán",
+    "结算价格": "Giá thanh toán",
+    "批量导入": "Nhập hàng loạt",
+    "导入成功": "Nhập thành công",
+    "未配置结算价格": "Chưa cấu hình giá thanh toán",
+    "请输入JSON格式的配置数据": "Vui lòng nhập dữ liệu cấu hình ở định dạng JSON",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

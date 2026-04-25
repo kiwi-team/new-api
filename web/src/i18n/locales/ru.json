@@ -2780,6 +2780,12 @@
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Цена вывода: {{symbol}}{{price}} / 1M токенов",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Ввод {{input}} токенов / 1M токенов * {{symbol}}{{inputPrice}} + Вывод {{output}} токенов / 1M токенов * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
     "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Ступенчатая тарификация (≤{{maxTokens}} токенов): Ввод {{symbol}}{{inputPrice}} / Вывод {{symbol}}{{outputPrice}} /1M токенов, {{ratioType}} {{ratio}}",
+    "结算价格管理": "Управление расчётными ценами",
+    "结算价格": "Расчётная цена",
+    "批量导入": "Массовый импорт",
+    "导入成功": "Импорт выполнен успешно",
+    "未配置结算价格": "Расчётная цена не настроена",
+    "请输入JSON格式的配置数据": "Введите данные конфигурации в формате JSON",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }

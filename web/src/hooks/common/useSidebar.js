@@ -57,6 +57,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     cuquota: true,
     project: true,
     modelRouteConfig: true,
+    settlementConfig: true,
   },
 };
 

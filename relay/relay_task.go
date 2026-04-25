@@ -549,6 +549,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 					originTask.FailReason = ti.Url
 				}
 			}
+			if originTask.Status == model.TaskStatusFailure && ti.Reason != "" {
+				originTask.FailReason = ti.Reason
+			}
+			originTask.Data = body
 			_ = originTask.Update()
 			var raw map[string]any
 			_ = json.Unmarshal(body, &raw)

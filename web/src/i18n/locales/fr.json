@@ -2767,6 +2767,12 @@
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Prix de sortie : {{symbol}}{{price}} / 1M tokens",
     "(输入 {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + 输出 {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}": "(Entrée {{input}} tokens / 1M tokens * {{symbol}}{{inputPrice}} + Sortie {{output}} tokens / 1M tokens * {{symbol}}{{outputPrice}}) * {{ratioType}} {{ratio}} = {{symbol}}{{total}}",
     "阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}": "Tarification par paliers (≤{{maxTokens}} tokens) : Entrée {{symbol}}{{inputPrice}} / Sortie {{symbol}}{{outputPrice}} /1M tokens, {{ratioType}} {{ratio}}",
+    "结算价格管理": "Gestion des prix de règlement",
+    "结算价格": "Prix de règlement",
+    "批量导入": "Importation en lot",
+    "导入成功": "Importation réussie",
+    "未配置结算价格": "Aucun prix de règlement configuré",
+    "请输入JSON格式的配置数据": "Veuillez saisir les données de configuration au format JSON",
     "设计版本": "b80c3466cb6feafeb3990c7820e10e50"
   }
 }
