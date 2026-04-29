@@ -124,6 +124,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if saveRequestResponse && httpResp != nil {
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
+		defer streamRecorder.Release()
 	}
 
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)

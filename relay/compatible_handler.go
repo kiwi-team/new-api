@@ -235,6 +235,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		// 使用流式记录器包装原始响应体，不影响实时传输
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
+		defer streamRecorder.Release()
 	}
 
 	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)

@@ -188,7 +188,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var responseTextBuilder strings.Builder
 	var toolCount int
 	var usage = &dto.Usage{}
-	var streamItems []string // store stream items
 	var lastStreamData string
 	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
 
@@ -278,8 +277,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 			data = string(chatItemJson)
 		}
-		//lastStreamData = data
-		//streamItems = append(streamItems, data)
 		if len(data) > 0 {
 			// 对音频模型，保存倒数第二个stream data
 			if isAudioModel && lastStreamData != "" {
@@ -287,7 +284,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 
 			lastStreamData = data
-			streamItems = append(streamItems, data)
+			// 流式增量记账：在数据到达时立即解析并把 delta content / reasoning /
+			// tool args 累计进 responseTextBuilder。替代旧的"累积所有 streamItems
+			// 到流结束再 processTokens 一次性 Unmarshal"，避免 O(单流体积 × 并发数)
+			// 的内存放大（旧路径在高并发下 inuse 占比 42% 且每 10s alloc 16+ GB）。
+			ingestStreamItem(info.RelayMode, data, &responseTextBuilder, &toolCount)
 		}
 		return true
 	})
@@ -331,10 +332,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	// 处理token计算
-	if err := processTokens(info.RelayMode, streamItems, &responseTextBuilder, &toolCount); err != nil {
-		logger.LogError(c, "error processing tokens: "+err.Error())
-	}
+	// token 累计已在 ingestStreamItem 内逐行完成；此处不再需要批量 processTokens。
 
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())

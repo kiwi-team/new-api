@@ -3,8 +3,12 @@ package model
 import (
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -120,13 +124,151 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 
 var LogList []*ErrorLog
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, includeBody bool) error {
+// multipartFileInfo 描述 multipart 上传中文件 part 的元信息（不含原始字节）。
+type multipartFileInfo struct {
+	Name        string `json:"name"`
+	Filename    string `json:"filename,omitempty"`
+	Size        int    `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
+// sanitizedMultipartBody 是 multipart/form-data 脱敏后的可入库 JSON 形态。
+type sanitizedMultipartBody struct {
+	Multipart  bool              `json:"_multipart"`
+	MediaType  string            `json:"_media_type"`
+	Fields     map[string]string `json:"fields,omitempty"`
+	Files      []multipartFileInfo `json:"files,omitempty"`
+	ParseError string            `json:"_parse_error,omitempty"`
+}
+
+// 单个文本字段最多保留的字节数；超过则截断并标注总长度。
+const maxMultipartFieldBytes = 4096
+
+// 回退路径下原始 body 最多保留的字节数（解析无果时用，避免日志过大）。
+const maxFallbackBodyBytes = 4096
+
+// sanitizeForPGText 把任意字节字符串净化成可写入 PostgreSQL TEXT 列的形态：
+//   1. 替换非法 UTF-8 字节序列（如孤立的 0xff）为 U+FFFD '�'
+//   2. 删除 NUL 字节 (0x00) —— 它们是合法 UTF-8，但 PG 的 TEXT 列单独拒绝，
+//      会触发 SQLSTATE 22021 "invalid byte sequence for encoding UTF8: 0x00"
+func sanitizeForPGText(s string) string {
+	s = strings.ToValidUTF8(s, "�")
+	if strings.IndexByte(s, 0x00) >= 0 {
+		s = strings.ReplaceAll(s, "\x00", "")
+	}
+	return s
+}
+
+// safeUTF8Snapshot 返回 PG-TEXT 安全、必要时截断的 body 文本，用于无法结构化解析时的回退。
+func safeUTF8Snapshot(body string) string {
+	s := sanitizeForPGText(body)
+	if len(s) > maxFallbackBodyBytes {
+		return s[:maxFallbackBodyBytes] + fmt.Sprintf("... [truncated, total %d bytes]", len(body))
+	}
+	return s
+}
+
+// sanitizeRequestBodyForLog 把请求 body 转成 PostgreSQL TEXT 列可安全写入的 UTF-8 字符串。
+// 对 multipart/form-data：解析出文本字段，文件 part 替换为元信息占位，避免二进制字节写入。
+// 其他 Content-Type：原样返回，但兜底用 ToValidUTF8 过滤掉非法 UTF-8 序列，
+// 防止 PG 报 "invalid byte sequence for encoding UTF8"。
+func sanitizeRequestBodyForLog(body string, contentType string) string {
+	if body == "" {
+		return body
+	}
+
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		return safeUTF8Snapshot(body)
+	}
+	boundary, ok := params["boundary"]
+	if !ok || boundary == "" {
+		return safeUTF8Snapshot(body)
+	}
+
+	sanitized := sanitizedMultipartBody{
+		Multipart: true,
+		MediaType: mediaType,
+		Fields:    make(map[string]string),
+	}
+
+	reader := multipart.NewReader(strings.NewReader(body), boundary)
+	for {
+		part, partErr := reader.NextPart()
+		if partErr == io.EOF {
+			break
+		}
+		if partErr != nil {
+			sanitized.ParseError = partErr.Error()
+			break
+		}
+
+		partName := part.FormName()
+		partFilename := part.FileName()
+		partContentType := part.Header.Get("Content-Type")
+
+		partBytes, _ := io.ReadAll(part)
+		_ = part.Close()
+
+		if partFilename != "" || isBinaryContentType(partContentType) {
+			sanitized.Files = append(sanitized.Files, multipartFileInfo{
+				Name:        partName,
+				Filename:    partFilename,
+				Size:        len(partBytes),
+				ContentType: partContentType,
+			})
+			continue
+		}
+
+		value := string(partBytes)
+		if len(value) > maxMultipartFieldBytes {
+			value = value[:maxMultipartFieldBytes] + fmt.Sprintf("... [truncated, total %d bytes]", len(partBytes))
+		}
+		sanitized.Fields[partName] = sanitizeForPGText(value)
+	}
+
+	// multipart 解析没拿到任何 part：boundary 不匹配 / body 已被替换 / 客户端格式不对，
+	// 退回到 UTF-8 安全的截断快照，至少保留诊断价值。
+	if len(sanitized.Fields) == 0 && len(sanitized.Files) == 0 {
+		return safeUTF8Snapshot(body)
+	}
+
+	out, marshalErr := common.Marshal(sanitized)
+	if marshalErr != nil {
+		return safeUTF8Snapshot(body)
+	}
+	return string(out)
+}
+
+func isBinaryContentType(ct string) bool {
+	if ct == "" {
+		return false
+	}
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return false
+	}
+	mt = strings.ToLower(mt)
+	if strings.HasPrefix(mt, "text/") {
+		return false
+	}
+	switch mt {
+	case "application/json", "application/xml", "application/x-www-form-urlencoded":
+		return false
+	}
+	return strings.HasPrefix(mt, "image/") ||
+		strings.HasPrefix(mt, "audio/") ||
+		strings.HasPrefix(mt, "video/") ||
+		strings.HasPrefix(mt, "application/octet-stream")
+}
+
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, includeBody bool) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
 	bodyToSave := ""
 	if includeBody {
-		bodyToSave = body
+		bodyToSave = sanitizeRequestBodyForLog(body, contentType)
 	}
 
 	log := &ErrorLog{

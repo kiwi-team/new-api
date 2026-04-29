@@ -92,78 +92,46 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
 	return nil
 }
 
-func processTokens(relayMode int, streamItems []string, responseTextBuilder *strings.Builder, toolCount *int) error {
-	streamResp := "[" + strings.Join(streamItems, ",") + "]"
-
+// ingestStreamItem performs the same token-side accounting that the old
+// post-stream processTokens batch did, but does it incrementally as each
+// SSE line arrives. Done this way the handler does not need to retain every
+// stream item in memory until the stream ends — a major source of OOM
+// pressure under high concurrency.
+//
+// Behavior matches the legacy fallback path in processChatCompletions /
+// processCompletions: parse a single JSON object, append delta content /
+// reasoning / tool args to responseTextBuilder, track the maximum tool call
+// count. Parse errors are logged and skipped (the legacy one-shot path
+// likewise tolerated bad lines via its fallback; here we just keep going).
+//
+// Modes outside {ChatCompletions, Completions} require no token accounting
+// in the legacy code, so this is a no-op for them.
+func ingestStreamItem(relayMode int, item string, responseTextBuilder *strings.Builder, toolCount *int) {
+	if item == "" {
+		return
+	}
 	switch relayMode {
 	case relayconstant.RelayModeChatCompletions:
-		return processChatCompletions(streamResp, streamItems, responseTextBuilder, toolCount)
+		var sr dto.ChatCompletionsStreamResponse
+		if err := json.Unmarshal(common.StringToByteSlice(item), &sr); err != nil {
+			if common.DebugEnabled {
+				common.SysLog("ingestStreamItem unmarshal chat error: " + err.Error())
+			}
+			return
+		}
+		_ = ProcessStreamResponse(sr, responseTextBuilder, toolCount)
 	case relayconstant.RelayModeCompletions:
-		return processCompletions(streamResp, streamItems, responseTextBuilder)
-	}
-	return nil
-}
-
-func processChatCompletions(streamResp string, streamItems []string, responseTextBuilder *strings.Builder, toolCount *int) error {
-	var streamResponses []dto.ChatCompletionsStreamResponse
-	if err := json.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
-		// 一次性解析失败，逐个解析
-		common.SysLog("error unmarshalling stream response: " + err.Error())
-		for _, item := range streamItems {
-			var streamResponse dto.ChatCompletionsStreamResponse
-			if err := json.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
-				return err
+		var sr dto.CompletionsStreamResponse
+		if err := json.Unmarshal(common.StringToByteSlice(item), &sr); err != nil {
+			if common.DebugEnabled {
+				common.SysLog("ingestStreamItem unmarshal completion error: " + err.Error())
 			}
-			if err := ProcessStreamResponse(streamResponse, responseTextBuilder, toolCount); err != nil {
-				common.SysLog("error processing stream response: " + err.Error())
-			}
+			return
 		}
-		return nil
-	}
-
-	// 批量处理所有响应
-	for _, streamResponse := range streamResponses {
-		for _, choice := range streamResponse.Choices {
-			responseTextBuilder.WriteString(choice.Delta.GetContentString())
-			responseTextBuilder.WriteString(choice.Delta.GetReasoningContent())
-			if choice.Delta.ToolCalls != nil {
-				if len(choice.Delta.ToolCalls) > *toolCount {
-					*toolCount = len(choice.Delta.ToolCalls)
-				}
-				for _, tool := range choice.Delta.ToolCalls {
-					responseTextBuilder.WriteString(tool.Function.Name)
-					responseTextBuilder.WriteString(tool.Function.Arguments)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func processCompletions(streamResp string, streamItems []string, responseTextBuilder *strings.Builder) error {
-	var streamResponses []dto.CompletionsStreamResponse
-	if err := json.Unmarshal(common.StringToByteSlice(streamResp), &streamResponses); err != nil {
-		// 一次性解析失败，逐个解析
-		common.SysLog("error unmarshalling stream response: " + err.Error())
-		for _, item := range streamItems {
-			var streamResponse dto.CompletionsStreamResponse
-			if err := json.Unmarshal(common.StringToByteSlice(item), &streamResponse); err != nil {
-				continue
-			}
-			for _, choice := range streamResponse.Choices {
-				responseTextBuilder.WriteString(choice.Text)
-			}
-		}
-		return nil
-	}
-
-	// 批量处理所有响应
-	for _, streamResponse := range streamResponses {
-		for _, choice := range streamResponse.Choices {
+		for _, choice := range sr.Choices {
 			responseTextBuilder.WriteString(choice.Text)
 		}
 	}
-	return nil
 }
 
 func handleLastResponse(lastStreamData string, responseId *string, createAt *int64,

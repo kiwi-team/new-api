@@ -23,8 +23,8 @@ func Monitor() {
 	var lastCPUProfile time.Time
 	var lastMemProfile time.Time
 	// 阈值与冷却时间
-	cpuThreshold := 30.0
-	memThreshold := 30.0
+	cpuThreshold := 80.0
+	memThreshold := 80.0
 	cooldown := 3 * time.Minute
 	var err error
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -13,6 +14,34 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+// writeSSEDataField writes the value of an SSE `data:` field, escaping lone
+// `\r` to literal `\r` to match the legacy dataReplacer behavior in
+// common/custom-event.go. `\n` is intentionally not escaped (legacy identity
+// replacement).
+func writeSSEDataField(w gin.ResponseWriter, s string) error {
+	// Fast path: most JSON payloads contain no `\r`.
+	if strings.IndexByte(s, '\r') < 0 {
+		_, err := w.WriteString(s)
+		return err
+	}
+	for {
+		i := strings.IndexByte(s, '\r')
+		if i < 0 {
+			_, err := w.WriteString(s)
+			return err
+		}
+		if i > 0 {
+			if _, err := w.WriteString(s[:i]); err != nil {
+				return err
+			}
+		}
+		if _, err := w.WriteString(`\r`); err != nil {
+			return err
+		}
+		s = s[i+1:]
+	}
+}
 
 func FlushWriter(c *gin.Context) (err error) {
 	defer func() {
@@ -58,23 +87,77 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
 		common.SysError("error marshalling stream response: " + err.Error())
-	} else {
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+		_ = FlushWriter(c)
+		return nil
+	}
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
+	w := c.Writer
+	if _, err := w.WriteString("event: "); err != nil {
+		return err
+	}
+	if _, err := w.WriteString(resp.Type); err != nil {
+		return err
+	}
+	if _, err := w.WriteString("\ndata: "); err != nil {
+		return err
+	}
+	if err := writeSSEDataField(w, string(jsonData)); err != nil {
+		return err
+	}
+	if _, err := w.WriteString("\n\n"); err != nil {
+		return err
 	}
 	_ = FlushWriter(c)
 	return nil
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
+	if c == nil || c.Writer == nil {
+		return
+	}
+	w := c.Writer
+	// Preserve legacy formatting: "event: %s\ndata: %s\n\n\n" (3 trailing newlines).
+	if _, err := w.WriteString("event: "); err != nil {
+		return
+	}
+	if _, err := w.WriteString(resp.Type); err != nil {
+		return
+	}
+	if _, err := w.WriteString("\ndata: "); err != nil {
+		return
+	}
+	if err := writeSSEDataField(w, data); err != nil {
+		return
+	}
+	if _, err := w.WriteString("\n\n\n"); err != nil {
+		return
+	}
 	_ = FlushWriter(c)
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) {
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
+	if c == nil || c.Writer == nil {
+		return
+	}
+	w := c.Writer
+	// Preserve legacy formatting: "event: %s\ndata: %s\n\n".
+	if _, err := w.WriteString("event: "); err != nil {
+		return
+	}
+	if _, err := w.WriteString(resp.Type); err != nil {
+		return
+	}
+	if _, err := w.WriteString("\ndata: "); err != nil {
+		return
+	}
+	if err := writeSSEDataField(w, data); err != nil {
+		return
+	}
+	if _, err := w.WriteString("\n\n"); err != nil {
+		return
+	}
 	_ = FlushWriter(c)
 }
 
@@ -87,7 +170,16 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
+	w := c.Writer
+	if _, err := w.WriteString("data: "); err != nil {
+		return err
+	}
+	if err := writeSSEDataField(w, str); err != nil {
+		return err
+	}
+	if _, err := w.WriteString("\n\n"); err != nil {
+		return err
+	}
 	return FlushWriter(c)
 }
 
