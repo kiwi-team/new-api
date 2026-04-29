@@ -240,8 +240,13 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 	// 构建基础查询
 	query := tx.Unscoped().Model(&User{})
 
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+	// 构建搜索条件（不区分大小写）
+	// MySQL/SQLite 的 LIKE 默认不区分大小写，PostgreSQL 需要使用 ILIKE
+	likeOp := "LIKE"
+	if common.UsingPostgreSQL {
+		likeOp = "ILIKE"
+	}
+	likeCondition := "username " + likeOp + " ? OR email " + likeOp + " ? OR display_name " + likeOp + " ?"
 
 	// 尝试将关键字转换为整数ID
 	keywordInt, err := strconv.Atoi(keyword)

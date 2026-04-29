@@ -375,6 +375,71 @@ func GetSelfSettlementBill(c *gin.Context) {
 	})
 }
 
+// SelfExportSettlementBillCSV GET /api/settlement/bill/self/export?start_timestamp=&end_timestamp=
+// Export current user's settlement bill as CSV.
+func SelfExportSettlementBillCSV(c *gin.Context) {
+	userId := c.GetInt("id")
+	if userId == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无法获取用户信息",
+		})
+		return
+	}
+	startTimestampStr := c.Query("start_timestamp")
+	endTimestampStr := c.Query("end_timestamp")
+	if startTimestampStr == "" || endTimestampStr == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请提供 start_timestamp 和 end_timestamp 参数",
+		})
+		return
+	}
+	startTimestamp, err := strconv.ParseInt(startTimestampStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "start_timestamp 参数格式错误",
+		})
+		return
+	}
+	endTimestamp, err := strconv.ParseInt(endTimestampStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "end_timestamp 参数格式错误",
+		})
+		return
+	}
+	if err := service.ValidateTimeRange(startTimestamp, endTimestamp); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	csvData, err := service.ExportSettlementBillCSV(bill)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	filename := fmt.Sprintf("settlement_bill_user_%d.csv", userId)
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment;filename=%s", filename))
+	c.Data(http.StatusOK, "text/csv; charset=utf-8", csvData)
+}
+
 // ========== Task 4.3: Admin bill query endpoints ==========
 
 // AdminGetSettlementBill GET /api/settlement/bill/admin?user_id=&start_timestamp=&end_timestamp=

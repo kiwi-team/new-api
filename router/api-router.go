@@ -554,6 +554,7 @@ func SetApiRouter(router *gin.Engine) {
 			// User query endpoints (UserAuth)
 			settlementRoute.GET("/config/self", middleware.UserAuth(), controller.GetSelfSettlementConfigs)
 			settlementRoute.GET("/bill/self", middleware.UserAuth(), controller.GetSelfSettlementBill)
+			settlementRoute.GET("/bill/self/export", middleware.UserAuth(), controller.SelfExportSettlementBillCSV)
 
 			// Admin bill endpoints (RootAuth)
 			adminBill := settlementRoute.Group("/bill/admin")

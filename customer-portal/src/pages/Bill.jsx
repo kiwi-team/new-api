@@ -10,7 +10,7 @@ import {
   Empty,
   Input,
 } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import { IconSearch, IconDownload } from '@douyinfe/semi-icons';
 import api from '../utils/api';
 
 const { Title, Text } = Typography;
@@ -42,10 +42,8 @@ export default function Bill() {
       return;
     }
     const [start, end] = range;
-    const startTs = Math.floor(new Date(start).setHours(0, 0, 0, 0) / 1000);
-    const endDate = new Date(end);
-    endDate.setHours(23, 59, 59, 999);
-    const endTs = Math.floor(endDate.getTime() / 1000);
+    const startTs = Math.floor(new Date(start).getTime() / 1000);
+    const endTs = Math.floor(new Date(end).getTime() / 1000);
 
     if (startTs >= endTs) {
       Toast.warning('开始时间不能晚于结束时间');
@@ -89,6 +87,33 @@ export default function Bill() {
   const filteredTotal = useMemo(() => {
     return filteredItems.reduce((sum, item) => sum + (item.total_amount || 0), 0);
   }, [filteredItems]);
+
+  const handleExport = async () => {
+    if (!dateRange || dateRange.length !== 2) {
+      Toast.warning('请先查询账单后再导出');
+      return;
+    }
+    const [start, end] = dateRange;
+    const startTs = Math.floor(new Date(start).getTime() / 1000);
+    const endTs = Math.floor(new Date(end).getTime() / 1000);
+
+    try {
+      const res = await api.get('/api/settlement/bill/self/export', {
+        params: { start_timestamp: startTs, end_timestamp: endTs },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'settlement_bill.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      Toast.error('导出失败');
+    }
+  };
 
   const formatNumber = (num) => {
     if (num == null) return '-';
@@ -194,11 +219,11 @@ export default function Bill() {
         }}
       >
         <DatePicker
-          type="dateRange"
+          type="dateTimeRange"
           density="compact"
-          placeholder={['开始日期', '结束日期']}
+          placeholder={['开始时间', '结束时间']}
           value={dateRange}
-          style={{ width: 280 }}
+          style={{ width: 420 }}
           onChange={(dates) => setDateRange(dates || [])}
         />
         <Button
@@ -217,6 +242,13 @@ export default function Bill() {
           showClear
           style={{ width: 200 }}
         />
+        <Button
+          icon={<IconDownload />}
+          disabled={!billData}
+          onClick={handleExport}
+        >
+          导出 CSV
+        </Button>
       </div>
 
       {loading ? (

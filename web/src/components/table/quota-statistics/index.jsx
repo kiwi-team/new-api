@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CardPro from '../../common/ui/CardPro';
 import { Table, Button, DatePicker, Space, Input, Tag, Select } from '@douyinfe/semi-ui';
 import { showError, API, isRoot, isMixRouter } from '../../../helpers';
@@ -65,18 +65,17 @@ const QuotaStatisticsTable = () => {
   ];
   const [userList, setUserList] = useState([]);
   const [userListLoading, setUserListLoading] = useState(false);
+  const userSearchTimerRef = useRef(null);
 
-  // 获取用户列表（仅root用户可用）
-  const fetchUserList = async () => {
+  // 远程搜索用户（通过 /api/user/search 接口模糊匹配）
+  const fetchUserOptions = useCallback(async (keyword = '') => {
     if (!isRoot()) return;
     setUserListLoading(true);
     try {
-      const res = await API.get('/api/user/', {
-        params: {
-          page: 1,
-          page_size: 1000, // 获取足够多的用户
-        },
-      });
+      const url = keyword.trim()
+        ? `/api/user/search?keyword=${encodeURIComponent(keyword.trim())}&p=1&page_size=20`
+        : `/api/user/?p=1&page_size=20`;
+      const res = await API.get(url);
       const { success, data } = res.data;
       if (success && data?.items) {
         const options = data.items.map((user) => ({
@@ -90,14 +89,24 @@ const QuotaStatisticsTable = () => {
     } finally {
       setUserListLoading(false);
     }
-  };
+  }, []);
+
+  const handleUserSearch = useCallback(
+    (val) => {
+      if (userSearchTimerRef.current) clearTimeout(userSearchTimerRef.current);
+      userSearchTimerRef.current = setTimeout(() => {
+        fetchUserOptions(val);
+      }, 300);
+    },
+    [fetchUserOptions],
+  );
 
   // 初始化时获取用户列表
   useEffect(() => {
     if (isRoot()) {
-      fetchUserList();
+      fetchUserOptions();
     }
-  }, []);
+  }, [fetchUserOptions]);
 
   // 获取token列表用于下拉筛选
   const fetchTokenList = async () => {
@@ -425,6 +434,8 @@ const QuotaStatisticsTable = () => {
                 onChange={setSelectedUserId}
                 loading={userListLoading}
                 filter
+                remote
+                onSearch={handleUserSearch}
                 showClear
               />
             )}
