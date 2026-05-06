@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -44,6 +45,9 @@ func (a *Adaptor) GetModelList() []string {
 // - flux-2-pro -> fal-ai/flux-2-pro/edit
 // - hunyuan-image-v3 -> fal-ai/hunyuan-image/v3/instruct/edit
 // - qwen-image-max -> fal-ai/qwen-image-edit-2511
+// - gemini-3.1-flash-image-preview (nano-banana-2):
+//     no input images -> fal-ai/nano-banana-2
+//     with input images -> fal-ai/nano-banana-2/edit
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	// Get base URL from channel configuration
 	baseURL := info.ChannelBaseUrl
@@ -58,21 +62,73 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		modelName = DefaultModel
 	}
 
-	// Map model name to FAL API endpoint
-	var endpoint string
-	switch {
-	case strings.Contains(modelName, "hunyuan"):
-		endpoint = "fal-ai/hunyuan-image/v3/instruct/edit"
-	case strings.Contains(modelName, "qwen"):
-		endpoint = "fal-ai/qwen-image-edit-2511"
-	case strings.Contains(modelName, "flux"):
-		endpoint = "fal-ai/flux-2-pro/edit"
-	default:
-		// For unknown models, try to use the model name directly
-		endpoint = fmt.Sprintf("fal-ai/%s/edit", modelName)
-	}
-
+	endpoint := submitEndpoint(modelName, info)
 	return fmt.Sprintf("%s/%s", baseURL, endpoint), nil
+}
+
+// submitEndpoint returns the FAL submit endpoint path (without base URL) for the
+// given model. nano-banana-2 picks edit vs text-to-image based on whether the
+// original request carries any input images.
+func submitEndpoint(modelName string, info *relaycommon.RelayInfo) string {
+	switch {
+	case isNanoBanana2Model(modelName):
+		if hasInputImages(info) {
+			return "fal-ai/nano-banana-2/edit"
+		}
+		return "fal-ai/nano-banana-2"
+	case strings.Contains(modelName, "hunyuan"):
+		return "fal-ai/hunyuan-image/v3/instruct/edit"
+	case strings.Contains(modelName, "qwen"):
+		return "fal-ai/qwen-image-edit-2511"
+	case strings.Contains(modelName, "flux"):
+		return "fal-ai/flux-2-pro/edit"
+	default:
+		return fmt.Sprintf("fal-ai/%s/edit", modelName)
+	}
+}
+
+// isNanoBanana2Model recognises gemini-3.1-flash-image-preview / nano-banana-2.
+func isNanoBanana2Model(model string) bool {
+	model = strings.ToLower(model)
+	return strings.Contains(model, "nano-banana-2") ||
+		strings.HasPrefix(model, "gemini-3.1-flash-image") ||
+		strings.HasPrefix(model, "gemini-3-flash-image")
+}
+
+// hasInputImages inspects the original request stored in info.Request to decide
+// whether to call the FAL edit endpoint (image-to-image / image edit) instead
+// of the plain text-to-image endpoint.
+func hasInputImages(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.Request == nil {
+		return false
+	}
+	switch req := info.Request.(type) {
+	case *dto.GeminiChatRequest:
+		return geminiHasInputImage(req)
+	case *dto.ImageRequest:
+		urls, _ := req.GetImageURLs()
+		return len(urls) > 0
+	}
+	return false
+}
+
+// geminiHasInputImage returns true if any user-supplied content in the Gemini
+// request contains inline image data or a file reference (URL).
+func geminiHasInputImage(req *dto.GeminiChatRequest) bool {
+	if req == nil {
+		return false
+	}
+	for _, content := range req.Contents {
+		for _, part := range content.Parts {
+			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image") && part.InlineData.Data != "" {
+				return true
+			}
+			if part.FileData != nil && part.FileData.FileUri != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SetupRequestHeader sets up the request headers for FAL API
@@ -151,6 +207,8 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize string, extraFields, extraMap map[string]any) (any, error) {
 	// Determine model type and build appropriate request
 	switch {
+	case isNanoBanana2Model(modelName):
+		return buildNanoBanana2Request(prompt, imageURLs, imageSize, extraFields, extraMap), nil
 	case isFlux2ProModel(modelName):
 		return buildFlux2ProRequest(prompt, imageURLs, imageSize, extraFields, extraMap), nil
 	case isHunyuanImageV3Model(modelName):
@@ -160,6 +218,110 @@ func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize s
 	default:
 		// Use generic request for unknown models
 		return buildGenericFALRequest(prompt, imageURLs, imageSize, extraFields, extraMap), nil
+	}
+}
+
+// buildNanoBanana2Request builds a NanoBanana2Request for nano-banana-2 /
+// gemini-3.1-flash-image-preview. The OpenAI image-generation API doesn't have
+// an aspect_ratio field, so we accept it via extra_fields/extra. `image_size`
+// from the OpenAI request is treated as an aspect_ratio (e.g. "1024x1024" -> "1:1").
+func buildNanoBanana2Request(prompt string, imageURLs []string, imageSize string, extraFields, extraMap map[string]any) *NanoBanana2Request {
+	req := &NanoBanana2Request{
+		Prompt:    prompt,
+		ImageURLs: imageURLs,
+	}
+
+	if imageSize != "" {
+		if ar := openAISizeToAspectRatio(imageSize); ar != "" {
+			req.AspectRatio = ar
+		}
+	}
+
+	applyNanoBanana2ExtraFields(req, extraFields)
+	applyNanoBanana2ExtraFields(req, extraMap)
+
+	return req
+}
+
+// openAISizeToAspectRatio maps the OpenAI image size string ("WxH" or already a
+// "W:H" ratio) to a fal-ai/nano-banana-2 aspect_ratio enum value.
+func openAISizeToAspectRatio(size string) string {
+	size = strings.TrimSpace(size)
+	if size == "" {
+		return ""
+	}
+	if strings.Contains(size, ":") {
+		return size
+	}
+	switch size {
+	case "256x256", "512x512", "1024x1024":
+		return "1:1"
+	case "1024x1536":
+		return "2:3"
+	case "1536x1024":
+		return "3:2"
+	case "1024x1792":
+		return "9:16"
+	case "1792x1024":
+		return "16:9"
+	}
+	return ""
+}
+
+func applyNanoBanana2ExtraFields(req *NanoBanana2Request, extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	for key, val := range extra {
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		switch key {
+		case "seed":
+			if v, ok := toInt64(val); ok {
+				req.Seed = v
+			}
+		case "num_images":
+			if v, ok := toInt(val); ok {
+				req.NumImages = v
+			}
+		case "aspect_ratio":
+			if v, ok := val.(string); ok {
+				req.AspectRatio = v
+			}
+		case "output_format":
+			if v, ok := val.(string); ok {
+				req.OutputFormat = v
+			}
+		case "safety_tolerance":
+			if v, ok := val.(string); ok {
+				req.SafetyTolerance = v
+			} else if v, ok := toInt(val); ok {
+				req.SafetyTolerance = fmt.Sprintf("%d", v)
+			}
+		case "sync_mode":
+			if v, ok := val.(bool); ok {
+				req.SyncMode = v
+			}
+		case "resolution":
+			if v, ok := val.(string); ok {
+				req.Resolution = v
+			}
+		case "limit_generations":
+			if v, ok := val.(bool); ok {
+				b := v
+				req.LimitGenerations = &b
+			}
+		case "enable_web_search":
+			if v, ok := val.(bool); ok {
+				b := v
+				req.EnableWebSearch = &b
+			}
+		case "thinking_level":
+			if v, ok := val.(string); ok {
+				req.ThinkingLevel = v
+			}
+		}
 	}
 }
 
@@ -684,9 +846,13 @@ func buildResultURL(baseURL, model, requestID string) string {
 	return fmt.Sprintf("%s/%s/requests/%s", baseURL, endpoint, requestID)
 }
 
-// getModelEndpoint returns the FAL API endpoint path for a given model
+// getModelEndpoint returns the FAL API endpoint path for status/result polling.
+// Note: queue status / result endpoints use the base model path (no `/edit`
+// suffix even when the submit URL uses `/edit`).
 func getModelEndpoint(model string) string {
 	switch {
+	case isNanoBanana2Model(model):
+		return "fal-ai/nano-banana-2"
 	case strings.Contains(model, "hunyuan"):
 		return "fal-ai/hunyuan-image"
 	case strings.Contains(model, "qwen"):
@@ -796,6 +962,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return nil, types.NewError(errors.New("fal_sync adaptor: no images in response"), types.ErrorCodeBadResponseBody)
 	}
 
+	// If the request was made in Gemini native format, write a Gemini-shaped
+	// response (candidates[].content.parts[] with inlineData) back to the client.
+	if info != nil && info.RelayMode == relayconstant.RelayModeGemini {
+		return writeGeminiResponse(c, info, &falResult, imageURLs)
+	}
+
 	// Check if user requested b64_json response format - Requirement 4.3
 	var wantsBase64 bool
 	if info != nil {
@@ -857,6 +1029,65 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	return &dto.Usage{}, nil
 }
 
+// writeGeminiResponse downloads each image returned by FAL, base64-encodes it
+// and emits a Gemini-format response (candidates[].content.parts[]) so that a
+// client speaking the native Gemini API receives the expected shape.
+func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult *FALResultResponse, imageURLs []string) (any, *types.NewAPIError) {
+	parts := make([]dto.GeminiPart, 0, len(imageURLs)+1)
+
+	if desc := strings.TrimSpace(falResult.Description); desc != "" {
+		parts = append(parts, dto.GeminiPart{Text: desc})
+	}
+
+	for _, url := range imageURLs {
+		mimeType, b64Data, downloadErr := service.GetImageFromUrl(url)
+		if downloadErr != nil {
+			return nil, types.NewError(fmt.Errorf("fal_sync adaptor: failed to download image from %s: %w", url, downloadErr), types.ErrorCodeBadResponse)
+		}
+		if b64Data == "" {
+			continue
+		}
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		parts = append(parts, dto.GeminiPart{
+			InlineData: &dto.GeminiInlineData{
+				MimeType: mimeType,
+				Data:     b64Data,
+			},
+		})
+	}
+
+	if len(parts) == 0 {
+		return nil, types.NewError(errors.New("fal_sync adaptor: no usable image data for gemini response"), types.ErrorCodeBadResponse)
+	}
+
+	finishReason := "STOP"
+	geminiResp := dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{
+			{
+				Content: dto.GeminiChatContent{
+					Role:  "model",
+					Parts: parts,
+				},
+				FinishReason: &finishReason,
+				Index:        0,
+			},
+		},
+	}
+
+	respBytes, marshalErr := common.Marshal(geminiResp)
+	if marshalErr != nil {
+		return nil, types.NewError(fmt.Errorf("fal_sync adaptor: encode gemini response failed: %w", marshalErr), types.ErrorCodeBadResponseBody)
+	}
+
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.Writer.WriteHeader(http.StatusOK)
+	_, _ = c.Writer.Write(respBytes)
+
+	return &dto.Usage{}, nil
+}
+
 // ConvertOpenAIRequest is not implemented for FAL Sync channel
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	return nil, errors.New("fal_sync adaptor: ConvertOpenAIRequest is not implemented")
@@ -887,7 +1118,121 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	return nil, errors.New("fal_sync adaptor: ConvertClaudeRequest is not implemented")
 }
 
-// ConvertGeminiRequest is not implemented for FAL Sync channel
+// ConvertGeminiRequest converts a Gemini-format request into a FAL request
+// payload. Currently only the nano-banana-2 family (gemini-3.1-flash-image-preview)
+// is supported on the fal_sync channel. The endpoint (text-to-image vs edit) is
+// chosen later in GetRequestURL by inspecting info.Request.
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
-	return nil, errors.New("fal_sync adaptor: ConvertGeminiRequest is not implemented")
+	if request == nil {
+		return nil, errors.New("fal_sync adaptor: gemini request is nil")
+	}
+
+	modelName := strings.TrimSpace(info.UpstreamModelName)
+	if modelName == "" {
+		return nil, errors.New("fal_sync adaptor: model name is required")
+	}
+	info.UpstreamModelName = modelName
+
+	if !isNanoBanana2Model(modelName) {
+		return nil, fmt.Errorf("fal_sync adaptor: gemini native format is only supported for nano-banana-2 / gemini-3.1-flash-image-preview, got %q", modelName)
+	}
+
+	prompt, imageURLs := extractGeminiPromptAndImages(request)
+	if strings.TrimSpace(prompt) == "" && len(imageURLs) == 0 {
+		return nil, errors.New("fal_sync adaptor: gemini request contains no prompt or images")
+	}
+
+	req := &NanoBanana2Request{
+		Prompt:    prompt,
+		ImageURLs: imageURLs,
+	}
+
+	applyGeminiGenerationConfig(req, request)
+
+	return req, nil
+}
+
+// extractGeminiPromptAndImages walks the contents of a Gemini chat request and
+// concatenates all user-visible text into a prompt while collecting any image
+// inputs (inline base64 -> data URI, file references -> URL) that should be
+// forwarded to the FAL nano-banana-2 edit endpoint.
+func extractGeminiPromptAndImages(req *dto.GeminiChatRequest) (string, []string) {
+	var (
+		textBuilder strings.Builder
+		imageURLs   []string
+	)
+
+	if req.SystemInstructions != nil {
+		for _, part := range req.SystemInstructions.Parts {
+			if t := strings.TrimSpace(part.Text); t != "" {
+				if textBuilder.Len() > 0 {
+					textBuilder.WriteString("\n")
+				}
+				textBuilder.WriteString(t)
+			}
+		}
+	}
+
+	for _, content := range req.Contents {
+		for _, part := range content.Parts {
+			switch {
+			case part.InlineData != nil && part.InlineData.Data != "":
+				if strings.HasPrefix(part.InlineData.MimeType, "image") {
+					mime := part.InlineData.MimeType
+					if mime == "" {
+						mime = "image/png"
+					}
+					// FAL's nano-banana-2 edit endpoint accepts data URIs in image_urls.
+					imageURLs = append(imageURLs, fmt.Sprintf("data:%s;base64,%s", mime, part.InlineData.Data))
+				}
+			case part.FileData != nil && part.FileData.FileUri != "":
+				imageURLs = append(imageURLs, part.FileData.FileUri)
+			case part.Text != "":
+				if textBuilder.Len() > 0 {
+					textBuilder.WriteString("\n")
+				}
+				textBuilder.WriteString(part.Text)
+			}
+		}
+	}
+
+	return strings.TrimSpace(textBuilder.String()), imageURLs
+}
+
+// applyGeminiGenerationConfig maps Gemini generationConfig fields onto the
+// corresponding FAL nano-banana-2 request fields.
+func applyGeminiGenerationConfig(req *NanoBanana2Request, gemReq *dto.GeminiChatRequest) {
+	cfg := gemReq.GenerationConfig
+	if cfg.CandidateCount > 0 {
+		req.NumImages = cfg.CandidateCount
+	}
+	if cfg.Seed != 0 {
+		req.Seed = cfg.Seed
+	}
+	if cfg.ThinkingConfig != nil {
+		switch strings.ToLower(strings.TrimSpace(cfg.ThinkingConfig.ThinkingLevel)) {
+		case "minimal":
+			req.ThinkingLevel = "minimal"
+		case "high":
+			req.ThinkingLevel = "high"
+		}
+	}
+	if len(cfg.ImageConfig) > 0 {
+		var imgCfg struct {
+			AspectRatio  string `json:"aspectRatio"`
+			OutputFormat string `json:"outputFormat"`
+			Resolution   string `json:"resolution"`
+		}
+		if err := common.Unmarshal(cfg.ImageConfig, &imgCfg); err == nil {
+			if imgCfg.AspectRatio != "" {
+				req.AspectRatio = imgCfg.AspectRatio
+			}
+			if imgCfg.OutputFormat != "" {
+				req.OutputFormat = strings.ToLower(imgCfg.OutputFormat)
+			}
+			if imgCfg.Resolution != "" {
+				req.Resolution = imgCfg.Resolution
+			}
+		}
+	}
 }

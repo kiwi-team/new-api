@@ -14,10 +14,11 @@ type FALQueueStatus struct {
 // FALResultResponse represents the FAL Result Response
 // Generic structure to handle various model outputs
 type FALResultResponse struct {
-	Images []FALImage `json:"images,omitempty"`
-	Image  *FALImage  `json:"image,omitempty"`  // Some models return single image
-	Output any        `json:"output,omitempty"` // Fallback for other output formats
-	Seed   int64      `json:"seed,omitempty"`
+	Images      []FALImage `json:"images,omitempty"`
+	Image       *FALImage  `json:"image,omitempty"`  // Some models return single image
+	Output      any        `json:"output,omitempty"` // Fallback for other output formats
+	Seed        int64      `json:"seed,omitempty"`
+	Description string     `json:"description,omitempty"` // nano-banana-2 returns a description string
 }
 
 // FALImage represents an image in FAL's response
@@ -70,6 +71,25 @@ type QwenImageMaxRequest struct {
 	NegativePrompt string   `json:"negative_prompt,omitempty"`
 	Acceleration   string   `json:"acceleration,omitempty"`
 	OutputFormat   string   `json:"output_format,omitempty"`
+}
+
+// NanoBanana2Request represents the request for fal-ai/nano-banana-2 (Gemini 3.1 Flash Image)
+// API endpoints:
+//   - text-to-image: fal-ai/nano-banana-2
+//   - edit:          fal-ai/nano-banana-2/edit (requires image_urls)
+type NanoBanana2Request struct {
+	Prompt           string   `json:"prompt"`
+	ImageURLs        []string `json:"image_urls,omitempty"`
+	NumImages        int      `json:"num_images,omitempty"`
+	Seed             int64    `json:"seed,omitempty"`
+	AspectRatio      string   `json:"aspect_ratio,omitempty"`
+	OutputFormat     string   `json:"output_format,omitempty"`
+	SafetyTolerance  string   `json:"safety_tolerance,omitempty"`
+	SyncMode         bool     `json:"sync_mode,omitempty"`
+	Resolution       string   `json:"resolution,omitempty"`
+	LimitGenerations *bool    `json:"limit_generations,omitempty"`
+	EnableWebSearch  *bool    `json:"enable_web_search,omitempty"`
+	ThinkingLevel    string   `json:"thinking_level,omitempty"`
 }
 
 // GenericFALRequest represents a generic FAL request for unknown models

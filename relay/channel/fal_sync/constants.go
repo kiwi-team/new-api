@@ -15,4 +15,5 @@ var ModelList = []string{
 	"flux-2-pro",
 	"hunyuan-image-v3",
 	"qwen-image-max",
+	"gemini-3.1-flash-image-preview",
 }
