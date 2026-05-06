@@ -24,6 +24,7 @@ import {
   API,
   getTodayStartTimestamp,
   isAdmin,
+  isRoot,
   showError,
   showSuccess,
   timestamp2string,
@@ -78,6 +79,8 @@ export const useLogsData = () => {
 
   // User and admin
   const isAdminUser = isAdmin();
+  const isRootUser = isRoot();
+  const [exporting, setExporting] = useState(false);
   // Role-specific storage key to prevent different roles from overwriting each other
   const STORAGE_KEY = isAdminUser
     ? 'logs-table-columns-admin'
@@ -706,6 +709,110 @@ export const useLogsData = () => {
     setLoading(false);
   };
 
+  // Export logs to CSV (root only, max 7-day range, excludes request/response)
+  const handleExportLogs = async () => {
+    if (!isRootUser) {
+      showError(t('仅超级管理员可导出日志'));
+      return;
+    }
+
+    const {
+      username,
+      token_name,
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+      group,
+      client_user_id,
+      request_id,
+      logType: formLogType,
+    } = getFormValues();
+
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+
+    if (
+      !Number.isFinite(localStartTimestamp) ||
+      !Number.isFinite(localEndTimestamp) ||
+      !localStartTimestamp ||
+      !localEndTimestamp
+    ) {
+      showError(t('请选择导出时间范围'));
+      return;
+    }
+    if (localEndTimestamp < localStartTimestamp) {
+      showError(t('结束时间必须晚于开始时间'));
+      return;
+    }
+    const maxRangeSeconds = 7 * 24 * 3600;
+    if (localEndTimestamp - localStartTimestamp > maxRangeSeconds) {
+      showError(t('导出时间范围不能超过 7 天'));
+      return;
+    }
+
+    const currentLogType =
+      formLogType !== undefined ? formLogType : logType;
+
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({
+        type: String(currentLogType),
+        username: username || '',
+        token_name: token_name || '',
+        model_name: model_name || '',
+        start_timestamp: String(localStartTimestamp),
+        end_timestamp: String(localEndTimestamp),
+        channel: channel ? String(channel) : '',
+        group: group || '',
+        client_user_id: client_user_id || '',
+        request_id: request_id || '',
+      });
+      const res = await API.get(`/api/log/export?${params.toString()}`, {
+        responseType: 'blob',
+      });
+
+      // Backend returns JSON on validation/permission error (status 200, success=false)
+      const contentType =
+        (res.headers && (res.headers['content-type'] || res.headers['Content-Type'])) || '';
+      if (contentType.includes('application/json')) {
+        const text = await res.data.text();
+        try {
+          const errBody = JSON.parse(text);
+          showError(errBody.message || t('导出失败'));
+        } catch (e) {
+          showError(t('导出失败'));
+        }
+        return;
+      }
+
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmtTs = (ts) => {
+        const d = new Date(ts * 1000);
+        return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(
+          d.getDate(),
+        )}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      };
+      const filename = `log-${fmtTs(localStartTimestamp)}-${fmtTs(
+        localEndTimestamp,
+      )}.csv`;
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showSuccess(t('导出成功'));
+    } catch (e) {
+      showError(t('导出失败'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Page handlers
   const handlePageChange = (page) => {
     setActivePage(page);
@@ -779,6 +886,9 @@ export const useLogsData = () => {
     logType,
     stat,
     isAdminUser,
+    isRootUser,
+    exporting,
+    handleExportLogs,
 
     // Form state
     formApi,

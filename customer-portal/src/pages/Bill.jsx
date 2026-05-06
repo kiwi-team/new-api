@@ -223,7 +223,9 @@ export default function Bill() {
           density="compact"
           placeholder={['开始时间', '结束时间']}
           value={dateRange}
-          style={{ width: 420 }}
+          format="yyyy-MM-dd HH:mm:ss"
+          timePickerOpts={{ showSeconds: true }}
+          style={{ width: 460 }}
           onChange={(dates) => setDateRange(dates || [])}
         />
         <Button

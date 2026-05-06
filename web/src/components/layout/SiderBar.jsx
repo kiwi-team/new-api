@@ -53,6 +53,7 @@ const routerMap = {
   playground: '/console/playground',
   personal: '/console/personal',
   quotaStatistics: '/console/quota-statistics',
+  bill: '/console/bill',
   cuquota: '/console/client-user-quota',
   project: '/console/project',
   // Settlement config route
@@ -106,11 +107,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
       { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: (isLeader() || isMixRouter()) ? '' : 'tableHiddle' },
+      { text: t('账单查询'), itemKey: 'bill', to: '/console/bill' },
     ];
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
       if (item.itemKey === 'quotaStatistics') return true;
+      if (item.itemKey === 'bill') return true;
       const configVisible = isModuleVisible('console', item.itemKey);
       return configVisible;
     });

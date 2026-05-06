@@ -56,6 +56,7 @@ import SetupCheck from './components/layout/SetupCheck';
 import ChannelByModel from './pages/Channel/ChannelByModel.js';
 import EditChannel from './pages/Channel/EditChannel.js';
 import QuotaStatistics from './pages/QuotaStatistics';
+import Bill from './pages/Bill';
 import CliendUserQuotaPage from './pages/CliendUserQuota';
 import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
@@ -222,6 +223,14 @@ function App() {
                 <QuotaStatistics />
               </LeaderRoute>
             )
+          }
+        />
+        <Route
+          path='/console/bill'
+          element={
+            <PrivateRoute>
+              <Bill />
+            </PrivateRoute>
           }
         />
         <Route

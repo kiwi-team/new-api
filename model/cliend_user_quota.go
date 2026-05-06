@@ -143,11 +143,54 @@ func ResetMonthlyUsedQuota() {
 			lastResetMonth = currentMonth
 			saveLastResetMonth(lastResetMonth)
 			resetMonthlyUsedQuotaOnce()
+			resetMonthlyFixedQuotaOnce()
 		}
 	}
 }
 
-const lastResetMonthFile = "data/last_reset_month.txt"
+const (
+	lastResetMonthFile       = "data/last_reset_month.txt"
+	defaultMonthlyFixedQuota = 100
+)
+
+// resetMonthlyFixedQuotaOnce 每月将所有用户的固定额度重置为 defaultMonthlyFixedQuota
+func resetMonthlyFixedQuotaOnce() {
+	var rows []CliendUserQuota
+	err := DB.Where("fixed_quota != ?", defaultMonthlyFixedQuota).Find(&rows).Error
+	if err != nil {
+		common.SysError(fmt.Sprintf("resetMonthlyFixedQuotaOnce query error: %v", err))
+		return
+	}
+
+	for _, row := range rows {
+		oldFixed := row.FixedQuota
+		err2 := DB.Model(&CliendUserQuota{}).
+			Where("id = ?", row.Id).
+			Updates(map[string]any{
+				"fixed_quota": defaultMonthlyFixedQuota,
+				"updated_at":  common.GetTimestamp(),
+			}).Error
+		if err2 != nil {
+			common.SysError(fmt.Sprintf("resetMonthlyFixedQuotaOnce update error for id %d: %v", row.Id, err2))
+			continue
+		}
+		log := CliendUserQuotaLog{
+			ClientUserId: row.ClientUserId,
+			AdminUserId:  0,
+			Action:       "monthly_fixed_reset",
+			OldFixed:     oldFixed,
+			NewFixed:     defaultMonthlyFixedQuota,
+			OldTemp:      row.TempQuota,
+			OldUsed:      row.UsedQuota,
+			NewTemp:      row.TempQuota,
+			NewUsed:      row.UsedQuota,
+			Remark:       fmt.Sprintf("每月固定预算自动重置为%d", defaultMonthlyFixedQuota),
+			CreatedAt:    time.Now().Unix(),
+		}
+		_ = DB.Create(&log).Error
+	}
+	common.SysLog(fmt.Sprintf("resetMonthlyFixedQuotaOnce completed, reset %d records", len(rows)))
+}
 
 func loadLastResetMonth() int {
 	data, err := os.ReadFile(lastResetMonthFile)

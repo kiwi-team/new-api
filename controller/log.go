@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"os"
@@ -300,6 +301,98 @@ func GetLogsSelfStat(c *gin.Context) {
 		},
 	})
 	return
+}
+
+// ExportLogsCSV 仅 root 可调用：按筛选条件导出日志为 CSV，时间范围最大 7 天，不包含 request/response 字段。
+func ExportLogsCSV(c *gin.Context) {
+	logType, _ := strconv.Atoi(c.Query("type"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	username := c.Query("username")
+	tokenName := c.Query("token_name")
+	modelName := c.Query("model_name")
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	group := c.Query("group")
+	clientUserId := c.Query("client_user_id")
+	requestId := c.Query("request_id")
+
+	if startTimestamp == 0 || endTimestamp == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请指定导出时间范围",
+		})
+		return
+	}
+	if endTimestamp < startTimestamp {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "结束时间必须晚于开始时间",
+		})
+		return
+	}
+	const maxRangeSeconds int64 = 7 * 24 * 3600
+	if endTimestamp-startTimestamp > maxRangeSeconds {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "导出时间范围不能超过 7 天",
+		})
+		return
+	}
+
+	logs, err := model.GetLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, clientUserId, requestId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	lc, _ := time.LoadLocation("Asia/Shanghai")
+	startStr := time.Unix(startTimestamp, 0).In(lc).Format("20060102-150405")
+	endStr := time.Unix(endTimestamp, 0).In(lc).Format("20060102-150405")
+	filename := fmt.Sprintf("log-%s-%s.csv", startStr, endStr)
+
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	// UTF-8 BOM 让 Excel 正确识别中文
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{
+		"ID", "UserID", "CreatedAt", "Type", "Content", "Username", "TokenName",
+		"ModelName", "Quota", "PromptTokens", "CompletionTokens", "UseTime",
+		"IsStream", "ChannelId", "ChannelName", "TokenId", "Group", "IP",
+		"RequestId", "ClientUserId", "ClientScenairo", "ProjectName", "PlanId",
+		"Other",
+	})
+	for _, log := range logs {
+		_ = w.Write([]string{
+			strconv.Itoa(log.Id),
+			strconv.Itoa(log.UserId),
+			time.Unix(log.CreatedAt, 0).In(lc).Format("2006-01-02 15:04:05"),
+			strconv.Itoa(log.Type),
+			log.Content,
+			log.Username,
+			log.TokenName,
+			log.ModelName,
+			strconv.Itoa(log.Quota),
+			strconv.Itoa(log.PromptTokens),
+			strconv.Itoa(log.CompletionTokens),
+			strconv.Itoa(log.UseTime),
+			strconv.FormatBool(log.IsStream),
+			strconv.Itoa(log.ChannelId),
+			log.ChannelName,
+			strconv.Itoa(log.TokenId),
+			log.Group,
+			log.Ip,
+			log.RequestId,
+			log.ClientUserId,
+			log.ClientScenairo,
+			log.ProjectName,
+			strconv.Itoa(log.PlanId),
+			log.Other,
+		})
+	}
+	w.Flush()
 }
 
 func DeleteHistoryLogs(c *gin.Context) {

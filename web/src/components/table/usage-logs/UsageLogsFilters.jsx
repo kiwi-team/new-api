@@ -32,6 +32,9 @@ const LogsFilters = ({
   setLogType,
   loading,
   isAdminUser,
+  isRootUser,
+  exporting,
+  handleExportLogs,
   t,
 }) => {
   return (
@@ -198,6 +201,16 @@ const LogsFilters = ({
             >
               {t('列设置')}
             </Button>
+            {isRootUser && (
+              <Button
+                type='tertiary'
+                onClick={handleExportLogs}
+                loading={exporting}
+                size='small'
+              >
+                {t('导出CSV')}
+              </Button>
+            )}
           </div>
         </div>
       </div>

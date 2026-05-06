@@ -320,6 +320,7 @@ func SetApiRouter(router *gin.Engine) {
 		logRootRoute := apiRouter.Group("/log")
 		logRootRoute.Use(middleware.RootAuth())
 		{
+			logRootRoute.GET("/export", controller.ExportLogsCSV)
 			logRootRoute.GET("/:id/request", controller.GetLogRequest)
 			logRootRoute.GET("/:id/response", controller.GetLogResponse)
 		}

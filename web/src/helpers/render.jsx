@@ -82,6 +82,7 @@ import {
   CalendarClock,
   FolderKanban,
   Wallet,
+  Receipt,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -172,6 +173,8 @@ export function getLucideIcon(key, selected = false) {
       return <RefreshCw {...commonProps} color={iconColor} />;
     case 'cuquota':
       return <Wallet {...commonProps} color={iconColor} />;
+    case 'bill':
+      return <Receipt {...commonProps} color={iconColor} />;
     case 'project':
       return <FolderKanban {...commonProps} color={iconColor} />;
     default:
