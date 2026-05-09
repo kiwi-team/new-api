@@ -262,9 +262,15 @@ export const useLogsData = () => {
     const currentLogType = formLogType !== undefined ? formLogType : logType;
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/self/stat?type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}`;
-    url = encodeURI(url);
-    let res = await API.get(url);
+    const params = new URLSearchParams({
+      type: String(currentLogType),
+      token_name: token_name || '',
+      model_name: model_name || '',
+      start_timestamp: String(localStartTimestamp),
+      end_timestamp: String(localEndTimestamp),
+      group: group || '',
+    });
+    let res = await API.get(`/api/log/self/stat?${params.toString()}`);
     const { success, message, data } = res.data;
     if (success) {
       setStat(data);
@@ -287,9 +293,17 @@ export const useLogsData = () => {
     const currentLogType = formLogType !== undefined ? formLogType : logType;
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    let url = `/api/log/stat?type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}`;
-    url = encodeURI(url);
-    let res = await API.get(url);
+    const params = new URLSearchParams({
+      type: String(currentLogType),
+      username: username || '',
+      token_name: token_name || '',
+      model_name: model_name || '',
+      start_timestamp: String(localStartTimestamp),
+      end_timestamp: String(localEndTimestamp),
+      channel: channel ? String(channel) : '',
+      group: group || '',
+    });
+    let res = await API.get(`/api/log/stat?${params.toString()}`);
     const { success, message, data } = res.data;
     if (success) {
       setStat(data);
@@ -688,12 +702,37 @@ export const useLogsData = () => {
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    let params;
     if (isAdminUser) {
-      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&client_user_id=${client_user_id}&request_id=${request_id}`;
+      params = new URLSearchParams({
+        p: String(startIdx),
+        page_size: String(pageSize),
+        type: String(currentLogType),
+        username: username || '',
+        token_name: token_name || '',
+        model_name: model_name || '',
+        start_timestamp: String(localStartTimestamp),
+        end_timestamp: String(localEndTimestamp),
+        channel: channel ? String(channel) : '',
+        group: group || '',
+        client_user_id: client_user_id || '',
+        request_id: request_id || '',
+      });
+      url = `/api/log/?${params.toString()}`;
     } else {
-      url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}&request_id=${request_id}`;
+      params = new URLSearchParams({
+        p: String(startIdx),
+        page_size: String(pageSize),
+        type: String(currentLogType),
+        token_name: token_name || '',
+        model_name: model_name || '',
+        start_timestamp: String(localStartTimestamp),
+        end_timestamp: String(localEndTimestamp),
+        group: group || '',
+        request_id: request_id || '',
+      });
+      url = `/api/log/self/?${params.toString()}`;
     }
-    url = encodeURI(url);
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {

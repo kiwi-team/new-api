@@ -561,8 +561,18 @@ const ErrorLogsTable = () => {
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    url = `/api/log/error-logs?p=${startIdx}&page_size=${pageSize}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&request_id=${request_id}&token_id=${token_id}&client_user_id=${client_user_id}`;
-    url = encodeURI(url);
+    const params = new URLSearchParams({
+      p: String(startIdx),
+      page_size: String(pageSize),
+      model_name: model_name || '',
+      start_timestamp: String(localStartTimestamp),
+      end_timestamp: String(localEndTimestamp),
+      channel: channel ? String(channel) : '',
+      request_id: request_id || '',
+      token_id: token_id ? String(token_id) : '',
+      client_user_id: client_user_id || '',
+    });
+    url = `/api/log/error-logs?${params.toString()}`;
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
