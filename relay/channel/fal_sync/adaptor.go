@@ -1025,8 +1025,25 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = c.Writer.Write(responseBytes)
 
-	// Return usage for billing
-	return &dto.Usage{}, nil
+	// Return usage for billing. PromptTokens must be > 0 so that
+	// postConsumeQuota's `totalTokens == 0` short-circuit doesn't zero out
+	// per-call (按次) billing. The OpenAI image handler also patches this
+	// before postConsumeQuota, but we set it here so the gemini-format path
+	// (which has no such patch) is also billed correctly.
+	return billingUsage(len(imageResponse.Data)), nil
+}
+
+// billingUsage returns a non-zero Usage so that per-call pricing is honoured
+// even though FAL doesn't report any token counts. n is the number of images
+// generated; we use it as a proxy token count.
+func billingUsage(n int) *dto.Usage {
+	if n < 1 {
+		n = 1
+	}
+	return &dto.Usage{
+		PromptTokens: n,
+		TotalTokens:  n,
+	}
 }
 
 // writeGeminiResponse downloads each image returned by FAL, base64-encodes it
@@ -1039,6 +1056,7 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 		parts = append(parts, dto.GeminiPart{Text: desc})
 	}
 
+	imageCount := 0
 	for _, url := range imageURLs {
 		mimeType, b64Data, downloadErr := service.GetImageFromUrl(url)
 		if downloadErr != nil {
@@ -1056,6 +1074,7 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 				Data:     b64Data,
 			},
 		})
+		imageCount++
 	}
 
 	if len(parts) == 0 {
@@ -1085,7 +1104,7 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = c.Writer.Write(respBytes)
 
-	return &dto.Usage{}, nil
+	return billingUsage(imageCount), nil
 }
 
 // ConvertOpenAIRequest is not implemented for FAL Sync channel
