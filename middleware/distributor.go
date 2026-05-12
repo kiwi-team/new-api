@@ -508,6 +508,12 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		modelRequest.Model = "serper"
 	}
 
+	// /v1/jina/<action>（reader / 后续的 search）走 ChannelTypeJina 渠道。
+	// jina-reader 不是 jina 真实模型，仅作占位让 channel 池匹配到正确渠道。
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/jina/") {
+		modelRequest.Model = "jina-reader"
+	}
+
 	// Moonshot Formulas 路由处理
 	// 这些路由不需要通过模型匹配选择渠道，而是直接使用 moonshot 渠道
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/formulas/") {
