@@ -42,10 +42,10 @@ func (a *Adaptor) GetModelList() []string {
 
 // GetRequestURL constructs the FAL API submit URL
 // Model name mapping:
-// - flux-2-pro -> fal-ai/flux-2-pro/edit
-// - hunyuan-image-v3 -> fal-ai/hunyuan-image/v3/instruct/edit
-// - qwen-image-max -> fal-ai/qwen-image-edit-2511
-// - gemini-3.1-flash-image-preview (nano-banana-2):
+//   - flux-2-pro -> fal-ai/flux-2-pro/edit
+//   - hunyuan-image-v3 -> fal-ai/hunyuan-image/v3/instruct/edit
+//   - qwen-image-max -> fal-ai/qwen-image-edit-2511
+//   - gemini-3.1-flash-image-preview (nano-banana-2):
 //     no input images -> fal-ai/nano-banana-2
 //     with input images -> fal-ai/nano-banana-2/edit
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -1241,6 +1241,7 @@ func applyGeminiGenerationConfig(req *NanoBanana2Request, gemReq *dto.GeminiChat
 			AspectRatio  string `json:"aspectRatio"`
 			OutputFormat string `json:"outputFormat"`
 			Resolution   string `json:"resolution"`
+			ImageSize    string `json:"imageSize"`
 		}
 		if err := common.Unmarshal(cfg.ImageConfig, &imgCfg); err == nil {
 			if imgCfg.AspectRatio != "" {
@@ -1251,6 +1252,9 @@ func applyGeminiGenerationConfig(req *NanoBanana2Request, gemReq *dto.GeminiChat
 			}
 			if imgCfg.Resolution != "" {
 				req.Resolution = imgCfg.Resolution
+			}
+			if imgCfg.ImageSize != "" {
+				req.Resolution = imgCfg.ImageSize
 			}
 		}
 	}
