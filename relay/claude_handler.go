@@ -277,12 +277,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
-	if httpResp == nil {
-		return types.NewOpenAIError(fmt.Errorf("upstream response is nil"), types.ErrorCodeEmptyResponse, http.StatusBadGateway)
-	}
-
 	var streamRecorder *helper.StreamResponseRecorder
-	if saveRequestResponse {
+	if saveRequestResponse && httpResp != nil {
 		// 使用流式记录器包装原始响应体，不影响实时传输
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
