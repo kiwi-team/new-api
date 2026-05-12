@@ -21,7 +21,22 @@ import (
 // 默认的 500 渲染与日志落库。
 var ErrUpstreamForwarded = errors.New("jina_reader: upstream response forwarded")
 
-const jinaReaderBaseURL = "https://r.jina.ai/"
+const defaultJinaReaderBaseURL = "https://r.jina.ai/"
+
+// resolveBaseURL 优先用渠道配置的 base_url；为空则回退到 jina 官方。
+// 兼容尾斜杠：返回值始终以 "/" 结尾。
+func resolveBaseURL(info *searchcommon.SearchInfo) string {
+	base := defaultJinaReaderBaseURL
+	if info != nil {
+		if b := strings.TrimSpace(info.ChannelBaseUrl); b != "" {
+			base = b
+		}
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	return base
+}
 
 // JinaReaderAdaptor 实现 search/engine.SearchAdptor，对接 https://r.jina.ai/ 抓取接口。
 type JinaReaderAdaptor struct{}
@@ -48,7 +63,7 @@ func (j JinaReaderAdaptor) GetRequestURL(info *searchcommon.SearchInfo) (string,
 	if _, err := url.Parse(target); err != nil {
 		return "", fmt.Errorf("jina_reader: invalid url: %w", err)
 	}
-	return jinaReaderBaseURL + target, nil
+	return resolveBaseURL(info) + target, nil
 }
 
 // SetupRequestHeader 设置鉴权头和所有 X-* 行为头。

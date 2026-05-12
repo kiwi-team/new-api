@@ -40,6 +40,7 @@ type SearchInfo struct {
 	UserId           int           `json:"user_id"`
 	ChannelId        int           `json:"channel_id"`
 	ChannelKey       string        `json:"channel_key"`
+	ChannelBaseUrl   string        `json:"channel_base_url"` // 渠道自定义 base_url，未配置时为空字符串
 	RequestURLPath   string        `json:"request_url_path"`
 	SearchParameters *SearchParams `json:"search_parameters"`
 	UseTimeSeconds   int64         `json:"use_time_seconds"`
@@ -89,6 +90,7 @@ func GetSearchInfo(c *gin.Context) *SearchInfo {
 		UserId:           userId,
 		ChannelId:        channelId,
 		ChannelKey:       common.GetContextKeyString(c, constant.ContextKeyChannelKey),
+		ChannelBaseUrl:   common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
 		SearchParameters: searchParams,
 		RequestURLPath:   c.Request.URL.String(),
 		ClientUserId:     common.GetContextKeyString(c, constant.ContextKeyClientUserId),
