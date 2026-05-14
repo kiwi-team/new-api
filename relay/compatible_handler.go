@@ -339,7 +339,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Reasoning = reasoningJSON
 			} else {
 				reasoning := openrouter.RequestReasoning{
-					Enabled: true,
+					Enabled: common.GetPointer(true),
 				}
 				if textRequest.ReasoningEffort != "" {
 					reasoning.Effort = textRequest.ReasoningEffort
@@ -352,7 +352,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			}
 		} else if thinking.Type == "disabled" {
 			reasoning := openrouter.RequestReasoning{
-				Enabled: false,
+				Enabled: common.GetPointer(false),
 			}
 			reasoningJSON, _ := json.Marshal(reasoning)
 			textRequest.Reasoning = reasoningJSON

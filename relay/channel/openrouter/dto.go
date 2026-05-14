@@ -9,7 +9,8 @@ type RequestReasoning struct {
 	// Optional: Default is false. All models support this.
 	Exclude bool `json:"exclude,omitempty"` // Set to true to exclude reasoning tokens from response
 	// Or enable reasoning with the default parameters:
-	Enabled bool `json:"enabled,omitempty"` // true to enable thinking ,false to disable thinking
+	// 用 *bool 区分未设置 / true / false：bool + omitempty 会把 false 一起省略，无法显式关闭推理
+	Enabled *bool `json:"enabled,omitempty"` // true to enable thinking, false to disable thinking
 }
 
 type OpenRouterEnterpriseResponse struct {
