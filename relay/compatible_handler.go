@@ -327,7 +327,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		}
 	}
 	if isOpenRouter && textRequest.THINKING != nil {
-		if textRequest.THINKING != nil && thinking.Type == "enabled" {
+		if thinking.Type == "enabled" {
 			if thinking.BudgetTokens > 0 {
 				reasoning := openrouter.RequestReasoning{
 					MaxTokens: thinking.BudgetTokens,
@@ -339,7 +339,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				textRequest.Reasoning = reasoningJSON
 			} else {
 				reasoning := openrouter.RequestReasoning{
-					Effort: "medium",
+					Enabled: true,
 				}
 				if textRequest.ReasoningEffort != "" {
 					reasoning.Effort = textRequest.ReasoningEffort
@@ -350,6 +350,12 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				}
 				textRequest.Reasoning = reasoningJSON
 			}
+		} else if thinking.Type == "disabled" {
+			reasoning := openrouter.RequestReasoning{
+				Enabled: false,
+			}
+			reasoningJSON, _ := json.Marshal(reasoning)
+			textRequest.Reasoning = reasoningJSON
 		}
 	} else if isChat && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" {
