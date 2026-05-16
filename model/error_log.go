@@ -160,12 +160,14 @@ func sanitizeForPGText(s string) string {
 }
 
 // safeUTF8Snapshot 返回 PG-TEXT 安全、必要时截断的 body 文本，用于无法结构化解析时的回退。
+// 先按字节截断原始 body，再做 UTF-8 清洗：截断可能切到多字节字符中间，
+// 留下孤儿字节，必须由 sanitizeForPGText 替换成 �，否则会触发 PG 22021。
 func safeUTF8Snapshot(body string) string {
-	s := sanitizeForPGText(body)
-	if len(s) > maxFallbackBodyBytes {
-		return s[:maxFallbackBodyBytes] + fmt.Sprintf("... [truncated, total %d bytes]", len(body))
+	if len(body) > maxFallbackBodyBytes {
+		return sanitizeForPGText(body[:maxFallbackBodyBytes]) +
+			fmt.Sprintf("... [truncated, total %d bytes]", len(body))
 	}
-	return s
+	return sanitizeForPGText(body)
 }
 
 // sanitizeRequestBodyForLog 把请求 body 转成 PostgreSQL TEXT 列可安全写入的 UTF-8 字符串。
