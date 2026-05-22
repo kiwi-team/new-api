@@ -46,6 +46,9 @@ func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 	// set Content-Length header manually BEFORE calling WriteHeader
 	c.Writer.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 
+	// 上游数据已就绪、即将开始向客户端发送（写出 body 之前），单位：秒
+	c.Writer.Header().Set("X-Finished-At", fmt.Sprintf("%d", common.GetTimestamp()))
+
 	// Write header with status code (this sends the headers)
 	if src != nil {
 		c.Writer.WriteHeader(src.StatusCode)

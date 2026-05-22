@@ -81,6 +81,8 @@ func SetEventStreamHeaders(c *gin.Context) {
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	// 上游数据已就绪、即将开始向客户端发送（流式首个 chunk 之前），单位：秒
+	c.Writer.Header().Set("X-Finished-At", fmt.Sprintf("%d", common.GetTimestamp()))
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
