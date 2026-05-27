@@ -605,6 +605,8 @@ func (m *Message) ParseContent() []MediaContent {
 			continue
 		}
 
+		lenBefore := len(contentList)
+
 		switch contentType {
 		case ContentTypeText:
 			if text, ok := contentItem["text"].(string); ok {
@@ -718,6 +720,15 @@ func (m *Message) ParseContent() []MediaContent {
 						Url: audioMap["url"].(string),
 					},
 				})
+			}
+		}
+
+		// 保留 cache_control（如 Claude 的 ephemeral 缓存标记），透传给上游
+		if len(contentList) > lenBefore {
+			if cc, ok := contentItem["cache_control"]; ok && cc != nil {
+				if raw, err := common.Marshal(cc); err == nil {
+					contentList[len(contentList)-1].CacheControl = raw
+				}
 			}
 		}
 	}

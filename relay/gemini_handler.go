@@ -209,6 +209,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		defer streamRecorder.Release()
 	}
 
+	// 上游响应已就绪、即将开始向客户端发送（覆盖 DoResponse 内部各 handler，含图片直写路径），单位：秒
+	c.Writer.Header().Set("X-Finished-At", fmt.Sprintf("%d", common.GetTimestamp()))
+
 	usage, openaiErr := adaptor.DoResponse(c, httpResp, info)
 	// new
 	//usage, openaiErr := adaptor.DoResponse(c, resp.(*http.Response), info)

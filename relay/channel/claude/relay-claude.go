@@ -330,8 +330,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 				for _, ctx := range message.ParseContent() {
 					if ctx.Type == "text" {
 						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-							Type: "text",
-							Text: common.GetPointer(ctx.Text),
+							Type:         "text",
+							Text:         common.GetPointer(ctx.Text),
+							CacheControl: ctx.CacheControl,
 						})
 					}
 					// 未来可以在这里扩展对图片等其他类型的支持
@@ -399,6 +400,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						mediaMessage.Type = "thinking"
 					}
 					if mediaMessage.Type == "text" {
+						claudeMediaMessage.CacheControl = mediaMessage.CacheControl
 						if len(mediaMessage.Text) > 0 {
 							claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
 						} else {
@@ -467,12 +469,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
 	// 2. temperature/top_p/top_k non-default values return 400
 	if isOpus47 {
-		if claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled" {
+		// claude-opus-4-7 仅支持 adaptive thinking，统一设置为 {type: adaptive, display: summarized}
+		if claudeRequest.Thinking == nil || claudeRequest.Thinking.Type != "adaptive" {
+			wasEnabled := claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled"
 			claudeRequest.Thinking = &dto.Thinking{
 				Type:    "adaptive",
 				Display: "summarized",
 			}
-			if claudeRequest.OutputConfig == nil {
+			if wasEnabled && claudeRequest.OutputConfig == nil {
 				claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
 			}
 		}

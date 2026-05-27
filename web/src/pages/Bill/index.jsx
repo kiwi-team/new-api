@@ -182,7 +182,7 @@ const Bill = () => {
 
   const formatAmount = (num) => {
     if (num == null) return '-';
-    return '$' + Number(num).toFixed(6);
+    return '' + Number(num).toFixed(6);
   };
 
   const formatPrice = (v) =>
