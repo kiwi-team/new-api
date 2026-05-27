@@ -350,7 +350,7 @@ const EditModal = ({ visible, config, onClose, onSuccess }) => {
             placeholder={t('请求失败时的最大重试次数')}
             rules={[{ required: true, message: t('请输入最大重试次数') }]}
             min={0}
-            max={10}
+            max={100}
             style={{ width: '100%' }}
           />
         </Card>
