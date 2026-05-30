@@ -57,6 +57,7 @@ const (
 	ContextKeyUserName       ContextKey = "username"
 	ContextKeyClientUserId   ContextKey = "client_user_id"
 	ContextKeyClientScenairo ContextKey = "client_scenairo"
+	ContextKeyExtra          ContextKey = "extra"
 
 	/* project related keys */
 	ContextKeyProjectName         ContextKey = "project_name"

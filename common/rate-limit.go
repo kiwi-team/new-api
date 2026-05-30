@@ -46,25 +46,43 @@ func (l *InMemoryRateLimiter) Request(key string, maxRequestNum int, duration in
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	// [old <-- new]
-	queue, ok := l.store[key]
 	now := time.Now().Unix()
-	if ok {
-		if len(*queue) < maxRequestNum {
-			*queue = append(*queue, now)
-			return true
-		} else {
-			if now-(*queue)[0] >= duration {
-				*queue = (*queue)[1:]
-				*queue = append(*queue, now)
-				return true
-			} else {
-				return false
-			}
+	cutoff := now - duration
+
+	queue, ok := l.store[key]
+	if !ok {
+		capHint := maxRequestNum
+		if capHint < 1 {
+			capHint = 1
 		}
-	} else {
-		s := make([]int64, 0, maxRequestNum)
+		s := make([]int64, 0, capHint)
+		s = append(s, now)
 		l.store[key] = &s
-		*(l.store[key]) = append(*(l.store[key]), now)
+		return true
 	}
+
+	q := *queue
+
+	// 丢弃所有超出时间窗口的旧记录（滑动窗口）
+	drop := 0
+	for drop < len(q) && q[drop] < cutoff {
+		drop++
+	}
+	if drop > 0 {
+		q = q[drop:]
+	}
+
+	// 限流配置被调小后，丢弃多余的最早记录，保留最新的 maxRequestNum 条
+	if maxRequestNum > 0 && len(q) > maxRequestNum {
+		q = q[len(q)-maxRequestNum:]
+	}
+
+	if maxRequestNum > 0 && len(q) >= maxRequestNum {
+		*queue = q
+		return false
+	}
+
+	q = append(q, now)
+	*queue = q
 	return true
 }

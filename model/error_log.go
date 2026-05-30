@@ -17,24 +17,25 @@ import (
 )
 
 type ErrorLog struct {
-	Id             int    `json:"id"`
-	UserId         int    `json:"user_id" gorm:"index"`
-	CreatedAt      int64  `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
-	ChannelId      int    `json:"channel_id" gorm:"index"`
-	ChannelName    string `json:"channel_name" gorm:"default:''"`
-	TokenId        int    `json:"token_id" gorm:"index"`
-	TokenName      string `json:"token_name"`
-	ModelName      string `json:"model_name" gorm:"default:''"`
-	Message        string `json:"message" gorm:"default:''"`
-	Type           string `json:"type" gorm:"default:''"`
-	Param          string `json:"param" gorm:"default:''"`
-	Code           string `json:"code" gorm:"default:''"`
-	RequestId      string `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
-	StatusCode     int    `json:"status_code" gorm:"default:0"`
-	Body           string `json:"body" gorm:"default:''"`
-	Ip             string `json:"ip" gorm:"default:''"`
-	ClientUserId   string `json:"client_user_id" gorm:"default:''"`
-	ClientScenairo string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	Id             int     `json:"id"`
+	UserId         int     `json:"user_id" gorm:"index"`
+	CreatedAt      int64   `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
+	ChannelId      int     `json:"channel_id" gorm:"index"`
+	ChannelName    string  `json:"channel_name" gorm:"default:''"`
+	TokenId        int     `json:"token_id" gorm:"index"`
+	TokenName      string  `json:"token_name"`
+	ModelName      string  `json:"model_name" gorm:"default:''"`
+	Message        string  `json:"message" gorm:"default:''"`
+	Type           string  `json:"type" gorm:"default:''"`
+	Param          string  `json:"param" gorm:"default:''"`
+	Code           string  `json:"code" gorm:"default:''"`
+	RequestId      string  `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
+	StatusCode     int     `json:"status_code" gorm:"default:0"`
+	Body           string  `json:"body" gorm:"default:''"`
+	Ip             string  `json:"ip" gorm:"default:''"`
+	ClientUserId   string  `json:"client_user_id" gorm:"default:''"`
+	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	Extra          *string `json:"extra,omitempty" gorm:"type:jsonb"`
 }
 
 // GetErrorLogBody 根据ID获取错误日志的body字段
@@ -134,11 +135,11 @@ type multipartFileInfo struct {
 
 // sanitizedMultipartBody 是 multipart/form-data 脱敏后的可入库 JSON 形态。
 type sanitizedMultipartBody struct {
-	Multipart  bool              `json:"_multipart"`
-	MediaType  string            `json:"_media_type"`
-	Fields     map[string]string `json:"fields,omitempty"`
+	Multipart  bool                `json:"_multipart"`
+	MediaType  string              `json:"_media_type"`
+	Fields     map[string]string   `json:"fields,omitempty"`
 	Files      []multipartFileInfo `json:"files,omitempty"`
-	ParseError string            `json:"_parse_error,omitempty"`
+	ParseError string              `json:"_parse_error,omitempty"`
 }
 
 // 单个文本字段最多保留的字节数；超过则截断并标注总长度。
@@ -148,9 +149,9 @@ const maxMultipartFieldBytes = 4096
 const maxFallbackBodyBytes = 4096
 
 // sanitizeForPGText 把任意字节字符串净化成可写入 PostgreSQL TEXT 列的形态：
-//   1. 替换非法 UTF-8 字节序列（如孤立的 0xff）为 U+FFFD '�'
-//   2. 删除 NUL 字节 (0x00) —— 它们是合法 UTF-8，但 PG 的 TEXT 列单独拒绝，
-//      会触发 SQLSTATE 22021 "invalid byte sequence for encoding UTF8: 0x00"
+//  1. 替换非法 UTF-8 字节序列（如孤立的 0xff）为 U+FFFD '�'
+//  2. 删除 NUL 字节 (0x00) —— 它们是合法 UTF-8，但 PG 的 TEXT 列单独拒绝，
+//     会触发 SQLSTATE 22021 "invalid byte sequence for encoding UTF8: 0x00"
 func sanitizeForPGText(s string) string {
 	s = strings.ToValidUTF8(s, "�")
 	if strings.IndexByte(s, 0x00) >= 0 {
@@ -171,9 +172,10 @@ func safeUTF8Snapshot(body string) string {
 }
 
 // sanitizeRequestBodyForLog 把请求 body 转成 PostgreSQL TEXT 列可安全写入的 UTF-8 字符串。
-// 对 multipart/form-data：解析出文本字段，文件 part 替换为元信息占位，避免二进制字节写入。
-// 其他 Content-Type：原样返回，但兜底用 ToValidUTF8 过滤掉非法 UTF-8 序列，
-// 防止 PG 报 "invalid byte sequence for encoding UTF8"。
+// 对 multipart/form-data：解析出文本字段，文件 part 替换为元信息占位，避免二进制字节写入，
+// 并对超大文本字段做截断（form-data 可能夹带图片等二进制数据）。
+// 其他 Content-Type（纯文本 / JSON 等）：完整保留，不做截断，只用 ToValidUTF8 过滤掉
+// 非法 UTF-8 序列、剔除 NUL 字节，防止 PG 报 "invalid byte sequence for encoding UTF8"。
 func sanitizeRequestBodyForLog(body string, contentType string) string {
 	if body == "" {
 		return body
@@ -181,7 +183,7 @@ func sanitizeRequestBodyForLog(body string, contentType string) string {
 
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		return safeUTF8Snapshot(body)
+		return sanitizeForPGText(body)
 	}
 	boundary, ok := params["boundary"]
 	if !ok || boundary == "" {
@@ -264,7 +266,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, includeBody bool) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, includeBody bool) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -290,6 +292,7 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		RequestId:      requestId,
 		ClientUserId:   clientUserId,
 		ClientScenairo: clientScenairo,
+		Extra:          normalizeExtraForJsonb(extra),
 	}
 	return LOG_DB.Create(log).Error
 	// LogList = append(LogList, log)
