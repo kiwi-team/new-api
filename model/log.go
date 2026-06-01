@@ -272,7 +272,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, clientUserId string, requestId string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
 	//func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
@@ -310,6 +310,16 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
+	}
+	// extra 是 PG jsonb 列，按嵌套字段精确匹配（NULL 行天然不命中，符合预期）
+	if mtSessionId != "" {
+		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
+	}
+	if traceId != "" {
+		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
+	}
+	if trajId != "" {
+		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
 	}
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
@@ -356,7 +366,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 }
 
 // GetLogsForExport 导出日志专用查询：按筛选条件返回日志（不分页），且不携带 request/response/usage 大字段。
-func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, clientUserId string, requestId string) (logs []*Log, err error) {
+func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string) (logs []*Log, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -389,6 +399,15 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 	}
 	if clientUserId != "" {
 		tx = tx.Where("logs.client_user_id LIKE ?", "%"+clientUserId+"%")
+	}
+	if mtSessionId != "" {
+		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
+	}
+	if traceId != "" {
+		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
+	}
+	if trajId != "" {
+		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
 	}
 
 	err = tx.Omit("request", "response", "usage").Order("logs.id asc").Find(&logs).Error

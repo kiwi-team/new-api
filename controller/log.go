@@ -49,8 +49,12 @@ func GetAllLogs(c *gin.Context) {
 	group := c.Query("group")
 	clientUserId := c.Query("client_user_id")
 	requestId := c.Query("request_id")
+	// extra 嵌套字段筛选；TrimSpace 防止前端漏掉/用户复制带空白
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
 	isAdmin := isAdmin(c)
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, export, isAdmin)
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, mtSessionId, traceId, trajId, export, isAdmin)
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group)
 	//requestId := c.Query("request_id")
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
@@ -315,6 +319,9 @@ func ExportLogsCSV(c *gin.Context) {
 	group := c.Query("group")
 	clientUserId := c.Query("client_user_id")
 	requestId := c.Query("request_id")
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
 
 	if startTimestamp == 0 || endTimestamp == 0 {
 		c.JSON(http.StatusOK, gin.H{
@@ -339,7 +346,7 @@ func ExportLogsCSV(c *gin.Context) {
 		return
 	}
 
-	logs, err := model.GetLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, clientUserId, requestId)
+	logs, err := model.GetLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, clientUserId, requestId, mtSessionId, traceId, trajId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

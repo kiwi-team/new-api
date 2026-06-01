@@ -103,6 +103,9 @@ export const useLogsData = () => {
     group: '',
     client_user_id: '',
     request_id: '',
+    mt_session_id: '',
+    trace_id: '',
+    traj_id: '',
     dateRange: [
       timestamp2string(getTodayStartTimestamp()),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -245,6 +248,10 @@ export const useLogsData = () => {
       group: formValues.group || '',
       client_user_id: formValues.client_user_id || '',
       request_id: formValues.request_id || '',
+      // 提交到后台前去掉首尾空白；URLSearchParams 已正确编码 + 等特殊字符，无需额外处理
+      mt_session_id: (formValues.mt_session_id || '').trim(),
+      trace_id: (formValues.trace_id || '').trim(),
+      traj_id: (formValues.traj_id || '').trim(),
       logType: formValues.logType ? parseInt(formValues.logType) : 0,
     };
   };
@@ -690,6 +697,9 @@ export const useLogsData = () => {
       group,
       client_user_id,
       request_id,
+      mt_session_id,
+      trace_id,
+      traj_id,
       logType: formLogType,
     } = getFormValues();
 
@@ -717,6 +727,9 @@ export const useLogsData = () => {
         group: group || '',
         client_user_id: client_user_id || '',
         request_id: request_id || '',
+        mt_session_id: mt_session_id || '',
+        trace_id: trace_id || '',
+        traj_id: traj_id || '',
       });
       url = `/api/log/?${params.toString()}`;
     } else {
@@ -765,6 +778,9 @@ export const useLogsData = () => {
       group,
       client_user_id,
       request_id,
+      mt_session_id,
+      trace_id,
+      traj_id,
       logType: formLogType,
     } = getFormValues();
 
@@ -806,6 +822,9 @@ export const useLogsData = () => {
         group: group || '',
         client_user_id: client_user_id || '',
         request_id: request_id || '',
+        mt_session_id: mt_session_id || '',
+        trace_id: trace_id || '',
+        traj_id: traj_id || '',
       });
       const res = await API.get(`/api/log/export?${params.toString()}`, {
         responseType: 'blob',

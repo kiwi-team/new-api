@@ -449,6 +449,9 @@ const ErrorLogsTable = () => {
     channel: '',
     token_id: '',
     client_user_id:'',
+    mt_session_id: '',
+    trace_id: '',
+    traj_id: '',
     dateRange: [
       timestamp2string(now.getTime() / 1000 - 3600),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -490,6 +493,10 @@ const ErrorLogsTable = () => {
       page_size: formValues.page_size || 10,
       token_id: formValues.token_id || 0,
       client_user_id: formValues.client_user_id || '',
+      // 提交到后台前去掉首尾空白；URLSearchParams 已正确编码 + 等特殊字符
+      mt_session_id: (formValues.mt_session_id || '').trim(),
+      trace_id: (formValues.trace_id || '').trim(),
+      traj_id: (formValues.traj_id || '').trim(),
     };
   };
 
@@ -556,7 +563,7 @@ const ErrorLogsTable = () => {
     setLoading(true);
 
     let url = '';
-    const { model_name, start_timestamp, end_timestamp, channel, request_id, token_id, client_user_id } =
+    const { model_name, start_timestamp, end_timestamp, channel, request_id, token_id, client_user_id, mt_session_id, trace_id, traj_id } =
       getFormValues();
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
@@ -571,6 +578,9 @@ const ErrorLogsTable = () => {
       request_id: request_id || '',
       token_id: token_id ? String(token_id) : '',
       client_user_id: client_user_id || '',
+      mt_session_id: mt_session_id || '',
+      trace_id: trace_id || '',
+      traj_id: traj_id || '',
     });
     url = `/api/log/error-logs?${params.toString()}`;
     const res = await API.get(url);
@@ -799,6 +809,30 @@ const ErrorLogsTable = () => {
                     field='client_user_id'
                     prefix={<IconSearch />}
                     placeholder={t('clientUserID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='mt_session_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('MT Session ID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='trace_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('Trace ID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='traj_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('Traj ID')}
                     className='!rounded-full'
                     showClear
                     pure

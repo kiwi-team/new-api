@@ -10,4 +10,7 @@ type ErrorLogsRequest struct {
 	PageSize     int    `json:"page_size,omitempty"`
 	TokenId      int    `json:"token_id,omitempty"`
 	ClientUserId string `json:"client_user_id,omitempty"`
+	MtSessionId  string `json:"mt_session_id,omitempty"`
+	TraceId      string `json:"trace_id,omitempty"`
+	TrajId       string `json:"traj_id,omitempty"`
 }

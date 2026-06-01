@@ -139,6 +139,30 @@ const LogsFilters = ({
                 pure
                 size='small'
               />
+              <Form.Input
+                field='mt_session_id'
+                prefix={<IconSearch />}
+                placeholder={t('MT Session ID')}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='trace_id'
+                prefix={<IconSearch />}
+                placeholder={t('Trace ID')}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='traj_id'
+                prefix={<IconSearch />}
+                placeholder={t('Traj ID')}
+                showClear
+                pure
+                size='small'
+              />
             </>
           )}
         </div>

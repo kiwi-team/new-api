@@ -91,6 +91,16 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	if req.ClientUserId != "" {
 		query = query.Where("client_user_id = ?", req.ClientUserId)
 	}
+	// extra 是 PG jsonb 列，按嵌套字段精确匹配（NULL 行天然不命中，符合预期）
+	if req.MtSessionId != "" {
+		query = query.Where("extra->>'mt_session_id' = ?", req.MtSessionId)
+	}
+	if req.TraceId != "" {
+		query = query.Where("extra->>'trace_id' = ?", req.TraceId)
+	}
+	if req.TrajId != "" {
+		query = query.Where("extra->>'traj_id' = ?", req.TrajId)
+	}
 	var total int64
 	_ = query.Count(&total)
 	// 不返回body字段，减少数据传输量

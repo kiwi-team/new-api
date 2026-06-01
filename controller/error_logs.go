@@ -60,6 +60,10 @@ func GetAllErrorLogs(c *gin.Context) {
 	tokenId, _ := strconv.Atoi(c.Query("token_id"))
 	clientUserId := c.Query("client_user_id")
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	// extra 嵌套字段筛选；TrimSpace 防止前端漏掉或用户复制时带空白
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
 	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
 		RequestId:    requestId,
 		ChannelId:    channel,
@@ -70,6 +74,9 @@ func GetAllErrorLogs(c *gin.Context) {
 		PageSize:     pageSize,
 		TokenId:      tokenId,
 		ClientUserId: clientUserId,
+		MtSessionId:  mtSessionId,
+		TraceId:      traceId,
+		TrajId:       trajId,
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{

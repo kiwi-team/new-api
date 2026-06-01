@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -246,6 +247,13 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			if err != nil {
 				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
 			}
+		}
+
+		// 在最终请求体发往上游 Claude 渠道之前做参数校验（此时各种参数转换均已完成）。
+		// 拦截会被上游拒绝的非法参数（如空文本内容块、thinking 下设置了 top_k 等），
+		// 直接返回参数异常，不再透传给上游。
+		if validateErr := claude.ValidateClaudeRequestBody(jsonData); validateErr != nil {
+			return types.NewErrorWithStatusCode(validateErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 
 		if common.DebugEnabled {
