@@ -31,6 +31,8 @@ import {
   isAdmin,
   renderQuota,
   stringToColor,
+  copy,
+  showSuccess,
 } from '../../../../helpers';
 import { Coins, BarChart2, Users } from 'lucide-react';
 
@@ -49,6 +51,28 @@ const UserInfoHeader = ({ t, userState }) => {
       return username.slice(0, 2).toUpperCase();
     }
     return 'NA';
+  };
+
+  // 点击 Tag 把 UID 值（不含 "UID:" 前缀）复制到剪贴板，方便粘贴到查询输入框
+  const handleCopyUid = async (e, value) => {
+    e.stopPropagation();
+    if (await copy(value)) {
+      showSuccess(t('已复制') + ': ' + value);
+    }
+  };
+
+  // 解析关联的 uid 列表：后端以 JSON 数组字符串存储（如 ["uid1","uid2"]），兼容已为数组的情况
+  const getRelatedUids = () => {
+    const raw = userState?.user?.related_uids;
+    if (!raw) return [];
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed)
+        ? parsed.map((u) => String(u).trim()).filter((u) => u !== '')
+        : [];
+    } catch {
+      return [];
+    }
   };
 
   return (
@@ -108,6 +132,38 @@ const UserInfoHeader = ({ t, userState }) => {
                     <Tag size='large' shape='circle' style={{ color: 'white' }}>
                       ID: {userState?.user?.id}
                     </Tag>
+                    {userState?.user?.uid ? (
+                      <Tag
+                        size='large'
+                        shape='circle'
+                        style={{ color: 'white', cursor: 'pointer' }}
+                        onClick={(e) => handleCopyUid(e, userState.user.uid)}
+                      >
+                        {t('UID')}: {userState.user.uid}
+                      </Tag>
+                    ) : null}
+                    {getRelatedUids().length > 0 ? (
+                      <>
+                        <Typography.Text
+                          strong
+                          style={{ color: 'white' }}
+                          className='text-sm'
+                        >
+                          {t('关联UID')}:
+                        </Typography.Text>
+                        {getRelatedUids().map((u, idx) => (
+                          <Tag
+                            key={`related-uid-${idx}`}
+                            size='large'
+                            shape='circle'
+                            style={{ color: 'white', cursor: 'pointer' }}
+                            onClick={(e) => handleCopyUid(e, u)}
+                          >
+                            {u}
+                          </Tag>
+                        ))}
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </div>

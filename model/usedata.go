@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -201,11 +202,51 @@ type QuotaDataStatistics struct {
 	TotalQuota      float64 `json:"total_quota"`
 	TotalPrompt     int64   `json:"total_prompt"`
 	TotalCompletion int64   `json:"total_completion"`
-	FixedQuota      int     `json:"fixed_quota"`
-	TempQuota       int     `json:"temp_quota"`
+	// 缓存相关：读缓存 tokens 适用于所有模型，写缓存 tokens 仅 Claude 系列有值
+	TotalCachedTokens        int64 `json:"total_cached_tokens"`
+	TotalCacheCreationTokens int64 `json:"total_cache_creation_tokens"`
+	// Claude 写缓存按 TTL 拆分：5 分钟缓存与 1 小时缓存定价不同（1h 通常更贵），
+	// 这里按 tier 单独聚合方便前端分列展示；总和等于 TotalCacheCreationTokens。
+	TotalCacheCreation5mTokens int64 `json:"total_cache_creation_5m_tokens"`
+	TotalCacheCreation1hTokens int64 `json:"total_cache_creation_1h_tokens"`
+	// 缓存费用为按模型当前倍率估算值（忽略分组倍率、历史倍率变化、阶梯价等），仅供参考
+	TotalCacheCost           float64 `json:"total_cache_cost"`
+	TotalCacheCreationCost   float64 `json:"total_cache_creation_cost"`
+	TotalCacheCreation5mCost float64 `json:"total_cache_creation_5m_cost"`
+	TotalCacheCreation1hCost float64 `json:"total_cache_creation_1h_cost"`
+	FixedQuota               int     `json:"fixed_quota"`
+	TempQuota                int     `json:"temp_quota"`
 }
 
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int) ([]*QuotaDataStatistics, error) {
+// estimateCacheCostUSD 按模型当前倍率估算缓存费用（美元）。
+// 公式与计费逻辑保持一致：cost = tokens * cacheRatio * modelRatio / QuotaPerUnit，
+// 但忽略分组倍率（按 1 处理）、历史倍率变化与阶梯价，因此仅为估算值。
+// 写缓存按 5m/1h 两个 TTL 拆分返回（ratio_setting 目前仅有一份 createCacheRatio，
+// 因此两档使用相同倍率拆分 token 数量；后续若引入 tier 级倍率可在此扩展）。
+func estimateCacheCostUSD(modelName string, cachedTokens int64, cacheCreation5mTokens int64, cacheCreation1hTokens int64) (readCostUSD, write5mCostUSD, write1hCostUSD float64) {
+	if modelName == "" {
+		return
+	}
+	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
+	if cachedTokens > 0 {
+		cacheRatio, _ := ratio_setting.GetCacheRatio(modelName)
+		readCostUSD = float64(cachedTokens) * cacheRatio * modelRatio / common.QuotaPerUnit
+	}
+	if cacheCreation5mTokens > 0 || cacheCreation1hTokens > 0 {
+		createCacheRatio, _ := ratio_setting.GetCreateCacheRatio(modelName)
+		if cacheCreation5mTokens > 0 {
+			write5mCostUSD = float64(cacheCreation5mTokens) * createCacheRatio * modelRatio / common.QuotaPerUnit
+		}
+		if cacheCreation1hTokens > 0 {
+			write1hCostUSD = float64(cacheCreation1hTokens) * createCacheRatio * modelRatio / common.QuotaPerUnit
+		}
+	}
+	return
+}
+
+// scopeUserId/scopeUids 用于非管理员的自助视图：限制为 (user_id = scopeUserId OR client_user_id IN scopeUids)。
+// scopeUserId<=0 时不施加该限制（管理员可见全部，userId 仍可用于显式按用户过滤）。
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int, scopeUserId int, scopeUids []string) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -234,79 +275,92 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	if expandTokens {
 		tokenPart = "MAX(token_name) as token_name, token_id"
 	}
-	selectFields := datePart + ", client_user_id, " + modelPart + ", " + tokenPart + ", sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion"
-	tx := DB.Model(&QuotaData{}).
-		Select(selectFields).
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+	cacheTokenFields := "sum(cached_tokens) as total_cached_tokens, sum(claude_cache_creation5m_tokens + claude_cache_creation1h_tokens) as total_cache_creation_tokens, sum(claude_cache_creation5m_tokens) as total_cache_creation_5m_tokens, sum(claude_cache_creation1h_tokens) as total_cache_creation_1h_tokens"
+	selectFields := datePart + ", client_user_id, " + modelPart + ", " + tokenPart + ", sum(count) as total_count, sum(quota) as total_quota, sum(prompt_tokens) as total_prompt, sum(completion_tokens) as total_completion, " + cacheTokenFields
 
-	if modelName != "" {
-		tx = tx.Where("model_name = ?", modelName)
-	}
-	if clientUserId != "" {
-		tx = tx.Where("client_user_id LIKE ?", "%"+clientUserId+"%")
-	}
-	if projectName != "" {
-		tx = tx.Where("project_name = ?", projectName)
-	}
-	// 处理多选scenairo筛选
-	if clientScenairos != "" {
-		scenairoList := strings.Split(clientScenairos, ",")
-		// 已知的三个场景（不含空值）
-		knownScenairos := []string{"PersonalExperiment", "ReleaseEvaluation", "DailyExternalModelEvaluation"}
-		hasOther := false
-		hasPersonalExperiment := false
-		normalScenairos := make([]string, 0)
-		for _, s := range scenairoList {
-			s = strings.TrimSpace(s)
-			if s == "Other" {
-				hasOther = true
-			} else if s == "PersonalExperiment" {
-				hasPersonalExperiment = true
-				normalScenairos = append(normalScenairos, s)
-			} else if s != "" {
-				normalScenairos = append(normalScenairos, s)
+	// 复用相同的筛选条件，主查询与缓存费用拆分查询共用
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+		if modelName != "" {
+			q = q.Where("model_name = ?", modelName)
+		}
+		if clientUserId != "" {
+			q = q.Where("client_user_id LIKE ?", "%"+clientUserId+"%")
+		}
+		if projectName != "" {
+			q = q.Where("project_name = ?", projectName)
+		}
+		// 处理多选scenairo筛选
+		if clientScenairos != "" {
+			scenairoList := strings.Split(clientScenairos, ",")
+			// 已知的三个场景（不含空值）
+			knownScenairos := []string{"PersonalExperiment", "ReleaseEvaluation", "DailyExternalModelEvaluation"}
+			hasOther := false
+			hasPersonalExperiment := false
+			normalScenairos := make([]string, 0)
+			for _, s := range scenairoList {
+				s = strings.TrimSpace(s)
+				if s == "Other" {
+					hasOther = true
+				} else if s == "PersonalExperiment" {
+					hasPersonalExperiment = true
+					normalScenairos = append(normalScenairos, s)
+				} else if s != "" {
+					normalScenairos = append(normalScenairos, s)
+				}
+			}
+
+			// 构建查询条件
+			var conditions []string
+			var args []interface{}
+
+			// 个人实验：包含 PersonalExperiment 和空值
+			if hasPersonalExperiment {
+				conditions = append(conditions, "(client_scenairo = ? OR client_scenairo = '')")
+				args = append(args, "PersonalExperiment")
+			}
+
+			// 其他普通场景（发版评测、日常外部模型评测）
+			otherNormalScenairos := make([]string, 0)
+			for _, s := range normalScenairos {
+				if s != "PersonalExperiment" {
+					otherNormalScenairos = append(otherNormalScenairos, s)
+				}
+			}
+			if len(otherNormalScenairos) > 0 {
+				conditions = append(conditions, "client_scenairo IN ?")
+				args = append(args, otherNormalScenairos)
+			}
+
+			// "其他"：不在三个已知场景中，且不为空
+			if hasOther {
+				conditions = append(conditions, "(client_scenairo NOT IN ? AND client_scenairo != '')")
+				args = append(args, knownScenairos)
+			}
+
+			if len(conditions) > 0 {
+				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
+				q = q.Where(combinedCondition, args...)
 			}
 		}
-
-		// 构建查询条件
-		var conditions []string
-		var args []interface{}
-
-		// 个人实验：包含 PersonalExperiment 和空值
-		if hasPersonalExperiment {
-			conditions = append(conditions, "(client_scenairo = ? OR client_scenairo = '')")
-			args = append(args, "PersonalExperiment")
+		if userId > 0 {
+			q = q.Where("user_id = ?", userId)
 		}
-
-		// 其他普通场景（发版评测、日常外部模型评测）
-		otherNormalScenairos := make([]string, 0)
-		for _, s := range normalScenairos {
-			if s != "PersonalExperiment" {
-				otherNormalScenairos = append(otherNormalScenairos, s)
+		// 非管理员自助视图：限定为本账号或其关联 uid 的数据（并集）
+		if scopeUserId > 0 {
+			if len(scopeUids) > 0 {
+				q = q.Where("(user_id = ? OR client_user_id IN ?)", scopeUserId, scopeUids)
+			} else {
+				q = q.Where("user_id = ?", scopeUserId)
 			}
 		}
-		if len(otherNormalScenairos) > 0 {
-			conditions = append(conditions, "client_scenairo IN ?")
-			args = append(args, otherNormalScenairos)
+		if len(tokenIds) > 0 {
+			q = q.Where("token_id IN ?", tokenIds)
 		}
+		return q
+	}
 
-		// "其他"：不在三个已知场景中，且不为空
-		if hasOther {
-			conditions = append(conditions, "(client_scenairo NOT IN ? AND client_scenairo != '')")
-			args = append(args, knownScenairos)
-		}
-
-		if len(conditions) > 0 {
-			combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
-			tx = tx.Where(combinedCondition, args...)
-		}
-	}
-	if userId > 0 {
-		tx = tx.Where("user_id = ?", userId)
-	}
-	if len(tokenIds) > 0 {
-		tx = tx.Where("token_id IN ?", tokenIds)
-	}
+	tx := applyFilters(DB.Model(&QuotaData{})).Select(selectFields)
 
 	// Build group-by clause dynamically
 	groupParts := []string{"client_user_id"}
@@ -325,6 +379,80 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		err = tx.Group(groupClause).Order("date DESC").Scan(&statistics).Error
 	} else {
 		err = tx.Group(groupClause).Scan(&statistics).Error
+	}
+	if err != nil {
+		return statistics, err
+	}
+
+	// 估算缓存费用：按模型当前倍率拆分计算。即使主视图未按模型展开，
+	// 也按模型粒度聚合后再汇总，保证未展开时也能给出估算费用。
+	// 缓存费用是估算值（忽略分组倍率、历史倍率变化、阶梯价等）。
+	mainKey := func(date, clientUserIdVal, modelNameVal string, tokenId int) string {
+		d := ""
+		if expandDates {
+			d = date
+		}
+		m := ""
+		if expandModels {
+			m = modelNameVal
+		}
+		t := 0
+		if expandTokens {
+			t = tokenId
+		}
+		return fmt.Sprintf("%s\x1f%s\x1f%s\x1f%d", d, clientUserIdVal, m, t)
+	}
+
+	type cacheCostRow struct {
+		Date                  string `gorm:"column:date"`
+		ClientUserId          string `gorm:"column:client_user_id"`
+		ModelName             string `gorm:"column:model_name"`
+		TokenId               int    `gorm:"column:token_id"`
+		CachedTokens          int64  `gorm:"column:cached_tokens"`
+		CacheCreation5mTokens int64  `gorm:"column:cache_creation_5m_tokens"`
+		CacheCreation1hTokens int64  `gorm:"column:cache_creation_1h_tokens"`
+	}
+	costDatePart := "'' as date"
+	if expandDates {
+		costDatePart = dateField + " as date"
+	}
+	costTokenPart := "0 as token_id"
+	if expandTokens {
+		costTokenPart = "token_id"
+	}
+	costSelect := costDatePart + ", client_user_id, model_name, " + costTokenPart + ", sum(cached_tokens) as cached_tokens, sum(claude_cache_creation5m_tokens) as cache_creation_5m_tokens, sum(claude_cache_creation1h_tokens) as cache_creation_1h_tokens"
+	// 缓存费用拆分查询始终按模型粒度分组
+	costGroupParts := []string{"client_user_id", "model_name"}
+	if expandDates {
+		costGroupParts = append([]string{"date"}, costGroupParts...)
+	}
+	if expandTokens {
+		costGroupParts = append(costGroupParts, "token_id")
+	}
+	var costRows []cacheCostRow
+	if costErr := applyFilters(DB.Model(&QuotaData{})).
+		Select(costSelect).
+		Group(strings.Join(costGroupParts, ", ")).
+		Scan(&costRows).Error; costErr == nil {
+		readCostMap := make(map[string]float64)
+		write5mCostMap := make(map[string]float64)
+		write1hCostMap := make(map[string]float64)
+		for _, r := range costRows {
+			read, write5m, write1h := estimateCacheCostUSD(r.ModelName, r.CachedTokens, r.CacheCreation5mTokens, r.CacheCreation1hTokens)
+			k := mainKey(r.Date, r.ClientUserId, r.ModelName, r.TokenId)
+			readCostMap[k] += read
+			write5mCostMap[k] += write5m
+			write1hCostMap[k] += write1h
+		}
+		for _, s := range statistics {
+			k := mainKey(s.Date, s.ClientUserId, s.ModelName, s.TokenId)
+			s.TotalCacheCost = readCostMap[k]
+			s.TotalCacheCreation5mCost = write5mCostMap[k]
+			s.TotalCacheCreation1hCost = write1hCostMap[k]
+			s.TotalCacheCreationCost = s.TotalCacheCreation5mCost + s.TotalCacheCreation1hCost
+		}
+	} else {
+		common.SysLog("GetQuotaDataStatistics cache cost query error:" + costErr.Error())
 	}
 
 	// 批量查询token key
@@ -381,12 +509,12 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName, planId).Updates(map[string]interface{}{
-		"count":                           gorm.Expr("count + ?", count),
-		"quota":                           gorm.Expr("quota + ?", quota),
-		"token_used":                      gorm.Expr("token_used + ?", tokenUsed),
-		"prompt_tokens":                   gorm.Expr("prompt_tokens + ?", promptTokens),
-		"completion_tokens":               gorm.Expr("completion_tokens + ?", completionTokens),
-		"cached_tokens":                   gorm.Expr("cached_tokens + ?", cachedTokens),
+		"count":                          gorm.Expr("count + ?", count),
+		"quota":                          gorm.Expr("quota + ?", quota),
+		"token_used":                     gorm.Expr("token_used + ?", tokenUsed),
+		"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", promptTokens),
+		"completion_tokens":              gorm.Expr("completion_tokens + ?", completionTokens),
+		"cached_tokens":                  gorm.Expr("cached_tokens + ?", cachedTokens),
 		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", claudeCacheCreation5mTokens),
 		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", claudeCacheCreation1hTokens),
 	}).Error

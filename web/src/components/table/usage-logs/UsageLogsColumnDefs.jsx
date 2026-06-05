@@ -504,6 +504,28 @@ export const getLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.UID,
+      title: t('UID'),
+      dataIndex: 'client_user_id',
+      render: (text, record, index) => {
+        return text ? (
+          <Tooltip content={text}>
+            <Tag
+              color='blue'
+              shape='circle'
+              onClick={(event) => {
+                copyText(event, text);
+              }}
+            >
+              {text}
+            </Tag>
+          </Tooltip>
+        ) : (
+          <></>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.TOKEN,
       title: t('令牌'),
       dataIndex: 'token_name',
@@ -766,7 +788,23 @@ export const getLogsColumns = ({
                 other.admin_info.use_channel !== ''
             ) {
               let useChannel = other.admin_info.use_channel;
-              let useChannelStr = useChannel.join('->');
+              // use_channel_time 与 use_channel 一一对应（毫秒）；缺失或长度不齐时降级为纯渠道
+              let useChannelTime = other.admin_info.use_channel_time;
+              const fmtMs = (ms) =>
+                ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+              let useChannelStr;
+              if (Array.isArray(useChannelTime) && useChannelTime.length > 0) {
+                useChannelStr = useChannel
+                  .map((ch, i) => {
+                    const ms = Number(useChannelTime[i]);
+                    return i < useChannelTime.length && ms > 0
+                      ? `${ch}(${fmtMs(ms)})`
+                      : `${ch}`;
+                  })
+                  .join('->');
+              } else {
+                useChannelStr = useChannel.join('->');
+              }
               content = t('渠道') + `：${useChannelStr}`;
             }
           }
@@ -850,6 +888,49 @@ export const getLogsColumns = ({
                 icon={<IconCopy />}
                 onClick={async (e) => {
                   const res = await API.get(`/api/log/${record.id}/response`);
+                  const { success, data } = res.data;
+                  const content = success ? data?.content || '' : '';
+                  copyText(e, content);
+                }}
+              />
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      // header 列：仅 root 可见，调用 /api/log/:id/header（后端 RootAuth 兜底）
+      key: COLUMN_KEYS.HEADER,
+      title: t('请求头'),
+      dataIndex: 'header',
+      className: isRoot() ? '' : 'tableHiddle',
+      render: (text, record, index) => {
+        if (!isRoot()) return null;
+        return (
+          <div className='flex items-center gap-2'>
+            <div className='flex gap-1'>
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconEyeOpened />}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const res = await API.get(`/api/log/${record.id}/header`);
+                  const { success, data } = res.data;
+                  if (success) {
+                    const content = data?.content || '';
+                    callback(e, content, 'showDetailModal');
+                  }
+                }}
+              />
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                onClick={async (e) => {
+                  const res = await API.get(`/api/log/${record.id}/header`);
                   const { success, data } = res.data;
                   const content = success ? data?.content || '' : '';
                   copyText(e, content);

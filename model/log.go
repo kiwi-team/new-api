@@ -47,21 +47,23 @@ type Log struct {
 	PlanId           int     `json:"plan_id" gorm:"default:0;index"`
 	Usage            string  `json:"usage" gorm:"type:text"`
 	Extra            *string `json:"extra,omitempty" gorm:"type:jsonb"`
+	Header           *string `json:"header,omitempty" gorm:"type:jsonb"`
 }
 
-// normalizeExtraForJsonb 把 extra header 规整成可写入 jsonb 列的形态：
+// normalizeJsonbString 把任意字符串规整成可写入 jsonb 列的形态：
 // 空串或非法 JSON 返回 nil（落库为 NULL）——jsonb 列会拒绝空串/非法 JSON，
 // 若直接写入会导致整条日志 INSERT 失败，这里宽容处理避免丢日志。
-func normalizeExtraForJsonb(extra string) *string {
-	extra = strings.TrimSpace(extra)
-	if extra == "" {
+// 用于 extra（客户端 extra header 内容）和 header（完整请求头快照）等 jsonb 列。
+func normalizeJsonbString(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return nil
 	}
 	var probe any
-	if err := common.UnmarshalJsonStr(extra, &probe); err != nil {
+	if err := common.UnmarshalJsonStr(s, &probe); err != nil {
 		return nil
 	}
-	return &extra
+	return &s
 }
 
 // don't use iota, avoid change log type value
@@ -121,6 +123,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
+	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := true
@@ -153,7 +156,8 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		}(),
 		RequestId: requestId,
 		Other:     otherStr,
-		Extra:     normalizeExtraForJsonb(extra),
+		Extra:     normalizeJsonbString(extra),
+		Header:    normalizeJsonbString(header),
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
@@ -201,6 +205,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := c.GetString("username")
 	otherStr := common.MapToJsonStr(params.Other)
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
+	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
 	// 判断是否需要记录 IP
 	clientIp := c.ClientIP()
 	//if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -233,7 +238,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ProjectName:      params.ProjectName,
 		PlanId:           params.PlanId,
 		Usage:            params.Usage,
-		Extra:            normalizeExtraForJsonb(extra),
+		Extra:            normalizeJsonbString(extra),
+		Header:           normalizeJsonbString(header),
 	}
 	// 异步写入日志，避免大请求体（如 base64 图片）阻塞请求响应
 	gopool.Go(func() {
@@ -441,15 +447,23 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 	return logs, nil
 }
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string) (logs []*Log, total int64, err error) {
-	// func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string) (logs []*Log, total int64, err error) {
+// scopeUids 为当前用户关联的 uid(client_user_id) 集合（自身 uid + related_uids，去重去空白）。
+// 行为：
+//   - scopeUids 为空（用户未配置 uid）：按账号自身过滤，WHERE logs.user_id = userId。
+//   - scopeUids 非空（用户配置了 uid）：切换为按 client_user_id 过滤，
+//     WHERE logs.client_user_id IN scopeUids。本账号 client_user_id 不在该集合
+//     的日志（包括未带 uid header 的请求）将不可见，这是预期语义。
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, scopeUids []string) (logs []*Log, total int64, err error) {
 	const logSearchCountLimit = 10000
 
 	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
+	if len(scopeUids) > 0 {
+		tx = LOG_DB.Where("logs.client_user_id IN ?", scopeUids)
 	} else {
-		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
+		tx = LOG_DB.Where("logs.user_id = ?", userId)
+	}
+	if logType != LogTypeUnknown {
+		tx = tx.Where("logs.type = ?", logType)
 	}
 
 	if modelName != "" {

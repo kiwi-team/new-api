@@ -87,6 +87,8 @@ const EditUserModal = (props) => {
     quota: 0,
     group: 'default',
     remark: '',
+    uid: '',
+    related_uids: [],
   });
 
   const fetchGroups = async () => {
@@ -128,9 +130,21 @@ const EditUserModal = (props) => {
           // ignore parse error
         }
       }
+      // related_uids 后端以 JSON 数组字符串存储，转换为数组供多选组件使用
+      let relatedUids = [];
+      if (data.related_uids) {
+        try {
+          const parsed = typeof data.related_uids === 'string' ? JSON.parse(data.related_uids) : data.related_uids;
+          if (Array.isArray(parsed)) relatedUids = parsed;
+        } catch (e) {
+          // ignore parse error
+        }
+      }
       formApiRef.current?.setValues({
         ...getInitValues(),
         ...data,
+        uid: data.uid || '',
+        related_uids: relatedUids,
         group_discount: groupDiscount,
         model_extra_discount: modelExtraDiscount,
         check_uid: checkUid,
@@ -183,6 +197,17 @@ const EditUserModal = (props) => {
     delete payload.group_discount;
     delete payload.model_extra_discount;
     delete payload.check_uid;
+    // uid / related_uids 仅在管理员编辑用户时提交；related_uids 转为 JSON 数组字符串
+    if (userId) {
+      payload.uid = (payload.uid || '').trim();
+      const relatedArr = Array.isArray(payload.related_uids)
+        ? payload.related_uids.map((u) => String(u).trim()).filter((u) => u !== '')
+        : [];
+      payload.related_uids = JSON.stringify(relatedArr);
+    } else {
+      delete payload.uid;
+      delete payload.related_uids;
+    }
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -391,6 +416,27 @@ const EditUserModal = (props) => {
                           uncheckedText={t('关')}
                           extraText={t(
                             '开启后，该用户创建的所有令牌在请求时必须携带 uid（通过 Header "uid" 或 key 中以 "_uid" 形式传入），否则拒绝访问',
+                          )}
+                        />
+                      </Col>
+                      <Col span={24}>
+                        <Form.Input
+                          field='uid'
+                          label={t('UID')}
+                          placeholder={t('该账号自身的 uid（client_user_id）')}
+                          showClear
+                        />
+                      </Col>
+                      <Col span={24}>
+                        <Form.TagInput
+                          field='related_uids'
+                          label={t('关联UID')}
+                          placeholder={t('输入后回车添加，可关联多个 uid')}
+                          addOnBlur
+                          showClear
+                          style={{ width: '100%' }}
+                          extraText={t(
+                            '该用户在消耗统计、使用日志、错误日志页面可额外查看这些 uid 的数据（与自己账号数据取并集）',
                           )}
                         />
                       </Col>

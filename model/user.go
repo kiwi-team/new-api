@@ -22,7 +22,8 @@ type User struct {
 	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
 	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
 	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	Uid              string         `json:"uid" gorm:"-:all"`               // this field is only for registration uid check, don't save it to database!
+	Uid              string         `json:"uid" gorm:"type:varchar(200);index;default:''"` // 账号自身的 uid(client_user_id)，注册时校验并持久化
+	RelatedUids      string         `json:"related_uids" gorm:"type:text"` // 关联的 uid 列表，JSON 数组字符串，如 ["uid1","uid2"]
 	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
 	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
 	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
@@ -513,6 +514,29 @@ func (user *User) Update(updatePassword bool) error {
 	return updateUserCache(*user)
 }
 
+// GetScopeUids 返回该用户可见的数据范围对应的 uid 集合：自身 uid + 关联 uid 列表（去重、去空白）。
+func (user *User) GetScopeUids() []string {
+	seen := make(map[string]bool)
+	uids := make([]string, 0)
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			uids = append(uids, s)
+		}
+	}
+	add(user.Uid)
+	if strings.TrimSpace(user.RelatedUids) != "" {
+		var list []string
+		if err := common.UnmarshalJsonStr(user.RelatedUids, &list); err == nil {
+			for _, u := range list {
+				add(u)
+			}
+		}
+	}
+	return uids
+}
+
 func (user *User) Edit(updatePassword bool) error {
 	var err error
 	if updatePassword {
@@ -531,6 +555,8 @@ func (user *User) Edit(updatePassword bool) error {
 		"remark":          newUser.Remark,
 		"toio_registered": newUser.ToioRegistered,
 		"setting":         newUser.Setting,
+		"uid":             newUser.Uid,
+		"related_uids":    newUser.RelatedUids,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

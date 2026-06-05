@@ -50,6 +50,7 @@ export const useLogsData = () => {
     TIME: 'time',
     CHANNEL: 'channel',
     USERNAME: 'username',
+    UID: 'uid',
     TOKEN: 'token',
     GROUP: 'group',
     TYPE: 'type',
@@ -63,6 +64,7 @@ export const useLogsData = () => {
     IP: 'ip',
     REQUEST: 'request',
     RESPONSE: 'response',
+    HEADER: 'header',
     DETAILS: 'details',
   };
 
@@ -147,6 +149,10 @@ export const useLogsData = () => {
           merged[COLUMN_KEYS.USERNAME] = false;
           merged[COLUMN_KEYS.RETRY] = false;
         }
+        // HEADER 仅 root 可见，强制对非 root 关闭，避免本地存储里残留的勾选状态泄露入口
+        if (!isRootUser) {
+          merged[COLUMN_KEYS.HEADER] = false;
+        }
         setVisibleColumns(merged);
       } catch (e) {
         console.error('Failed to parse saved column preferences', e);
@@ -164,6 +170,7 @@ export const useLogsData = () => {
       [COLUMN_KEYS.TIME]: true,
       [COLUMN_KEYS.CHANNEL]: isAdminUser,
       [COLUMN_KEYS.USERNAME]: isAdminUser,
+      [COLUMN_KEYS.UID]: true,
       [COLUMN_KEYS.TOKEN]: true,
       [COLUMN_KEYS.GROUP]: true,
       [COLUMN_KEYS.TYPE]: true,
@@ -177,6 +184,7 @@ export const useLogsData = () => {
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.REQUEST]: true,
       [COLUMN_KEYS.RESPONSE]: true,
+      [COLUMN_KEYS.HEADER]: isRootUser,
       [COLUMN_KEYS.DETAILS]: true,
     };
   };
@@ -206,6 +214,8 @@ export const useLogsData = () => {
           key === COLUMN_KEYS.RETRY) &&
         !isAdminUser
       ) {
+        updatedColumns[key] = false;
+      } else if (key === COLUMN_KEYS.HEADER && !isRootUser) {
         updatedColumns[key] = false;
       } else {
         updatedColumns[key] = checked;

@@ -23,6 +23,7 @@ import {
   copy,
   getTodayStartTimestamp,
   isAdmin,
+  isRoot,
   showError,
   showSuccess,
   timestamp2string,
@@ -71,8 +72,10 @@ const ErrorLogsTable = () => {
     CODE: 'code',
     REQUESTID: 'request_id',
     STATUSCODE: 'status_code',
+    USETIME: 'use_time_ms',
     IP: 'ip',
     BODY: 'body',
+    HEADER: 'header',
     USER_CLIENT_ID: 'user_client_id',
   };
 
@@ -82,6 +85,7 @@ const ErrorLogsTable = () => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [detailContent, setDetailContent] = useState('');
   const [loadingBodyId, setLoadingBodyId] = useState(null);
+  const [loadingHeaderId, setLoadingHeaderId] = useState(null);
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -92,6 +96,10 @@ const ErrorLogsTable = () => {
         // Make sure all columns are accounted for
         const defaults = getDefaultColumnVisibility();
         const merged = { ...defaults, ...parsed };
+        // HEADER 列仅 root 可见，对非 root 强制关闭，防止本地存储里残留 true 状态泄露入口
+        if (!isRoot()) {
+          merged[COLUMN_KEYS.HEADER] = false;
+        }
         setVisibleColumns(merged);
       } catch (e) {
         console.error('Failed to parse saved column preferences', e);
@@ -119,8 +127,11 @@ const ErrorLogsTable = () => {
       [COLUMN_KEYS.CODE]: true,
       [COLUMN_KEYS.REQUESTID]: true,
       [COLUMN_KEYS.STATUSCODE]: isAdminUser,
+      [COLUMN_KEYS.USETIME]: true,
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.USER_CLIENT_ID]: true,
+      // HEADER 默认仅对 root 可见，其它角色完全看不到入口
+      [COLUMN_KEYS.HEADER]: isRoot(),
     };
   };
 
@@ -150,6 +161,8 @@ const ErrorLogsTable = () => {
           key === COLUMN_KEYS.REQUESTID) &&
         !isAdminUser
       ) {
+        updatedColumns[key] = false;
+      } else if (key === COLUMN_KEYS.HEADER && !isRoot()) {
         updatedColumns[key] = false;
       } else {
         updatedColumns[key] = checked;
@@ -266,6 +279,31 @@ const ErrorLogsTable = () => {
       },
     },
     {
+      // 请求头列：仅 root 可见，调用 /api/log/error-logs/:id/header（后端 RootAuth 兜底）
+      key: COLUMN_KEYS.HEADER,
+      title: t('请求头'),
+      dataIndex: 'header',
+      className: isRoot() ? '' : 'tableHiddle',
+      render: (text, record, index) => {
+        if (!isRoot()) return null;
+        return (
+          <div className='flex items-center gap-2'>
+            <Button
+              theme='borderless'
+              type='tertiary'
+              size='small'
+              icon={<IconEyeOpened />}
+              loading={loadingHeaderId === record.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                fetchAndShowHeader(record.id);
+              }}
+            />
+          </div>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.MODELNAME,
       title: t('模型'),
       dataIndex: 'model_name',
@@ -329,6 +367,19 @@ const ErrorLogsTable = () => {
       fixed: 'right',
       render: (text, record, index) => {
         return <>{t(text)}</>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.USETIME,
+      title: t('耗时'),
+      dataIndex: 'use_time_ms',
+      fixed: 'right',
+      render: (text, record, index) => {
+        const ms = Number(text);
+        if (!ms || ms <= 0) {
+          return <>-</>;
+        }
+        return <>{ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`}</>;
       },
     },
   ];
@@ -582,7 +633,10 @@ const ErrorLogsTable = () => {
       trace_id: trace_id || '',
       traj_id: traj_id || '',
     });
-    url = `/api/log/error-logs?${params.toString()}`;
+    // 非管理员走自助接口，仅能看到本账号或其关联 uid 的错误日志
+    url = isAdminUser
+      ? `/api/log/error-logs?${params.toString()}`
+      : `/api/log/self/error-logs?${params.toString()}`;
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
@@ -649,7 +703,11 @@ const ErrorLogsTable = () => {
   const fetchAndShowBody = async (id) => {
     setLoadingBodyId(id);
     try {
-      const res = await API.get(`/api/log/error-logs/${id}/body`);
+      const res = await API.get(
+        isAdminUser
+          ? `/api/log/error-logs/${id}/body`
+          : `/api/log/self/error-logs/${id}/body`,
+      );
       const { success, message, data } = res.data;
       if (success) {
         showDetailDialog(data, true);
@@ -666,6 +724,25 @@ const ErrorLogsTable = () => {
   // 复制body内容
   const copyBodyContent = async (e, content) => {
     await copyText(e, content);
+  };
+
+  // 获取并显示 header 内容（仅 root）。后端 RootAuth 会兜底，前端入口同样按 root 隐藏。
+  const fetchAndShowHeader = async (id) => {
+    if (!isRoot()) return;
+    setLoadingHeaderId(id);
+    try {
+      const res = await API.get(`/api/log/error-logs/${id}/header`);
+      const { success, message, data } = res.data;
+      if (success) {
+        showDetailDialog(data?.content || '', true);
+      } else {
+        showError(message);
+      }
+    } catch (e) {
+      showError(e.message || t('获取Header失败'));
+    } finally {
+      setLoadingHeaderId(null);
+    }
   };
 
   useEffect(() => {

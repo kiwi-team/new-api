@@ -31,17 +31,33 @@ type ErrorLog struct {
 	Code           string  `json:"code" gorm:"default:''"`
 	RequestId      string  `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
 	StatusCode     int     `json:"status_code" gorm:"default:0"`
+	UseTimeMs      int64   `json:"use_time_ms" gorm:"default:0"`
 	Body           string  `json:"body" gorm:"default:''"`
 	Ip             string  `json:"ip" gorm:"default:''"`
 	ClientUserId   string  `json:"client_user_id" gorm:"default:''"`
 	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
 	Extra          *string `json:"extra,omitempty" gorm:"type:jsonb"`
+	Header         *string `json:"header,omitempty" gorm:"type:jsonb"`
 }
 
 // GetErrorLogBody 根据ID获取错误日志的body字段
 func GetErrorLogBody(id int) (string, error) {
 	var body string
 	err := LOG_DB.Model(&ErrorLog{}).Where("id = ?", id).Pluck("body", &body).Error
+	return body, err
+}
+
+// GetSelfErrorLogBody 在自助视图范围内获取错误日志 body：
+// 仅当该日志属于 (user_id = scopeUserId OR client_user_id IN scopeUids) 时才返回，否则返回空。
+func GetSelfErrorLogBody(id int, scopeUserId int, scopeUids []string) (string, error) {
+	q := LOG_DB.Model(&ErrorLog{}).Where("id = ?", id)
+	if len(scopeUids) > 0 {
+		q = q.Where("(user_id = ? OR client_user_id IN ?)", scopeUserId, scopeUids)
+	} else {
+		q = q.Where("user_id = ?", scopeUserId)
+	}
+	var body string
+	err := q.Pluck("body", &body).Error
 	return body, err
 }
 
@@ -90,6 +106,14 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	if req.ClientUserId != "" {
 		query = query.Where("client_user_id = ?", req.ClientUserId)
+	}
+	// 非管理员自助视图：限定为本账号或其关联 uid 的错误日志（并集）
+	if req.ScopeUserId > 0 {
+		if len(req.ScopeUids) > 0 {
+			query = query.Where("(user_id = ? OR client_user_id IN ?)", req.ScopeUserId, req.ScopeUids)
+		} else {
+			query = query.Where("user_id = ?", req.ScopeUserId)
+		}
 	}
 	// extra 是 PG jsonb 列，按嵌套字段精确匹配（NULL 行天然不命中，符合预期）
 	if req.MtSessionId != "" {
@@ -276,7 +300,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, includeBody bool) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, useTimeMs int64, includeBody bool) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -298,11 +322,13 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		StatusCode:     err.StatusCode,
 		Body:           bodyToSave,
 		Ip:             ip,
+		UseTimeMs:      useTimeMs,
 		TokenId:        tokenId,
 		RequestId:      requestId,
 		ClientUserId:   clientUserId,
 		ClientScenairo: clientScenairo,
-		Extra:          normalizeExtraForJsonb(extra),
+		Extra:          normalizeJsonbString(extra),
+		Header:         normalizeJsonbString(header),
 	}
 	return LOG_DB.Create(log).Error
 	// LogList = append(LogList, log)

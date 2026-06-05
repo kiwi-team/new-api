@@ -18,6 +18,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetErrorLogHeader 仅 root：拉取 error_logs.header（jsonb）原始 JSON 字符串供前端按需展开。
+// 返回结构与 GetLogHeader/GetLogRequest 一致：{ data: { content: "..." } }，NULL 行返回空串。
+func GetErrorLogHeader(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无效的ID",
+		})
+		return
+	}
+	var result struct {
+		Header *string `gorm:"column:header" json:"header"`
+	}
+	err = model.LOG_DB.Model(&model.ErrorLog{}).Select("header").Where("id = ?", id).First(&result).Error
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	content := ""
+	if result.Header != nil {
+		content = *result.Header
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"content": content,
+		},
+	})
+}
+
 // GetErrorLogBody 获取错误日志的body字段
 func GetErrorLogBody(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
@@ -95,6 +130,98 @@ func GetAllErrorLogs(c *gin.Context) {
 			"page_size": pageSize,
 		},
 	})
+}
+
+// resolveErrorLogSelfScope 返回当前登录用户的 id 及其可见 uid 集合（自身 uid + 关联 uid）。
+func resolveErrorLogSelfScope(c *gin.Context) (int, []string) {
+	selfId := c.GetInt("id")
+	if selfId <= 0 {
+		return 0, nil
+	}
+	if u, err := model.GetUserById(selfId, false); err == nil {
+		return selfId, u.GetScopeUids()
+	}
+	return selfId, nil
+}
+
+// GetSelfErrorLogs 非管理员自助查看错误日志：仅返回本账号或其关联 uid 的错误日志。
+func GetSelfErrorLogs(c *gin.Context) {
+	p, _ := strconv.Atoi(c.Query("p"))
+	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	if p < 1 {
+		p = 1
+	}
+	if pageSize < 0 {
+		pageSize = common.ItemsPerPage
+	}
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	modelName := c.Query("model_name")
+	requestId := c.Query("request_id")
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	tokenId, _ := strconv.Atoi(c.Query("token_id"))
+	clientUserId := c.Query("client_user_id")
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
+
+	scopeUserId, scopeUids := resolveErrorLogSelfScope(c)
+	if scopeUserId <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效的用户"})
+		return
+	}
+
+	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
+		RequestId:    requestId,
+		ChannelId:    channel,
+		ModelName:    modelName,
+		StartTime:    startTimestamp,
+		EndTime:      endTimestamp,
+		Page:         p,
+		PageSize:     pageSize,
+		TokenId:      tokenId,
+		ClientUserId: clientUserId,
+		MtSessionId:  mtSessionId,
+		TraceId:      traceId,
+		TrajId:       trajId,
+		ScopeUserId:  scopeUserId,
+		ScopeUids:    scopeUids,
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"items":     logs,
+			"total":     total,
+			"page":      p,
+			"page_size": pageSize,
+		},
+	})
+}
+
+// GetSelfErrorLogBody 非管理员在自助视图范围内获取错误日志 body。
+func GetSelfErrorLogBody(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效的ID"})
+		return
+	}
+	scopeUserId, scopeUids := resolveErrorLogSelfScope(c)
+	if scopeUserId <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效的用户"})
+		return
+	}
+	body, err := model.GetSelfErrorLogBody(id, scopeUserId, scopeUids)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": body})
 }
 
 var prevWarningTime int64

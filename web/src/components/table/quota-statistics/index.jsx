@@ -157,6 +157,9 @@ const QuotaStatisticsTable = () => {
     fetchProjectNames();
   }, []);
 
+  // 写缓存仅 Claude 系列模型有值，非 Claude 行展示为 '-'
+  const isClaudeModel = (name) => String(name || '').toLowerCase().includes('claude');
+
   const columns = (() => {
     const base = [
       { title: 'UID', dataIndex: 'client_user_id', key: 'client_user_id', sorter: (a, b) => String(a.client_user_id).localeCompare(String(b.client_user_id)) },
@@ -224,6 +227,47 @@ const QuotaStatisticsTable = () => {
     base.push({ title: '请求次数', dataIndex: 'total_count', key: 'total_count' });
     base.push({ title: '总PromptTokens', dataIndex: 'total_prompt', key: 'total_prompt' });
     base.push({ title: '总Completion Tokens', dataIndex: 'total_completion', key: 'total_completion' });
+    // 读缓存：所有模型
+    base.push({
+      title: '读缓存Tokens',
+      dataIndex: 'total_cached_tokens',
+      key: 'total_cached_tokens',
+      sorter: (a, b) => (parseInt(a.total_cached_tokens) || 0) - (parseInt(b.total_cached_tokens) || 0),
+      render: (v) => parseInt(v) || 0,
+    });
+    base.push({
+      title: '读缓存($)',
+      dataIndex: 'total_cache_cost',
+      key: 'total_cache_cost',
+      sorter: (a, b) => (parseFloat(a.total_cache_cost) || 0) - (parseFloat(b.total_cache_cost) || 0),
+      render: (v) => (parseFloat(v) || 0).toFixed(6),
+    });
+    // 写缓存：仅 Claude 系列有值，按 5m/1h TTL 拆列；同一格内分两行展示 tokens 与 $
+    const renderCacheCreationCell = (tokensField, costField) => (_, record) => {
+      if (expandModels && record.model_name && !isClaudeModel(record.model_name)) return '-';
+      const tokens = parseInt(record[tokensField]) || 0;
+      const cost = parseFloat(record[costField]) || 0;
+      return (
+        <div className='flex flex-col leading-tight'>
+          <span>{tokens}</span>
+          <span className='text-xs text-gray-500'>${cost.toFixed(6)}</span>
+        </div>
+      );
+    };
+    base.push({
+      title: '写缓存(Claude,5m)',
+      dataIndex: 'total_cache_creation_5m_tokens',
+      key: 'cache_creation_5m',
+      sorter: (a, b) => (parseInt(a.total_cache_creation_5m_tokens) || 0) - (parseInt(b.total_cache_creation_5m_tokens) || 0),
+      render: renderCacheCreationCell('total_cache_creation_5m_tokens', 'total_cache_creation_5m_cost'),
+    });
+    base.push({
+      title: '写缓存(Claude,1h)',
+      dataIndex: 'total_cache_creation_1h_tokens',
+      key: 'cache_creation_1h',
+      sorter: (a, b) => (parseInt(a.total_cache_creation_1h_tokens) || 0) - (parseInt(b.total_cache_creation_1h_tokens) || 0),
+      render: renderCacheCreationCell('total_cache_creation_1h_tokens', 'total_cache_creation_1h_cost'),
+    });
     return base;
   })();
 
@@ -365,6 +409,9 @@ const QuotaStatisticsTable = () => {
             />
             <Tag color='white' shape='circle'>
               <span>总消耗: ${totalUSD.toFixed(2)}</span>
+            </Tag>
+            <Tag color='grey' shape='circle'>
+              <span>缓存费用为按当前倍率估算，仅供参考</span>
             </Tag>
             {!toioMode && (
               <>

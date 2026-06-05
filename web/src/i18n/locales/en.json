@@ -1691,6 +1691,7 @@
     "用户账户创建成功！": "User account created successfully!",
     "用户账户管理": "User account management",
     "用时/首字": "Time/first word",
+    "耗时": "Duration",
     "留空则使用账号绑定的邮箱": "If left blank, the email address bound to the account will be used",
     "留空则使用默认端点；支持 {path, method}": "Leave blank to use the default endpoint; supports {path, method}",
     "留空则默认使用服务器地址，注意不能携带http://或者https://": "If left blank, the server address will be used by default. Note that http:// or https:// should not be included",

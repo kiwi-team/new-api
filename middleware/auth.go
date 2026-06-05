@@ -381,6 +381,46 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// 快照请求头到 context，落库时给 logs/error_logs.header 列用。必须在任何 header
+		// 修改之前（ws / x-api-key / x-goog-api-key 等会改写 Authorization）。
+		//
+		// 落库形态：扁平 {name: value} JSON 对象（{"authorization":"Bearer ...","Content-Type":"application/json"}）。
+		// 优先从 ExtractRawHeaders 拿 wire 字节解析出的有序切片，保留原始大小写；
+		// 抓不到的（HTTP/2、未挂 CaptureListener 的 dev 路径）回落 canonical http.Header（大小写已被 net/http
+		// 规范化，无法挽回）。两条路径都拍平到同一 map shape，前端展示无差异。
+		//
+		// 取舍：
+		//   - 同名重复 header（HTTP 协议允许）会被合并成 "v1, v2"，符合 RFC 7230 §3.2.2 的合并语义；
+		//   - JSON 对象的 key 顺序在 PG jsonb 存储后不保证保留（jsonb 会重排），所以"按到达顺序"
+		//     无法从落库结果还原；若以后真要看顺序，需要回到 array-of-pairs shape 或改 TEXT 列。
+		//
+		// 是否对 Authorization/Cookie/X-Api-Key 等敏感头脱敏由 options 表 LogHeaderRedactEnabled 控制，
+		// 默认 true（!= "false" 才视为关闭，老库未写入此 key 也按 true 处理）。
+		// 序列化失败则忽略，日志记录链路不能因为序列化而阻塞请求。
+		headerMap := make(map[string]string)
+		if rawPairs, _ := ExtractRawHeaders(c.Request); rawPairs != nil {
+			for _, p := range rawPairs {
+				if existing, ok := headerMap[p.Name]; ok {
+					headerMap[p.Name] = existing + ", " + p.Value
+				} else {
+					headerMap[p.Name] = p.Value
+				}
+			}
+		} else {
+			for k, vs := range c.Request.Header {
+				headerMap[k] = strings.Join(vs, ", ")
+			}
+		}
+		if common.OptionMap["LogHeaderRedactEnabled"] != "false" {
+			for k, v := range headerMap {
+				if sensitiveHeaderKeys[strings.ToLower(k)] {
+					headerMap[k] = redactHeaderValue(v)
+				}
+			}
+		}
+		if headerBytes, err := common.Marshal(headerMap); err == nil {
+			common.SetContextKey(c, constant.ContextKeyHeader, string(headerBytes))
+		}
 		// 先检测是否为ws
 		if c.Request.Header.Get("Sec-WebSocket-Protocol") != "" {
 			// Sec-WebSocket-Protocol: realtime, openai-insecure-api-key.sk-xxx, openai-beta.realtime-v1

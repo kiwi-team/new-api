@@ -198,6 +198,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	type pendingError struct {
 		channelError types.ChannelError
 		apiError     *types.NewAPIError
+		// useTimeMs 是该渠道本次尝试的真实耗时（毫秒），在失败现场捕获，
+		// 避免延迟处理时 ContextKeyRequestStartTime 已被后续重试覆盖导致耗时失真
+		useTimeMs int64
 	}
 	var pendingErrors []pendingError
 
@@ -242,6 +245,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		// 在失败现场捕获本渠道真实耗时：每次尝试单独计时，与延迟处理解耦
+		attemptStart := time.Now()
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -252,11 +257,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		attemptUseTimeMs := time.Since(attemptStart).Milliseconds()
+		// 记录本渠道耗时（毫秒），与 use_channel 一一对应（含成功的最后一个渠道）
+		addUsedChannelTime(c, attemptUseTimeMs)
 
 		if newAPIError == nil {
 			// 请求成功，处理之前收集的错误（不包含request body，因为消耗日志会记录）
 			for _, pe := range pendingErrors {
-				processChannelError(c, pe.channelError, pe.apiError, false)
+				processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, false)
 			}
 			return
 		}
@@ -265,7 +273,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		pendingErrors = append(pendingErrors, pendingError{
 			channelError: *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 			//apiError:     newAPIError,
-			apiError: service.NormalizeViolationFeeError(newAPIError),
+			apiError:  service.NormalizeViolationFeeError(newAPIError),
+			useTimeMs: attemptUseTimeMs,
 		})
 		//newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		//processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
@@ -279,7 +288,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// 只有最后一个错误记录request body
 	for i, pe := range pendingErrors {
 		includeBody := (i == len(pendingErrors)-1) // 只有最后一个错误包含body
-		processChannelError(c, pe.channelError, pe.apiError, includeBody)
+		processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, includeBody)
 	}
 
 	// Check if no valid channel was found when using tokenChannelIds
@@ -293,9 +302,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
+		retryLogStr := fmt.Sprintf("重试：%s", buildUseChannelWithTimeStr(c, useChannel))
 		logger.LogInfo(c, retryLogStr)
 	}
+}
+
+// buildUseChannelWithTimeStr 把渠道链与各自耗时拼成 "1544(1203ms)->1541(812ms)->1543" 形式。
+// 耗时数组缺失或长度不齐时优雅降级为纯渠道链，不影响主流程。
+func buildUseChannelWithTimeStr(c *gin.Context, useChannel []string) string {
+	times := getUsedChannelTime(c)
+	parts := make([]string, 0, len(useChannel))
+	for i, ch := range useChannel {
+		if i < len(times) {
+			parts = append(parts, fmt.Sprintf("%s(%dms)", ch, times[i]))
+		} else {
+			parts = append(parts, ch)
+		}
+	}
+	return strings.Join(parts, "->")
 }
 
 var upgrader = websocket.Upgrader{
@@ -309,6 +333,23 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+}
+
+// addUsedChannelTime 记录本次渠道尝试的耗时（毫秒），与 use_channel 一一对应。
+func addUsedChannelTime(c *gin.Context, useTimeMs int64) {
+	times := getUsedChannelTime(c)
+	times = append(times, useTimeMs)
+	common.SetContextKey(c, constant.ContextKeyUseChannelTime, times)
+}
+
+// getUsedChannelTime 取出已累积的各渠道耗时（毫秒）数组，未设置时返回 nil。
+func getUsedChannelTime(c *gin.Context) []int64 {
+	if v, ok := common.GetContextKey(c, constant.ContextKeyUseChannelTime); ok {
+		if times, ok := v.([]int64); ok {
+			return times
+		}
+	}
+	return nil
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -440,7 +481,7 @@ func sendFeishuQianfeiNotify(channelError types.ChannelError, err *types.NewAPIE
 	})
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, includeBody bool) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool) {
 	openaiError := err.ToOpenAIError()
 	requestStorage, _ := common.GetBodyStorage(c)
 	var requestBytes []byte
@@ -453,11 +494,12 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
+	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
 	requestId := c.GetString(common.RequestIdKey)
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	contentType := c.Request.Header.Get("Content-Type")
 	if common.SaveErrorLog {
-		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, contentType, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, extra, includeBody)
+		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, contentType, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, extra, header, useTimeMs, includeBody)
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
@@ -523,11 +565,10 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
+		// 使用失败现场捕获的本渠道耗时（毫秒），换算为秒写入 logs 表；
+		// 旧逻辑用 ContextKeyRequestStartTime 在延迟处理时计算，会因被后续重试覆盖而失真
+		other["use_time_ms"] = useTimeMs
+		useTimeSeconds := int(useTimeMs / 1000)
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, false, userGroup, other)
 	}
 

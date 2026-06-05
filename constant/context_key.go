@@ -10,6 +10,8 @@ const (
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
+	// ContextKeyUseChannelTime 累积每个被尝试渠道的耗时（毫秒），与 use_channel 一一对应（含成功的最后一个渠道）
+	ContextKeyUseChannelTime ContextKey = "use_channel_time"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
@@ -58,6 +60,7 @@ const (
 	ContextKeyClientUserId   ContextKey = "client_user_id"
 	ContextKeyClientScenairo ContextKey = "client_scenairo"
 	ContextKeyExtra          ContextKey = "extra"
+	ContextKeyHeader         ContextKey = "header"
 
 	/* project related keys */
 	ContextKeyProjectName         ContextKey = "project_name"

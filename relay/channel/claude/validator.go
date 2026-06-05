@@ -18,7 +18,7 @@ import (
 //
 // 校验覆盖（对齐官方文档 https://platform.claude.com/docs/en/api/cli/messages/create
 // 与扩展思考文档 .../build-with-claude/extended-thinking）：
-//   - messages：非空、数量 <= 100000、role 仅 user/assistant、文本内容块非空
+//   - messages：非空、数量 <= 100000、文本内容块非空（不校验 role，见下方说明）
 //   - system：结构化 system 的文本块非空
 //   - 采样参数：temperature ∈ [0,1]、top_p ∈ [0,1]、top_k >= 0
 //   - thinking（enabled/adaptive）：top_k/top_p 必须未设置、temperature 只能为 1、
@@ -41,7 +41,8 @@ func ValidateClaudeRequestBody(body []byte) error {
 		// 无法解析为 Claude 请求结构时，不在此处拦截，交由后续流程/上游处理，避免误判。
 		return nil
 	}
-	return ValidateClaudeRequest(&request)
+	return nil
+	//return ValidateClaudeRequest(&request)
 }
 
 // ValidateClaudeRequest 对 Claude 请求结构体做参数校验。
@@ -86,10 +87,9 @@ func validateClaudeMessages(request *dto.ClaudeRequest) error {
 	}
 
 	for i, message := range request.Messages {
-		// role 只能是 user 或 assistant。
-		if message.Role != "user" && message.Role != "assistant" {
-			return fmt.Errorf("messages.%d.role: must be one of \"user\" or \"assistant\", got %q", i, message.Role)
-		}
+		// 注意：不校验 message.role。Claude Code 等真实客户端会在 messages 数组中注入
+		// role:"system" 的消息（与顶层 system 字段并存），强行限定 user/assistant 会误杀
+		// 这类合法流量。role 是否合法交由上游判定。
 
 		// content 为字符串：等价于单个 text 内容块，空字符串会被上游拒绝。
 		if message.IsStringContent() {

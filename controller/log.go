@@ -48,6 +48,8 @@ func GetAllLogs(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	clientUserId := c.Query("client_user_id")
+	// uid(client_user_id) 可能含 + 等特殊符号，URL 解码后 + 会被还原成空格，这里还原回来
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 	requestId := c.Query("request_id")
 	// extra 嵌套字段筛选；TrimSpace 防止前端漏掉/用户复制带空白
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
@@ -148,6 +150,32 @@ func GetLogRequest(c *gin.Context) {
 	})
 }
 
+// GetLogHeader 仅 root：拉取 logs.header（jsonb）原始 JSON 字符串供前端按需展开。
+// 返回结构与 GetLogRequest/GetLogResponse 一致：{ data: { content: "..." } }，NULL 行返回空串。
+func GetLogHeader(c *gin.Context) {
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
+	var result struct {
+		Header *string `gorm:"column:header" json:"header"`
+	}
+	err := model.LOG_DB.Model(&model.Log{}).Select("header").Where("id = ?", id).First(&result).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	content := ""
+	if result.Header != nil {
+		content = *result.Header
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"content": content,
+		},
+	})
+}
+
 func GetLogResponse(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.Atoi(idStr)
@@ -184,9 +212,14 @@ func GetUserLogs(c *gin.Context) {
 	modelName := c.Query("model_name")
 	group := c.Query("group")
 	isAdmin := isAdmin(c)
-	//logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin)
 	requestId := c.Query("request_id")
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId)
+	// 自助视图：若用户配置了 uid（含 related_uids），过滤切换为按 client_user_id IN scopeUids；
+	// 未配置则按 user_id = self 返回本账号日志。
+	var scopeUids []string
+	if u, e := model.GetUserById(userId, false); e == nil {
+		scopeUids = u.GetScopeUids()
+	}
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -318,6 +351,8 @@ func ExportLogsCSV(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	clientUserId := c.Query("client_user_id")
+	// uid(client_user_id) 可能含 +，URL 解码后 + 会被还原成空格，这里还原回来
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
 	requestId := c.Query("request_id")
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))

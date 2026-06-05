@@ -67,6 +67,12 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	adminInfo := make(map[string]interface{})
 	adminInfo["use_channel"] = ctx.GetStringSlice("use_channel")
+	// 各渠道耗时（毫秒），与 use_channel 一一对应，供使用日志展示重试链每段耗时
+	if v, ok := common.GetContextKey(ctx, constant.ContextKeyUseChannelTime); ok {
+		if times, ok := v.([]int64); ok && len(times) > 0 {
+			adminInfo["use_channel_time"] = times
+		}
+	}
 	isMultiKey := common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey)
 	if isMultiKey {
 		adminInfo["is_multi_key"] = true

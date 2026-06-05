@@ -295,6 +295,8 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
+		logRoute.GET("/self/error-logs", middleware.UserAuth(), controller.GetSelfErrorLogs)
+		logRoute.GET("/self/error-logs/:id/body", middleware.UserAuth(), controller.GetSelfErrorLogBody)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 
 		dataRoute := apiRouter.Group("/data")
@@ -323,6 +325,9 @@ func SetApiRouter(router *gin.Engine) {
 			logRootRoute.GET("/export", controller.ExportLogsCSV)
 			logRootRoute.GET("/:id/request", controller.GetLogRequest)
 			logRootRoute.GET("/:id/response", controller.GetLogResponse)
+			// header 仅 root 可查；同组复用 RootAuth 中间件
+			logRootRoute.GET("/:id/header", controller.GetLogHeader)
+			logRootRoute.GET("/error-logs/:id/header", controller.GetErrorLogHeader)
 		}
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())

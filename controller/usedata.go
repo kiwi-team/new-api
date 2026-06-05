@@ -162,9 +162,10 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
 
-	// 普通用户（通过 MixRouterAuth）只能查看自己的数据
-	if forceSelf, exists := c.Get("force_self_user_id"); exists && forceSelf.(bool) {
-		userId = c.GetInt("id")
+	// 普通用户（通过 MixRouterAuth）只能查看自己或其关联 uid 的数据
+	scopeUserId, scopeUids := resolveSelfScope(c)
+	if scopeUserId > 0 {
+		userId = 0 // 改用 scope 限制，不再按精确 userId 过滤
 	}
 
 	var tokenIds []int
@@ -177,7 +178,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -188,6 +189,22 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		"message": "",
 		"data":    statistics,
 	})
+}
+
+// resolveSelfScope 当请求被标记为 force_self_user_id（非管理员自助视图）时，
+// 返回当前用户 id 及其可见 uid 集合（自身 uid + 关联 uid）。否则返回 0/nil。
+func resolveSelfScope(c *gin.Context) (int, []string) {
+	if forceSelf, exists := c.Get("force_self_user_id"); !exists || !forceSelf.(bool) {
+		return 0, nil
+	}
+	selfId := c.GetInt("id")
+	if selfId <= 0 {
+		return 0, nil
+	}
+	if u, err := model.GetUserById(selfId, false); err == nil {
+		return selfId, u.GetScopeUids()
+	}
+	return selfId, nil
 }
 
 func ExportQuotaDataStatistics(c *gin.Context) {
@@ -204,9 +221,10 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
 
-	// 普通用户（通过 MixRouterAuth）只能导出自己的数据
-	if forceSelf, exists := c.Get("force_self_user_id"); exists && forceSelf.(bool) {
-		userId = c.GetInt("id")
+	// 普通用户（通过 MixRouterAuth）只能导出自己或其关联 uid 的数据
+	scopeUserId, scopeUids := resolveSelfScope(c)
+	if scopeUserId > 0 {
+		userId = 0
 	}
 
 	var tokenIds []int
@@ -219,7 +237,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -242,10 +260,13 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	if expandTokens {
 		header = append(header, "Token ID", "Token Name", "Token Key")
 	}
+	header = append(header, "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens",
+		"Cached Tokens", "Cache Cost",
+		"Cache Creation Tokens", "Cache Creation Cost",
+		"Cache Creation 5m Tokens", "Cache Creation 5m Cost",
+		"Cache Creation 1h Tokens", "Cache Creation 1h Cost")
 	if !expandModels {
-		header = append(header, "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens", "Fixed Budget", "Temp Budget")
-	} else {
-		header = append(header, "Total Count", "Total Quota", "Total Prompt Tokens", "Total Completion Tokens")
+		header = append(header, "Fixed Budget", "Temp Budget")
 	}
 	writer.Write(header)
 
@@ -266,6 +287,14 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 			strconv.FormatFloat(stat.TotalQuota, 'f', 2, 64),
 			strconv.FormatInt(stat.TotalPrompt, 10),
 			strconv.FormatInt(stat.TotalCompletion, 10),
+			strconv.FormatInt(stat.TotalCachedTokens, 10),
+			strconv.FormatFloat(stat.TotalCacheCost, 'f', 6, 64),
+			strconv.FormatInt(stat.TotalCacheCreationTokens, 10),
+			strconv.FormatFloat(stat.TotalCacheCreationCost, 'f', 6, 64),
+			strconv.FormatInt(stat.TotalCacheCreation5mTokens, 10),
+			strconv.FormatFloat(stat.TotalCacheCreation5mCost, 'f', 6, 64),
+			strconv.FormatInt(stat.TotalCacheCreation1hTokens, 10),
+			strconv.FormatFloat(stat.TotalCacheCreation1hCost, 'f', 6, 64),
 		)
 		if !expandModels {
 			row = append(row, strconv.Itoa(stat.FixedQuota), strconv.Itoa(stat.TempQuota))

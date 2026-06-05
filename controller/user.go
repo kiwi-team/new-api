@@ -198,6 +198,7 @@ func Register(c *gin.Context) {
 		Password:       user.Password,
 		DisplayName:    user.Username,
 		InviterId:      inviterId,
+		Uid:            strings.TrimSpace(user.Uid),                        // 持久化注册 uid(client_user_id)
 		Role:           common.RoleCommonUser,                              // 明确设置角色为普通用户
 		ToioRegistered: common.String2Int(os.Getenv("IS_TOIO_REGISTERED")), // 标记为已注册Toio
 	}
@@ -427,6 +428,8 @@ func GetSelf(c *gin.Context) {
 	responseData := map[string]interface{}{
 		"id":                user.Id,
 		"username":          user.Username,
+		"uid":               user.Uid,         // 账号自身的 uid(client_user_id)
+		"related_uids":      user.RelatedUids, // 关联的 uid 列表（JSON 数组字符串）
 		"display_name":      user.DisplayName,
 		"role":              user.Role,
 		"status":            user.Status,
@@ -633,6 +636,17 @@ func UpdateUser(c *gin.Context) {
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
+	}
+	// 校验 related_uids 必须是合法的 JSON 字符串数组（如 ["uid1","uid2"]）
+	updatedUser.Uid = strings.TrimSpace(updatedUser.Uid)
+	if strings.TrimSpace(updatedUser.RelatedUids) != "" {
+		var relatedUids []string
+		if err := common.UnmarshalJsonStr(updatedUser.RelatedUids, &relatedUids); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": "related_uids 必须是 JSON 字符串数组"})
+			return
+		}
+	} else {
+		updatedUser.RelatedUids = ""
 	}
 	// Merge discount settings into existing user setting
 	if updatedUser.Setting != "" {

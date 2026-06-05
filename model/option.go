@@ -58,6 +58,9 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
+	// LogHeaderRedactEnabled: 写 logs/error_logs.header 列时是否对 Authorization/Cookie/X-Api-Key 等敏感头脱敏。
+	// 默认 true；运行时读取按 != "false" 判定，老库未写入此 key 也按 true 处理（默认安全）。
+	common.OptionMap["LogHeaderRedactEnabled"] = strconv.FormatBool(true)
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)

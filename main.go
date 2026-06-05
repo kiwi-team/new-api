@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -231,10 +232,20 @@ func main() {
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: server,
+		// 把 per-conn 的 raw header 捕获 state 注入请求 ctx，供 middleware/auth.go 提取
+		// 未经 textproto canonical 化的原始大小写 + wire 顺序 headers 用于落库（debug 目的）。
+		ConnContext: middleware.RawHeaderConnContext,
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// 用包装过的 net.Listener，让每条 conn 的 Read 自动把字节 tee 到 per-conn 缓冲；
+		// 这样 handler 才能在 net/http 已经 canonical 化 r.Header 之后，回去拿到原始 wire 字节。
+		ln, err := net.Listen("tcp", srv.Addr)
+		if err != nil {
+			common.FatalLog("failed to listen: " + err.Error())
+			return
+		}
+		if err := srv.Serve(&middleware.CaptureListener{Listener: ln}); err != nil && err != http.ErrServerClosed {
 			common.FatalLog("failed to start HTTP server: " + err.Error())
 		}
 	}()

@@ -78,10 +78,15 @@ func TestValidateClaudeRequest_TemperatureOutOfRange(t *testing.T) {
 	}
 }
 
-func TestValidateClaudeRequest_InvalidRole(t *testing.T) {
-	body := `{"model":"claude-opus-4-6","max_tokens":1024,"messages":[{"role":"system","content":"hi"}]}`
-	if err := ValidateClaudeRequestBody([]byte(body)); err == nil {
-		t.Fatalf("expected error for invalid role, got nil")
+func TestValidateClaudeRequest_SystemRoleAllowed(t *testing.T) {
+	// Claude Code 会在 messages 数组中注入 role:"system" 的消息，不应被拦截。
+	body := `{"model":"claude-opus-4-8","max_tokens":1024,"messages":[
+		{"role":"user","content":"1+1?"},
+		{"role":"system","content":"The following skills are available..."},
+		{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc"},{"type":"text","text":"2"}]}
+	]}`
+	if err := ValidateClaudeRequestBody([]byte(body)); err != nil {
+		t.Fatalf("expected system-role message to pass, got: %v", err)
 	}
 }
 

@@ -128,14 +128,25 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 	}
 }
 
+// memoryRateLimitKeys 构造内存限流使用的三个 key。
+// 隔离粒度是 (uid, tokenId)：同一个用户的不同 token 计数互不影响，
+// 即使它们属于同一个分组。限流额度仍来自 token 所属分组的配置。
+// check 哨兵放在 uid/tokenId 段之前，结构上不可能与 success/total bucket 碰撞。
+func memoryRateLimitKeys(userId, tokenId string) (totalKey, successKey, checkKey string) {
+	suffix := ":" + userId + ":t=" + tokenId
+	totalKey = ModelRequestRateLimitCountMark + suffix
+	successKey = ModelRequestRateLimitSuccessCountMark + suffix
+	checkKey = ModelRequestRateLimitSuccessCountMark + ":check" + suffix
+	return
+}
+
 // 内存限流处理器
-func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
+func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int, tokenId string) gin.HandlerFunc {
 	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
 
 	return func(c *gin.Context) {
 		userId := strconv.Itoa(c.GetInt("id"))
-		totalKey := ModelRequestRateLimitCountMark + userId
-		successKey := ModelRequestRateLimitSuccessCountMark + userId
+		totalKey, successKey, checkKey := memoryRateLimitKeys(userId, tokenId)
 
 		// 1. 检查总请求数限制（当totalMaxCount为0时跳过）
 		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
@@ -146,7 +157,6 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 
 		// 2. 检查成功请求数限制
 		// 使用一个临时key来检查限制，这样可以避免实际记录
-		checkKey := successKey + "_check"
 		if !inMemoryRateLimiter.Request(checkKey, successMaxCount, duration) {
 			c.Status(http.StatusTooManyRequests)
 			c.Abort()
@@ -191,10 +201,12 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		}
 
 		// 根据存储类型选择并执行限流处理器
+		// 内存模式按 (uid, tokenId) 隔离，确保同用户的不同 token 之间相互不影响。
+		tokenId := strconv.Itoa(c.GetInt("token_id"))
 		if common.RedisEnabled {
 			redisRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		} else {
-			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
+			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount, tokenId)(c)
 		}
 	}
 }

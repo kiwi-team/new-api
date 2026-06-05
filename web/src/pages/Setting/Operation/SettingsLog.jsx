@@ -46,6 +46,7 @@ export default function SettingsLog(props) {
   const [loadingCleanHistoryLog, setLoadingCleanHistoryLog] = useState(false);
   const [inputs, setInputs] = useState({
     LogConsumeEnabled: false,
+    LogHeaderRedactEnabled: true,
     historyTimestamp: dayjs().subtract(1, 'month').toDate(),
   });
   const refForm = useRef();
@@ -215,6 +216,32 @@ export default function SettingsLog(props) {
                     });
                   }}
                 />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'LogHeaderRedactEnabled'}
+                  label={t(
+                    '日志请求头脱敏（Authorization/Cookie/X-Api-Key 等替换为 ***末4位）',
+                  )}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogHeaderRedactEnabled: value,
+                    });
+                  }}
+                />
+                <Text
+                  type='tertiary'
+                  size='small'
+                  style={{ display: 'block', marginTop: 4 }}
+                >
+                  {t(
+                    '关闭后 logs/error_logs.header 列会原样保存所有请求头，包括 token，谨慎开启',
+                  )}
+                </Text>
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Spin spinning={loadingCleanHistoryLog}>

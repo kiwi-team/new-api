@@ -123,18 +123,11 @@ const LogsFilters = ({
                 pure
                 size='small'
               />
+              {/* UID 查询：对应 client_user_id，支持模糊匹配，值可能包含 + 等特殊符号 */}
               <Form.Input
                 field='client_user_id'
                 prefix={<IconSearch />}
-                placeholder={t('Client User ID')}
-                showClear
-                pure
-                size='small'
-              />
-              <Form.Input
-                field='request_id'
-                prefix={<IconSearch />}
-                placeholder={t('Request ID')}
+                placeholder={t('UID(模糊)')}
                 showClear
                 pure
                 size='small'
