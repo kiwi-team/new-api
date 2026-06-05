@@ -10,6 +10,9 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	// ModelOutputMapping 输出模型重命名：键为上游响应中返回的模型名称，值为返回给用户的模型名称。
+	// 存储为 JSON 字符串，例如：{"zai-org/glm-4.7-flash": "glm-4.7"}
+	ModelOutputMapping string `json:"model_output_mapping,omitempty"`
 }
 
 type VertexKeyType string

@@ -83,6 +83,10 @@ const MODEL_MAPPING_EXAMPLE = {
   'gpt-3.5-turbo': 'gpt-3.5-turbo-0125',
 };
 
+const MODEL_OUTPUT_MAPPING_EXAMPLE = {
+  'zai-org/glm-4.7-flash': 'glm-4.7',
+};
+
 const STATUS_CODE_MAPPING_EXAMPLE = {
   400: '500',
 };
@@ -143,6 +147,7 @@ const EditChannelModal = (props) => {
     base_url: '',
     other: '',
     model_mapping: '',
+    model_output_mapping: '',
     status_code_mapping: '',
     models: [],
     auto_ban: 1,
@@ -603,6 +608,7 @@ const EditChannelModal = (props) => {
             parsedSettings.system_prompt_override || false;
           data.google_file_bucket = parsedSettings.google_file_bucket || '';
           data.google_file_upload = parsedSettings.google_file_upload || '';
+          data.model_output_mapping = parsedSettings.model_output_mapping || '';
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -611,6 +617,7 @@ const EditChannelModal = (props) => {
           data.pass_through_body_enabled = false;
           data.system_prompt = '';
           data.system_prompt_override = false;
+          data.model_output_mapping = '';
         }
       } else {
         data.force_format = false;
@@ -621,6 +628,7 @@ const EditChannelModal = (props) => {
         data.system_prompt_override = false;
         data.google_file_bucket = '';
         data.google_file_upload = '';
+        data.model_output_mapping = '';
       }
 
       if (data.settings) {
@@ -1368,6 +1376,7 @@ const EditChannelModal = (props) => {
       system_prompt_override: localInputs.system_prompt_override || false,
       google_file_bucket: localInputs.google_file_bucket || '',
       google_file_upload: localInputs.google_file_upload || '',
+      model_output_mapping: localInputs.model_output_mapping || '',
     };
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
@@ -1422,6 +1431,7 @@ const EditChannelModal = (props) => {
     delete localInputs.pass_through_body_enabled;
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
+    delete localInputs.model_output_mapping;
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -2955,6 +2965,29 @@ const EditChannelModal = (props) => {
                       }}
                       extraText={t(
                         '键为请求中的模型名称，值为要替换的模型名称',
+                      )}
+                    />
+
+                    <JSONEditor
+                      key={`model_output_mapping-${isEdit ? channelId : 'new'}`}
+                      field='model_output_mapping'
+                      label={t('输出模型重命名')}
+                      placeholder={
+                        t(
+                          '此项可选，用于修改返回给用户的响应体中的模型名称，为一个 JSON 字符串，键为上游响应返回的模型名称（需完整精确匹配），值为返回给用户的模型名称，例如：',
+                        ) +
+                        `\n${JSON.stringify(MODEL_OUTPUT_MAPPING_EXAMPLE, null, 2)}`
+                      }
+                      value={inputs.model_output_mapping || ''}
+                      onChange={(value) =>
+                        handleInputChange('model_output_mapping', value)
+                      }
+                      template={MODEL_OUTPUT_MAPPING_EXAMPLE}
+                      templateLabel={t('填入模板')}
+                      editorType='keyValue'
+                      formApi={formApiRef.current}
+                      extraText={t(
+                        '键为上游响应返回的模型名称，值为返回给用户的模型名称',
                       )}
                     />
                   </Card>

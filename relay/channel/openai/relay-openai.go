@@ -116,28 +116,52 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	return helper.ObjectData(c, lastStreamResponse)
 }
 
-func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
-	if strings.Contains(info.UpstreamModelName, "glm-4.7") || strings.Contains(info.UpstreamModelName, "glm-5") {
-		var lastStreamResponse dto.ChatCompletionsStreamResponse
-		err := common.UnmarshalJsonStr(lastStreamData, &lastStreamResponse)
-		if err != nil {
-			common.SysError("error setting delta role: " + err.Error())
-			return lastStreamData
+// remapResponseModelName 计算返回给用户的模型名称。
+// 优先使用渠道配置的「输出模型重命名」(ModelOutputMapping，按完整模型名精确匹配)，
+// 未命中时回退到内置的 glm 重命名逻辑以保持向后兼容。
+func remapResponseModelName(info *relaycommon.RelayInfo, model string) string {
+	if mapping := info.ChannelSetting.ModelOutputMapping; mapping != "" && mapping != "{}" {
+		modelMap := make(map[string]string)
+		if err := common.UnmarshalJsonStr(mapping, &modelMap); err != nil {
+			common.SysError("error unmarshalling model_output_mapping: " + err.Error())
+		} else if mapped, ok := modelMap[model]; ok && mapped != "" {
+			return mapped
 		}
-		if strings.Contains(lastStreamResponse.Model, "glm-4.7") {
-			lastStreamResponse.Model = "glm-4.7"
-		}
-		if strings.Contains(lastStreamResponse.Model, "glm-5") {
-			lastStreamResponse.Model = "glm-5"
-		}
-		byteArr, err1 := common.Marshal(lastStreamResponse)
-		if err1 != nil {
-			common.SysError("error setting delta role: " + err1.Error())
-			return lastStreamData
-		}
-		return string(byteArr)
 	}
-	return lastStreamData
+	// 内置兼容逻辑
+	if strings.Contains(model, "glm-4.7") {
+		return "glm-4.7"
+	}
+	if strings.Contains(model, "glm-5") {
+		return "glm-5"
+	}
+	return model
+}
+
+func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
+	hasOutputMapping := info.ChannelSetting.ModelOutputMapping != "" && info.ChannelSetting.ModelOutputMapping != "{}"
+	isBuiltinRemap := strings.Contains(info.UpstreamModelName, "glm-4.7") || strings.Contains(info.UpstreamModelName, "glm-5")
+	// 无配置且非内置场景时跳过解析，避免逐个流式分片的额外开销
+	if !hasOutputMapping && !isBuiltinRemap {
+		return lastStreamData
+	}
+	var lastStreamResponse dto.ChatCompletionsStreamResponse
+	err := common.UnmarshalJsonStr(lastStreamData, &lastStreamResponse)
+	if err != nil {
+		common.SysError("error setting response model: " + err.Error())
+		return lastStreamData
+	}
+	newModel := remapResponseModelName(info, lastStreamResponse.Model)
+	if newModel == lastStreamResponse.Model {
+		return lastStreamData
+	}
+	lastStreamResponse.Model = newModel
+	byteArr, err1 := common.Marshal(lastStreamResponse)
+	if err1 != nil {
+		common.SysError("error setting response model: " + err1.Error())
+		return lastStreamData
+	}
+	return string(byteArr)
 }
 
 func setDeltaRole(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
@@ -455,12 +479,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if strings.Contains(simpleResponse.Model, "glm-4.7") {
-		simpleResponse.Model = "glm-4.7"
-		responseBody, _ = common.Marshal(simpleResponse)
-	}
-	if strings.Contains(simpleResponse.Model, "glm-5") {
-		simpleResponse.Model = "glm-5"
+	if newModel := remapResponseModelName(info, simpleResponse.Model); newModel != simpleResponse.Model {
+		simpleResponse.Model = newModel
 		responseBody, _ = common.Marshal(simpleResponse)
 	}
 	isGuoguo := strings.Contains(info.ChannelBaseUrl, "aiguoguo")

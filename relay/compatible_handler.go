@@ -449,6 +449,14 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			//textRequest.EnableThinking = true
 			// 默认是要开启思考的，和官方保持一致的行为
 			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
+		} else if strings.Contains(textRequest.Model, "glm-4.7-flash") {
+			if textRequest.THINKING != nil {
+				if thinking.Type == "enabled" {
+					textRequest.EnableThinking = true
+				} else if thinking.Type == "disabled" {
+					textRequest.EnableThinking = false
+				}
+			}
 		}
 	} else if info.ChannelType == common.ChannelTypeAli {
 		if strings.Contains(textRequest.Model, "glm") {
