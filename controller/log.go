@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-contrib/sessions"
 
 	"github.com/gin-gonic/gin"
@@ -124,6 +126,13 @@ func GetAllLogs(c *gin.Context) {
 	// 		"page_size": pageSize,
 	// 	},
 	// })
+	// header 字段仅 root 可见;其他用户(包括 admin / 组织 admin)的列表响应里清掉,
+	// 配合既有的 GET /api/log/:id/header(RootAuth) 端点保持一致。
+	if c.GetInt("role") < common.RoleRootUser {
+		for i := range logs {
+			logs[i].Header = nil
+		}
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
@@ -213,16 +222,34 @@ func GetUserLogs(c *gin.Context) {
 	group := c.Query("group")
 	isAdmin := isAdmin(c)
 	requestId := c.Query("request_id")
-	// 自助视图：若用户配置了 uid（含 related_uids），过滤切换为按 client_user_id IN scopeUids；
-	// 未配置则按 user_id = self 返回本账号日志。
+	// mt 业务筛选(详见 org.md 4.3):mt org 用户在使用日志页用 UID/MT Session/Trace/Traj 收窄数据
+	clientUserId := c.Query("client_user_id")
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
+	// 自助视图数据范围:
+	//   - mt-admin: 扩展到 mt 全组织成员的 uid + related_uids 并集(详见 org.md 4.2.1)
+	//   - 其他用户: 沿用 GetScopeUids(自己 uid + 自己 related_uids)
+	//   - 用户没配 uid 时 scopeUids 为空,model.GetUserLogs 兜底为 WHERE user_id = self
 	var scopeUids []string
 	if u, e := model.GetUserById(userId, false); e == nil {
-		scopeUids = u.GetScopeUids()
+		if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+			scope := service.ComputeOrgScope(u)
+			scopeUids = scope.UidSet
+		} else {
+			scopeUids = u.GetScopeUids()
+		}
 	}
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids)
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids, clientUserId, mtSessionId, traceId, trajId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// header 字段仅 root 可见;其他用户(自助视图)的列表响应里清掉。
+	if c.GetInt("role") < common.RoleRootUser {
+		for i := range logs {
+			logs[i].Header = nil
+		}
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)

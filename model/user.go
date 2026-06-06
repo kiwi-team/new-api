@@ -21,9 +21,9 @@ type User struct {
 	Id               int            `json:"id"`
 	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
 	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	OriginalPassword string         `json:"original_password" gorm:"-:all"`                // this field is only for Password change verification, don't save it to database!
 	Uid              string         `json:"uid" gorm:"type:varchar(200);index;default:''"` // 账号自身的 uid(client_user_id)，注册时校验并持久化
-	RelatedUids      string         `json:"related_uids" gorm:"type:text"` // 关联的 uid 列表，JSON 数组字符串，如 ["uid1","uid2"]
+	RelatedUids      string         `json:"related_uids" gorm:"type:text"`                 // 关联的 uid 列表，JSON 数组字符串，如 ["uid1","uid2"]
 	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
 	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
 	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
@@ -50,6 +50,10 @@ type User struct {
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	ToioRegistered   int            `json:"toio_registered" gorm:"type:int;default:0;index"`
+	// 组织标签：org_code 对应 constant.Orgs 中的 code，org_role 是组织内角色(member/leader/admin)。
+	// 设计文档见 org.md。空 org_code 等同 "other"(普通用户体验)。
+	OrgCode string `json:"org_code" gorm:"type:varchar(32);index;default:'other'"`
+	OrgRole string `json:"org_role" gorm:"type:varchar(32);default:'member'"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -557,6 +561,9 @@ func (user *User) Edit(updatePassword bool) error {
 		"setting":         newUser.Setting,
 		"uid":             newUser.Uid,
 		"related_uids":    newUser.RelatedUids,
+		// 组织标签:详见 org.md
+		"org_code": newUser.OrgCode,
+		"org_role": newUser.OrgRole,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

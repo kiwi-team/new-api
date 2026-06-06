@@ -11,6 +11,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// checkUserIdInOrgScope 校验 user_id 是否在当前用户的 org scope 内。
+// 系统 admin/root 直接放行(看全局)。非系统 admin 用户(wl-admin 等)只能查
+// 本组织成员的 user_id。详见 org.md 4.2.2。
+func checkUserIdInOrgScope(c *gin.Context, userId int) bool {
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		return true
+	}
+	for _, id := range scope.UserIdSet {
+		if id == userId {
+			return true
+		}
+	}
+	return false
+}
+
 // ========== Task 4.1: Admin config endpoints ==========
 
 // GetSettlementConfigs GET /api/settlement/config?user_id=
@@ -29,6 +45,14 @@ func GetSettlementConfigs(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "user_id 参数格式错误",
+		})
+		return
+	}
+	// 组织数据隔离:wl-admin 等只能查本 org 成员的结算配置(详见 org.md 4.2.2 只读约束)
+	if !checkUserIdInOrgScope(c, userId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "无权查看该 user_id 的结算配置(不在本组织范围内)",
 		})
 		return
 	}
@@ -444,6 +468,7 @@ func SelfExportSettlementBillCSV(c *gin.Context) {
 
 // AdminGetSettlementBill GET /api/settlement/bill/admin?user_id=&start_timestamp=&end_timestamp=
 // Admin endpoint to query any user's settlement bill.
+// 组织数据隔离:wl-admin 等非系统 admin 只能查本 org 成员的账单(详见 org.md 4.2.2)。
 func AdminGetSettlementBill(c *gin.Context) {
 	userIdStr := c.Query("user_id")
 	startTimestampStr := c.Query("start_timestamp")
@@ -460,6 +485,13 @@ func AdminGetSettlementBill(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "user_id 参数格式错误",
+		})
+		return
+	}
+	if !checkUserIdInOrgScope(c, userId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "无权查看该 user_id 的账单(不在本组织范围内)",
 		})
 		return
 	}
@@ -504,6 +536,7 @@ func AdminGetSettlementBill(c *gin.Context) {
 
 // AdminExportSettlementBillCSV GET /api/settlement/bill/admin/export?user_id=&start_timestamp=&end_timestamp=
 // Admin endpoint to export a user's settlement bill as CSV.
+// 组织数据隔离:wl-admin 等只能导出本 org 成员的账单(详见 org.md 4.2.2)。
 func AdminExportSettlementBillCSV(c *gin.Context) {
 	userIdStr := c.Query("user_id")
 	startTimestampStr := c.Query("start_timestamp")
@@ -520,6 +553,13 @@ func AdminExportSettlementBillCSV(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "user_id 参数格式错误",
+		})
+		return
+	}
+	if !checkUserIdInOrgScope(c, userId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "无权导出该 user_id 的账单(不在本组织范围内)",
 		})
 		return
 	}

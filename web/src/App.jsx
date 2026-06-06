@@ -21,12 +21,12 @@ import React, { lazy, Suspense, useContext, useMemo, useEffect } from 'react';
 import { Route, Routes, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, RootRoute, isRoot } from './helpers';
+import { AuthRedirect, PrivateRoute, AdminRoute, LeaderRoute, RootRoute, PageRoute, isRoot } from './helpers';
 import { isMixRouter } from './helpers';
 import RegisterForm from './components/auth/RegisterForm';
-import ToioRegisterForm from './components/auth/ToioRegisterForm';
+// ToioRegisterForm import 已删除(组织标签系统替代)
 import LoginForm from './components/auth/LoginForm';
-import ToioLoginForm from './components/auth/ToioLoginForm';
+// ToioLoginForm import 已删除(组织标签系统替代)
 import NotFound from './pages/NotFound';
 import Forbidden from './pages/Forbidden';
 import Setting from './pages/Setting';
@@ -76,11 +76,34 @@ const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 
+// 组织标签:砍光模式(mt)下,只允许的 URL 白名单 — 按 service.GetUserMenu 的 page key 映射。
+// 不在白名单的访问被重定向到首个允许页。详见 org.md 7.2。
+const PAGE_KEY_TO_URL = {
+  log: '/console/log',
+  quota_statistics: '/console/quota-statistics',
+  client_user_quota: '/console/client-user-quota',
+  project: '/console/project',
+  bill: '/console/bill',
+  settlement_config_readonly: '/console/settlement-config',
+};
+
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [statusState] = useContext(StatusContext);
-  const toioMode = (localStorage.getItem('is_toio') === 'true') && !isRoot();
+
+  // 组织标签:消费 localStorage.user_menu(UserContext 在登录后写入)
+  // 系统 admin 跳过砍光逻辑,他们看完整菜单
+  const userMenu = (() => {
+    try {
+      const raw = localStorage.getItem('user_menu');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const isWhitelistMode =
+    userMenu?.topbar_mode === 'logout_only' && !isRoot();
 
   // 获取模型广场权限配置
   const pricingRequireAuth = useMemo(() => {
@@ -106,10 +129,15 @@ function App() {
 
   return (
     <SetupCheck>
-      {toioMode && (() => {
-        const allowed = ['/console/quota-statistics', '/console/client-user-quota','/console/project'];
-        if (!allowed.includes(location.pathname)) {
-          return <Navigate to='/console/quota-statistics' replace />;
+      {isWhitelistMode && (() => {
+        // 砍光模式:白名单从 userMenu.pages 计算,落地为允许的 URL 列表;
+        // 当前路径不在白名单则跳到第一个允许页
+        const allowed = (userMenu?.pages || [])
+          .map((p) => PAGE_KEY_TO_URL[p])
+          .filter(Boolean);
+        if (allowed.length === 0) return null;
+        if (!allowed.some((u) => location.pathname.startsWith(u))) {
+          return <Navigate to={allowed[0]} replace />;
         }
         return null;
       })()}
@@ -214,15 +242,10 @@ function App() {
         <Route
           path='/console/quota-statistics'
           element={
-            toioMode || isMixRouter() ? (
-              <PrivateRoute>
-                <QuotaStatistics />
-              </PrivateRoute>
-            ) : (
-              <LeaderRoute>
-                <QuotaStatistics />
-              </LeaderRoute>
-            )
+            // 组织标签:消耗统计在 (mt-leader/admin, wl-admin) menu 里;系统 admin 始终通过
+            <PageRoute pageKey='quota_statistics'>
+              <QuotaStatistics />
+            </PageRoute>
           }
         />
         <Route
@@ -236,23 +259,19 @@ function App() {
         <Route
           path='/console/client-user-quota'
           element={
-            toioMode ? (
-              <PrivateRoute>
-                <CliendUserQuotaPage />
-              </PrivateRoute>
-            ) : (
-              <AdminRoute>
-                <CliendUserQuotaPage />
-              </AdminRoute>
-            )
+            // 组织标签:mt-admin 在 menu 里有此页;系统 admin 始终通过
+            <PageRoute pageKey='client_user_quota'>
+              <CliendUserQuotaPage />
+            </PageRoute>
           }
         />
         <Route
           path='/console/project'
           element={
-            <AdminRoute>
+            // 组织标签:mt-admin 在 menu 里有此页;系统 admin 始终通过
+            <PageRoute pageKey='project'>
               <ProjectPage />
-            </AdminRoute>
+            </PageRoute>
           }
         />
         <Route
@@ -281,32 +300,14 @@ function App() {
             </Suspense>
           }
         />
-        <Route
-          path='/toio/login'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <AuthRedirect>
-                <ToioLoginForm />
-              </AuthRedirect>
-            </Suspense>
-          }
-        />
+        {/* /toio/login + /toio/register 路由已删除(组织标签系统替代,详见 org.md)。
+            老 toio 用户登录走统一 /login,所属组织由 root 手动打 tag。 */}
         <Route
           path='/register'
           element={
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
               <AuthRedirect>
                 <RegisterForm />
-              </AuthRedirect>
-            </Suspense>
-          }
-        />
-        <Route
-          path='/toio/register'
-          element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <AuthRedirect>
-                <ToioRegisterForm />
               </AuthRedirect>
             </Suspense>
           }

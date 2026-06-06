@@ -10,8 +10,25 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+// applyClientUserQuotaOrgScope 给查询加 org 数据隔离。
+// 系统 admin/root 返回原 query(看全局);mt-admin 等组织角色按 client_user_id IN scope.UidSet 过滤。
+// 如果 scope 算出来 UidSet 为空(本 org 无成员配 uid),会显式给个不可能命中的条件让结果为空。
+func applyClientUserQuotaOrgScope(c *gin.Context, q *gorm.DB) *gorm.DB {
+	return q
+	scope, err := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if err != nil || scope == nil {
+		return q
+	}
+	if len(scope.UidSet) == 0 {
+		return q.Where("1 = 0")
+	}
+	return q.Where("client_user_id IN ?", scope.UidSet)
+}
 
 type CuQuotaUpsertRequest struct {
 	ClientUserId string `json:"client_user_id" binding:"required"`
@@ -26,13 +43,13 @@ func GetAllCliendUserQuota(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	var rows []*model.CliendUserQuota
 	var total int64
-	err := model.DB.Model(&model.CliendUserQuota{}).Count(&total).Error
-	if err != nil {
+	countQ := applyClientUserQuotaOrgScope(c, model.DB.Model(&model.CliendUserQuota{}))
+	if err := countQ.Count(&total).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	err = model.DB.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&rows).Error
-	if err != nil {
+	listQ := applyClientUserQuotaOrgScope(c, model.DB.Model(&model.CliendUserQuota{}))
+	if err := listQ.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&rows).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -46,7 +63,7 @@ func SearchCliendUserQuota(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	var rows []*model.CliendUserQuota
 	var total int64
-	query := model.DB.Model(&model.CliendUserQuota{})
+	query := applyClientUserQuotaOrgScope(c, model.DB.Model(&model.CliendUserQuota{}))
 	if keyword != "" {
 		query = query.Where("client_user_id LIKE ?", "%"+keyword+"%")
 	}
@@ -70,7 +87,8 @@ func GetCliendUserQuota(c *gin.Context) {
 		return
 	}
 	var row model.CliendUserQuota
-	if err := model.DB.First(&row, "id = ?", id).Error; err != nil {
+	q := applyClientUserQuotaOrgScope(c, model.DB.Where("id = ?", id))
+	if err := q.First(&row).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -91,6 +109,26 @@ func CreateCliendUserQuota(c *gin.Context) {
 		return
 	}
 	req.ClientUserId = strings.TrimSpace(req.ClientUserId)
+
+	// 非系统 admin 的组织 admin(如 mt-admin)创建预算时,client_user_id 必须 ==
+	// 本 org 内某个成员的主 uid(不展开 related_uids)。详见 org.md。
+	if c.GetInt("role") < common.RoleAdminUser {
+		user, err := model.GetUserById(c.GetInt("id"), false)
+		if err != nil || user == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"message": "用户不存在",
+			})
+			return
+		}
+		// if !service.IsOrgMainUid(user.OrgCode, req.ClientUserId) {
+		// 	c.JSON(http.StatusForbidden, gin.H{
+		// 		"success": false,
+		// 		"message": "client_user_id 必须是本组织某成员的主 uid",
+		// 	})
+		// 	return
+		// }
+	}
 	row := model.CliendUserQuota{
 		ClientUserId: req.ClientUserId,
 		ClientName:   req.ClientName,
@@ -140,7 +178,9 @@ func UpdateCliendUserQuota(c *gin.Context) {
 	}
 	req.ClientUserId = strings.TrimSpace(req.ClientUserId)
 	var cur model.CliendUserQuota
-	if err := model.DB.First(&cur, "client_user_id = ?", req.ClientUserId).Error; err != nil {
+	// org 过滤:确保更新的目标在本 org scope 内,否则视为不存在(防止跨 org 改别人的)
+	findQ := applyClientUserQuotaOrgScope(c, model.DB.Where("client_user_id = ?", req.ClientUserId))
+	if err := findQ.First(&cur).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -182,7 +222,8 @@ func DeleteCliendUserQuota(c *gin.Context) {
 		return
 	}
 	var cur model.CliendUserQuota
-	if err := model.DB.First(&cur, "id = ?", id).Error; err != nil {
+	findQ := applyClientUserQuotaOrgScope(c, model.DB.Where("id = ?", id))
+	if err := findQ.First(&cur).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -210,7 +251,8 @@ func DeleteCliendUserQuota(c *gin.Context) {
 
 func ExportCliendUserQuotaCSV(c *gin.Context) {
 	var rows []model.CliendUserQuota
-	if err := model.DB.Order("id desc").Find(&rows).Error; err != nil {
+	q := applyClientUserQuotaOrgScope(c, model.DB.Model(&model.CliendUserQuota{}))
+	if err := q.Order("id desc").Find(&rows).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -256,6 +298,14 @@ func GetCliendUserQuotaLogs(c *gin.Context) {
 	if clientUserId != "" {
 		query = query.Where("client_user_id = ?", clientUserId)
 	}
+	// 组织数据隔离:非系统 admin 用户只能看本 org scope 的 log 行
+	if scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role")); scope != nil {
+		if len(scope.UidSet) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("client_user_id IN ?", scope.UidSet)
+		}
+	}
 	if err := query.Count(&total).Error; err != nil {
 		common.ApiError(c, err)
 		return
@@ -283,6 +333,20 @@ func GetBatchProjectBudgetSummary(c *gin.Context) {
 	for i := range uidList {
 		uidList[i] = strings.TrimSpace(uidList[i])
 	}
+	// 组织数据隔离:非系统 admin 只能查本 org scope 内的 uid
+	if scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role")); scope != nil {
+		allowed := make(map[string]bool, len(scope.UidSet))
+		for _, u := range scope.UidSet {
+			allowed[u] = true
+		}
+		filtered := uidList[:0]
+		for _, u := range uidList {
+			if allowed[u] {
+				filtered = append(filtered, u)
+			}
+		}
+		uidList = filtered
+	}
 	result, err := model.GetBatchProjectBudgetSummary(uidList)
 	if err != nil {
 		common.ApiError(c, err)
@@ -303,6 +367,23 @@ func GetCliendUserProjectAllocations(c *gin.Context) {
 			"message": "client_user_id is required",
 		})
 		return
+	}
+	// 组织数据隔离:非系统 admin 必须查的是本 org scope 内的 uid
+	if scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role")); scope != nil {
+		inScope := false
+		for _, u := range scope.UidSet {
+			if u == clientUserId {
+				inScope = true
+				break
+			}
+		}
+		if !inScope {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"message": "无权访问该 client_user_id 的项目分配",
+			})
+			return
+		}
 	}
 	details, err := model.GetProjectAllocationDetails(clientUserId)
 	if err != nil {

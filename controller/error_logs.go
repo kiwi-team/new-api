@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -120,6 +121,12 @@ func GetAllErrorLogs(c *gin.Context) {
 		})
 		return
 	}
+	// header 字段仅 root 可见;其他用户(包括 admin)列表里清掉。
+	if c.GetInt("role") < common.RoleRootUser {
+		for i := range logs {
+			logs[i].Header = nil
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -132,13 +139,20 @@ func GetAllErrorLogs(c *gin.Context) {
 	})
 }
 
-// resolveErrorLogSelfScope 返回当前登录用户的 id 及其可见 uid 集合（自身 uid + 关联 uid）。
+// resolveErrorLogSelfScope 返回当前登录用户的 id 及其可见 uid 集合。
+// 数据范围规则(详见 org.md 4.2.1):
+//   - mt-admin: 扩展为 mt 全组织成员的 uid + related_uids 并集
+//   - 其他用户: 自身 uid + 自身 related_uids
 func resolveErrorLogSelfScope(c *gin.Context) (int, []string) {
 	selfId := c.GetInt("id")
 	if selfId <= 0 {
 		return 0, nil
 	}
 	if u, err := model.GetUserById(selfId, false); err == nil {
+		if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+			scope := service.ComputeOrgScope(u)
+			return selfId, scope.UidSet
+		}
 		return selfId, u.GetScopeUids()
 	}
 	return selfId, nil
@@ -191,6 +205,12 @@ func GetSelfErrorLogs(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
+	}
+	// header 字段仅 root 可见;其他用户(自助视图)列表里清掉。
+	if c.GetInt("role") < common.RoleRootUser {
+		for i := range logs {
+			logs[i].Header = nil
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

@@ -53,9 +53,9 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     navigate,
     t,
   } = useHeaderBar({ onMobileMenuToggle, drawerOpen });
-  const toioOnlyLogout =
-    (userState?.user && userState.user.toio_registered === 1) ||
-    localStorage.getItem('is_toio') === 'true';
+  // 组织标签系统:消费 userMenu.topbar_mode (详见 org.md 6.1 / 7.3)。
+  // 不再读 toio_registered / is_toio。
+  const toioOnlyLogout = userState?.userMenu?.topbar_mode === 'logout_only';
 
   const {
     noticeVisible,

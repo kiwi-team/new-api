@@ -37,16 +37,6 @@ const QuotaStatisticsTable = () => {
   const [expandModels, setExpandModels] = useState(false);
   const [expandDates, setExpandDates] = useState(false);
   const [expandTokens, setExpandTokens] = useState(false);
-  const toioMode = (() => {
-    try {
-      const u = localStorage.getItem('user');
-      if (u) {
-        const parsed = JSON.parse(u);
-        if (parsed?.toio_registered === 1) return true;
-      }
-    } catch {}
-    return localStorage.getItem('is_toio') === 'true';
-  })();
   const [clientUserId, setClientUserId] = useState('');
   const [clientScenairos, setClientScenairos] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
@@ -339,15 +329,6 @@ const QuotaStatisticsTable = () => {
     fetchData();
   }, [selectedTokenIds]);
 
-  useEffect(() => {
-    if (toioMode) {
-      setExpandModels(false);
-      setExpandDates(false);
-      setExpandTokens(false);
-      setModelName('');
-    }
-  }, [toioMode]);
-
   const handleExport = async () => {
     if (!dateRange || dateRange.length !== 2) {
         showError('Please select a date range first');
@@ -410,46 +391,37 @@ const QuotaStatisticsTable = () => {
             <Tag color='white' shape='circle'>
               <span>总消耗: ${totalUSD.toFixed(2)}</span>
             </Tag>
-            <Tag color='grey' shape='circle'>
-              <span>缓存费用为按当前倍率估算，仅供参考</span>
-            </Tag>
-            {!toioMode && (
-              <>
-                <Button
-                  type='tertiary'
-                  onClick={() => setExpandModels(!expandModels)}
-                >
-                  {expandModels ? '按模型展开: 开' : '按模型展开: 关'}
-                </Button>
-                <Button
-                  type='tertiary'
-                  onClick={() => setExpandDates(!expandDates)}
-                >
-                  {expandDates ? '按日期展开: 开' : '按日期展开: 关'}
-                </Button>
-                <Button
-                  type='tertiary'
-                  onClick={() => setExpandTokens(!expandTokens)}
-                >
-                  {expandTokens ? '按Token展开: 开' : '按Token展开: 关'}
-                </Button>
-              </>
-            )}
+            <Button
+              type='tertiary'
+              onClick={() => setExpandModels(!expandModels)}
+            >
+              {expandModels ? '按模型展开: 开' : '按模型展开: 关'}
+            </Button>
+            <Button
+              type='tertiary'
+              onClick={() => setExpandDates(!expandDates)}
+            >
+              {expandDates ? '按日期展开: 开' : '按日期展开: 关'}
+            </Button>
+            <Button
+              type='tertiary'
+              onClick={() => setExpandTokens(!expandTokens)}
+            >
+              {expandTokens ? '按Token展开: 开' : '按Token展开: 关'}
+            </Button>
         </Space>
         <Space>
-            {!toioMode && (
-              <Input 
-                  placeholder="Model Name" 
-                  value={modelName} 
-                  onChange={setModelName} 
-                  style={{ width: 150 }}
-              />
-            )}
+            <Input
+                placeholder="Model Name"
+                value={modelName}
+                onChange={setModelName}
+                style={{ width: 150 }}
+            />
             {!(isMixRouter()) && (<>
-            <Input 
-                placeholder="UID(模糊)" 
-                value={clientUserId} 
-                onChange={setClientUserId} 
+            <Input
+                placeholder="UID(模糊)"
+                value={clientUserId}
+                onChange={setClientUserId}
                 style={{ width: 150 }}
             />
             <Select

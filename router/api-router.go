@@ -3,6 +3,7 @@ package router
 import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/service"
 
 	// Import oauth package to register providers via init()
 	_ "github.com/QuantumNous/new-api/oauth"
@@ -69,6 +70,8 @@ func SetApiRouter(router *gin.Engine) {
 			{
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
 				selfRoute.GET("/self", controller.GetSelf)
+				// 组织标签系统:登录后前端调一次拿菜单 + 顶栏模式,详见 org.md
+				selfRoute.GET("/menu", controller.GetUserMenu)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", controller.UpdateSelf)
 				selfRoute.DELETE("/self", controller.DeleteSelf)
@@ -204,8 +207,9 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
+		// org.md 全系统级约束:channels 升级为 root only,非 root 不可见所有 channel 接口
 		channelRoute := apiRouter.Group("/channel")
-		channelRoute.Use(middleware.AdminAuth())
+		channelRoute.Use(middleware.RootAuth())
 		{
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/channel-list-by-model", controller.GetChannelsByModelName)
@@ -245,8 +249,10 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/copy/:id", controller.CopyChannel)
 			channelRoute.POST("/multi_key/manage", controller.ManageMultiKeys)
 		}
+		// org.md 全系统级约束:channels 全部 root only,channel-name-list 也不例外
+		// (非 root 用户的 token 编辑表单本就不显示 specific_channel_id 相关字段)
 		userCannelRoute := apiRouter.Group("/channel")
-		userCannelRoute.Use(middleware.UserAuth())
+		userCannelRoute.Use(middleware.RootAuth())
 		{
 			userCannelRoute.GET("/channel-name-list", controller.GetNameIdList)
 		}
@@ -307,13 +313,8 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
 		dataRoute.GET("/project-names", middleware.MixRouterAuth(), controller.GetDistinctProjectNames)
 		dataRoute.GET("/token-list", middleware.MixRouterAuth(), controller.GetTokenListForStatistics)
-		toioDataRoute := apiRouter.Group("/toio/data")
-		toioDataRoute.Use(middleware.ToioAuth())
-		{
-			toioDataRoute.GET("/", controller.GetAllQuotaDates)
-			toioDataRoute.GET("/statistics", controller.GetQuotaDataStatistics)
-			toioDataRoute.GET("/statistics/export", controller.ExportQuotaDataStatistics)
-		}
+		// /api/toio/data/* 路由已删除(组织标签系统替代,详见 org.md)。
+		// 同源能力通过 /api/data/statistics 等接口提供,数据范围由 ComputeOrgScope 计算。
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
@@ -333,6 +334,13 @@ func SetApiRouter(router *gin.Engine) {
 		groupRoute.Use(middleware.AdminAuth())
 		{
 			groupRoute.GET("/", controller.GetGroups)
+		}
+
+		// 组织清单只读接口:root 在用户编辑下拉里用。详见 org.md (constant/org.go 是唯一权威)
+		orgRoute := apiRouter.Group("/orgs")
+		orgRoute.Use(middleware.RootAuth())
+		{
+			orgRoute.GET("/", controller.GetOrgs)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")
@@ -410,8 +418,11 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
 
+		// UID 预算管理:从 AdminAuth 降到 UserAuth + PageAuth(client_user_quota)。
+		// PageAuth 让系统 admin/root bypass 通过(看全局),mt-admin 走 GetUserMenu 命中此页;
+		// controller 内部按 ComputeOrgScope 加 WHERE 过滤数据范围。详见 org.md。
 		cuQuotaRoute := apiRouter.Group("/cliend_user_quota")
-		cuQuotaRoute.Use(middleware.AdminAuth())
+		cuQuotaRoute.Use(middleware.UserAuth(), middleware.PageAuth(service.PageClientUserQuota))
 		{
 			cuQuotaRoute.GET("/", controller.GetAllCliendUserQuota)
 			cuQuotaRoute.GET("/search", controller.SearchCliendUserQuota)
@@ -425,9 +436,10 @@ func SetApiRouter(router *gin.Engine) {
 			cuQuotaRoute.DELETE("/:id", controller.DeleteCliendUserQuota)
 		}
 
-		// Project budget management routes (admin only)
+		// 项目预算管理:从 AdminAuth 降到 UserAuth + PageAuth(project)。
+		// PageAuth 让系统 admin/root bypass,mt-admin 命中此页;controller 按 ComputeOrgScope 过滤。
 		projectRoute := apiRouter.Group("/project")
-		projectRoute.Use(middleware.AdminAuth())
+		projectRoute.Use(middleware.UserAuth(), middleware.PageAuth(service.PageProject))
 		{
 			projectRoute.GET("/dashboard", controller.GetProjectDashboard)
 			projectRoute.GET("/:id/allocations", controller.GetProjectAllocations)
@@ -446,12 +458,12 @@ func SetApiRouter(router *gin.Engine) {
 			projectRoute.POST("/allocation/:allocationId/clear", controller.ClearAllocationBudget)
 		}
 		projectsRoute := apiRouter.Group("/projects")
-		projectsRoute.Use(middleware.AdminAuth())
+		projectsRoute.Use(middleware.UserAuth(), middleware.PageAuth(service.PageProject))
 		{
 			projectsRoute.GET("/", controller.GetProjects)
 		}
 		// Single project creation route
-		apiRouter.POST("/project", middleware.AdminAuth(), controller.CreateProject)
+		apiRouter.POST("/project", middleware.UserAuth(), middleware.PageAuth(service.PageProject), controller.CreateProject)
 
 		// Root-only import/export
 		adminRootRoute := apiRouter.Group("/admin")
@@ -546,11 +558,16 @@ func SetApiRouter(router *gin.Engine) {
 		// Settlement pricing routes
 		settlementRoute := apiRouter.Group("/settlement")
 		{
-			// Admin config endpoints (RootAuth)
+			// 结算配置只读 GET:wl-admin 可见(详见 org.md 4.2.2),系统 admin 自动 bypass
+			settlementRoute.GET("/config",
+				middleware.UserAuth(),
+				middleware.PageAuth(service.PageSettlementConfigReadonly),
+				controller.GetSettlementConfigs)
+
+			// 结算配置写操作仍然 root only
 			adminSettlementConfig := settlementRoute.Group("/config")
 			adminSettlementConfig.Use(middleware.RootAuth())
 			{
-				adminSettlementConfig.GET("", controller.GetSettlementConfigs)
 				adminSettlementConfig.POST("", controller.CreateSettlementConfigHandler)
 				adminSettlementConfig.PUT("", controller.UpdateSettlementConfigHandler)
 				adminSettlementConfig.DELETE("/:id", controller.DeleteSettlementConfigHandler)
@@ -562,9 +579,9 @@ func SetApiRouter(router *gin.Engine) {
 			settlementRoute.GET("/bill/self", middleware.UserAuth(), controller.GetSelfSettlementBill)
 			settlementRoute.GET("/bill/self/export", middleware.UserAuth(), controller.SelfExportSettlementBillCSV)
 
-			// Admin bill endpoints (RootAuth)
+			// 账单 admin 端:wl-admin 也能调,controller 内部按 ComputeOrgScope 过滤 user_id
 			adminBill := settlementRoute.Group("/bill/admin")
-			adminBill.Use(middleware.RootAuth())
+			adminBill.Use(middleware.UserAuth(), middleware.PageAuth(service.PageBill))
 			{
 				adminBill.GET("", controller.AdminGetSettlementBill)
 				adminBill.GET("/export", controller.AdminExportSettlementBillCSV)

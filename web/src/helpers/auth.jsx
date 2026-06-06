@@ -100,3 +100,45 @@ export function RootRoute({ children }) {
 }
 
 export { PrivateRoute };
+
+/**
+ * PageRoute - 组织标签系统的统一权限路由守卫(详见 org.md 第 7.2 节)
+ *
+ * 用法: <PageRoute pageKey="quota_statistics"><MyPage /></PageRoute>
+ *
+ * 行为:
+ *   - 未登录 → 跳 /login
+ *   - 系统 admin/root (role >= 10) → 直接放行(完整菜单)
+ *   - 当前 userMenu.pages 含 pageKey → 放行
+ *   - 否则 → 跳 /forbidden
+ *
+ * userMenu 由 UserContext 在登录后自动 fetch /api/user/menu 拿到,后端按 (org_code, org_role) 计算。
+ * 在 menu 还没加载完成时(首次访问),按 user.role 兜底放行高权限用户,避免闪烁。
+ */
+export function PageRoute({ pageKey, children }) {
+  const raw = localStorage.getItem('user');
+  if (!raw) {
+    return <Navigate to='/login' state={{ from: history.location }} />;
+  }
+  try {
+    const user = JSON.parse(raw);
+    // 系统 admin/root 始终通过(他们看完整菜单)
+    if (user && typeof user.role === 'number' && user.role >= 10) {
+      return children;
+    }
+    // 读 localStorage 缓存的 userMenu(UserContext 注入)
+    const menuRaw = localStorage.getItem('user_menu');
+    if (menuRaw) {
+      const menu = JSON.parse(menuRaw);
+      if (Array.isArray(menu?.pages) && menu.pages.includes(pageKey)) {
+        return children;
+      }
+      // 已经拉到 menu 但 page 不在白名单 → 拒
+      return <Navigate to='/forbidden' replace />;
+    }
+    // menu 还没拉到 → 暂时放行(避免闪烁);后端有 PageAuth 中间件兜底
+    return children;
+  } catch (e) {
+    return <Navigate to='/forbidden' replace />;
+  }
+}

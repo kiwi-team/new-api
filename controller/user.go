@@ -114,6 +114,10 @@ func setupLogin(user *model.User, c *gin.Context) {
 			"status":          user.Status,
 			"group":           user.Group,
 			"toio_registered": user.ToioRegistered,
+			// 组织标签:前端 showMtFilters / SiderBar / Headerbar 依赖这两个字段;
+			// 所有登录入口都走 setupLogin,这里补齐就全部链路通了。详见 org.md。
+			"org_code": user.OrgCode,
+			"org_role": user.OrgRole,
 		},
 	})
 }
@@ -454,6 +458,9 @@ func GetSelf(c *gin.Context) {
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
 		"toio_registered":   user.ToioRegistered,        // 新增Toio注册状态字段
+		// 组织标签:前端 SiderBar/Headerbar 用,以及 root 在用户编辑里展示当前归属
+		"org_code": user.OrgCode,
+		"org_role": user.OrgRole,
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -671,7 +678,26 @@ func UpdateUser(c *gin.Context) {
 	if myRole != common.RoleRootUser {
 		updatedUser.ToioRegistered = originUser.ToioRegistered
 	}
+	// 组织标签(详见 org.md):仅 root 能改 org_code / org_role;其他用户保持原值
+	if myRole != common.RoleRootUser {
+		updatedUser.OrgCode = originUser.OrgCode
+		updatedUser.OrgRole = originUser.OrgRole
+	} else {
+		// root 改时校验合法性
+		if !constant.IsValidOrgCode(updatedUser.OrgCode) {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": "org_code 非法"})
+			return
+		}
+		if updatedUser.OrgRole == "" {
+			updatedUser.OrgRole = constant.OrgRoleMember
+		}
+		if !constant.IsValidOrgRole(updatedUser.OrgRole) {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": "org_role 非法"})
+			return
+		}
+	}
 	updatePassword := updatedUser.Password != ""
+	// Edit() 内部已经调用 updateUserCache,组织变更下次请求自动按新 org 走(详见 org.md 6.4)
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
@@ -895,6 +921,22 @@ func CreateUser(c *gin.Context) {
 	// 仅 Root 用户可以设置 toio_registered
 	if myRole == common.RoleRootUser && user.ToioRegistered == 1 {
 		cleanUser.ToioRegistered = 1
+	}
+	// 组织标签:仅 root 创建时可指定;否则用默认 org(OptionMap.DefaultOrgCode,自带"other")。
+	// org_role 默认 member。
+	if myRole == common.RoleRootUser && user.OrgCode != "" {
+		if !constant.IsValidOrgCode(user.OrgCode) {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": "org_code 非法"})
+			return
+		}
+		cleanUser.OrgCode = user.OrgCode
+	}
+	if myRole == common.RoleRootUser && user.OrgRole != "" {
+		if !constant.IsValidOrgRole(user.OrgRole) {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": "org_role 非法"})
+			return
+		}
+		cleanUser.OrgRole = user.OrgRole
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)

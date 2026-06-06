@@ -186,12 +186,9 @@ const LoginForm = () => {
         localStorage.setItem('user', JSON.stringify(data));
         setUserData(data);
         updateAPI();
-        if (data?.toio_registered === 1) {
-          localStorage.setItem('is_toio', 'true');
-          navigate('/console/quota-statistics');
-        } else {
-          navigate('/console');
-        }
+        // 组织标签系统:统一跳 /console,App.jsx 会根据 userMenu.topbar_mode === 'logout_only'(mt 砍光)
+        // 自动重定向到允许的首页。不再读 toio_registered 决定路径。详见 org.md。
+        navigate('/console');
         showSuccess('登录成功！');
         setShowWeChatLoginModal(false);
       } else {
@@ -248,12 +245,8 @@ const LoginForm = () => {
               centered: true,
             });
           }
-          if (data?.toio_registered === 1) {
-            localStorage.setItem('is_toio', 'true');
-            navigate('/console/quota-statistics');
-          } else {
-            navigate('/console');
-          }
+          // 组织标签系统:统一跳 /console,App.jsx 按 userMenu 自动重定向。详见 org.md。
+          navigate('/console');
         } else {
           showError(message);
         }
@@ -298,12 +291,9 @@ const LoginForm = () => {
         showSuccess('登录成功！');
         setUserData(data);
         updateAPI();
-        if (data?.toio_registered === 1) {
-          localStorage.setItem('is_toio', 'true');
-          navigate('/console/quota-statistics');
-        } else {
-          navigate('/console');
-        }
+        // 组织标签系统:统一跳 /console,App.jsx 会根据 userMenu.topbar_mode === 'logout_only'(mt 砍光)
+        // 自动重定向到允许的首页。不再读 toio_registered 决定路径。详见 org.md。
+        navigate('/console');
       } else {
         showError(message);
       }
@@ -459,12 +449,8 @@ const LoginForm = () => {
         setUserData(finish.data);
         updateAPI();
         showSuccess('登录成功！');
-        if (finish.data?.toio_registered === 1) {
-          localStorage.setItem('is_toio', 'true');
-          navigate('/console/quota-statistics');
-        } else {
-          navigate('/console');
-        }
+        // 组织标签系统:统一跳 /console,App.jsx 按 userMenu 自动重定向。详见 org.md。
+        navigate('/console');
       } else {
         showError(finish.message || 'Passkey 登录失败，请重试');
       }
@@ -499,12 +485,8 @@ const LoginForm = () => {
     setUserData(data);
     updateAPI();
     showSuccess('登录成功！');
-    if (data?.toio_registered === 1) {
-      localStorage.setItem('is_toio', 'true');
-      navigate('/console/quota-statistics');
-    } else {
-      navigate('/console');
-    }
+    // 组织标签系统:统一跳 /console,App.jsx 按 userMenu 自动重定向。详见 org.md。
+    navigate('/console');
   };
 
   // 返回登录页面

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { API } from '../../helpers';
 import { reducer, initialState } from './reducer';
 
 export const UserContext = React.createContext({
@@ -43,6 +44,28 @@ export const UserProvider = ({ children }) => {
       }
     }
   }, [state.user?.setting, i18n]);
+
+  // 组织标签系统:登录后(user 变化)自动拉 /api/user/menu 缓存到 context + localStorage。
+  // SiderBar/App.jsx/Headerbar 都消费 state.userMenu;
+  // PageRoute 路由守卫读 localStorage('user_menu')(它在 React 渲染前判定)。
+  // 详见 org.md 第 6.1 / 7.1 / 7.2 节。
+  useEffect(() => {
+    if (!state.user?.id) {
+      localStorage.removeItem('user_menu');
+      return;
+    }
+    (async () => {
+      try {
+        const res = await API.get('/api/user/menu');
+        if (res.data?.success && res.data?.data) {
+          dispatch({ type: 'setUserMenu', payload: res.data.data });
+          localStorage.setItem('user_menu', JSON.stringify(res.data.data));
+        }
+      } catch (e) {
+        // 静默失败:menu 为 undefined,消费方按"未授权"兜底
+      }
+    })();
+  }, [state.user?.id]);
 
   return (
     <UserContext.Provider value={[state, dispatch]}>

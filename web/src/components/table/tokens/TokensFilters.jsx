@@ -84,16 +84,19 @@ const TokensFilters = ({
             />
           </div>
 
-          <div className='relative w-full md:w-44'>
-            <Form.Input
-              field='channel'
-              prefix={<IconSearch />}
-              placeholder={t('渠道')}
-              showClear
-              pure
-              size='small'
-            />
-          </div>
+          {/* 渠道筛选:仅 root 可见。详见 org.md 全系统级约束(channels 全部 root only)。 */}
+          {isRoot() && (
+            <div className='relative w-full md:w-44'>
+              <Form.Input
+                field='channel'
+                prefix={<IconSearch />}
+                placeholder={t('渠道')}
+                showClear
+                pure
+                size='small'
+              />
+            </div>
+          )}
 
           <div className='relative w-full md:w-44'>
             <Form.Input

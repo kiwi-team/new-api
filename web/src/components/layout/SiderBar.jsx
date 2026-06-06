@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getLucideIcon } from '../../helpers/render';
@@ -26,9 +26,22 @@ import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { isAdmin, isLeader, isRoot, isMixRouter, showError } from '../../helpers';
+import { UserContext } from '../../context/User';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
+
+// 把 SiderBar 的 itemKey 映射到 service.GetUserMenu 返回的 page key。
+// 一个 itemKey 可以对应多个候选 page(任一命中即可见)。
+// 详见 org.md service/org_view.go 中的 page 常量。
+const ITEM_KEY_TO_PAGES = {
+  cuquota: ['client_user_quota'],
+  quotaStatistics: ['quota_statistics'],
+  modelRouteConfig: ['model_route_config'],
+  settlementConfig: ['settlement_config_readonly', 'settlement_config'],
+  // bill: 既包含普通用户的 bill_self,也包含 wl-admin 的全组织 bill
+  bill: ['bill', 'bill_self'],
+};
 
 const routerMap = {
   home: '/',
@@ -82,36 +95,39 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const [openedKeys, setOpenedKeys] = useState([]);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
-  const toioMode = (() => {
-    try {
-      const u = localStorage.getItem('user');
-      if (u) {
-        const parsed = JSON.parse(u);
-        if (parsed?.toio_registered === 1) return !isRoot();
-      }
-    } catch {}
-    return (localStorage.getItem('is_toio') === 'true') && !isRoot();
-  })();
+  // 组织标签系统:消费 UserContext.userMenu(由 UserContext 在登录后从 /api/user/menu 拉)。
+  // SiderBar 只渲染 userMenu.pages 里的菜单(系统 admin 看完整菜单)。详见 org.md。
+  const [userContextState] = useContext(UserContext);
+  const userMenu = userContextState?.userMenu;
+  // 砍光模式:顶栏只剩登出 + 菜单严格白名单(mt 砍光)
+  const isWhitelistMode = userMenu?.topbar_mode === 'logout_only' && !isAdmin();
+  // 判定一个 itemKey 是否在当前用户的 userMenu.pages 内(系统 admin 默认放行)
+  const itemAllowedByMenu = (itemKey) => {
+    if (isAdmin() || isRoot()) return true;
+    if (!userMenu?.pages) return true; // menu 还没拉到时不拦截,避免闪烁
+    const candidates = ITEM_KEY_TO_PAGES[itemKey] || [itemKey];
+    return candidates.some((k) => userMenu.pages.includes(k));
+  };
 
   const workspaceItems = useMemo(() => {
-    if (toioMode) {
-      return [
-        { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: '' },
-      ];
-    }
+    // 组织标签:角色相关的可见性(errorlog/quotaStatistics)交给 itemAllowedByMenu 过滤,
+    // 不再用 tableHiddle CSS hide(否则 mt-admin 等 role=common 但有 org 加成的用户会被
+    // 错误地藏掉菜单项)。仅保留 feature flag 类的 className(detail/midjourney/task)。
     const items = [
       { text: t('数据看板'), itemKey: 'detail', to: '/detail', className: localStorage.getItem('enable_data_export') === 'true' ? '' : 'tableHiddle' },
       { text: t('令牌管理'), itemKey: 'token', to: '/token' },
       { text: t('使用日志'), itemKey: 'log', to: '/log' },
-      { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('错误日志'), itemKey: 'errorlog', to: '/errorlog' },
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
-      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics', className: (isLeader() || isMixRouter()) ? '' : 'tableHiddle' },
+      { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics' },
       { text: t('账单查询'), itemKey: 'bill', to: '/console/bill' },
     ];
 
-    // 根据配置过滤项目
+    // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
+    // tableHiddle/isModuleVisible 是后端 menu 之外的额外细分(数据看板的功能开关等)
     const filteredItems = items.filter((item) => {
+      if (!itemAllowedByMenu(item.itemKey)) return false;
       if (item.itemKey === 'quotaStatistics') return true;
       if (item.itemKey === 'bill') return true;
       const configVisible = isModuleVisible('console', item.itemKey);
@@ -125,7 +141,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_task'),
     t,
     isModuleVisible,
-    toioMode,
+    userMenu?.pages,
   ]);
 
   const financeItems = useMemo(() => {
@@ -152,19 +168,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   }, [t, isModuleVisible]);
 
   const adminItems = useMemo(() => {
-    if (toioMode) {
-      if (isAdmin()) {
-        return [
-          { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/client-user-quota', className: '' },
-          { text: t('项目预算管理'), itemKey: 'project', to: '/console/project', className: '' },
-        ];
-      }else if (isLeader()) {
-        return [];
-
-      }
-    }
     const items = [
-      { text: t('渠道管理'), itemKey: 'channel', to: '/channel', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('渠道管理'), itemKey: 'channel', to: '/channel', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('模型管理'), itemKey: 'models', to: '/console/models', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型部署'), itemKey: 'deployment', to: '/deployment', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
@@ -175,26 +180,22 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       { text: t('用户管理'), itemKey: 'user', to: '/user', className: isAdmin() ? '' : 'tableHiddle' },
-      { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/client-user-quota', className: isAdmin() ? '' : 'tableHiddle' },
-      { text: t('项目预算管理'), itemKey: 'project', to: '/console/project', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('UID预算管理'), itemKey: 'cuquota', to: '/console/client-user-quota' },
+      { text: t('项目预算管理'), itemKey: 'project', to: '/console/project' },
       { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
-      { text: t('结算价格管理'), itemKey: 'settlementConfig', to: '/console/settlement-config', className: isRoot() ? '' : 'tableHiddle' },
-
+      { text: t('结算价格管理'), itemKey: 'settlementConfig', to: '/console/settlement-config' },
     ];
 
-    // 根据配置过滤项目
+    // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
     const filteredItems = items.filter((item) => {
-      // UID 预算管理需要管理员权限，Leader 用户不能访问
-      if (item.itemKey === 'cuquota' && !isAdmin()) {
-        return false;
-      }
+      if (!itemAllowedByMenu(item.itemKey)) return false;
       const configVisible = isModuleVisible('admin', item.itemKey);
       return configVisible;
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible, toioMode]);
+  }, [isAdmin(), isRoot(), t, isModuleVisible, userMenu?.pages]);
 
   // Debug module items - only for root users
   const debugItems = useMemo(() => {
@@ -230,14 +231,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       },
     ];
 
-    // 根据配置过滤项目
+    // 组织标签:userMenu.pages 决定可见项(wl 用户菜单里没有 playground/chat,自动过滤掉);
+    // isModuleVisible 是另一层管理员可配置的功能开关。
     const filteredItems = items.filter((item) => {
+      if (!itemAllowedByMenu(item.itemKey)) return false;
       const configVisible = isModuleVisible('chat', item.itemKey);
       return configVisible;
     });
 
     return filteredItems;
-  }, [chatItems, t, isModuleVisible]);
+  }, [chatItems, t, isModuleVisible, userMenu?.pages]);
 
   // 更新路由映射，添加聊天路由
   const updateRouterMapWithChats = (chats) => {
@@ -455,15 +458,18 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             setOpenedKeys(data.openKeys);
           }}
         >
-          {/* 聊天区域 */}
-          {!toioMode && hasSectionVisibleModules('chat') && (
-            <div className='sidebar-section'>
-              {!collapsed && (
-                <div className='sidebar-group-label'>{t('聊天')}</div>
-              )}
-              {chatMenuItems.map((item) => renderSubItem(item))}
-            </div>
-          )}
+          {/* 聊天区域:砍光模式(mt)不渲染;wl 用户 chatMenuItems 已经被 userMenu 过滤空,
+              用 chatMenuItems.length 兜底也藏掉空标题 */}
+          {!isWhitelistMode &&
+            hasSectionVisibleModules('chat') &&
+            chatMenuItems.length > 0 && (
+              <div className='sidebar-section'>
+                {!collapsed && (
+                  <div className='sidebar-group-label'>{t('聊天')}</div>
+                )}
+                {chatMenuItems.map((item) => renderSubItem(item))}
+              </div>
+            )}
 
           {/* 控制台区域 */}
           {hasSectionVisibleModules('console') && (
@@ -478,8 +484,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             </>
           )}
 
-          {/* 个人中心区域 */}
-          {!toioMode && hasSectionVisibleModules('personal') && (
+          {/* 个人中心区域:砍光模式(mt)不渲染 */}
+          {!isWhitelistMode && hasSectionVisibleModules('personal') && (
             <>
               <Divider className='sidebar-divider' />
               <div>
@@ -491,9 +497,9 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             </>
           )}
 
-          {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
-          {/* Leader 用户（role=5）不能看到管理员区域 */}
-          {(isAdmin() && hasSectionVisibleModules('admin')) || toioMode ? (
+          {/* 管理员区域:系统 admin 看完整 + 组织 admin(如 mt-admin)看部分。
+              判断依据是 adminItems 非空 OR isAdmin。adminItems 已经按 userMenu 过滤过了。 */}
+          {(isAdmin() && hasSectionVisibleModules('admin')) || adminItems.length > 0 ? (
             <>
               <Divider className='sidebar-divider' />
               <div>

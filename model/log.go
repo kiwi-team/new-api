@@ -453,7 +453,13 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 //   - scopeUids 非空（用户配置了 uid）：切换为按 client_user_id 过滤，
 //     WHERE logs.client_user_id IN scopeUids。本账号 client_user_id 不在该集合
 //     的日志（包括未带 uid header 的请求）将不可见，这是预期语义。
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, scopeUids []string) (logs []*Log, total int64, err error) {
+//
+// 额外 4 个 mt 业务筛选(在 scopeUids 命中范围内进一步收窄)：
+//   - clientUserId  — LIKE 模糊匹配 client_user_id (UID 模糊)
+//   - mtSessionId / traceId / trajId — 按 extra jsonb 嵌套字段精确匹配
+//
+// 这些是空串时不施加额外 WHERE,无 org 上下文用户传空也不影响。
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, scopeUids []string, clientUserId string, mtSessionId string, traceId string, trajId string) (logs []*Log, total int64, err error) {
 	const logSearchCountLimit = 10000
 
 	var tx *gorm.DB
@@ -487,6 +493,19 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	}
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+	// mt 业务筛选:在 scopeUids 之内进一步收窄
+	if clientUserId != "" {
+		tx = tx.Where("logs.client_user_id LIKE ?", "%"+clientUserId+"%")
+	}
+	if mtSessionId != "" {
+		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
+	}
+	if traceId != "" {
+		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
+	}
+	if trajId != "" {
+		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
 	}
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {

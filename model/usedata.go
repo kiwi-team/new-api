@@ -244,9 +244,18 @@ func estimateCacheCostUSD(modelName string, cachedTokens int64, cacheCreation5mT
 	return
 }
 
-// scopeUserId/scopeUids 用于非管理员的自助视图：限制为 (user_id = scopeUserId OR client_user_id IN scopeUids)。
-// scopeUserId<=0 时不施加该限制（管理员可见全部，userId 仍可用于显式按用户过滤）。
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int, scopeUserId int, scopeUids []string) ([]*QuotaDataStatistics, error) {
+// scopeUserId/scopeUids/scopeUserIds 是数据范围过滤入参，三种用法互斥但可组合:
+//
+//	scopeUserId > 0:   非管理员自助视图(并集语义) — WHERE (user_id = scopeUserId OR client_user_id IN scopeUids)
+//	                   对应:普通用户、mt-leader/member。
+//	scopeUserId <= 0 且 scopeUids 非空: 纯 client_user_id 过滤(mt-admin) —
+//	                   WHERE client_user_id IN scopeUids
+//	scopeUserId <= 0 且 scopeUserIds 非空: 纯 user_id 过滤(wl-admin) —
+//	                   WHERE user_id IN scopeUserIds
+//
+// 系统 admin 三个都给 0/nil/nil,无 scope 过滤(看全局)。
+// 详见 org.md 第 4 节。
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int, scopeUserId int, scopeUids []string, scopeUserIds []int) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -346,13 +355,21 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		if userId > 0 {
 			q = q.Where("user_id = ?", userId)
 		}
-		// 非管理员自助视图：限定为本账号或其关联 uid 的数据（并集）
-		if scopeUserId > 0 {
+		// 数据范围过滤(三种互斥模式,见函数文档)
+		switch {
+		case scopeUserId > 0:
+			// 自助视图:本账号 OR 关联 uid(并集)
 			if len(scopeUids) > 0 {
 				q = q.Where("(user_id = ? OR client_user_id IN ?)", scopeUserId, scopeUids)
 			} else {
 				q = q.Where("user_id = ?", scopeUserId)
 			}
+		case len(scopeUids) > 0:
+			// mt-admin:纯 client_user_id IN(本 org 全员的 uid 并集)
+			q = q.Where("client_user_id IN ?", scopeUids)
+		case len(scopeUserIds) > 0:
+			// wl-admin:纯 user_id IN(本 org 全员的 user_id 集合)
+			q = q.Where("user_id IN ?", scopeUserIds)
 		}
 		if len(tokenIds) > 0 {
 			q = q.Where("token_id IN ?", tokenIds)

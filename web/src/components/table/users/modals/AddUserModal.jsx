@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { API, showError, showSuccess, isRoot } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
@@ -44,6 +44,21 @@ const AddUserModal = (props) => {
   const formApiRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
+  const [orgOptions, setOrgOptions] = useState([]);
+
+  // 组织标签:仅 root 看得到。详见 org.md
+  useEffect(() => {
+    if (!isRoot()) return;
+    (async () => {
+      try {
+        const res = await API.get('/api/orgs/');
+        const list = res.data?.data || [];
+        setOrgOptions(list.map((o) => ({ label: `${o.code} - ${o.name}`, value: o.code })));
+      } catch (e) {
+        // 静默失败
+      }
+    })();
+  }, []);
 
   const getInitValues = () => ({
     username: '',
@@ -51,6 +66,8 @@ const AddUserModal = (props) => {
     password: '',
     remark: '',
     toio_registered: false,
+    org_code: '',
+    org_role: 'member',
   });
 
   const submit = async (values) => {
@@ -190,6 +207,27 @@ const AddUserModal = (props) => {
                         label={t('TOIO注册')}
                         checkedText={t('是')}
                         uncheckedText={t('否')}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Form.Select
+                        field='org_code'
+                        label={t('所属组织')}
+                        placeholder={t('选择组织')}
+                        optionList={orgOptions}
+                        showClear
+                        filter
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Form.Select
+                        field='org_role'
+                        label={t('组织内角色')}
+                        optionList={[
+                          { label: 'member', value: 'member' },
+                          { label: 'leader', value: 'leader' },
+                          { label: 'admin', value: 'admin' },
+                        ]}
                       />
                     </Col>
                   </Row>

@@ -25,7 +25,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getTokensColumns } from './TokensColumnDefs';
-import { API } from '../../../helpers';
+import { API, isRoot } from '../../../helpers';
 
 const TokensTable = (tokensData) => {
   const {
@@ -53,6 +53,10 @@ const TokensTable = (tokensData) => {
   const [channelNameMap, setChannelNameMap] = useState(new Map());
 
   useEffect(() => {
+    // 渠道名映射只对 root 用户拉(后端 /api/channel/* 已经升级为 RootAuth)。
+    // 非 root 用户既看不到渠道列也用不到这个映射,跳过请求避免 403/无谓网络。
+    // 详见 org.md 全系统级约束。
+    if (!isRoot()) return;
     let mounted = true;
     (async () => {
       try {

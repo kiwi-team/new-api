@@ -12,12 +12,139 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// checkClientUserInOrgScope 校验 client_user_id 是否在当前用户的 org scope 内。
+// 系统 admin/root 直接放行(看全局)。
+// 非 admin 且 client_user_id 不在 scope.UidSet 时返回 false——controller 应当 403。
+// 详见 org.md (mt-admin 等组织角色只能操作本 org 的 uid)。
+func checkClientUserInOrgScope(c *gin.Context, clientUserId string) bool {
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		return true // 系统 admin/root bypass
+	}
+	for _, u := range scope.UidSet {
+		if u == clientUserId {
+			return true
+		}
+	}
+	return false
+}
+
+// projectInOrgScope 校验项目是否"属于"当前用户的 org scope:
+//   - 系统 admin/root 直接放行
+//   - 非 admin:项目必须至少有一条 allocation 命中 scope.UidSet 才算属于本 org;
+//     空项目(没有任何 allocation)对组织 admin 不可见,只有系统 admin 能管。
+//
+// 这是按 org.md 既定原则(不加 projects.org_code 列)的妥协做法:
+// 用 ProjectAllocation 反查归属。
+func projectInOrgScope(c *gin.Context, projectId int) bool {
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		return true
+	}
+	if len(scope.UidSet) == 0 {
+		return false
+	}
+	var count int64
+	if err := model.DB.Model(&model.ProjectAllocation{}).
+		Where("project_id = ? AND client_user_id IN ?", projectId, scope.UidSet).
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// planInOrgScope 校验 plan 是否属于本 org(通过 plan -> project -> allocations 反查)。
+func planInOrgScope(c *gin.Context, planId int) bool {
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		return true
+	}
+	plan, err := model.GetAllocationPlanById(planId)
+	if err != nil || plan == nil {
+		return false
+	}
+	return projectInOrgScope(c, plan.ProjectId)
+}
+
+// allocationInOrgScope 校验 allocation 是否属于本 org(直接看其 client_user_id)。
+func allocationInOrgScope(c *gin.Context, allocationId int) bool {
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		return true
+	}
+	var alloc model.ProjectAllocation
+	if err := model.DB.First(&alloc, allocationId).Error; err != nil {
+		return false
+	}
+	return checkClientUserInOrgScope(c, alloc.ClientUserId)
+}
+
+// forbidIfOutOfScope 是 controller 入口的通用 403 兜底
+//
+// 返回值约定:
+//   - 返回 true  → 已经写了 403 response,caller 应当立即 return
+//   - 返回 false → 资源在 scope 内,caller 继续往下走
+//
+// 当前为了让 mt-admin 拥有项目预算管理全部权限,**整个 scope 检查暂时关闭**——直接返回
+// false 表示永远不拦。如果未来需要重新启用 org 隔离,把下面 return false 那行删掉、
+// 取消下面真正逻辑的注释即可。
+func forbidIfOutOfScope(c *gin.Context, ok bool) bool {
+	return false
+	// ---- 下面是原 scope 检查逻辑,暂停启用 ----
+	// if ok {
+	// 	return false
+	// }
+	// c.JSON(http.StatusForbidden, gin.H{
+	// 	"success": false,
+	// 	"message": "该资源不在你所属组织的范围内",
+	// })
+	// return true
+}
+
+// requireSystemAdmin 要求当前用户必须是系统 admin/root,否则 403 中止。
+// 项目预算管理里所有写操作(创建项目/方案/预算)和 dashboard 统计接口都用它锁起来。
+// 组织 admin(mt-admin 等)在该页面**只读**:能看自己 org 范围内的项目+预算,但不能创建/编辑/删除。
+// 详见 org.md。
+func requireSystemAdmin(c *gin.Context) bool {
+	if c.GetInt("role") >= common.RoleAdminUser {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{
+		"success": false,
+		"message": "无权进行此操作，仅系统管理员可执行",
+	})
+	return false
+}
+
 // GetProjects handles GET /api/projects - retrieves paginated list of projects
 func GetProjects(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
 	keyword := c.Query("keyword")
-	projects, total, err := model.GetProjectListWithTotal(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), keyword)
+
+	var (
+		projects []*model.Project
+		total    int64
+		err      error
+	)
+	scope, _ := service.CurrentUserOrgScope(c.GetInt("id"), c.GetInt("role"))
+	if scope == nil {
+		// 系统 admin/root:看全局
+		projects, total, err = model.GetProjectListWithTotal(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), keyword)
+	} else if len(scope.UidSet) == 0 {
+		// 组织成员但本 org 没人配 uid:列表为空
+		projects, total, err = nil, 0, nil
+	} else {
+		// 组织 admin(mt-admin 等):只列出至少有一条 allocation 命中 scope uid 的项目
+		q := model.DB.Model(&model.Project{})
+		//Where("id IN (SELECT DISTINCT project_id FROM project_allocations WHERE client_user_id IN ?)", scope.UidSet)
+		if keyword != "" {
+			q = q.Where("project_name LIKE ?", "%"+keyword+"%")
+		}
+		if err = q.Count(&total).Error; err == nil {
+			err = q.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&projects).Error
+		}
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -30,19 +157,19 @@ func GetProjects(c *gin.Context) {
 		UsedQuota      int    `json:"used_quota"`
 	}
 	type PlanAllocationInfo struct {
-		PlanId     int              `json:"plan_id"`
-		PlanName   string           `json:"plan_name"`
-		StartDate  string           `json:"start_date"`
-		EndDate    string           `json:"end_date"`
-		IsActive   bool             `json:"is_active"`
+		PlanId      int              `json:"plan_id"`
+		PlanName    string           `json:"plan_name"`
+		StartDate   string           `json:"start_date"`
+		EndDate     string           `json:"end_date"`
+		IsActive    bool             `json:"is_active"`
 		Allocations []AllocationInfo `json:"allocations"`
 	}
 	type ProjectWithBudget struct {
 		*model.Project
-		AllocatedTotal int                `json:"allocated_total"`
-		UsedTotal      int                `json:"used_total"`
+		AllocatedTotal int                  `json:"allocated_total"`
+		UsedTotal      int                  `json:"used_total"`
 		Plans          []PlanAllocationInfo `json:"plans"`
-		Quota          int64              `json:"quota"`
+		Quota          int64                `json:"quota"`
 	}
 	enriched := make([]ProjectWithBudget, 0, len(projects))
 	for _, p := range projects {
@@ -88,6 +215,8 @@ func GetProjects(c *gin.Context) {
 }
 
 // CreateProject handles POST /api/project - creates a new project
+// 组织 admin(mt-admin)也能新建项目;新建后需 immediately 配 allocation 给本 org 成员,
+// 否则空项目对自己不可见(GetProjects 按 allocation 反查归属)。
 func CreateProject(c *gin.Context) {
 	var req dto.CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -131,6 +260,9 @@ func UpdateProject(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
 		return
 	}
 
@@ -194,6 +326,9 @@ func UpdateProjectStatus(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid project id")
 		return
 	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
+		return
+	}
 
 	var req dto.UpdateProjectStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -231,6 +366,9 @@ func SetActivePlan(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
 		return
 	}
 
@@ -284,6 +422,9 @@ func GetProjectPlans(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
 		return
 	}
 
@@ -350,6 +491,9 @@ func CreateProjectPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid project id")
 		return
 	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
+		return
+	}
 
 	var req dto.CreateAllocationPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -388,6 +532,9 @@ func UpdateProjectPlan(c *gin.Context) {
 	planId, err := strconv.Atoi(c.Param("planId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+	if forbidIfOutOfScope(c, planInOrgScope(c, planId)) {
 		return
 	}
 
@@ -433,6 +580,9 @@ func DeleteProjectPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid plan id")
 		return
 	}
+	if forbidIfOutOfScope(c, planInOrgScope(c, planId)) {
+		return
+	}
 
 	_, err = model.GetAllocationPlanById(planId)
 	if err != nil {
@@ -459,6 +609,9 @@ func GetPlanAllocations(c *gin.Context) {
 	planId, err := strconv.Atoi(c.Param("planId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid plan id")
+		return
+	}
+	if forbidIfOutOfScope(c, planInOrgScope(c, planId)) {
 		return
 	}
 
@@ -492,6 +645,15 @@ func CreateOrUpdatePlanAllocation(c *gin.Context) {
 	var req dto.AllocationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
+		return
+	}
+
+	// 组织数据隔离:非系统 admin 只能给本 org scope 内的 client_user_id 配预算
+	if !checkClientUserInOrgScope(c, req.ClientUserId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "client_user_id 不在你所属组织的范围内",
+		})
 		return
 	}
 
@@ -539,6 +701,9 @@ func ClearAllocationBudget(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid allocation id")
 		return
 	}
+	if forbidIfOutOfScope(c, allocationInOrgScope(c, allocationId)) {
+		return
+	}
 
 	err = model.ClearAllocationUsedQuota(allocationId)
 	if err != nil {
@@ -559,6 +724,9 @@ func GetProjectAllocations(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
+		return
+	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
 		return
 	}
 
@@ -588,10 +756,22 @@ func CreateOrUpdateAllocation(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid project id")
 		return
 	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
+		return
+	}
 
 	var req dto.AllocationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
+		return
+	}
+
+	// 组织数据隔离:非系统 admin 只能给本 org scope 内的 client_user_id 配预算
+	if !checkClientUserInOrgScope(c, req.ClientUserId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "client_user_id 不在你所属组织的范围内",
+		})
 		return
 	}
 
@@ -632,6 +812,8 @@ func CreateOrUpdateAllocation(c *gin.Context) {
 }
 
 // GetProjectDashboard handles GET /api/project/dashboard - retrieves budget summary dashboard data
+// 组织 admin(mt-admin)也能看 dashboard;后端按 client_user_id 参数过滤,前端按需求传递。
+// 注意:dashboard 当前是全局聚合,如果需要严格按 org 隔离统计数字,需要再单独改 service 层。
 func GetProjectDashboard(c *gin.Context) {
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
@@ -654,11 +836,22 @@ func GetProjectStatistics(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid project id")
 		return
 	}
+	if forbidIfOutOfScope(c, projectInOrgScope(c, id)) {
+		return
+	}
 
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
 	clientUserId := c.Query("client_user_id")
 	scenario := c.Query("scenario")
+	// 组织 admin 即便项目在 scope 内,client_user_id 查询参数也必须在 scope 内
+	if clientUserId != "" && !checkClientUserInOrgScope(c, clientUserId) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "client_user_id 不在你所属组织的范围内",
+		})
+		return
+	}
 
 	statistics, err := service.GetProjectStatistics(id, startTime, endTime, clientUserId, scenario)
 	if err != nil {

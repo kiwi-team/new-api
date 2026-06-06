@@ -61,6 +61,9 @@ func InitOptionMap() {
 	// LogHeaderRedactEnabled: 写 logs/error_logs.header 列时是否对 Authorization/Cookie/X-Api-Key 等敏感头脱敏。
 	// 默认 true；运行时读取按 != "false" 判定，老库未写入此 key 也按 true 处理（默认安全）。
 	common.OptionMap["LogHeaderRedactEnabled"] = strconv.FormatBool(true)
+	// DefaultOrgCode: 新用户注册时 users.org_code 默认值。空串等同 "other"(普通用户体验)。
+	// 详见 org.md。
+	common.OptionMap["DefaultOrgCode"] = "other"
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)

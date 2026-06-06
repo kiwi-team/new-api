@@ -37,6 +37,17 @@ const LogsFilters = ({
   handleExportLogs,
   t,
 }) => {
+  // mt org 任意角色都能看到 UID / MT Session / Trace / Traj 4 个筛选;系统 admin 也能看。
+  // 详见 org.md(其他 org 不放开)。
+  const showMtFilters = (() => {
+    if (isAdminUser) return true;
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || '{}');
+      return u?.org_code === 'mt';
+    } catch {
+      return false;
+    }
+  })();
   return (
     <Form
       initValues={formInitValues}
@@ -123,6 +134,11 @@ const LogsFilters = ({
                 pure
                 size='small'
               />
+            </>
+          )}
+          {/* UID/MT Session/Trace/Traj 筛选:对 mt org 任意角色 + 系统 admin 开放,其他 org 不放开 */}
+          {showMtFilters && (
+            <>
               {/* UID 查询：对应 client_user_id，支持模糊匹配，值可能包含 + 等特殊符号 */}
               <Form.Input
                 field='client_user_id'

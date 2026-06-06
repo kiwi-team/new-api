@@ -70,7 +70,21 @@ const EditUserModal = (props) => {
   const [addAmountLocal, setAddAmountLocal] = useState('');
   const isMobile = useIsMobile();
   const [groupOptions, setGroupOptions] = useState([]);
+  const [orgOptions, setOrgOptions] = useState([]);
   const formApiRef = useRef(null);
+
+  // 组织标签下拉:从后端 GET /api/orgs/ 拉(返回 constant.Orgs 中 enabled 的清单)。
+  // 仅 root 能编辑 org_code / org_role,详见 org.md。
+  const fetchOrgs = async () => {
+    if (!isRoot()) return;
+    try {
+      const res = await API.get('/api/orgs/');
+      const list = res.data?.data || [];
+      setOrgOptions(list.map((o) => ({ label: `${o.code} - ${o.name}`, value: o.code })));
+    } catch (e) {
+      // 静默失败:下拉为空,但不阻塞用户编辑流程
+    }
+  };
 
   const isEdit = Boolean(userId);
 
@@ -89,6 +103,8 @@ const EditUserModal = (props) => {
     remark: '',
     uid: '',
     related_uids: [],
+    org_code: '',
+    org_role: 'member',
   });
 
   const fetchGroups = async () => {
@@ -158,6 +174,7 @@ const EditUserModal = (props) => {
   useEffect(() => {
     loadUser();
     if (userId) fetchGroups();
+    fetchOrgs();
   }, [props.editingUser.id]);
 
   /* ----------------------- submit ----------------------- */
@@ -407,6 +424,32 @@ const EditUserModal = (props) => {
                             uncheckedText={t('否')}
                           />
                         </Col>
+                      )}
+                      {isRoot() && (
+                        <>
+                          <Col span={12}>
+                            <Form.Select
+                              field='org_code'
+                              label={t('所属组织')}
+                              placeholder={t('选择组织')}
+                              optionList={orgOptions}
+                              showClear
+                              filter
+                              extraText={t('改变后用户登录看到的菜单/数据范围会按新组织计算')}
+                            />
+                          </Col>
+                          <Col span={12}>
+                            <Form.Select
+                              field='org_role'
+                              label={t('组织内角色')}
+                              optionList={[
+                                { label: 'member', value: 'member' },
+                                { label: 'leader', value: 'leader' },
+                                { label: 'admin', value: 'admin' },
+                              ]}
+                            />
+                          </Col>
+                        </>
                       )}
                       <Col span={24}>
                         <Form.Switch

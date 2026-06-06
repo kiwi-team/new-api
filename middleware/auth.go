@@ -275,12 +275,23 @@ func mixRouterAuthHelper(c *gin.Context, minRole int) {
 	if roleInt >= common.RoleLeaderUser {
 		// 正常设置上下文，继续执行
 	} else {
-		// 普通用户：仅在 api.mixrouter.com 域名下允许
+		// 组织标签:role=common 但 (org_code, org_role) 在 menu 里有 quota_statistics 的也放行
+		// 比如 mt-admin / wl-admin。详见 org.md 4.2。
+		// 通过组织获得的访问也属于"自助视图",同样要设置 force_self_user_id,让 controller 走
+		// resolveSelfScope 路径(mt-admin → 全 mt 组织 uid;wl-admin → 全 wl 组织 user_id)。
+		allowedByOrg := false
+		if userID, ok := id.(int); ok && userID > 0 {
+			if user, err := model.GetUserById(userID, false); err == nil && user != nil {
+				if service.HasPage(user, service.PageQuotaStatistics) {
+					allowedByOrg = true
+				}
+			}
+		}
 		host := c.Request.Host
 		if idx := strings.Index(host, ":"); idx != -1 {
 			host = host[:idx]
 		}
-		if host != "api.mixrouter.com" {
+		if host != "api.mixrouter.com" && !allowedByOrg {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "无权进行此操作，权限不足",
@@ -288,7 +299,7 @@ func mixRouterAuthHelper(c *gin.Context, minRole int) {
 			c.Abort()
 			return
 		}
-		// 在 c.Next() 之前设置标记，控制器将强制只查看自己的数据
+		// 在 c.Next() 之前设置标记，控制器将强制只查看自己的数据(或本 org 的数据)
 		c.Set("force_self_user_id", true)
 	}
 
@@ -303,21 +314,9 @@ func mixRouterAuthHelper(c *gin.Context, minRole int) {
 	c.Next()
 }
 
-func ToioAuth() func(c *gin.Context) {
-	return func(c *gin.Context) {
-		authHelper(c, common.RoleCommonUser)
-		session := sessions.Default(c)
-		flag := session.Get("is_toio")
-		if flag != true {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无权进行此操作，未通过 toio 登录",
-			})
-			c.Abort()
-			return
-		}
-	}
-}
+// ToioAuth 已废弃,组织标签系统替代,详见 org.md。
+// 残留删除时机:确认无前端/集成方调用 /api/toio/data 后下个版本一起清掉。
+
 func WssAuth(c *gin.Context) {
 
 }

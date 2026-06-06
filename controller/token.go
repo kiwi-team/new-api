@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -68,8 +67,10 @@ func GetAllTokens(c *gin.Context) {
 }
 
 func clearTokenInfo(c *gin.Context, token *model.Token) {
-	isAdmin := model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId))
-	if !isAdmin {
+	// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段对**非 root** 不可见
+	// (原来是非 admin 不可见，现在收紧到非 root)
+	role := c.GetInt("role")
+	if role < common.RoleRootUser {
 		token.ChannelRules = ""
 		token.ChannelRatios = ""
 	}
@@ -269,7 +270,8 @@ func AddToken(c *gin.Context) {
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AlertThreshold:     token.AlertThreshold,
 	}
-	if model.IsAdmin(common.GetContextKeyInt(c, constant.ContextKeyUserId)) {
+	// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段只 root 可写
+	if c.GetInt("role") >= common.RoleRootUser {
 		cleanToken.ChannelRules = token.ChannelRules
 		cleanToken.ChannelRatios = token.ChannelRatios
 	}
@@ -362,8 +364,8 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
-		isAdmin := model.IsAdmin(userId)
-		if isAdmin || role >= common.RoleRootUser {
+		// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段只 root 可写
+		if role >= common.RoleRootUser {
 			cleanToken.ChannelRules = token.ChannelRules
 			cleanToken.ChannelRatios = token.ChannelRatios
 		}

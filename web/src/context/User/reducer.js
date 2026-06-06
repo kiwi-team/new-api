@@ -28,6 +28,14 @@ export const reducer = (state, action) => {
       return {
         ...state,
         user: undefined,
+        userMenu: undefined,
+      };
+    // 组织标签系统:登录后前端拉一次 /api/user/menu,后续 SiderBar/App.jsx/Headerbar 都消费它。
+    // 详见 org.md 第 6.1 / 7.1 节。
+    case 'setUserMenu':
+      return {
+        ...state,
+        userMenu: action.payload,
       };
 
     default:
@@ -37,4 +45,5 @@ export const reducer = (state, action) => {
 
 export const initialState = {
   user: undefined,
+  userMenu: undefined, // { topbar_mode: 'normal'|'logout_only', pages: [...] }
 };

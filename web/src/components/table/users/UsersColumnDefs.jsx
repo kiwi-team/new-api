@@ -367,6 +367,20 @@ export const getUsersColumns = ({
       },
     },
     {
+      // 组织标签:展示 org_code + org_role,详见 org.md
+      title: t('组织'),
+      dataIndex: 'org_code',
+      render: (text, record) => {
+        const code = record.org_code || 'other';
+        const role = record.org_role || 'member';
+        return (
+          <Tag color='blue' shape='circle' size='small'>
+            {code} / {role}
+          </Tag>
+        );
+      },
+    },
+    {
       title: t('邀请信息'),
       dataIndex: 'invite',
       render: (text, record, index) => renderInviteInfo(text, record, t),

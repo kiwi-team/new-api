@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -163,8 +164,9 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	tokenIdsStr := c.Query("token_ids")
 
 	// 普通用户（通过 MixRouterAuth）只能查看自己或其关联 uid 的数据
-	scopeUserId, scopeUids := resolveSelfScope(c)
-	if scopeUserId > 0 {
+	// mt-admin / wl-admin 通过 resolveSelfScope 拿到 org 全员范围(详见 org.md)
+	scopeUserId, scopeUids, scopeUserIds := resolveSelfScope(c)
+	if scopeUserId > 0 || len(scopeUids) > 0 || len(scopeUserIds) > 0 {
 		userId = 0 // 改用 scope 限制，不再按精确 userId 过滤
 	}
 
@@ -178,7 +180,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids, scopeUserIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -192,19 +194,31 @@ func GetQuotaDataStatistics(c *gin.Context) {
 }
 
 // resolveSelfScope 当请求被标记为 force_self_user_id（非管理员自助视图）时，
-// 返回当前用户 id 及其可见 uid 集合（自身 uid + 关联 uid）。否则返回 0/nil。
-func resolveSelfScope(c *gin.Context) (int, []string) {
+// 按 (org_code, org_role) 返回数据范围,详见 org.md 第 4 节。返回 (scopeUserId, scopeUids, scopeUserIds):
+//   - mt-admin: (0, mt 全员 uid 并集, nil)
+//   - wl-admin: (0, nil, wl 全员 user_id 集合)
+//   - 其他: (self.id, self.uid + self.related_uids, nil)
+func resolveSelfScope(c *gin.Context) (int, []string, []int) {
 	if forceSelf, exists := c.Get("force_self_user_id"); !exists || !forceSelf.(bool) {
-		return 0, nil
+		return 0, nil, nil
 	}
 	selfId := c.GetInt("id")
 	if selfId <= 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
-	if u, err := model.GetUserById(selfId, false); err == nil {
-		return selfId, u.GetScopeUids()
+	u, err := model.GetUserById(selfId, false)
+	if err != nil || u == nil {
+		return selfId, nil, nil
 	}
-	return selfId, nil
+	if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+		s := service.ComputeOrgScope(u)
+		return 0, s.UidSet, nil
+	}
+	if u.OrgCode == "wl" && u.OrgRole == constant.OrgRoleAdmin {
+		s := service.ComputeOrgScope(u)
+		return 0, nil, s.UserIdSet
+	}
+	return selfId, u.GetScopeUids(), nil
 }
 
 func ExportQuotaDataStatistics(c *gin.Context) {
@@ -222,8 +236,9 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	tokenIdsStr := c.Query("token_ids")
 
 	// 普通用户（通过 MixRouterAuth）只能导出自己或其关联 uid 的数据
-	scopeUserId, scopeUids := resolveSelfScope(c)
-	if scopeUserId > 0 {
+	// mt-admin / wl-admin 通过 resolveSelfScope 拿到 org 全员范围(详见 org.md)
+	scopeUserId, scopeUids, scopeUserIds := resolveSelfScope(c)
+	if scopeUserId > 0 || len(scopeUids) > 0 || len(scopeUserIds) > 0 {
 		userId = 0
 	}
 
@@ -237,7 +252,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids, scopeUserIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return

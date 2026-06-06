@@ -743,6 +743,8 @@ export const useLogsData = () => {
       });
       url = `/api/log/?${params.toString()}`;
     } else {
+      // 自助视图(普通用户、mt-leader/admin、wl-admin 等):带上 mt 业务筛选;
+      // 后端按 (org_code, org_role) 决定是否实际命中,看不到这些输入的 org 传空串不影响。
       params = new URLSearchParams({
         p: String(startIdx),
         page_size: String(pageSize),
@@ -753,6 +755,10 @@ export const useLogsData = () => {
         end_timestamp: String(localEndTimestamp),
         group: group || '',
         request_id: request_id || '',
+        client_user_id: client_user_id || '',
+        mt_session_id: mt_session_id || '',
+        trace_id: trace_id || '',
+        traj_id: traj_id || '',
       });
       url = `/api/log/self/?${params.toString()}`;
     }

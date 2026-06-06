@@ -39,8 +39,6 @@ const ProjectPage = () => {
   const [editing, setEditing] = useState(null);
   const [formApi, setFormApi] = useState(null);
 
-  const isAdminOrRoot = useMemo(() => isAdmin() || isRoot(), []);
-
   const initFormValues = {
     project_name: '',
     total_budget: 0,
@@ -655,13 +653,11 @@ const ProjectPage = () => {
           <Tag color={status === ProjectStatusEnabled ? 'green' : 'grey'}>
             {status === ProjectStatusEnabled ? t('启用') : t('暂停')}
           </Tag>
-          {isAdminOrRoot && (
-            <Switch
-              checked={status === ProjectStatusEnabled}
-              onChange={() => handleStatusToggle(record)}
-              size="small"
-            />
-          )}
+          <Switch
+            checked={status === ProjectStatusEnabled}
+            onChange={() => handleStatusToggle(record)}
+            size="small"
+          />
         </Space>
       ),
     },
@@ -711,7 +707,7 @@ const ProjectPage = () => {
   return (
     <div className='mt-[60px] px-2'>
       {/* Dashboard Summary Cards */}
-      {isAdminOrRoot && dashboardData && (
+      {dashboardData && (
         <div className='grid grid-cols-2 md:grid-cols-4 gap-4 mb-4'>
           <Card title={t('项目总数')} loading={dashboardLoading}>
             <Text size='large' strong>{dashboardData.projects?.length || 0}</Text>
@@ -736,11 +732,9 @@ const ProjectPage = () => {
             onChange={(v) => setSearchKeyword(v)}
           />
           <Button onClick={() => fetchData(1, pageSize, searchKeyword)}>{t('搜索')}</Button>
-          {isAdminOrRoot && (
-            <Button type='primary' onClick={openCreate}>
-              {t('新建')}
-            </Button>
-          )}
+          <Button type='primary' onClick={openCreate}>
+            {t('新建')}
+          </Button>
         </Space>
       </div>
       <Table
@@ -811,11 +805,9 @@ const ProjectPage = () => {
             />
             <div className='flex items-center justify-between mb-3'>
               <Text strong>{t('分配计划列表')}</Text>
-              {isAdminOrRoot && (
-                <Button type='primary' size='small' onClick={() => openPlanForm()}>
-                  {t('新建计划')}
-                </Button>
-              )}
+              <Button type='primary' size='small' onClick={() => openPlanForm()}>
+                {t('新建计划')}
+              </Button>
             </div>
             <Table
               loading={plansLoading}
@@ -891,11 +883,9 @@ const ProjectPage = () => {
             />
             <div className='flex items-center justify-between mb-3'>
               <Text>{t('分配列表')}</Text>
-              {isAdminOrRoot && (
-                <Button type='primary' size='small' onClick={() => openAllocationForm()}>
-                  {t('新建分配')}
-                </Button>
-              )}
+              <Button type='primary' size='small' onClick={() => openAllocationForm()}>
+                {t('新建分配')}
+              </Button>
             </div>
             <Table
               loading={allocationLoading}

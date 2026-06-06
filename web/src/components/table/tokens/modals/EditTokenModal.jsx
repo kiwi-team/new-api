@@ -28,6 +28,7 @@ import {
   getModelCategories,
   selectFilter,
   isAdmin,
+  isRoot,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
@@ -380,6 +381,11 @@ const EditTokenModal = (props) => {
   };
 
   const loadAllChannels = async () => {
+    // 渠道列表只对 root 用户拉(后端 /api/channel/* 已升级为 RootAuth)。
+    // 非 root 用户在 Token 编辑里看不到"指定渠道""设置渠道规则""设置渠道倍率"等
+    // 渠道相关字段(controller/token.go 也会剔除返回),跳过请求避免无谓 403。
+    // 详见 org.md 全系统级约束。
+    if (!isRoot()) return;
     try {
       const res = await API.get(
         //`/api/channel/?p=1&page_size=1000&id_sort=true&tag_mode=false`,
