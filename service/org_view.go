@@ -130,10 +130,16 @@ func GetUserMenu(user *model.User) UserMenu {
 		case constant.OrgRoleMember:
 			return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog}}
 		case constant.OrgRoleLeader:
-			return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog, PageQuotaStatistics}}
+			// mt-leader 提权到看 mt 全员 uid 的所有数据:使用日志、消耗统计 + UID预算/项目预算(只读)。
+			// 菜单跟 mt-admin 完全相同,但 controller 层会拒掉 mt-leader 的写操作。
+			return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog, PageQuotaStatistics, PageClientUserQuota, PageProject}}
 		case constant.OrgRoleAdmin:
 			// mt-admin: 使用日志 + 消耗统计 + UID 预算 + 项目预算(累加包含 leader 的能力)
 			return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog, PageQuotaStatistics, PageClientUserQuota, PageProject}}
+		case constant.OrgRoleMtUser:
+			// mt-mtuser: 只看使用日志 + 消耗统计(数据范围跟 admin/leader 一样,mt 全员 uid),
+			// 没有 UID 预算/项目预算菜单。"观察员"角色。
+			return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog, PageQuotaStatistics}}
 		}
 		// 未知 mt 角色兜底为 member 最小集合
 		return UserMenu{TopbarMode: TopbarLogoutOnly, Pages: []string{PageLog}}
@@ -233,6 +239,33 @@ func CurrentUserOrgScope(userID int, role int) (*OrgScope, error) {
 	return &s, nil
 }
 
+// HasMtFullOrgScope 判断该用户在使用日志/消耗统计/UID预算/项目预算等页面是否拥有
+// "mt 全员"数据范围。当前 mt-admin / mt-leader / mt-mtuser 都享有此范围。
+// 系统 admin/root 不通过这里(他们看全局,不走 scope 过滤)。
+func HasMtFullOrgScope(user *model.User) bool {
+	if user == nil || user.OrgCode != "mt" {
+		return false
+	}
+	switch user.OrgRole {
+	case constant.OrgRoleAdmin, constant.OrgRoleLeader, constant.OrgRoleMtUser:
+		return true
+	}
+	return false
+}
+
+// IsReadOnlyOnOrgManagement 判断该用户在 UID 预算管理 / 项目预算管理 等组织管理页面是否只读。
+// 当前 mt-leader 是只读(能看不能写),mt-admin 是读写。
+// 系统 admin/root 始终可写(返回 false)。
+func IsReadOnlyOnOrgManagement(user *model.User) bool {
+	if user == nil {
+		return false
+	}
+	if user.Role >= common.RoleAdminUser {
+		return false
+	}
+	return user.OrgCode == "mt" && user.OrgRole == constant.OrgRoleLeader
+}
+
 // IsOrgMainUid 校验 client_user_id 是否恰好是某 org 内某成员的**主 uid**(不展开 related_uids)。
 // 用于 mt-admin 创建 UID 预算条目时的校验:必须给某个"正式 mt 成员"开预算,
 // 不能给"成员的关联 uid"开。
@@ -295,6 +328,22 @@ func ComputeOrgScope(user *model.User) OrgScope {
 					}
 				}
 			}
+		}
+	}
+
+	// mt-admin / mt-leader / mt-mtuser:UidSet 改为来自 cliend_user_quota.client_user_id 全集
+	// (不再用"mt 成员 uid + related_uids 并集"那套)。
+	// 语义:他们可以看"所有配过 UID 预算的 uid"的日志/消耗统计。UserIdSet 仍来自 users 表,
+	// 给少数还依赖 user_id 维度过滤的地方用。
+	if HasMtFullOrgScope(user) {
+		var quotaUids []string
+		if err := model.DB.Model(&model.CliendUserQuota{}).
+			Distinct("client_user_id").
+			Where("client_user_id <> ?", "").
+			Pluck("client_user_id", &quotaUids).Error; err != nil {
+			logger.LogError(context.Background(), "ComputeOrgScope cliend_user_quota query failed: "+err.Error())
+		} else {
+			scope.UidSet = quotaUids
 		}
 	}
 	return scope

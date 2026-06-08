@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -149,7 +148,8 @@ func resolveErrorLogSelfScope(c *gin.Context) (int, []string) {
 		return 0, nil
 	}
 	if u, err := model.GetUserById(selfId, false); err == nil {
-		if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+		if service.HasMtFullOrgScope(u) {
+			// mt-admin / mt-leader 都拥有 mt 全员 uid 范围
 			scope := service.ComputeOrgScope(u)
 			return selfId, scope.UidSet
 		}

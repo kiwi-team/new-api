@@ -101,6 +101,9 @@ func forbidIfOutOfScope(c *gin.Context, ok bool) bool {
 	// return true
 }
 
+// 注:forbidIfReadOnlyOrgManagement 在 controller/cliend_user_quota.go 里定义,同 package 复用。
+// mt-leader 等"只读组织管理页面"角色调写接口时 403。系统 admin / mt-admin 等通过。
+
 // requireSystemAdmin 要求当前用户必须是系统 admin/root,否则 403 中止。
 // 项目预算管理里所有写操作(创建项目/方案/预算)和 dashboard 统计接口都用它锁起来。
 // 组织 admin(mt-admin 等)在该页面**只读**:能看自己 org 范围内的项目+预算,但不能创建/编辑/删除。
@@ -217,7 +220,11 @@ func GetProjects(c *gin.Context) {
 // CreateProject handles POST /api/project - creates a new project
 // 组织 admin(mt-admin)也能新建项目;新建后需 immediately 配 allocation 给本 org 成员,
 // 否则空项目对自己不可见(GetProjects 按 allocation 反查归属)。
+// mt-leader 是只读,被 forbidIfReadOnlyOrgManagement 拦掉。
 func CreateProject(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	var req dto.CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiError(c, err)
@@ -257,6 +264,9 @@ func CreateProject(c *gin.Context) {
 
 // UpdateProject handles PUT /api/project/:id - updates project information
 func UpdateProject(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
@@ -321,6 +331,9 @@ func UpdateProject(c *gin.Context) {
 
 // UpdateProjectStatus handles PUT /api/project/:id/status - updates project status
 func UpdateProjectStatus(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
@@ -363,6 +376,9 @@ func UpdateProjectStatus(c *gin.Context) {
 
 // SetActivePlan handles PUT /api/project/:id/active-plan - sets the active plan for a project
 func SetActivePlan(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
@@ -486,6 +502,9 @@ func GetProjectPlans(c *gin.Context) {
 
 // CreateProjectPlan handles POST /api/project/:id/plan - creates a new allocation plan
 func CreateProjectPlan(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
@@ -529,6 +548,9 @@ func CreateProjectPlan(c *gin.Context) {
 
 // UpdateProjectPlan handles PUT /api/project/plan/:planId - updates a plan
 func UpdateProjectPlan(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	planId, err := strconv.Atoi(c.Param("planId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid plan id")
@@ -575,6 +597,9 @@ func UpdateProjectPlan(c *gin.Context) {
 
 // DeleteProjectPlan handles DELETE /api/project/plan/:planId - deletes a plan and its allocations
 func DeleteProjectPlan(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	planId, err := strconv.Atoi(c.Param("planId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid plan id")
@@ -636,6 +661,9 @@ func GetPlanAllocations(c *gin.Context) {
 
 // CreateOrUpdatePlanAllocation handles POST /api/project/plan/:planId/allocation
 func CreateOrUpdatePlanAllocation(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	planId, err := strconv.Atoi(c.Param("planId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid plan id")
@@ -648,14 +676,9 @@ func CreateOrUpdatePlanAllocation(c *gin.Context) {
 		return
 	}
 
-	// 组织数据隔离:非系统 admin 只能给本 org scope 内的 client_user_id 配预算
-	if !checkClientUserInOrgScope(c, req.ClientUserId) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": "client_user_id 不在你所属组织的范围内",
-		})
-		return
-	}
+	// 注:原先有 checkClientUserInOrgScope 校验 client_user_id 必须在本 org scope 内,
+	// 已去掉——业务场景是 admin 经常提前给"尚未注册"的 uid 配预算,严格校验会阻塞这个流程。
+	// 副作用:admin 输错 uid(比如填了别 org 的 uid)时不会被前端拦截,只能事后纠正。
 
 	plan, err := model.GetAllocationPlanById(planId)
 	if err != nil {
@@ -696,6 +719,9 @@ func CreateOrUpdatePlanAllocation(c *gin.Context) {
 
 // ClearAllocationBudget handles POST /api/project/allocation/:allocationId/clear - clears remaining budget
 func ClearAllocationBudget(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	allocationId, err := strconv.Atoi(c.Param("allocationId"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid allocation id")
@@ -751,6 +777,9 @@ func GetProjectAllocations(c *gin.Context) {
 
 // CreateOrUpdateAllocation handles POST /api/project/:id/allocation - creates or updates a budget allocation
 func CreateOrUpdateAllocation(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiErrorMsg(c, "invalid project id")
@@ -766,14 +795,7 @@ func CreateOrUpdateAllocation(c *gin.Context) {
 		return
 	}
 
-	// 组织数据隔离:非系统 admin 只能给本 org scope 内的 client_user_id 配预算
-	if !checkClientUserInOrgScope(c, req.ClientUserId) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": "client_user_id 不在你所属组织的范围内",
-		})
-		return
-	}
+	// 注:原先有 checkClientUserInOrgScope,允许 pre-registration 创建,理由同 CreateOrUpdatePlanAllocation。
 
 	_, err = model.GetProjectById(id)
 	if err != nil {

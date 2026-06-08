@@ -15,6 +15,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// forbidIfReadOnlyOrgManagement:对当前用户禁写组织管理(UID 预算 / 项目预算)时直接 403,
+// 返回 true 表示已经写了 response,caller 应当立刻 return。
+// 当前只对 mt-leader 生效(他只能看不能改);mt-admin / 系统 admin 都通过。
+func forbidIfReadOnlyOrgManagement(c *gin.Context) bool {
+	u, err := model.GetUserById(c.GetInt("id"), false)
+	if err != nil || u == nil {
+		return false // 用户查不到的话交由下面的逻辑兜底,这里不主动拒
+	}
+	if service.IsReadOnlyOnOrgManagement(u) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "你在该页面只读,无权执行写操作",
+		})
+		return true
+	}
+	return false
+}
+
 // applyClientUserQuotaOrgScope 给查询加 org 数据隔离。
 // 系统 admin/root 返回原 query(看全局);mt-admin 等组织角色按 client_user_id IN scope.UidSet 过滤。
 // 如果 scope 算出来 UidSet 为空(本 org 无成员配 uid),会显式给个不可能命中的条件让结果为空。
@@ -100,6 +118,9 @@ func GetCliendUserQuota(c *gin.Context) {
 }
 
 func CreateCliendUserQuota(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	var req CuQuotaUpsertRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.ClientUserId == "" {
 		c.JSON(http.StatusOK, gin.H{
@@ -168,6 +189,9 @@ func CreateCliendUserQuota(c *gin.Context) {
 }
 
 func UpdateCliendUserQuota(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	var req CuQuotaUpsertRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.ClientUserId == "" {
 		c.JSON(http.StatusOK, gin.H{
@@ -216,6 +240,9 @@ func UpdateCliendUserQuota(c *gin.Context) {
 }
 
 func DeleteCliendUserQuota(c *gin.Context) {
+	if forbidIfReadOnlyOrgManagement(c) {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)

@@ -207,8 +207,11 @@ type QuotaDataStatistics struct {
 	TotalCacheCreationTokens int64 `json:"total_cache_creation_tokens"`
 	// Claude 写缓存按 TTL 拆分：5 分钟缓存与 1 小时缓存定价不同（1h 通常更贵），
 	// 这里按 tier 单独聚合方便前端分列展示；总和等于 TotalCacheCreationTokens。
-	TotalCacheCreation5mTokens int64 `json:"total_cache_creation_5m_tokens"`
-	TotalCacheCreation1hTokens int64 `json:"total_cache_creation_1h_tokens"`
+	// 显式声明 gorm 列名:GORM 默认会把 `TotalCacheCreation5mTokens` 映射成
+	// `total_cache_creation5m_tokens`(数字前不加下划线),但 SELECT 别名是
+	// `total_cache_creation_5m_tokens`,对不上会读不到值(token 数显示 0,而费用是 Go 里算的所以正常)。
+	TotalCacheCreation5mTokens int64 `json:"total_cache_creation_5m_tokens" gorm:"column:total_cache_creation_5m_tokens"`
+	TotalCacheCreation1hTokens int64 `json:"total_cache_creation_1h_tokens" gorm:"column:total_cache_creation_1h_tokens"`
 	// 缓存费用为按模型当前倍率估算值（忽略分组倍率、历史倍率变化、阶梯价等），仅供参考
 	TotalCacheCost           float64 `json:"total_cache_cost"`
 	TotalCacheCreationCost   float64 `json:"total_cache_creation_cost"`

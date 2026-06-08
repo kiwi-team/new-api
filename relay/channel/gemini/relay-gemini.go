@@ -578,7 +578,9 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 		imageNum := 0
 		//source := &types.FileSource{}
 		//imageUrl := ""
-		isBaiduVODGemini := channel.Type == constant.ChannelTypeGemini && strings.Contains(info.ChannelBaseUrl, "baidubce")
+		// baiduvod和usapi都支持url传递gemini附件
+		supportGeminiUrl := channel.Type == constant.ChannelTypeGemini && (strings.Contains(info.ChannelBaseUrl, "baidubce") ||
+			strings.Contains(info.ChannelBaseUrl, "openai-next"))
 		//isVipGemini := channel.Type == constant.ChannelTypeGemini && strings.Contains(info.ChannelBaseUrl, "theapi")
 		for _, part := range openaiContent {
 			if part.Type == dto.ContentTypeText {
@@ -654,7 +656,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 
 				if strings.HasPrefix(imageUrl, "http") {
-					if isBaiduVODGemini {
+					if supportGeminiUrl {
 						// baidu vod gemini 可以支持直接传递image_url
 						mimeType, err := GetFileMimeType(imageUrl)
 						if err != nil {
@@ -767,7 +769,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				channelConfig := channel.GetSetting()
 				bukect := channelConfig.GoogleFileBucket
 				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
-				if (isBaiduVODGemini) && strings.HasPrefix(audioFileUrl, "http") {
+				if (supportGeminiUrl) && strings.HasPrefix(audioFileUrl, "http") {
 					// baidu vod gemini 可以支持直接传递audio_url
 					mimeType, err := GetFileMimeType(audioFileUrl)
 					if err != nil {
@@ -866,7 +868,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 							FileUri:  uploadedFile.URI,
 						},
 					})
-				} else if isBaiduVODGemini {
+				} else if supportGeminiUrl {
 					// baidu vod gemini 可以支持直接传递video_url
 					videoFileUrl := ""
 					if videoUrl, ok := part.VideoUrl.(string); ok {

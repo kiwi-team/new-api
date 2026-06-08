@@ -550,13 +550,30 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+// SumUsedQuota 汇总消费 quota / rpm / tpm。
+//
+// scopeUids 控制范围(详见 org.md 4.2.1):
+//   - nil         → 用 username 过滤(其他 org / 系统 admin 走老路径,与现有行为完全一致)
+//   - 空切片(非 nil 但 len=0) → mt org 用户但 scope 为空(比如 mt-admin 但 org 内无人配 uid,
+//                                 或 mt-member 自己 uid 是空串),直接返回 Stat{} 不查 DB
+//   - 非空切片  → mt org 用户,改为 WHERE client_user_id IN scopeUids(取代 username 过滤)
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, scopeUids []string) (stat Stat, err error) {
+	// 空 scope 早返 0/0/0,避免 IN () 语法错误也避免误命中 NULL/空 client_user_id
+	if scopeUids != nil && len(scopeUids) == 0 {
+		return Stat{}, nil
+	}
+
 	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
 
-	if username != "" {
+	if scopeUids != nil {
+		// mt org:按 client_user_id 聚合(与使用日志列表的过滤维度一致)
+		tx = tx.Where("client_user_id IN ?", scopeUids)
+		rpmTpmQuery = rpmTpmQuery.Where("client_user_id IN ?", scopeUids)
+	} else if username != "" {
+		// 其他 org / 系统 admin:沿用 username 过滤
 		tx = tx.Where("username = ?", username)
 		rpmTpmQuery = rpmTpmQuery.Where("username = ?", username)
 	}

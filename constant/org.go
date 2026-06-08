@@ -21,10 +21,13 @@ var Orgs = []OrgInfo{
 
 // 组织内角色常量。约定三档强制存在，未来扩展时新增字符串即可，
 // service.GetUserMenu 里的 switch 会兜底到普通用户行为。
+// mtuser 是 mt org 专属的"只看日志/统计"观察员角色:能看到 mt 全员 uid 数据范围,
+// 但没有 UID 预算/项目预算菜单。
 const (
 	OrgRoleMember = "member"
 	OrgRoleLeader = "leader"
 	OrgRoleAdmin  = "admin"
+	OrgRoleMtUser = "mtuser"
 )
 
 // IsValidOrgCode 校验 root 给用户分配 org_code 时输入合法。
@@ -44,7 +47,7 @@ func IsValidOrgCode(code string) bool {
 // IsValidOrgRole 校验 org_role 输入合法。
 func IsValidOrgRole(role string) bool {
 	switch role {
-	case OrgRoleMember, OrgRoleLeader, OrgRoleAdmin:
+	case OrgRoleMember, OrgRoleLeader, OrgRoleAdmin, OrgRoleMtUser:
 		return true
 	}
 	return false

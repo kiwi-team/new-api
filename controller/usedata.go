@@ -149,9 +149,33 @@ func WarningUserQuota() {
 	}
 }
 
+// mtOrgQuotaStatsMinStart 是 mt org 用户在 /console/quota-statistics 上**最早**可查时间(unix 秒)。
+// 业务规则:更早的数据对 mt org 所有角色都不开放;系统 admin/root 不受此限制(看全局)。
+// 时间点:2026-06-01 00:00:00 Asia/Shanghai (+08:00)。
+var mtOrgQuotaStatsMinStart = time.Date(2026, 6, 1, 0, 0, 0, 0, time.FixedZone("CST", 8*3600)).Unix()
+
+// clampMtOrgStatsStartTime:mt org 用户的 start_timestamp 向后 clamp 到 mtOrgQuotaStatsMinStart;
+// 其他 org / 系统 admin 不变。startTimestamp == 0(用户没传)也会被 clamp 到 cutoff。
+func clampMtOrgStatsStartTime(c *gin.Context, startTimestamp int64) int64 {
+	// 系统 admin/root 看全局,跳过(免去一次 user 查库)
+	if c.GetInt("role") >= common.RoleAdminUser {
+		return startTimestamp
+	}
+	u, err := model.GetUserById(c.GetInt("id"), false)
+	if err != nil || u == nil || u.OrgCode != "mt" {
+		return startTimestamp
+	}
+	if startTimestamp < mtOrgQuotaStatsMinStart {
+		return mtOrgQuotaStatsMinStart
+	}
+	return startTimestamp
+}
+
 func GetQuotaDataStatistics(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	// mt org 用户:start_timestamp 向后 clamp 到 2026-06-01 00:00 +0800
+	startTimestamp = clampMtOrgStatsStartTime(c, startTimestamp)
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
@@ -210,7 +234,8 @@ func resolveSelfScope(c *gin.Context) (int, []string, []int) {
 	if err != nil || u == nil {
 		return selfId, nil, nil
 	}
-	if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+	if service.HasMtFullOrgScope(u) {
+		// mt-admin / mt-leader 都拥有 mt 全员 uid 范围
 		s := service.ComputeOrgScope(u)
 		return 0, s.UidSet, nil
 	}
@@ -224,6 +249,8 @@ func resolveSelfScope(c *gin.Context) (int, []string, []int) {
 func ExportQuotaDataStatistics(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	// mt org 用户:导出也走相同的 cutoff
+	startTimestamp = clampMtOrgStatsStartTime(c, startTimestamp)
 	modelName := c.Query("model_name")
 	clientUserId := c.Query("client_user_id")
 	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")

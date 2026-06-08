@@ -227,6 +227,7 @@ const AddUserModal = (props) => {
                           { label: 'member', value: 'member' },
                           { label: 'leader', value: 'leader' },
                           { label: 'admin', value: 'admin' },
+                          { label: 'mtuser (mt 专属:看 mt 全员日志/统计)', value: 'mtuser' },
                         ]}
                       />
                     </Col>

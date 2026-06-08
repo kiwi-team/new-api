@@ -80,7 +80,21 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
       <div className='w-full px-2'>
         <div className='flex items-center justify-between h-16'>
           {toioOnlyLogout ? (
-            <div className='flex-1 flex justify-end'>
+            <div className='flex-1 flex items-center justify-end gap-3'>
+              {/* 砍光模式(mt 等):右上角只剩登出按钮时,补上当前账号 + 组织角色,
+                  避免用户误以为不知道自己以什么身份登录 */}
+              {userState?.user?.username && (
+                <span className='text-semi-color-text-1 text-sm'>
+                  {userState.user.display_name || userState.user.username}
+                  {userState.user.org_role && (
+                    <span className='ml-1 text-semi-color-text-2'>
+                      ({userState.user.org_code
+                        ? `${userState.user.org_code}-${userState.user.org_role}`
+                        : userState.user.org_role})
+                    </span>
+                  )}
+                </span>
+              )}
               <ActionButtons
                 isNewYear={isNewYear}
                 unreadCount={unreadCount}

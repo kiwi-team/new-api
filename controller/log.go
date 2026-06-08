@@ -233,7 +233,8 @@ func GetUserLogs(c *gin.Context) {
 	//   - 用户没配 uid 时 scopeUids 为空,model.GetUserLogs 兜底为 WHERE user_id = self
 	var scopeUids []string
 	if u, e := model.GetUserById(userId, false); e == nil {
-		if u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleAdmin {
+		if service.HasMtFullOrgScope(u) {
+			// mt-admin / mt-leader 都拥有 mt 全员 uid 范围
 			scope := service.ComputeOrgScope(u)
 			scopeUids = scope.UidSet
 		} else {
@@ -321,7 +322,8 @@ func GetLogsStat(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	// admin 端按 username 老路径,传 nil 让 model 走原 username 过滤
+	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, nil)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -341,6 +343,7 @@ func GetLogsStat(c *gin.Context) {
 
 func GetLogsSelfStat(c *gin.Context) {
 	username := c.GetString("username")
+	userId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -348,7 +351,33 @@ func GetLogsSelfStat(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+
+	// mt org:把统计范围从 username 切换到 client_user_id IN scope。
+	// 严格语义(见 org.md 4.2.1):
+	//   - mt-admin: mt 全组织成员 uid + related_uids 并集
+	//   - mt-leader: 自己 uid + 自己 related_uids
+	//   - mt-member: 仅自己 uid(不含 related_uids)
+	// 其他 org / 系统 admin:scopeUids 留 nil,走 username 老路径,行为不变。
+	var scopeUids []string
+	if u, e := model.GetUserById(userId, false); e == nil && u != nil {
+		switch {
+		case service.HasMtFullOrgScope(u):
+			// mt-admin / mt-leader 都拥有 mt 全员 uid 范围
+			scopeUids = service.ComputeOrgScope(u).UidSet
+		case u.OrgCode == "mt" && u.OrgRole == constant.OrgRoleMember:
+			// 严格:仅自己 uid;若 uid 为空,scopeUids = [](非 nil 空切片) → model 早返 0/0/0
+			if u.Uid != "" {
+				scopeUids = []string{u.Uid}
+			} else {
+				scopeUids = []string{}
+			}
+		case u.OrgCode == "mt":
+			// mt org 未识别角色:兜底走自己 GetScopeUids
+			scopeUids = u.GetScopeUids()
+		}
+	}
+
+	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, scopeUids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
