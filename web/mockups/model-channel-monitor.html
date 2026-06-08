@@ -1,0 +1,1404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>模型渠道监控 Mock</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6fa;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --line: #dfe4ec;
+      --line-strong: #cbd5e1;
+      --text: #202636;
+      --muted: #758098;
+      --green: #16a34a;
+      --green-bg: #eaf8ef;
+      --amber: #d97706;
+      --amber-bg: #fff4db;
+      --red: #dc2626;
+      --red-bg: #fff0f0;
+      --blue: #2563eb;
+      --blue-bg: #edf4ff;
+      --violet: #7c3aed;
+      --violet-bg: #f3edff;
+      --cyan: #0891b2;
+      --cyan-bg: #e9f8fb;
+      --shadow: 0 8px 24px rgba(25, 33, 52, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.8), rgba(244,246,250,0.92)),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .page {
+      width: min(1480px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 28px 0 44px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+
+    .title h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.2;
+      font-weight: 760;
+    }
+
+    .title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .freshness {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+      margin-top: 7px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr 1fr 0.8fr auto;
+      gap: 10px;
+      align-items: end;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      margin-bottom: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .control {
+      width: 100%;
+      height: 38px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 11px;
+      outline: none;
+    }
+
+    .control:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .refresh-btn,
+    .icon-btn,
+    .seg-btn {
+      height: 38px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: 120ms ease;
+    }
+
+    .refresh-btn {
+      padding: 0 14px;
+      background: #192033;
+      border-color: #192033;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .refresh-btn:hover {
+      background: #2b344f;
+    }
+
+    .tabs {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 14px 0;
+    }
+
+    .segmented {
+      display: inline-grid;
+      grid-auto-flow: column;
+      gap: 4px;
+      padding: 4px;
+      background: #e8edf5;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+
+    .seg-btn {
+      border: 0;
+      min-width: 82px;
+      height: 32px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .seg-btn.active {
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 1px 4px rgba(20, 30, 48, 0.1);
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px 14px;
+      min-height: 88px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .metric .value {
+      font-size: 25px;
+      line-height: 1;
+      font-weight: 780;
+    }
+
+    .metric .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .groups {
+      display: grid;
+      gap: 20px;
+    }
+
+    .group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 8px 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+
+    .group-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #eef2f8;
+      color: #667085;
+      font-size: 12px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 5px 18px rgba(18, 26, 43, 0.06);
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: #b8c4d7;
+      box-shadow: var(--shadow);
+    }
+
+    .card-top {
+      padding: 16px 18px 14px;
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .model-name {
+      margin: 0 0 9px;
+      font-size: 18px;
+      line-height: 1.25;
+      font-weight: 790;
+      overflow-wrap: anywhere;
+    }
+
+    .tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 23px;
+      padding: 0 8px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 760;
+      border: 1px solid transparent;
+    }
+
+    .tag.blue { color: var(--blue); background: var(--blue-bg); border-color: #c8dcff; }
+    .tag.violet { color: var(--violet); background: var(--violet-bg); border-color: #ddd0ff; }
+    .tag.cyan { color: var(--cyan); background: var(--cyan-bg); border-color: #bfe9f2; }
+    .tag.gray { color: #667085; background: #f1f4f8; border-color: #d9e0ea; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: currentColor;
+    }
+
+    .status.healthy { color: var(--green); background: var(--green-bg); border: 1px solid #bde9cc; }
+    .status.degraded { color: var(--amber); background: var(--amber-bg); border: 1px solid #f4d491; }
+    .status.down { color: var(--red); background: var(--red-bg); border: 1px solid #ffc7c7; }
+    .status.unknown { color: #64748b; background: #f2f4f7; border: 1px solid #d6dde8; }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .kpi {
+      min-height: 116px;
+      padding: 14px 15px;
+      border-right: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .kpi:last-child {
+      border-right: 0;
+    }
+
+    .kpi.focus {
+      background: #f0f2f6;
+      box-shadow: inset 0 -3px 0 var(--blue);
+    }
+
+    .kpi-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+      margin-bottom: 7px;
+    }
+
+    .kpi-value {
+      font-size: 28px;
+      font-weight: 820;
+      line-height: 1;
+      color: var(--green);
+    }
+
+    .kpi-value.red {
+      color: var(--red);
+    }
+
+    .kpi-value.amber {
+      color: var(--amber);
+    }
+
+    .unit {
+      font-size: 13px;
+      color: var(--muted);
+      margin-left: 2px;
+      font-weight: 760;
+    }
+
+    .kpi-help {
+      color: #8a94aa;
+      font-size: 12px;
+      line-height: 1.35;
+      margin-top: 8px;
+    }
+
+    .chart-block {
+      padding: 12px 12px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .chart-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+      margin: 0 4px 5px;
+    }
+
+    .spark {
+      width: 100%;
+      height: 108px;
+      display: block;
+    }
+
+    .chart-axis {
+      display: flex;
+      justify-content: space-between;
+      color: #8d96aa;
+      font-size: 12px;
+      margin: 1px 2px 0;
+    }
+
+    .errors {
+      min-height: 142px;
+      padding: 13px 16px 16px;
+      background: linear-gradient(180deg, #fff, #fff8f8);
+    }
+
+    .errors h3 {
+      margin: 0 0 10px;
+      color: var(--red);
+      font-size: 14px;
+      font-weight: 820;
+    }
+
+    .error-item {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .error-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #8b92a7;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .count-badge {
+      display: inline-flex;
+      align-items: center;
+      height: 23px;
+      padding: 0 8px;
+      color: var(--red);
+      background: var(--red-bg);
+      border-radius: 5px;
+      font-weight: 820;
+    }
+
+    .error-text {
+      border: 1px solid #ffd0d0;
+      background: #fff4f2;
+      color: #9a3b14;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .empty-errors {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 16px 0 8px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .table-wrap,
+    .matrix-wrap {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: auto;
+      box-shadow: var(--shadow);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 960px;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      font-size: 13px;
+      vertical-align: middle;
+    }
+
+    th {
+      color: var(--muted);
+      background: #f8fafc;
+      font-weight: 800;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .name-cell {
+      font-weight: 770;
+      color: var(--text);
+      max-width: 280px;
+      overflow-wrap: anywhere;
+    }
+
+    .mini-status {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .matrix-cell {
+      min-width: 128px;
+      border-radius: 6px;
+      padding: 9px 10px;
+      display: grid;
+      gap: 5px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .matrix-cell strong {
+      font-size: 13px;
+    }
+
+    .matrix-cell span {
+      font-size: 12px;
+      color: #5f6c82;
+    }
+
+    .matrix-cell.healthy { background: var(--green-bg); border-color: #c3ebd0; }
+    .matrix-cell.degraded { background: var(--amber-bg); border-color: #f3d89e; }
+    .matrix-cell.down { background: var(--red-bg); border-color: #ffcaca; }
+    .matrix-cell.unknown { background: #f3f5f8; border-color: #dce2ea; }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease;
+      z-index: 20;
+    }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(560px, 100vw);
+      height: 100vh;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      box-shadow: -12px 0 34px rgba(15, 23, 42, 0.16);
+      transform: translateX(100%);
+      transition: transform 160ms ease;
+      z-index: 21;
+      display: flex;
+      flex-direction: column;
+    }
+
+    body.drawer-open .drawer-backdrop {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    body.drawer-open .drawer {
+      transform: translateX(0);
+    }
+
+    .drawer-head {
+      padding: 20px 22px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .drawer-title h2 {
+      margin: 0 0 7px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .drawer-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .close {
+      width: 36px;
+      min-width: 36px;
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .drawer-body {
+      overflow: auto;
+      padding: 18px 22px 24px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .drawer-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .drawer-section h3 {
+      margin: 0;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      background: #f8fafc;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .detail-stat {
+      padding: 12px 14px;
+      background: #fff;
+    }
+
+    .detail-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+      font-weight: 740;
+    }
+
+    .detail-stat strong {
+      font-size: 20px;
+    }
+
+    .sample-list {
+      display: grid;
+      gap: 8px;
+      padding: 12px 14px 14px;
+    }
+
+    .sample {
+      display: grid;
+      grid-template-columns: 74px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .sample small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1200px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100vw - 24px, 680px);
+        padding-top: 18px;
+      }
+      .header,
+      .tabs {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .toolbar,
+      .summary,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .segmented {
+        width: 100%;
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .seg-btn {
+        min-width: 0;
+      }
+      .kpis {
+        grid-template-columns: 1fr;
+      }
+      .kpi {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .kpi:last-child {
+        border-bottom: 0;
+      }
+      .sample {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="title">
+        <h1>模型渠道监控</h1>
+        <p>基于真实请求日志的首字时长、成功率、错误率与错误原因聚合。当前为第一阶段静态 mock。</p>
+      </div>
+      <div class="freshness">
+        <span class="dot"></span>
+        <span>模拟数据已刷新 · 2026-06-08 11:58</span>
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="筛选条件">
+      <div class="field">
+        <label for="timeRange">时间范围</label>
+        <select class="control" id="timeRange">
+          <option>过去 24 小时</option>
+          <option>过去 6 小时</option>
+          <option>过去 1 小时</option>
+          <option>过去 15 分钟</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="groupBy">分组方式</label>
+        <select class="control" id="groupBy">
+          <option value="app">按 APPID</option>
+          <option value="channel">按渠道</option>
+          <option value="model">按模型</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="modelFilter">模型</label>
+        <select class="control" id="modelFilter">
+          <option value="all">全部模型</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="statusFilter">状态</label>
+        <select class="control" id="statusFilter">
+          <option value="all">全部状态</option>
+          <option value="healthy">健康</option>
+          <option value="degraded">波动</option>
+          <option value="down">异常</option>
+          <option value="unknown">未知</option>
+        </select>
+      </div>
+      <button class="refresh-btn" id="refreshBtn" type="button" title="刷新模拟数据">
+        <span aria-hidden="true">↻</span>
+        刷新
+      </button>
+    </section>
+
+    <section class="summary" id="summary"></section>
+
+    <section class="tabs">
+      <div class="segmented" aria-label="视图切换">
+        <button class="seg-btn active" data-view="cards" type="button">卡片</button>
+        <button class="seg-btn" data-view="table" type="button">表格</button>
+        <button class="seg-btn" data-view="matrix" type="button">矩阵</button>
+      </div>
+      <div class="freshness">
+        <span>异常优先排序 · 点击卡片查看详情</span>
+      </div>
+    </section>
+
+    <section id="cardsView" class="groups"></section>
+    <section id="tableView" class="table-wrap hidden"></section>
+    <section id="matrixView" class="matrix-wrap hidden"></section>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" aria-label="组合详情">
+    <div class="drawer-head">
+      <div class="drawer-title">
+        <h2 id="drawerTitle">详情</h2>
+        <p id="drawerSubtitle">模型渠道组合</p>
+      </div>
+      <button class="icon-btn close" id="closeDrawer" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
+  <script>
+    const statusMeta = {
+      healthy: { text: "健康", order: 3, color: "green" },
+      degraded: { text: "波动", order: 2, color: "amber" },
+      down: { text: "异常", order: 1, color: "red" },
+      unknown: { text: "未知", order: 4, color: "gray" },
+    };
+
+    const records = [
+      {
+        app: "APPID A",
+        maskedApp: "2031****3523",
+        channel: "yuju-cn-01",
+        channelType: "claude-compatible",
+        group: "thinking",
+        model: "claude-opus-4.8-evaDaily",
+        status: "degraded",
+        successRate: 95,
+        requests: 20,
+        errors: 5,
+        firstMs: 15056,
+        p95FirstMs: 39120,
+        useMs: 61200,
+        p95UseMs: 121900,
+        tps: 63.7,
+        samples: 269,
+        lastSuccess: "11:54",
+        lastError: "10:56",
+        trend: [980, 1100, 920, 1300, 880, 1020, 940, 1000, 6200, 12800, 3100, 920, 980, 20600, 4200, 1000, 1100, 930, 960, 18800, 1400, 980, 1060, 15056],
+        errorMarks: [0, 1, 6, 9, 10, 11, 19, 23],
+        errorsTop: [
+          { count: 4, last: "10:56", text: "HTTP 429: {\"status\":429,\"message\":\"App:**3523 在模型 claude-opus-4.8-evaDaily 每分钟请求次数超过限制\"}" },
+          { count: 9, last: "21:49", text: "timeout: The read operation timed out" },
+        ],
+      },
+      {
+        app: "APPID A",
+        maskedApp: "2031****3523",
+        channel: "yuju-cn-01",
+        channelType: "claude-compatible",
+        group: "thinking",
+        model: "claude-opus-4.7-evaDaily",
+        status: "healthy",
+        successRate: 100,
+        requests: 20,
+        errors: 0,
+        firstMs: 52062,
+        p95FirstMs: 61000,
+        useMs: 83400,
+        p95UseMs: 132000,
+        tps: 92.4,
+        samples: 269,
+        lastSuccess: "11:57",
+        lastError: "02:59",
+        trend: [900, 1000, 880, 920, 910, 980, 1100, 890, 16000, 35200, 18800, 4900, 980, 920, 880, 920, 1440, 7800, 920, 870, 1050, 14100, 36200, 52062],
+        errorMarks: [1, 2, 6, 9, 10, 11, 12, 13, 14, 15],
+        errorsTop: [
+          { count: 25, last: "02:59", text: "HTTP 429: {\"status\":429,\"message\":\"App:**3523 在模型 claude-opus-4.7-evaDaily 每分钟请求次数超过限制\"}" },
+          { count: 9, last: "21:49", text: "timeout: The read operation timed out" },
+        ],
+      },
+      {
+        app: "APPID A",
+        maskedApp: "2031****3523",
+        channel: "yuju-cn-01",
+        channelType: "claude-compatible",
+        group: "thinking",
+        model: "claude-opus-4.6-evaDaily",
+        status: "down",
+        successRate: 0,
+        requests: 20,
+        errors: 269,
+        firstMs: null,
+        p95FirstMs: null,
+        useMs: 0,
+        p95UseMs: 0,
+        tps: null,
+        samples: 269,
+        lastSuccess: "-",
+        lastError: "11:56",
+        trend: [],
+        errorMarks: Array.from({ length: 24 }, (_, i) => i),
+        errorsTop: [
+          { count: 269, last: "11:56", text: "HTTP 429: {\"status\":429,\"message\":\"App:**3523 在模型 claude-opus-4.6-evaDaily 每分钟请求次数超过限制\"}" },
+        ],
+      },
+      {
+        app: "APPID B",
+        maskedApp: "2031****2224",
+        channel: "yuju-us-02",
+        channelType: "claude-compatible",
+        group: "thinking",
+        model: "claude-opus-4.8-evaDaily",
+        status: "healthy",
+        successRate: 100,
+        requests: 20,
+        errors: 1,
+        firstMs: 28898,
+        p95FirstMs: 40100,
+        useMs: 50900,
+        p95UseMs: 90110,
+        tps: 147.2,
+        samples: 269,
+        lastSuccess: "11:57",
+        lastError: "21:49",
+        trend: [820, 790, 810, 900, 1100, 980, 900, 1060, 22000, 28898, 16400, 4800, 980, 890, 820, 810, 790, 940, 960, 1010, 840, 900, 11200, 28898],
+        errorMarks: [0, 2, 7],
+        errorsTop: [
+          { count: 9, last: "21:49", text: "timeout: The read operation timed out" },
+        ],
+      },
+      {
+        app: "APPID B",
+        maskedApp: "2031****2224",
+        channel: "yuju-us-02",
+        channelType: "claude-compatible",
+        group: "thinking",
+        model: "claude-opus-4.7-evaDaily",
+        status: "healthy",
+        successRate: 100,
+        requests: 20,
+        errors: 1,
+        firstMs: 28912,
+        p95FirstMs: 42300,
+        useMs: 54800,
+        p95UseMs: 94000,
+        tps: 114.0,
+        samples: 269,
+        lastSuccess: "11:57",
+        lastError: "21:49",
+        trend: [920, 860, 900, 880, 920, 950, 870, 910, 28912, 28400, 21100, 5200, 910, 880, 920, 890, 930, 820, 900, 980, 850, 9800, 910, 28912],
+        errorMarks: [0, 3],
+        errorsTop: [
+          { count: 9, last: "21:49", text: "timeout: The read operation timed out" },
+        ],
+      },
+      {
+        app: "APPID C",
+        maskedApp: "2031****9011",
+        channel: "azure-eastasia",
+        channelType: "azure",
+        group: "default",
+        model: "gpt-4o-mini",
+        status: "degraded",
+        successRate: 91,
+        requests: 186,
+        errors: 17,
+        firstMs: 3820,
+        p95FirstMs: 14300,
+        useMs: 8200,
+        p95UseMs: 33400,
+        tps: 86.5,
+        samples: 186,
+        lastSuccess: "11:58",
+        lastError: "11:41",
+        trend: [900, 1100, 1800, 1400, 990, 1100, 3820, 1700, 2100, 9800, 11200, 1300, 880, 920, 3400, 5100, 6900, 14300, 2200, 1800, 1440, 1280, 1800, 3820],
+        errorMarks: [9, 10, 17],
+        errorsTop: [
+          { count: 12, last: "11:41", text: "HTTP 503: upstream deployment temporarily unavailable" },
+          { count: 5, last: "09:18", text: "HTTP 429: rate limit exceeded for deployment gpt-4o-mini" },
+        ],
+      },
+    ];
+
+    const els = {
+      summary: document.getElementById("summary"),
+      cardsView: document.getElementById("cardsView"),
+      tableView: document.getElementById("tableView"),
+      matrixView: document.getElementById("matrixView"),
+      modelFilter: document.getElementById("modelFilter"),
+      statusFilter: document.getElementById("statusFilter"),
+      groupBy: document.getElementById("groupBy"),
+      drawerTitle: document.getElementById("drawerTitle"),
+      drawerSubtitle: document.getElementById("drawerSubtitle"),
+      drawerBody: document.getElementById("drawerBody"),
+    };
+
+    const nf = new Intl.NumberFormat("zh-CN");
+
+    function statusText(status) {
+      return statusMeta[status]?.text || "未知";
+    }
+
+    function formatMs(ms) {
+      if (ms === null || ms === undefined) return "-";
+      return nf.format(ms);
+    }
+
+    function formatTps(tps) {
+      if (tps === null || tps === undefined) return "-";
+      return tps.toFixed(1);
+    }
+
+    function valueClass(record, key) {
+      if (key === "success") {
+        if (record.successRate < 90) return "red";
+        if (record.successRate < 98) return "amber";
+        return "";
+      }
+      if (key === "first") {
+        if (record.firstMs === null) return "red";
+        if (record.firstMs > 15000) return "red";
+        if (record.firstMs > 5000) return "amber";
+      }
+      return "";
+    }
+
+    function filteredRecords() {
+      const model = els.modelFilter.value;
+      const status = els.statusFilter.value;
+      return records
+        .filter((record) => model === "all" || record.model === model)
+        .filter((record) => status === "all" || record.status === status)
+        .sort((a, b) => statusMeta[a.status].order - statusMeta[b.status].order || b.errors - a.errors);
+    }
+
+    function sparkline(record) {
+      const width = 500;
+      const height = 96;
+      const pad = 8;
+      const values = record.trend.length ? record.trend : Array(24).fill(0);
+      const max = Math.max(...values, 1000);
+      const min = Math.min(...values, 0);
+      const span = Math.max(max - min, 1);
+      const step = (width - pad * 2) / (values.length - 1);
+      const points = values.map((v, i) => {
+        const x = pad + i * step;
+        const y = height - pad - ((v - min) / span) * (height - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+      const marks = record.errorMarks.map((idx) => {
+        const x = pad + idx * step;
+        return `<line x1="${x.toFixed(1)}" y1="12" x2="${x.toFixed(1)}" y2="50" stroke="#ff8b8b" stroke-width="2" opacity="0.8" />`;
+      }).join("");
+      const downLine = record.status === "down"
+        ? `<line x1="8" y1="52" x2="${width - 8}" y2="52" stroke="#ef4444" stroke-width="2" stroke-dasharray="4 4" />`
+        : "";
+      return `
+        <svg class="spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="首字延迟趋势">
+          <rect x="0" y="0" width="${width}" height="${height}" fill="#fff" />
+          <line x1="8" y1="78" x2="${width - 8}" y2="78" stroke="#edf0f5" stroke-width="1" />
+          ${marks}
+          ${downLine}
+          ${record.trend.length ? `<polyline fill="none" stroke="#2f6df6" stroke-width="2.3" points="${points}" />` : ""}
+        </svg>
+      `;
+    }
+
+    function errorList(record, limit = 2) {
+      if (!record.errorsTop.length) {
+        return `<div class="empty-errors">过去 24 小时没有聚合错误。</div>`;
+      }
+      return record.errorsTop.slice(0, limit).map((err) => `
+        <div class="error-item">
+          <div class="error-meta">
+            <span class="count-badge">${err.count} 次</span>
+            <span>最近 ${err.last}</span>
+          </div>
+          <div class="error-text">${escapeHtml(err.text)}</div>
+        </div>
+      `).join("");
+    }
+
+    function card(record, index) {
+      return `
+        <article class="card" data-index="${index}">
+          <div class="card-top">
+            <div>
+              <h2 class="model-name">${escapeHtml(record.model)}</h2>
+              <div class="tags">
+                <span class="tag blue">${escapeHtml(record.channel)}</span>
+                <span class="tag violet">${escapeHtml(record.group)}</span>
+                <span class="tag cyan">${escapeHtml(record.channelType)}</span>
+              </div>
+            </div>
+            <span class="status ${record.status}">${statusText(record.status)}</span>
+          </div>
+          <div class="kpis">
+            <div class="kpi">
+              <div class="kpi-label">成功率</div>
+              <div class="kpi-value ${valueClass(record, "success")}">${record.successRate}<span class="unit">%</span></div>
+              <div class="kpi-help">最近 ${record.requests} 次请求的成功比例</div>
+            </div>
+            <div class="kpi focus">
+              <div class="kpi-label">首字延迟</div>
+              <div class="kpi-value ${valueClass(record, "first")}">${formatMs(record.firstMs)}<span class="unit">ms</span></div>
+              <div class="kpi-help">发出请求到收到第一个 token 的时间</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">输出速度</div>
+              <div class="kpi-value">${formatTps(record.tps)}<span class="unit">tok/s</span></div>
+              <div class="kpi-help">模型输出 token 的平均速度</div>
+            </div>
+          </div>
+          <div class="chart-block">
+            <div class="chart-title">
+              <span>首字延迟 · 过去 24 小时</span>
+              <span>${record.samples} 个样本点</span>
+            </div>
+            ${sparkline(record)}
+            <div class="chart-axis">
+              <span>11:58</span><span>17:56</span><span>00:09</span><span>06:03</span><span>11:57</span>
+            </div>
+          </div>
+          <div class="errors">
+            <h3>最近 24h 错误原因</h3>
+            ${errorList(record)}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderSummary(list) {
+      const totalRequests = list.reduce((sum, r) => sum + r.requests + r.errors, 0);
+      const totalErrors = list.reduce((sum, r) => sum + r.errors, 0);
+      const weightedSuccess = totalRequests ? list.reduce((sum, r) => sum + r.successRate * (r.requests || 1), 0) / list.reduce((sum, r) => sum + (r.requests || 1), 0) : 0;
+      const validFirst = list.filter((r) => r.firstMs !== null);
+      const avgFirst = validFirst.length ? validFirst.reduce((sum, r) => sum + r.firstMs, 0) / validFirst.length : 0;
+      const downCount = list.filter((r) => r.status === "down").length;
+      const degradedCount = list.filter((r) => r.status === "degraded").length;
+      const items = [
+        ["组合数", `${list.length}`, "当前筛选下模型 x 渠道组合"],
+        ["整体成功率", `${weightedSuccess.toFixed(1)}%`, "按最近请求数加权"],
+        ["平均首字", `${formatMs(Math.round(avgFirst))} ms`, "仅统计有首字样本的组合"],
+        ["错误请求数", nf.format(totalErrors), "真实错误日志聚合"],
+        ["异常/波动", `${downCount} / ${degradedCount}`, "异常优先展示"],
+      ];
+      els.summary.innerHTML = items.map(([label, value, hint]) => `
+        <div class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+          <div class="hint">${hint}</div>
+        </div>
+      `).join("");
+    }
+
+    function groupKey(record) {
+      const mode = els.groupBy.value;
+      if (mode === "channel") return `${record.channel} · ${record.channelType}`;
+      if (mode === "model") return record.model;
+      return `${record.app} · ${record.maskedApp}`;
+    }
+
+    function renderCards(list) {
+      const groups = new Map();
+      list.forEach((record, index) => {
+        const key = groupKey(record);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ record, index });
+      });
+      els.cardsView.innerHTML = Array.from(groups.entries()).map(([key, group]) => {
+        const healthy = group.filter(({ record }) => record.status === "healthy").length;
+        return `
+          <div class="group">
+            <div class="group-head">
+              <div class="group-title">
+                <span>${escapeHtml(key)}</span>
+                <span class="pill">${healthy} / ${group.length} 健康</span>
+              </div>
+              <span>${group.length} 个组合</span>
+            </div>
+            <div class="grid">
+              ${group.map(({ record, index }) => card(record, index)).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+      els.cardsView.querySelectorAll(".card").forEach((node) => {
+        node.addEventListener("click", () => openDrawer(records[Number(node.dataset.index)]));
+      });
+    }
+
+    function renderTable(list) {
+      els.tableView.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>渠道</th>
+              <th>模型</th>
+              <th>状态</th>
+              <th>请求数</th>
+              <th>成功率</th>
+              <th>报错率</th>
+              <th>平均首字</th>
+              <th>P95 首字</th>
+              <th>输出速度</th>
+              <th>Top 错误</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map((record) => `
+              <tr>
+                <td class="name-cell">${escapeHtml(record.channel)}</td>
+                <td class="name-cell">${escapeHtml(record.model)}</td>
+                <td><span class="mini-status status ${record.status}">${statusText(record.status)}</span></td>
+                <td>${nf.format(record.requests + record.errors)}</td>
+                <td>${record.successRate}%</td>
+                <td>${((record.errors / Math.max(record.requests + record.errors, 1)) * 100).toFixed(1)}%</td>
+                <td>${formatMs(record.firstMs)} ms</td>
+                <td>${formatMs(record.p95FirstMs)} ms</td>
+                <td>${formatTps(record.tps)} tok/s</td>
+                <td>${record.errorsTop[0] ? escapeHtml(record.errorsTop[0].text).slice(0, 76) : "-"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderMatrix(list) {
+      const channels = [...new Set(list.map((r) => r.channel))];
+      const models = [...new Set(list.map((r) => r.model))];
+      const findRecord = (channel, model) => list.find((r) => r.channel === channel && r.model === model);
+      els.matrixView.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>渠道 \\ 模型</th>
+              ${models.map((model) => `<th>${escapeHtml(model)}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${channels.map((channel) => `
+              <tr>
+                <td class="name-cell">${escapeHtml(channel)}</td>
+                ${models.map((model) => {
+                  const record = findRecord(channel, model);
+                  if (!record) {
+                    return `<td><div class="matrix-cell unknown"><strong>未知</strong><span>无样本</span></div></td>`;
+                  }
+                  return `
+                    <td>
+                      <div class="matrix-cell ${record.status}" data-matrix="${records.indexOf(record)}">
+                        <strong>${statusText(record.status)} · ${record.successRate}%</strong>
+                        <span>首字 ${formatMs(record.firstMs)}ms</span>
+                        <span>错误 ${record.errors} 次</span>
+                      </div>
+                    </td>
+                  `;
+                }).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+      els.matrixView.querySelectorAll("[data-matrix]").forEach((node) => {
+        node.addEventListener("click", () => openDrawer(records[Number(node.dataset.matrix)]));
+      });
+    }
+
+    function renderAll() {
+      const list = filteredRecords();
+      renderSummary(list);
+      renderCards(list);
+      renderTable(list);
+      renderMatrix(list);
+    }
+
+    function openDrawer(record) {
+      els.drawerTitle.textContent = record.model;
+      els.drawerSubtitle.textContent = `${record.channel} · ${record.app} ${record.maskedApp}`;
+      els.drawerBody.innerHTML = `
+        <div class="drawer-section">
+          <h3>核心指标</h3>
+          <div class="detail-grid">
+            <div class="detail-stat"><span>状态</span><strong>${statusText(record.status)}</strong></div>
+            <div class="detail-stat"><span>成功率</span><strong>${record.successRate}%</strong></div>
+            <div class="detail-stat"><span>平均首字</span><strong>${formatMs(record.firstMs)} ms</strong></div>
+            <div class="detail-stat"><span>P95 首字</span><strong>${formatMs(record.p95FirstMs)} ms</strong></div>
+            <div class="detail-stat"><span>输出速度</span><strong>${formatTps(record.tps)} tok/s</strong></div>
+            <div class="detail-stat"><span>样本数</span><strong>${record.samples}</strong></div>
+          </div>
+        </div>
+        <div class="drawer-section">
+          <h3>首字趋势</h3>
+          <div class="chart-block">
+            ${sparkline(record)}
+            <div class="chart-axis">
+              <span>11:58</span><span>17:56</span><span>00:09</span><span>06:03</span><span>11:57</span>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-section">
+          <h3>错误原因</h3>
+          <div class="sample-list">${errorList(record, 5)}</div>
+        </div>
+        <div class="drawer-section">
+          <h3>最近样本</h3>
+          <div class="sample-list">
+            ${mockSamples(record).map((sample) => `
+              <div class="sample">
+                <strong>${sample.time}</strong>
+                <div>${sample.text}<br><small>${sample.meta}</small></div>
+                <span class="mini-status status ${sample.ok ? "healthy" : "down"}">${sample.ok ? "成功" : "错误"}</span>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+      document.body.classList.add("drawer-open");
+    }
+
+    function mockSamples(record) {
+      const okText = `首字 ${formatMs(record.firstMs)}ms · 总耗时 ${formatMs(record.useMs)}ms · request_id req_${Math.floor(Math.random() * 9000 + 1000)}`;
+      const errText = record.errorsTop[0]?.text || "无错误";
+      return [
+        { time: "11:57", ok: record.status !== "down", text: "消费日志", meta: okText },
+        { time: record.lastError, ok: false, text: errText.slice(0, 86), meta: `status_code ${record.status === "down" ? 429 : 503}` },
+        { time: "10:42", ok: true, text: "消费日志", meta: okText },
+        { time: "09:18", ok: record.errorsTop.length < 2, text: record.errorsTop[1]?.text?.slice(0, 86) || "消费日志", meta: record.errorsTop[1] ? "status_code timeout" : okText },
+      ];
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function initFilters() {
+      const models = [...new Set(records.map((record) => record.model))];
+      els.modelFilter.innerHTML += models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("");
+      [els.modelFilter, els.statusFilter, els.groupBy].forEach((node) => {
+        node.addEventListener("change", renderAll);
+      });
+      document.getElementById("refreshBtn").addEventListener("click", renderAll);
+    }
+
+    function initTabs() {
+      document.querySelectorAll(".seg-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+          button.classList.add("active");
+          const view = button.dataset.view;
+          els.cardsView.classList.toggle("hidden", view !== "cards");
+          els.tableView.classList.toggle("hidden", view !== "table");
+          els.matrixView.classList.toggle("hidden", view !== "matrix");
+        });
+      });
+    }
+
+    function initDrawer() {
+      const close = () => document.body.classList.remove("drawer-open");
+      document.getElementById("closeDrawer").addEventListener("click", close);
+      document.getElementById("drawerBackdrop").addEventListener("click", close);
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") close();
+      });
+    }
+
+    initFilters();
+    initTabs();
+    initDrawer();
+    renderAll();
+  </script>
+</body>
+</html>

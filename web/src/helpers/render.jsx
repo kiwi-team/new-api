@@ -83,6 +83,7 @@ import {
   FolderKanban,
   Wallet,
   Receipt,
+  Activity,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -155,6 +156,8 @@ export function getLucideIcon(key, selected = false) {
       return <Package {...commonProps} color={iconColor} />;
     case 'deployment':
       return <Server {...commonProps} color={iconColor} />;
+    case 'modelChannelMonitor':
+      return <Activity {...commonProps} color={iconColor} />;
     case 'subscription':
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'setting':

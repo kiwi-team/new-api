@@ -38,15 +38,16 @@ const (
 	PageBillSelf   = "bill_self" // 普通用户的账单(看自己)
 
 	// 仅管理员可见的页面 — 系统 admin/root 的完整菜单要包含。
-	PageChannel          = "channel"
-	PageModels           = "models"
-	PageDeployment       = "deployment"
-	PageRedemption       = "redemption"
-	PageSubscription     = "subscription"
-	PageUser             = "user"
-	PageModelRouteConfig = "model_route_config"
-	PageSetting          = "setting"
-	PageSettlementConfig = "settlement_config" // 可编辑(root)
+	PageChannel             = "channel"
+	PageModels              = "models"
+	PageDeployment          = "deployment"
+	PageModelChannelMonitor = "modelChannelMonitor"
+	PageRedemption          = "redemption"
+	PageSubscription        = "subscription"
+	PageUser                = "user"
+	PageModelRouteConfig    = "model_route_config"
+	PageSetting             = "setting"
+	PageSettlementConfig    = "settlement_config" // 可编辑(root)
 )
 
 // TopbarMode 顶栏行为
@@ -89,7 +90,7 @@ func pagesForCommonUser(role int) []string {
 	return pages
 }
 
-// allAdminPages 系统 admin / root 的完整菜单
+// allAdminPages 系统 admin 的完整菜单；root-only 页面单独追加。
 var allAdminPages = append(append([]string{}, defaultUserPages...),
 	PageChannel,
 	PageModels,
@@ -105,11 +106,13 @@ var allAdminPages = append(append([]string{}, defaultUserPages...),
 	PageBill,
 )
 
+var allRootPages = append(append([]string{}, allAdminPages...), PageModelChannelMonitor)
+
 // GetUserMenu 返回当前用户能看到的菜单 + 顶栏模式。
 // 设计核心:权限策略只在这里,一个 switch case,改权限就改这里。
 //
 // 优先级:
-//  1. 系统 root / admin / leader 全局角色 — 看完整菜单(跨 org)。
+//  1. 系统 root / admin / leader 全局角色 — 看对应完整菜单(跨 org)。
 //  2. 按 (org_code, org_role) switch。
 //  3. 兜底 "other" 普通用户行为。
 func GetUserMenu(user *model.User) UserMenu {
@@ -118,7 +121,12 @@ func GetUserMenu(user *model.User) UserMenu {
 		return UserMenu{TopbarMode: TopbarNormal, Pages: nil}
 	}
 
-	// 全局 admin / root 跨 org,始终看完整菜单
+	// 模型渠道监控只给系统 root 账号看。
+	if user.Role >= common.RoleRootUser {
+		return UserMenu{TopbarMode: TopbarNormal, Pages: allRootPages}
+	}
+
+	// 全局 admin 跨 org,始终看完整菜单，但不包含 root-only 页面。
 	if user.Role >= common.RoleAdminUser {
 		return UserMenu{TopbarMode: TopbarNormal, Pages: allAdminPages}
 	}

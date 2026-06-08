@@ -56,6 +56,7 @@ const routerMap = {
   midjourney: '/console/midjourney',
   setting: '/console/setting',
   modelRouteConfig: '/console/model-route-config',
+  modelChannelMonitor: '/console/model-channel-monitor',
   about: '/about',
   detail: '/console',
   pricing: '/pricing',
@@ -172,6 +173,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('渠道管理'), itemKey: 'channel', to: '/channel', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('模型管理'), itemKey: 'models', to: '/console/models', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型部署'), itemKey: 'deployment', to: '/deployment', className: isAdmin() ? '' : 'tableHiddle' },
+      { text: t('模型渠道监控'), itemKey: 'modelChannelMonitor', to: '/console/model-channel-monitor', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
       {
         text: t('订阅管理'),
