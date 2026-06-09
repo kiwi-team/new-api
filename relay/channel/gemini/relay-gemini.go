@@ -682,7 +682,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						if isGenai {
 							bukect = ""
 						}
-						uploadedFile, err := RetryUploadFileToGoogle(context.Background(), part.GetImageMedia().Url, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
+						uploadedFile, err := RetryUploadFileToGoogle(c.Request.Context(), part.GetImageMedia().Url, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 						if err != nil {
 							return nil, fmt.Errorf("upload image file to google failed: %s", err.Error())
 						}
@@ -791,7 +791,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if !exists {
 						return nil, fmt.Errorf("channel key not found in context")
 					}
-					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), audioFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
+					uploadedFile, err := RetryUploadFileToGoogle(c.Request.Context(), audioFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload audio file to google failed: %s", err.Error())
 					}
@@ -847,7 +847,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if videoFileUrl == "" {
 						continue
 					}
-					uploadedFile, err := RetryUploadFileToGoogle(context.Background(), videoFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
+					uploadedFile, err := RetryUploadFileToGoogle(c.Request.Context(), videoFileUrl, bukect, key.(string), constant.GeminiUploadFileRetryTimes)
 					if err != nil {
 						return nil, fmt.Errorf("upload vidoe file to google failed: %s", err.Error())
 					}

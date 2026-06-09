@@ -21,6 +21,18 @@ import (
 	"google.golang.org/genai"
 )
 
+const (
+	// googleUploadTimeout 单次上传(下载源文件 + 写入 GCS)的硬超时上限,防止任一端卡死导致 goroutine 与缓冲区泄漏。
+	googleUploadTimeout = 10 * time.Minute
+	// googleUploadMaxChunkSize GCS 写入分块缓冲的上限。GCS writer 默认 ChunkSize=16MB 且按此预分配缓冲区,过大。
+	googleUploadMaxChunkSize = 4 * 1024 * 1024
+	// googleUploadChunkAlign GCS 要求 ChunkSize 必须是 256KB 的整数倍。
+	googleUploadChunkAlign = 256 * 1024
+)
+
+// mimeProbeClient 仅用于探测远端文件的 Content-Type(只读响应头),带较短超时,避免连接挂死泄漏。
+var mimeProbeClient = &http.Client{Timeout: 30 * time.Second}
+
 // urlExt extracts the file extension from a URL, stripping query parameters and fragments.
 func urlExt(rawURL string) string {
 	if u, err := url.Parse(rawURL); err == nil {
@@ -30,7 +42,7 @@ func urlExt(rawURL string) string {
 }
 
 func GetFileMimeType(fileUri string) (string, error) {
-	response, err := http.Get(fileUri)
+	response, err := mimeProbeClient.Get(fileUri)
 	if err != nil {
 		return "", fmt.Errorf("failed to get file type from URL: %w", err)
 	}
@@ -48,6 +60,11 @@ func GetFileMimeType(fileUri string) (string, error) {
 }
 
 func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string) (*genai.File, error) {
+	// 给整个上传(下载源文件 + 写入 GCS)加硬超时:任一端卡死时,defer cancel() 会取消 ctx,
+	// 从而终止 GCS writer 的后台 goroutine 并释放其分块缓冲区,杜绝 goroutine / 内存泄漏。
+	ctx, cancel := context.WithTimeout(ctx, googleUploadTimeout)
+	defer cancel()
+
 	if strings.HasPrefix(fileUri, "https://storage.googleapis.com/") {
 		mimeType, err := GetFileMimeType(fileUri)
 		if err != nil {
@@ -67,7 +84,12 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 	defer client.Close()
 
 	//file, err := client.Files.UploadFromPath(ctx, fileUri, uploadConfig)
-	response, err := http.Get(fileUri)
+	// 下载源文件:使用带超时的请求级 ctx,避免源站慢或挂死时无限阻塞(此前用默认 http.Get 无超时)。
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileUri, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download request: %w", err)
+	}
+	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file from URL: %w", err)
 	}
@@ -87,7 +109,16 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 
 	// 获取对象的写入器
 	wc := obj.NewWriter(ctx)
+	// GCS writer 默认 ChunkSize=16MB,且会按 ChunkSize 预分配缓冲区 —— 高并发上传时这是内存被打满的主因。
+	// 按源文件大小自适应缓冲(小文件用更小的块,256KB 对齐),并设上限,显著降低单个上传的常驻内存。
+	chunkSize := googleUploadMaxChunkSize
+	if response.ContentLength > 0 && response.ContentLength < int64(chunkSize) {
+		chunkSize = int((response.ContentLength+googleUploadChunkAlign-1)/googleUploadChunkAlign) * googleUploadChunkAlign
+	}
+	wc.ChunkSize = chunkSize
 	if _, err = io.Copy(wc, response.Body); err != nil {
+		// 失败时不调用 wc.Close()(可能阻塞在 flush);由上面的 defer cancel() 取消 ctx,
+		// 让 writer 的后台 goroutine 退出并释放缓冲区。
 		return nil, fmt.Errorf("io.Copy: %w", err)
 	}
 
