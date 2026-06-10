@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -23,9 +24,11 @@ import (
 
 const (
 	// googleUploadTimeout 单次上传(下载源文件 + 写入 GCS)的硬超时上限,防止任一端卡死导致 goroutine 与缓冲区泄漏。
-	googleUploadTimeout = 10 * time.Minute
-	// googleUploadMaxChunkSize GCS 写入分块缓冲的上限。GCS writer 默认 ChunkSize=16MB 且按此预分配缓冲区,过大。
-	googleUploadMaxChunkSize = 4 * 1024 * 1024
+	googleUploadTimeout = 20 * time.Minute
+	// googleUploadMaxChunkSize GCS 写入分块缓冲上限,取 GCS 默认值 16MB:大文件用它保证上传吞吐
+	// (分块越小,resumable 上传的往返次数越多、吞吐越低);小文件再按实际大小缩小(见下方 ContentLength 自适应),
+	// 避免一张小图也占满 16MB。内存泄漏由超时机制兜底,故此处无需为省内存而牺牲大文件吞吐。
+	googleUploadMaxChunkSize = 16 * 1024 * 1024
 	// googleUploadChunkAlign GCS 要求 ChunkSize 必须是 256KB 的整数倍。
 	googleUploadChunkAlign = 256 * 1024
 )
@@ -109,17 +112,20 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 
 	// 获取对象的写入器
 	wc := obj.NewWriter(ctx)
-	// GCS writer 默认 ChunkSize=16MB,且会按 ChunkSize 预分配缓冲区 —— 高并发上传时这是内存被打满的主因。
-	// 按源文件大小自适应缓冲(小文件用更小的块,256KB 对齐),并设上限,显著降低单个上传的常驻内存。
+	// GCS writer 会按 ChunkSize 预分配缓冲区。大文件用上限(16MB,等于默认值,保证上传吞吐),
+	// 小文件按实际大小缩小(256KB 对齐),避免一张小图也占 16MB —— 此前内存被放大的主因之一。
 	chunkSize := googleUploadMaxChunkSize
 	if response.ContentLength > 0 && response.ContentLength < int64(chunkSize) {
 		chunkSize = int((response.ContentLength+googleUploadChunkAlign-1)/googleUploadChunkAlign) * googleUploadChunkAlign
 	}
 	wc.ChunkSize = chunkSize
-	if _, err = io.Copy(wc, response.Body); err != nil {
+	// io.Copy 同时在"下载源文件 + 上传 GCS",二者串联、谁慢谁拖累。失败时它仍会返回已拷贝字节数,
+	// 连同总大小一起带出,便于判断是源站下载慢、GCS 上传慢,还是文件本身过大。
+	written, copyErr := io.Copy(wc, response.Body)
+	if copyErr != nil {
 		// 失败时不调用 wc.Close()(可能阻塞在 flush);由上面的 defer cancel() 取消 ctx,
 		// 让 writer 的后台 goroutine 退出并释放缓冲区。
-		return nil, fmt.Errorf("io.Copy: %w", err)
+		return nil, fmt.Errorf("io.Copy failed (transferred %d/%d bytes): %w", written, response.ContentLength, copyErr)
 	}
 
 	// 关闭写入器以完成上传
@@ -213,6 +219,7 @@ func CleanupGCSObjects(objects []relaycommon.GCSObjectRef) {
 }
 
 func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string, retryTimes int) (*genai.File, error) {
+	var lastErr error
 	for i := 0; i < retryTimes; i++ {
 		var file *genai.File
 		var err error
@@ -226,13 +233,27 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 			file, err = UploadFileToGoogle(ctx, fileUri, bucket, credentials)
 		}
 		if err != nil {
+			// 记录每次失败的真实原因,便于定位(此前错误被静默吞掉,只能看到笼统的 "failed after N retries")。
+			lastErr = err
+			common.SysError(fmt.Sprintf("upload file to google failed (attempt %d/%d), fileUri: %s, err: %v", i+1, retryTimes, fileUri, err))
+			// 以下两种情况不再重试,避免白白多等 N 倍超时:
+			//  1) 父 ctx 已取消(如客户端断开)—— 重试也会立即再失败;
+			//  2) 单次传输撞了硬超时(DeadlineExceeded)—— 同一文件从头重下也赶不上,只会再耗一个超时周期。
+			if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
 			continue
 		}
 		if file == nil {
+			lastErr = fmt.Errorf("upload returned nil file")
+			common.SysError(fmt.Sprintf("upload file to google returned nil file (attempt %d/%d), fileUri: %s", i+1, retryTimes, fileUri))
 			continue
 		}
 		return file, nil
 	}
-	//fmt.Printf("upload file to google failed after %d retries, fileUri: %s\n", retryTimes, fileUri)
+	if lastErr != nil {
+		// 把最后一次的真实错误一并带出,channel error 日志里就能直接看到根因。
+		return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s, last error: %w", retryTimes, fileUri, lastErr)
+	}
 	return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s", retryTimes, fileUri)
 }
