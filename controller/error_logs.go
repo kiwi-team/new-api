@@ -262,16 +262,24 @@ func WarningErrorLog() {
 
 		fileName := "error_warning.txt"
 		if prevWarningTime == 0 {
-			// 从fileName中读取上次预警时间
+			// 从fileName中读取上次预警时间。
+			// 文件缺失/为空/内容损坏时，用 now 自愈并立刻落盘，避免 ParseInt("") 失败后
+			// 一直 continue 导致预警轮询永久卡死（prevWarningTime 始终为 0）。
 			data, err1 := os.ReadFile(fileName)
 			if err1 != nil {
-				logger.LogError(ctx, "error reading file: "+err1.Error())
-				continue
+				if !os.IsNotExist(err1) {
+					logger.LogError(ctx, "error reading file: "+err1.Error())
+				}
+				prevWarningTime = now
+			} else {
+				prevWarningTime, err1 = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+				if err1 != nil {
+					logger.LogError(ctx, "error parsing file data, reset to now: "+err1.Error())
+					prevWarningTime = now
+				}
 			}
-			prevWarningTime, err1 = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-			if err1 != nil {
-				logger.LogError(ctx, "error parsing file data: "+err1.Error())
-				continue
+			if writeErr := os.WriteFile(fileName, []byte(strconv.FormatInt(prevWarningTime, 10)), 0644); writeErr != nil {
+				logger.LogError(ctx, "error initializing warning file: "+writeErr.Error())
 			}
 		}
 		loc, _ := time.LoadLocation("Asia/Shanghai")
