@@ -31,6 +31,8 @@ import {
   Input,
   Tabs,
   TabPane,
+  Select,
+  Switch,
 } from '@douyinfe/semi-ui';
 import { IconSearch, IconDownload, IconRefresh } from '@douyinfe/semi-icons';
 import { API } from '../../helpers/api';
@@ -52,6 +54,12 @@ const Bill = () => {
   const [billData, setBillData] = useState(null);
   const [dateRange, setDateRange] = useState([daysAgo(7), new Date()]);
   const [modelKeyword, setModelKeyword] = useState('');
+
+  // ----- 新增筛选条件 -----
+  const [tokenId, setTokenId] = useState(undefined); // 选中的 key（单选，token id）
+  const [tokenOptions, setTokenOptions] = useState([]);
+  const [tokenSearchLoading, setTokenSearchLoading] = useState(false);
+  const [expandDate, setExpandDate] = useState(false); // 是否按日期展开
 
   // ----- Pricing tab state -----
   const [pricingLoading, setPricingLoading] = useState(false);
@@ -77,9 +85,10 @@ const Bill = () => {
 
     setLoading(true);
     try {
-      const res = await API.get('/api/settlement/bill/self', {
-        params: { start_timestamp: startTs, end_timestamp: endTs },
-      });
+      const params = { start_timestamp: startTs, end_timestamp: endTs };
+      if (tokenId) params.token_id = tokenId;
+      if (expandDate) params.expand_date = 'true';
+      const res = await API.get('/api/settlement/bill/self', { params });
       const { success, data, message } = res.data;
       if (success) {
         setBillData(data);
@@ -93,8 +102,34 @@ const Bill = () => {
     }
   };
 
+  // key 下拉框：服务端模糊搜索（root 可查所有用户的 key，普通用户只查自己的）
+  const handleTokenSearch = async (keyword = '') => {
+    setTokenSearchLoading(true);
+    try {
+      const res = await API.get('/api/settlement/bill/tokens', {
+        params: { keyword },
+      });
+      const { success, data } = res.data;
+      if (success) {
+        setTokenOptions(
+          (data || []).map((tk) => ({
+            label: tk.username
+              ? `${tk.name || t('未命名')}（${tk.username}）`
+              : tk.name || t('未命名'),
+            value: tk.id,
+          })),
+        );
+      }
+    } catch (err) {
+      // 下拉数据加载失败不阻塞主流程
+    } finally {
+      setTokenSearchLoading(false);
+    }
+  };
+
   useEffect(() => {
     handleQuery([daysAgo(7), new Date()]);
+    handleTokenSearch('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -158,8 +193,11 @@ const Bill = () => {
     const endTs = Math.floor(new Date(end).getTime() / 1000);
 
     try {
+      const params = { start_timestamp: startTs, end_timestamp: endTs };
+      if (tokenId) params.token_id = tokenId;
+      if (expandDate) params.expand_date = 'true';
       const res = await API.get('/api/settlement/bill/self/export', {
-        params: { start_timestamp: startTs, end_timestamp: endTs },
+        params,
         responseType: 'blob',
       });
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -267,6 +305,17 @@ const Bill = () => {
     },
   ];
 
+  // 按日期展开时前置「日期」列；以实际查询结果的 expand_date 为准，避免开关与数据不一致
+  const dateColumn = {
+    title: t('日期'),
+    dataIndex: 'date',
+    key: 'date',
+    width: 120,
+  };
+  const displayColumns = billData?.expand_date
+    ? [dateColumn, ...billColumns]
+    : billColumns;
+
   const pricingColumns = [
     {
       title: t('模型名称'),
@@ -328,6 +377,31 @@ const Bill = () => {
                 style={{ width: 460 }}
                 onChange={(dates) => setDateRange(dates || [])}
               />
+              <Select
+                placeholder={t('按 Key 筛选（可搜索）')}
+                filter
+                remote
+                showClear
+                loading={tokenSearchLoading}
+                value={tokenId}
+                optionList={tokenOptions}
+                onSearch={(kw) => handleTokenSearch(kw)}
+                onChange={(val) => setTokenId(val)}
+                onClear={() => {
+                  setTokenId(undefined);
+                  handleTokenSearch('');
+                }}
+                style={{ width: 240 }}
+              />
+              <span
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Switch
+                  checked={expandDate}
+                  onChange={(val) => setExpandDate(val)}
+                />
+                <Text>{t('按日期展开')}</Text>
+              </span>
               <Button
                 type='primary'
                 icon={<IconSearch />}
@@ -360,9 +434,13 @@ const Bill = () => {
             ) : billData ? (
               <>
                 <Table
-                  columns={billColumns}
+                  columns={displayColumns}
                   dataSource={filteredItems}
-                  rowKey='model_name'
+                  rowKey={(record) =>
+                    record.date
+                      ? `${record.date}__${record.model_name}`
+                      : record.model_name
+                  }
                   pagination={false}
                   size='middle'
                   rowClassName={(record) =>

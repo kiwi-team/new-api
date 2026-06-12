@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -340,8 +341,84 @@ func GetSelfSettlementConfigs(c *gin.Context) {
 	})
 }
 
-// GetSelfSettlementBill GET /api/settlement/bill/self?start_timestamp=&end_timestamp=
+// GetSettlementBillTokenOptions GET /api/settlement/bill/tokens?keyword=
+// 账单页 key 筛选下拉框数据源：root 返回所有用户的 token（带所属用户名），
+// 普通用户只返回自己的 token。服务端按名称模糊匹配并限量返回。
+func GetSettlementBillTokenOptions(c *gin.Context) {
+	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	keyword := c.Query("keyword")
+
+	// root 查全部（queryUserId=0），其他用户只查自己
+	queryUserId := userId
+	if role >= common.RoleRootUser {
+		queryUserId = 0
+	}
+
+	opts, err := model.SearchTokensForBill(queryUserId, keyword, 50)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 仅 root 需要区分 key 所属用户，普通用户下拉无需展示自己的用户名
+	if role < common.RoleRootUser {
+		for _, opt := range opts {
+			opt.Username = ""
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    opts,
+	})
+}
+
+// resolveSelfBillScope 解析账单自助接口的 token_id 参数，返回用于统计的有效 userId 与 tokenId。
+//   - 未传 token_id：返回当前登录用户、tokenId=0（统计本人全部 key）。
+//   - 传了 token_id：有效 userId 取该 token 的拥有者。非 root 用户只能选自己的 key，
+//     否则返回 403；root 可选任意用户的 key 以跨用户审查其消耗（价格用 key 拥有者配置）。
+//
+// 第二个返回值为 false 时表示已写出错误响应，调用方应直接 return。
+func resolveSelfBillScope(c *gin.Context) (int, int, bool) {
+	currentUserId := c.GetInt("id")
+	tokenIdStr := c.Query("token_id")
+	if tokenIdStr == "" {
+		return currentUserId, 0, true
+	}
+	tokenId, err := strconv.Atoi(tokenIdStr)
+	if err != nil || tokenId <= 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "token_id 参数格式错误",
+		})
+		return 0, 0, false
+	}
+	token, err := model.GetTokenById(tokenId)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "指定的 key 不存在",
+		})
+		return 0, 0, false
+	}
+	if c.GetInt("role") < common.RoleRootUser && token.UserId != currentUserId {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "无权查看该 key 的账单",
+		})
+		return 0, 0, false
+	}
+	return token.UserId, tokenId, true
+}
+
+// GetSelfSettlementBill GET /api/settlement/bill/self?start_timestamp=&end_timestamp=&token_id=&expand_date=
 // Get current user's settlement bill. Forces use of logged-in user ID for data isolation.
+// token_id 可选（按 key 过滤，root 可跨用户）；expand_date=true 时按日期(东八区)展开。
 func GetSelfSettlementBill(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId == 0 {
@@ -351,6 +428,11 @@ func GetSelfSettlementBill(c *gin.Context) {
 		})
 		return
 	}
+	effectiveUserId, tokenId, ok := resolveSelfBillScope(c)
+	if !ok {
+		return
+	}
+	expandDate := c.Query("expand_date") == "true" || c.Query("expand_date") == "1"
 	startTimestampStr := c.Query("start_timestamp")
 	endTimestampStr := c.Query("end_timestamp")
 	if startTimestampStr == "" || endTimestampStr == "" {
@@ -384,7 +466,7 @@ func GetSelfSettlementBill(c *gin.Context) {
 		})
 		return
 	}
-	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp)
+	bill, err := service.CalculateSettlementBill(effectiveUserId, startTimestamp, endTimestamp, tokenId, expandDate)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -399,8 +481,8 @@ func GetSelfSettlementBill(c *gin.Context) {
 	})
 }
 
-// SelfExportSettlementBillCSV GET /api/settlement/bill/self/export?start_timestamp=&end_timestamp=
-// Export current user's settlement bill as CSV.
+// SelfExportSettlementBillCSV GET /api/settlement/bill/self/export?start_timestamp=&end_timestamp=&token_id=&expand_date=
+// Export current user's settlement bill as CSV. 与查询接口保持完全一致的筛选口径。
 func SelfExportSettlementBillCSV(c *gin.Context) {
 	userId := c.GetInt("id")
 	if userId == 0 {
@@ -410,6 +492,11 @@ func SelfExportSettlementBillCSV(c *gin.Context) {
 		})
 		return
 	}
+	effectiveUserId, tokenId, ok := resolveSelfBillScope(c)
+	if !ok {
+		return
+	}
+	expandDate := c.Query("expand_date") == "true" || c.Query("expand_date") == "1"
 	startTimestampStr := c.Query("start_timestamp")
 	endTimestampStr := c.Query("end_timestamp")
 	if startTimestampStr == "" || endTimestampStr == "" {
@@ -442,7 +529,7 @@ func SelfExportSettlementBillCSV(c *gin.Context) {
 		})
 		return
 	}
-	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp)
+	bill, err := service.CalculateSettlementBill(effectiveUserId, startTimestamp, endTimestamp, tokenId, expandDate)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -519,7 +606,7 @@ func AdminGetSettlementBill(c *gin.Context) {
 		})
 		return
 	}
-	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp)
+	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp, 0, false)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -587,7 +674,7 @@ func AdminExportSettlementBillCSV(c *gin.Context) {
 		})
 		return
 	}
-	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp)
+	bill, err := service.CalculateSettlementBill(userId, startTimestamp, endTimestamp, 0, false)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

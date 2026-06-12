@@ -578,6 +578,8 @@ func SetApiRouter(router *gin.Engine) {
 			settlementRoute.GET("/config/self", middleware.UserAuth(), controller.GetSelfSettlementConfigs)
 			settlementRoute.GET("/bill/self", middleware.UserAuth(), controller.GetSelfSettlementBill)
 			settlementRoute.GET("/bill/self/export", middleware.UserAuth(), controller.SelfExportSettlementBillCSV)
+			// 账单页 key 筛选下拉框数据源:root 查全部用户的 key,普通用户只查自己的
+			settlementRoute.GET("/bill/tokens", middleware.UserAuth(), controller.GetSettlementBillTokenOptions)
 
 			// 账单 admin 端:wl-admin 也能调,controller 内部按 ComputeOrgScope 过滤 user_id
 			adminBill := settlementRoute.Group("/bill/admin")

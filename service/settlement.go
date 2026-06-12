@@ -5,13 +5,16 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
 // SettlementBillItem 单个模型的结算账单项
 type SettlementBillItem struct {
+	Date          string  `json:"date,omitempty"`
 	ModelName     string  `json:"model_name"`
 	InputTokens   int64   `json:"input_tokens"`
 	OutputTokens  int64   `json:"output_tokens"`
@@ -31,6 +34,7 @@ type SettlementBill struct {
 	UserId      int                   `json:"user_id"`
 	StartTime   int64                 `json:"start_time"`
 	EndTime     int64                 `json:"end_time"`
+	ExpandDate  bool                  `json:"expand_date"`
 	Items       []*SettlementBillItem `json:"items"`
 	TotalAmount float64               `json:"total_amount"`
 }
@@ -61,6 +65,7 @@ func MatchSettlementConfig(configs []*model.SettlementConfig, modelName string) 
 
 // modelUsage 用于从 quota_data 汇总查询结果
 type modelUsage struct {
+	Date                        string `gorm:"column:date"`
 	ModelName                   string `gorm:"column:model_name"`
 	PromptTokens                int64  `gorm:"column:prompt_tokens"`
 	CachedTokens                int64  `gorm:"column:cached_tokens"`
@@ -70,22 +75,56 @@ type modelUsage struct {
 	ClaudeCacheCreation1hTokens int64  `gorm:"column:claude_cache_creation1h_tokens"`
 }
 
+// billDateField 返回按东八区(+8)聚合日期的跨库 SQL 表达式，口径与 GetQuotaDataStatistics 保持一致。
+func billDateField() string {
+	if common.UsingSQLite {
+		return "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
+	} else if common.UsingMySQL {
+		return "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
+	} else if common.UsingPostgreSQL {
+		return "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
+	}
+	return "DATE(created_at)"
+}
+
 // CalculateSettlementBill 计算结算账单（纯只读）
-// 1. 从 quota_data 按模型维度汇总 prompt_tokens、cached_tokens、completion_tokens
+// 1. 从 quota_data 按模型维度（可选叠加日期维度）汇总 prompt_tokens、cached_tokens、completion_tokens
 // 2. 从 settlement_config 获取用户的结算价格配置
 // 3. 匹配模型名称（支持通配符），计算金额
 // 4. 返回账单，不写入任何数据
-func CalculateSettlementBill(userId int, startTime int64, endTime int64) (*SettlementBill, error) {
-	// 1. 从 quota_data 按模型维度汇总 token 用量（纯 SELECT 只读查询）
+//
+// 参数：
+//   - tokenId：>0 时只统计该 key(token) 的用量；0 表示不按 key 过滤。
+//   - expandDate：true 时额外按日期(东八区)分组，每天每模型一行。
+func CalculateSettlementBill(userId int, startTime int64, endTime int64, tokenId int, expandDate bool) (*SettlementBill, error) {
+	// 1. 从 quota_data 按模型维度（可选叠加日期维度）汇总 token 用量（纯 SELECT 只读查询）
+	datePart := "'' as date"
+	groupBy := "model_name"
+	if expandDate {
+		dateField := billDateField()
+		datePart = dateField + " as date"
+		groupBy = dateField + ", model_name"
+	}
+
 	var usages []modelUsage
-	err := model.DB.Table("quota_data").
-		Select("model_name, SUM(prompt_tokens) as prompt_tokens, SUM(cached_tokens) as cached_tokens, SUM(completion_tokens) as completion_tokens, SUM(count) as count, SUM(claude_cache_creation5m_tokens) as claude_cache_creation5m_tokens, SUM(claude_cache_creation1h_tokens) as claude_cache_creation1h_tokens").
-		Where("user_id = ? AND created_at >= ? AND created_at <= ?", userId, startTime, endTime).
-		Group("model_name").
-		Scan(&usages).Error
+	query := model.DB.Table("quota_data").
+		Select(datePart + ", model_name, SUM(prompt_tokens) as prompt_tokens, SUM(cached_tokens) as cached_tokens, SUM(completion_tokens) as completion_tokens, SUM(count) as count, SUM(claude_cache_creation5m_tokens) as claude_cache_creation5m_tokens, SUM(claude_cache_creation1h_tokens) as claude_cache_creation1h_tokens").
+		Where("user_id = ? AND created_at >= ? AND created_at <= ?", userId, startTime, endTime)
+	if tokenId > 0 {
+		query = query.Where("token_id = ?", tokenId)
+	}
+	err := query.Group(groupBy).Scan(&usages).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询用量数据失败: %w", err)
 	}
+
+	// 排序保证输出稳定：先按日期、再按模型名
+	sort.SliceStable(usages, func(i, j int) bool {
+		if usages[i].Date != usages[j].Date {
+			return usages[i].Date < usages[j].Date
+		}
+		return usages[i].ModelName < usages[j].ModelName
+	})
 
 	// 2. 从 settlement_config 获取用户的所有结算价格配置
 	configs, err := model.GetSettlementConfigsByUserId(userId)
@@ -95,10 +134,11 @@ func CalculateSettlementBill(userId int, startTime int64, endTime int64) (*Settl
 
 	// 3. 对每个模型计算账单项
 	bill := &SettlementBill{
-		UserId:    userId,
-		StartTime: startTime,
-		EndTime:   endTime,
-		Items:     make([]*SettlementBillItem, 0, len(usages)),
+		UserId:     userId,
+		StartTime:  startTime,
+		EndTime:    endTime,
+		ExpandDate: expandDate,
+		Items:      make([]*SettlementBillItem, 0, len(usages)),
 	}
 
 	var totalAmount float64
@@ -117,6 +157,7 @@ func CalculateSettlementBill(userId int, startTime int64, endTime int64) (*Settl
 		requestCount := usage.Count
 
 		item := &SettlementBillItem{
+			Date:         usage.Date,
 			ModelName:    usage.ModelName,
 			InputTokens:  inputTokens,
 			OutputTokens: outputTokens,
@@ -168,8 +209,11 @@ func ExportSettlementBillCSV(bill *SettlementBill) ([]byte, error) {
 
 	writer := csv.NewWriter(&buf)
 
-	// 写入表头
+	// 写入表头（按日期展开时额外前置「日期」列，与页面表格保持一致）
 	header := []string{"模型名称", "输入Token数", "输出Token数", "请求次数", "输入金额", "输出金额", "次数金额", "合计金额"}
+	if bill.ExpandDate {
+		header = append([]string{"日期"}, header...)
+	}
 	if err := writer.Write(header); err != nil {
 		return nil, fmt.Errorf("写入 CSV 表头失败: %w", err)
 	}
@@ -185,6 +229,9 @@ func ExportSettlementBillCSV(bill *SettlementBill) ([]byte, error) {
 			fmt.Sprintf("%.6f", item.OutputAmount),
 			fmt.Sprintf("%.6f", item.RequestAmount),
 			fmt.Sprintf("%.6f", item.TotalAmount),
+		}
+		if bill.ExpandDate {
+			row = append([]string{item.Date}, row...)
 		}
 		if err := writer.Write(row); err != nil {
 			return nil, fmt.Errorf("写入 CSV 数据行失败: %w", err)

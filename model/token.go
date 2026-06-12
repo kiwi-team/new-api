@@ -554,6 +554,32 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination
+// BillTokenOption 账单页 key 筛选下拉框的选项
+type BillTokenOption struct {
+	Id       int    `json:"id" gorm:"column:id"`
+	Name     string `json:"name" gorm:"column:name"`
+	UserId   int    `json:"user_id" gorm:"column:user_id"`
+	Username string `json:"username" gorm:"column:username"`
+}
+
+// SearchTokensForBill 为账单页 key 筛选下拉框返回 token 选项。
+// userId > 0 时只返回该用户的 token（普通用户）；userId == 0 时返回所有用户的 token（root）。
+// keyword 非空时按 token 名称模糊匹配，limit 限制返回条数。
+func SearchTokensForBill(userId int, keyword string, limit int) ([]*BillTokenOption, error) {
+	opts := make([]*BillTokenOption, 0)
+	tx := DB.Model(&Token{}).
+		Select("tokens.id as id, tokens.name as name, tokens.user_id as user_id, users.username as username").
+		Joins("left join users on users.id = tokens.user_id")
+	if userId > 0 {
+		tx = tx.Where("tokens.user_id = ?", userId)
+	}
+	if keyword != "" {
+		tx = tx.Where("tokens.name LIKE ?", "%"+keyword+"%")
+	}
+	err := tx.Order("tokens.id desc").Limit(limit).Find(&opts).Error
+	return opts, err
+}
+
 func CountUserTokens(userId int) (int64, error) {
 	var total int64
 	tx := DB.Model(&Token{})
