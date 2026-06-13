@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useMemo, useState } from 'react';
 import { Empty } from '@douyinfe/semi-ui';
+import { isRoot } from '../../../helpers';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
@@ -50,6 +51,7 @@ const UsersTable = (usersData) => {
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
+    rowSelection,
     t,
   } = usersData;
 
@@ -185,6 +187,7 @@ const UsersTable = (usersData) => {
         }}
         hidePagination={true}
         loading={loading}
+        rowSelection={isRoot() ? rowSelection : undefined}
         onRow={handleRow}
         empty={
           <Empty

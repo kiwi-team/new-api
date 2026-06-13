@@ -337,6 +337,65 @@ func HardDeleteUserById(id int) error {
 	return err
 }
 
+// BatchDeleteUsers 批量硬删除用户，并级联硬删除这些用户名下的所有 token。
+// 在一个事务内完成，保证「用户记录」与「其 token」原子性删除；
+// 提交后异步清理用户缓存与 token 缓存。返回成功删除的用户数量。
+func BatchDeleteUsers(ids []int) (int, error) {
+	if len(ids) == 0 {
+		return 0, errors.New("ids 不能为空！")
+	}
+
+	tx := DB.Begin()
+
+	// 先捞出待删用户（确认实际存在的数量，并用于缓存清理）
+	var users []User
+	if err := tx.Where("id IN (?)", ids).Find(&users).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if len(users) == 0 {
+		tx.Rollback()
+		return 0, nil
+	}
+
+	// 先捞出这些用户名下的 token（用于提交后清理 Redis 缓存）
+	var tokens []Token
+	if err := tx.Where("user_id IN (?)", ids).Find(&tokens).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	// 级联硬删除 token（Unscoped 真正删除，避免遗留指向已删用户的孤儿记录）
+	if err := tx.Unscoped().Where("user_id IN (?)", ids).Delete(&Token{}).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	// 硬删除用户记录
+	if err := tx.Unscoped().Where("id IN (?)", ids).Delete(&User{}).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return 0, err
+	}
+
+	// 清理缓存（用户状态缓存 + token 缓存）
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			for _, u := range users {
+				_ = invalidateUserCache(u.Id)
+			}
+			for _, tk := range tokens {
+				_ = cacheDeleteToken(tk.Key)
+			}
+		})
+	}
+
+	return len(users), nil
+}
+
 func inviteUser(inviterId int) (err error) {
 	user, err := GetUserById(inviterId, true)
 	if err != nil {

@@ -122,6 +122,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.POST("/manage", controller.ManageUser)
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
+				// 批量删除用户:root 专属(级联删除其 token 与用户记录)
+				adminRoute.POST("/batch/delete", middleware.RootAuth(), controller.DeleteUserBatch)
 				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
 
 				// Admin 2FA routes

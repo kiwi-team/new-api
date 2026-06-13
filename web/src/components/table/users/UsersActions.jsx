@@ -18,10 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useRef } from 'react';
-import { Button } from '@douyinfe/semi-ui';
+import { Button, Modal } from '@douyinfe/semi-ui';
 import { API, showError, showSuccess, isRoot } from '../../../helpers';
 
-const UsersActions = ({ setShowAddUser, t }) => {
+const UsersActions = ({
+  setShowAddUser,
+  selectedKeys = [],
+  batchDeleteUsers,
+  t,
+}) => {
   // Add new user
   const handleAddUser = () => {
     setShowAddUser(true);
@@ -84,6 +89,26 @@ const UsersActions = ({ setShowAddUser, t }) => {
           }}
         >
           {t('导入CSV')}
+        </Button>
+      )}
+      {isRoot() && (
+        <Button
+          className='w-full md:w-auto'
+          size='small'
+          type='danger'
+          disabled={selectedKeys.length === 0}
+          onClick={() => {
+            Modal.confirm({
+              title: t('确定要删除所选用户吗？'),
+              content: t(
+                '将级联删除这些用户名下的所有 Key 以及用户记录，此操作不可逆！',
+              ),
+              onOk: () => batchDeleteUsers?.(),
+            });
+          }}
+        >
+          {t('批量删除用户')}
+          {selectedKeys.length > 0 ? `(${selectedKeys.length})` : ''}
         </Button>
       )}
     </div>

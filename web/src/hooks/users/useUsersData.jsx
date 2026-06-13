@@ -36,6 +36,9 @@ export const useUsersData = () => {
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
 
+  // 批量删除选中行（root 专属功能）
+  const [selectedKeys, setSelectedKeys] = useState([]);
+
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
   const [showEditUser, setShowEditUser] = useState(false);
@@ -211,6 +214,47 @@ export const useUsersData = () => {
       });
   };
 
+  // 表格多选配置（仅 root 在表格上启用）
+  const rowSelection = {
+    onChange: (selectedRowKeys, selectedRows) => {
+      setSelectedKeys(selectedRows);
+    },
+  };
+
+  // 批量删除用户：级联删除每个用户的 token 与用户记录（仅 root）
+  const batchDeleteUsers = async () => {
+    if (selectedKeys.length === 0) {
+      showError(t('请先选择要删除的用户！'));
+      return;
+    }
+    setLoading(true);
+    try {
+      const ids = selectedKeys.map((u) => u.id);
+      const res = await API.post('/api/user/batch/delete', { ids });
+      if (res?.data?.success) {
+        const { deleted = 0, skipped = 0 } = res.data.data || {};
+        if (skipped > 0) {
+          showSuccess(
+            t('已删除 {{deleted}} 个用户，{{skipped}} 个因权限不足被跳过', {
+              deleted,
+              skipped,
+            }),
+          );
+        } else {
+          showSuccess(t('已删除 {{deleted}} 个用户！', { deleted }));
+        }
+        setSelectedKeys([]);
+        await refresh();
+      } else {
+        showError(res?.data?.message || t('删除失败'));
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Handle table row styling for disabled/deleted users
   const handleRow = (record, index) => {
     if (record.DeletedAt !== null || record.status !== 1) {
@@ -300,6 +344,12 @@ export const useUsersData = () => {
     // UI state
     compactMode,
     setCompactMode,
+
+    // 批量删除
+    selectedKeys,
+    setSelectedKeys,
+    rowSelection,
+    batchDeleteUsers,
 
     // Actions
     loadUsers,
