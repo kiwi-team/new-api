@@ -272,7 +272,9 @@ func CleanupGCSObjects(objects []relaycommon.GCSObjectRef) {
 
 func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string, retryTimes int) (*genai.File, error) {
 	var lastErr error
+	attempts := 0
 	for i := 0; i < retryTimes; i++ {
+		attempts++
 		var file *genai.File
 		var err error
 		if bucket == "" {
@@ -306,7 +308,8 @@ func RetryUploadFileToGoogle(ctx context.Context, fileUri string, bucket string,
 	}
 	if lastErr != nil {
 		// 把最后一次的真实错误一并带出,channel error 日志里就能直接看到根因。
-		return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s, last error: %w", retryTimes, fileUri, lastErr)
+		// 用真实尝试次数:命中不可重试的错误(超大/超时/取消)时只试 1 次就退出,不再误报 "after 3 retries"。
+		return nil, fmt.Errorf("upload file to google failed after %d attempt(s), fileUri: %s, last error: %w", attempts, fileUri, lastErr)
 	}
-	return nil, fmt.Errorf("upload file to google failed after %d retries, fileUri: %s", retryTimes, fileUri)
+	return nil, fmt.Errorf("upload file to google failed after %d attempt(s), fileUri: %s", attempts, fileUri)
 }

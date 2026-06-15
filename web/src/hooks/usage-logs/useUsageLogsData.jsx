@@ -145,12 +145,12 @@ export const useLogsData = () => {
 
         // For non-admin users, force-hide admin-only columns (does not touch admin settings)
         if (!isAdminUser) {
-          merged[COLUMN_KEYS.CHANNEL] = false;
           merged[COLUMN_KEYS.USERNAME] = false;
           merged[COLUMN_KEYS.RETRY] = false;
         }
-        // HEADER 仅 root 可见，强制对非 root 关闭，避免本地存储里残留的勾选状态泄露入口
+        // CHANNEL 与 HEADER 仅 root 可见，强制对非 root 关闭，避免本地存储里残留的勾选状态泄露入口
         if (!isRootUser) {
+          merged[COLUMN_KEYS.CHANNEL] = false;
           merged[COLUMN_KEYS.HEADER] = false;
         }
         setVisibleColumns(merged);
@@ -168,7 +168,7 @@ export const useLogsData = () => {
     return {
       [COLUMN_KEYS.ID]: true,
       [COLUMN_KEYS.TIME]: true,
-      [COLUMN_KEYS.CHANNEL]: isAdminUser,
+      [COLUMN_KEYS.CHANNEL]: isRootUser,
       [COLUMN_KEYS.USERNAME]: isAdminUser,
       [COLUMN_KEYS.UID]: true,
       [COLUMN_KEYS.TOKEN]: true,
@@ -209,13 +209,14 @@ export const useLogsData = () => {
 
     allKeys.forEach((key) => {
       if (
-        (key === COLUMN_KEYS.CHANNEL ||
-          key === COLUMN_KEYS.USERNAME ||
-          key === COLUMN_KEYS.RETRY) &&
+        (key === COLUMN_KEYS.USERNAME || key === COLUMN_KEYS.RETRY) &&
         !isAdminUser
       ) {
         updatedColumns[key] = false;
-      } else if (key === COLUMN_KEYS.HEADER && !isRootUser) {
+      } else if (
+        (key === COLUMN_KEYS.CHANNEL || key === COLUMN_KEYS.HEADER) &&
+        !isRootUser
+      ) {
         updatedColumns[key] = false;
       } else {
         updatedColumns[key] = checked;
@@ -388,7 +389,7 @@ export const useLogsData = () => {
       let other = getLogOther(logs[i].other);
       let expandDataLocal = [];
 
-      if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2)) {
+      if (isRootUser && (logs[i].type === 0 || logs[i].type === 2)) {
         expandDataLocal.push({
           key: t('渠道信息'),
           value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,

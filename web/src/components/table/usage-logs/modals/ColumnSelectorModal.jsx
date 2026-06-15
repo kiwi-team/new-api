@@ -30,6 +30,7 @@ const ColumnSelectorModal = ({
   initDefaultColumns,
   COLUMN_KEYS,
   isAdminUser,
+  isRootUser,
   copyText,
   showUserInfoFunc,
   t,
@@ -41,6 +42,7 @@ const ColumnSelectorModal = ({
     copyText,
     showUserInfoFunc,
     isAdminUser,
+    isRootUser,
   });
 
   return (
@@ -80,10 +82,13 @@ const ColumnSelectorModal = ({
           // Skip admin-only columns for non-admin users
           if (
             !isAdminUser &&
-            (column.key === COLUMN_KEYS.CHANNEL ||
-              column.key === COLUMN_KEYS.USERNAME ||
+            (column.key === COLUMN_KEYS.USERNAME ||
               column.key === COLUMN_KEYS.RETRY)
           ) {
+            return null;
+          }
+          // CHANNEL 列仅 root 可见，非 root 不显示该列开关
+          if (!isRootUser && column.key === COLUMN_KEYS.CHANNEL) {
             return null;
           }
 

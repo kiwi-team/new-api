@@ -66,6 +66,14 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 渠道信息仅 root 可见;其他用户(包括 admin / 组织 admin)无论列表/导出都清掉渠道 ID 与名称,
+	// 避免普通 admin 透过响应体或 CSV 看到上游渠道归属。
+	if c.GetInt("role") < common.RoleRootUser {
+		for i := range logs {
+			logs[i].ChannelId = 0
+			logs[i].ChannelName = ""
+		}
+	}
 	if export {
 		csvData := "ID\tUserID\tCreatedAt\tType\tContent\tUsername\tTokenName\tModelName\tQuota\tPromptTokens\tCompletionTokens\tUseTime\tIsStream\tChannelId\tChannelName\tTokenId\tGroup\tIP\tOther\tRequest\tResponse\n"
 		lc, _ := time.LoadLocation("Asia/Shanghai")
@@ -246,10 +254,13 @@ func GetUserLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// header 字段仅 root 可见;其他用户(自助视图)的列表响应里清掉。
+	// header 与渠道信息仅 root 可见;其他用户(自助视图)的列表响应里清掉。
+	// ChannelName 已由 formatUserLogs 清空,这里补清 ChannelId(json:"channel"),避免渠道 ID 泄露。
 	if c.GetInt("role") < common.RoleRootUser {
 		for i := range logs {
 			logs[i].Header = nil
+			logs[i].ChannelId = 0
+			logs[i].ChannelName = ""
 		}
 	}
 	pageInfo.SetTotal(int(total))

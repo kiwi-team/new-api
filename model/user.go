@@ -312,6 +312,17 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+// GetUserByIdIncludeDeleted 按 id 查询用户，包含已注销(软删除)的记录。
+// 用于批量删除等需要对已注销用户也生效的场景。
+func GetUserByIdIncludeDeleted(id int) (*User, error) {
+	if id == 0 {
+		return nil, errors.New("id 为空！")
+	}
+	user := User{Id: id}
+	err := DB.Unscoped().Omit("password").First(&user, "id = ?", id).Error
+	return &user, err
+}
+
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, errors.New("affCode 为空！")
@@ -348,8 +359,9 @@ func BatchDeleteUsers(ids []int) (int, error) {
 	tx := DB.Begin()
 
 	// 先捞出待删用户（确认实际存在的数量，并用于缓存清理）
+	// Unscoped 使已注销(软删除)用户也被纳入计数与缓存清理
 	var users []User
-	if err := tx.Where("id IN (?)", ids).Find(&users).Error; err != nil {
+	if err := tx.Unscoped().Where("id IN (?)", ids).Find(&users).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
@@ -359,8 +371,9 @@ func BatchDeleteUsers(ids []int) (int, error) {
 	}
 
 	// 先捞出这些用户名下的 token（用于提交后清理 Redis 缓存）
+	// Unscoped 同时覆盖已被软删除的 token
 	var tokens []Token
-	if err := tx.Where("user_id IN (?)", ids).Find(&tokens).Error; err != nil {
+	if err := tx.Unscoped().Where("user_id IN (?)", ids).Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}

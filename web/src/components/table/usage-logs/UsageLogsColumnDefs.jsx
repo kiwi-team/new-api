@@ -374,6 +374,7 @@ export const getLogsColumns = ({
   showUserInfoFunc,
   openChannelAffinityUsageCacheModal,
   isAdminUser,
+  isRootUser,
   callback,
 }) => {
   return [
@@ -416,7 +417,7 @@ export const getLogsColumns = ({
           }
         }
 
-        return isAdminUser &&
+        return isRootUser &&
           (record.type === 0 || record.type === 2 || record.type === 5) ? (
           <Space>
             <span style={{ position: 'relative', display: 'inline-block' }}>

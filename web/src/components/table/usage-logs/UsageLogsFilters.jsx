@@ -116,25 +116,26 @@ const LogsFilters = ({
             size='small'
           />
 
+          {/* 渠道 ID 筛选仅 root 可见,与渠道信息整体的 root-only 可见性保持一致 */}
+          {isRootUser && (
+            <Form.Input
+              field='channel'
+              prefix={<IconSearch />}
+              placeholder={t('渠道 ID')}
+              showClear
+              pure
+              size='small'
+            />
+          )}
           {isAdminUser && (
-            <>
-              <Form.Input
-                field='channel'
-                prefix={<IconSearch />}
-                placeholder={t('渠道 ID')}
-                showClear
-                pure
-                size='small'
-              />
-              <Form.Input
-                field='username'
-                prefix={<IconSearch />}
-                placeholder={t('用户名称')}
-                showClear
-                pure
-                size='small'
-              />
-            </>
+            <Form.Input
+              field='username'
+              prefix={<IconSearch />}
+              placeholder={t('用户名称')}
+              showClear
+              pure
+              size='small'
+            />
           )}
           {/* UID/MT Session/Trace/Traj 筛选:对 mt org 任意角色 + 系统 admin 开放,其他 org 不放开 */}
           {showMtFilters && (

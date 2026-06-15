@@ -889,10 +889,11 @@ func DeleteUserBatch(c *gin.Context) {
 	myRole := c.GetInt("role")
 
 	// 逐个校验权限:只删角色低于自己的用户,跳过不存在或不可删除(root/同级/更高)的
+	// 使用 IncludeDeleted 查询,使已注销(软删除)用户也能被校验并删除
 	deletableIds := make([]int, 0, len(req.Ids))
 	skipped := 0
 	for _, id := range req.Ids {
-		u, err := model.GetUserById(id, false)
+		u, err := model.GetUserByIdIncludeDeleted(id)
 		if err != nil {
 			skipped++
 			continue
