@@ -51,6 +51,8 @@ export const DEFAULT_ADMIN_CONFIG = {
     models: true,
     deployment: true,
     modelChannelMonitor: true,
+    internalChannelMonitor: true,
+    modelUsageAnalysis: true,
     redemption: true,
     user: true,
     subscription: true,

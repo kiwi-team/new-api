@@ -62,6 +62,7 @@ import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
 import SettlementConfig from './pages/SettlementConfig';
 import ModelChannelMonitor from './pages/ModelChannelMonitor';
+import ModelUsageAnalysis from './pages/ModelUsageAnalysis';
 
 // Debug module pages
 import DebugExecutor from './pages/Debug/Executor';
@@ -376,6 +377,22 @@ function App() {
           element={
             <RootRoute>
               <ModelChannelMonitor />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/internal-channel-monitor'
+          element={
+            <RootRoute>
+              <ModelChannelMonitor internalView />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/model-usage-analysis'
+          element={
+            <RootRoute>
+              <ModelUsageAnalysis />
             </RootRoute>
           }
         />

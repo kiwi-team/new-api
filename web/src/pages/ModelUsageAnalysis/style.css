@@ -1,0 +1,134 @@
+.mua-page {
+  min-height: 100%;
+  padding: 76px 16px 32px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(244, 246, 250, 0.94));
+}
+
+.mua-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.mua-refresh-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--semi-color-text-2);
+  font-size: 13px;
+  white-space: nowrap;
+  margin-top: 8px;
+}
+
+.mua-refresh-note span {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: #16a34a;
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12);
+}
+
+.mua-toolbar {
+  margin-bottom: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--semi-color-border);
+}
+
+.mua-filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.mua-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mua-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.mua-summary-card {
+  min-height: 94px;
+  padding: 13px 14px;
+  background: var(--semi-color-bg-2);
+  border: 1px solid var(--semi-color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.mua-summary-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mua-summary-card strong {
+  font-size: 22px;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.mua-summary-card p {
+  margin: 0;
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.mua-summary-card.tone-warn strong {
+  color: #d97706;
+}
+
+.mua-table-card {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mua-token-cell {
+  display: grid;
+  gap: 3px;
+}
+
+.mua-token-cell span {
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+}
+
+@media (max-width: 1220px) {
+  .mua-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mua-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .mua-page {
+    padding: 68px 10px 24px;
+  }
+
+  .mua-header {
+    flex-direction: column;
+  }
+
+  .mua-filter-grid,
+  .mua-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

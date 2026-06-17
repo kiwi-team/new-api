@@ -25,7 +25,6 @@ import {
   SideSheet,
   Space,
   TabPane,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -586,10 +585,6 @@ function getKeyLabel(record) {
   return `Key ID ${record.keyId} · ${record.keyName} · ${record.keyHint}`;
 }
 
-function getMatrixLabel(record) {
-  return `${getKeyLabel(record)} · ${record.channelName}`;
-}
-
 function getRecordVolume(record) {
   return record.requests + record.errors;
 }
@@ -824,7 +819,14 @@ function TrendChart({ record }) {
   );
 }
 
-function ErrorList({ record, limit = 2 }) {
+function getErrorPreview(error, showSensitive = false) {
+  if (showSensitive) {
+    return error.code ? `${error.code}: ${error.text}` : error.text;
+  }
+  return error.code ? `错误码 ${error.code}` : '错误类型未归类';
+}
+
+function ErrorList({ record, limit = 2, showSensitive = false }) {
   if (!record.errorsTop.length) {
     return <div className='mcm-empty-error'>过去 24 小时没有聚合错误。</div>;
   }
@@ -836,14 +838,16 @@ function ErrorList({ record, limit = 2 }) {
             <span>{formatCount(error.count)} 次</span>
             <small>最近 {error.last}</small>
           </div>
-          <div className='mcm-error-text'>{error.text}</div>
+          <div className='mcm-error-text'>
+            {getErrorPreview(error, showSensitive)}
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-function ErrorChannelStrip({ errors, onOpen }) {
+function ErrorChannelStrip({ errors, onOpen, limit = 6, showSensitive = false }) {
   if (!errors.length) {
     return null;
   }
@@ -854,27 +858,28 @@ function ErrorChannelStrip({ errors, onOpen }) {
         <span>按错误次数排序</span>
       </div>
       <div className='mcm-error-channel-grid'>
-        {errors.slice(0, 6).map((error) => (
+        {errors.slice(0, limit).map((error) => (
           <button
             key={`${error.channelId}-${error.model}-${error.code}-${error.index}`}
             type='button'
             onClick={() => onOpen(error.record)}
           >
             <div className='mcm-error-channel-head'>
-              <strong>{error.channelName}</strong>
+              <strong>
+                {showSensitive
+                  ? `${error.channelName} · ID ${error.channelId}`
+                  : `渠道 ID ${error.channelId}`}
+              </strong>
               <Tag color={error.status === 'down' ? 'red' : 'amber'} size='small'>
                 {formatCount(error.count)} 次
               </Tag>
             </div>
             <div className='mcm-error-channel-meta'>
-              <span>ID {error.channelId}</span>
               <span>{error.provider}</span>
               <span>{error.model}</span>
+              <span>{error.channelType}</span>
             </div>
-            <p>
-              {error.code ? `${error.code}: ` : ''}
-              {error.text}
-            </p>
+            <p>{getErrorPreview(error, showSensitive)}</p>
           </button>
         ))}
       </div>
@@ -882,7 +887,7 @@ function ErrorChannelStrip({ errors, onOpen }) {
   );
 }
 
-function ChannelErrorTable({ errors, onOpen }) {
+function ChannelErrorTable({ errors, onOpen, showSensitive = false }) {
   if (!errors.length) {
     return <div className='mcm-empty-error'>过去 24 小时没有聚合错误。</div>;
   }
@@ -895,8 +900,12 @@ function ChannelErrorTable({ errors, onOpen }) {
           onClick={() => onOpen(error.record)}
         >
           <div>
-            <strong>{error.channelName}</strong>
-            <span>ID {error.channelId} · {error.channelType}</span>
+            <strong>
+              {showSensitive
+                ? `${error.channelName} · ID ${error.channelId}`
+                : `渠道 ID ${error.channelId}`}
+            </strong>
+            <span>{error.channelType}</span>
           </div>
           <div>
             <strong>{error.model}</strong>
@@ -906,36 +915,14 @@ function ChannelErrorTable({ errors, onOpen }) {
             <strong>{formatCount(error.count)} 次</strong>
             <span>最近 {error.last}</span>
           </div>
-          <p>{error.text}</p>
+          <p>{getErrorPreview(error, showSensitive)}</p>
         </button>
       ))}
     </div>
   );
 }
 
-function ModelRankStrip({ models, activeModel, onSelect }) {
-  return (
-    <div className='mcm-model-rank'>
-      {models.map((model, index) => (
-        <button
-          className={activeModel === model.model ? 'active' : ''}
-          key={model.model}
-          type='button'
-          onClick={() => onSelect(activeModel === model.model ? 'all' : model.model)}
-        >
-          <span>#{index + 1}</span>
-          <strong>{model.model}</strong>
-          <small>
-            {getProviderMeta(model.provider).name} · {formatCount(model.total)} 次 ·{' '}
-            {model.successRate.toFixed(1)}%
-          </small>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ProviderGrid({ providers }) {
+function ProviderGrid({ providers, showSensitive = false }) {
   return (
     <div className='mcm-provider-grid'>
       {providers.map((provider) => {
@@ -961,7 +948,9 @@ function ProviderGrid({ providers }) {
               <span>P95 {formatMs(provider.p95UseMs)}</span>
               <small>
                 {provider.topError
-                  ? `${provider.topError.channelName} · ${provider.topError.model} · ${provider.topError.text}`
+                  ? showSensitive
+                    ? `${provider.topError.channelName} · ${provider.topError.model} · ${getErrorPreview(provider.topError, true)}`
+                    : `${provider.topError.model} · ${getErrorPreview(provider.topError)}`
                   : '过去 24 小时无聚合错误'}
               </small>
             </div>
@@ -972,7 +961,7 @@ function ProviderGrid({ providers }) {
   );
 }
 
-function MonitorCard({ record, onOpen }) {
+function MonitorCard({ record, onOpen, showSensitive = false }) {
   const useTone =
     record.p95UseMs > 120000
       ? 'bad'
@@ -997,7 +986,9 @@ function MonitorCard({ record, onOpen }) {
           </div>
           <Space spacing={6} wrap>
             <Tag color='blue' size='small'>
-              {record.channelName}
+              {showSensitive
+                ? `${record.channelName} · ID ${record.channelId}`
+                : `渠道 ID ${record.channelId}`}
             </Tag>
             <Tag color='purple' size='small'>
               {record.group}
@@ -1009,7 +1000,7 @@ function MonitorCard({ record, onOpen }) {
         </div>
         <StatusBadge status={record.status} />
       </div>
-      <div className='mcm-kpis'>
+      <div className='mcm-kpis compact'>
         <div>
           <span>成功率</span>
           <strong className={`tone-${successTone}`}>{record.successRate}%</strong>
@@ -1023,69 +1014,41 @@ function MonitorCard({ record, onOpen }) {
           <p>当前日志 use_time 口径</p>
         </div>
         <div>
-          <span>输出速度</span>
-          <strong>{formatTps(record.tps)}</strong>
-          <p>completion tokens / use time</p>
+          <span>最近错误</span>
+          <strong className={record.errors ? 'tone-bad' : ''}>
+            {record.errors ? record.lastError : '-'}
+          </strong>
+          <p>{formatCount(record.errors)} 次错误</p>
         </div>
       </div>
-      <div className='mcm-card-chart'>
+      <div className='mcm-card-chart compact'>
         <div className='mcm-section-line'>
-          <span>总耗时 · 过去 24 小时</span>
-          <span>{record.samples} 个样本点</span>
+          <span>首字趋势 · 过去 24 小时</span>
+          <span>{record.firstMs === null ? '待埋点' : `${record.samples} 个样本点`}</span>
         </div>
         <TrendChart record={record} />
       </div>
       <div className='mcm-card-errors'>
-        <h3>最近 24h 错误原因</h3>
-        <ErrorList record={record} />
+        <h3>{showSensitive ? '最近 24h 错误原因' : '最近 24h 错误概览'}</h3>
+        <ErrorList record={record} showSensitive={showSensitive} />
       </div>
     </article>
   );
 }
 
-function groupRecords(records, mode) {
-  const map = new Map();
-  records.forEach((record) => {
-    let key = getKeyLabel(record);
-    if (mode === 'channel') key = `${record.channelName} · #${record.channelId}`;
-    if (mode === 'model') key = record.model;
-    if (mode === 'provider') key = getProviderMeta(record).name;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(record);
-  });
-  return Array.from(map.entries());
-}
-
-function buildSamples(record) {
-  const okText = `首字 ${formatFirstMs(record.firstMs)} · 总耗时 ${formatMs(record.useMs)} · request_id req_${record.keyId}${record.channelId}`;
-  return [
-    { time: '11:57', ok: record.status !== 'down', title: '消费日志', text: okText },
-    {
-      time: record.lastError,
-      ok: false,
-      title: '错误日志',
-      text: record.errorsTop[0]?.text || '无错误',
-    },
-    { time: '10:42', ok: true, title: '消费日志', text: okText },
-    {
-      time: '09:18',
-      ok: !record.errorsTop[1],
-      title: record.errorsTop[1] ? '错误日志' : '消费日志',
-      text: record.errorsTop[1]?.text || okText,
-    },
-  ];
-}
-
-export default function ModelChannelMonitor() {
-  const [scopeTab, setScopeTab] = useState('topModels');
-  const [groupMode, setGroupMode] = useState('key');
-  const [modelFilter, setModelFilter] = useState('all');
+export default function ModelChannelMonitor({ internalView = false }) {
+  const [scene, setScene] = useState('overview');
+  const [providerFilter, setProviderFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [topLimit, setTopLimit] = useState(8);
-  const [activeTab, setActiveTab] = useState('cards');
   const [selected, setSelected] = useState(null);
 
   const modelStats = useMemo(() => buildModelStats(MONITOR_DATA), []);
+  const [selectedModels, setSelectedModels] = useState(() =>
+    buildModelStats(MONITOR_DATA)
+      .slice(0, 6)
+      .map((item) => item.model),
+  );
+  const selectedModelSet = useMemo(() => new Set(selectedModels), [selectedModels]);
 
   const modelOptions = useMemo(
     () =>
@@ -1096,46 +1059,63 @@ export default function ModelChannelMonitor() {
     [modelStats],
   );
 
-  const topModelStats = useMemo(() => {
-    if (topLimit === 'all') return modelStats;
-    return modelStats.slice(0, Number(topLimit));
-  }, [modelStats, topLimit]);
-
-  const topModelNames = useMemo(
-    () => new Set(topModelStats.map((item) => item.model)),
-    [topModelStats],
+  const providerOptions = useMemo(
+    () =>
+      Array.from(new Set(MONITOR_DATA.map((item) => getProviderKey(item))))
+        .sort(
+          (a, b) =>
+            getProviderMeta(a).order - getProviderMeta(b).order ||
+            getProviderMeta(a).name.localeCompare(getProviderMeta(b).name),
+        )
+        .map((providerKey) => ({
+          label: getProviderMeta(providerKey).name,
+          value: providerKey,
+      })),
+    [],
   );
 
   const baseRecords = useMemo(() => {
     return MONITOR_DATA.filter(
-      (item) => modelFilter === 'all' || item.model === modelFilter,
-    ).filter((item) => statusFilter === 'all' || item.status === statusFilter);
-  }, [modelFilter, statusFilter]);
+      (item) => providerFilter === 'all' || getProviderKey(item) === providerFilter,
+    )
+      .filter((item) => selectedModelSet.has(item.model))
+      .filter((item) => statusFilter === 'all' || item.status === statusFilter);
+  }, [providerFilter, selectedModelSet, statusFilter]);
 
   const filteredRecords = useMemo(() => {
     return baseRecords
-      .filter(
-        (item) =>
-          scopeTab !== 'topModels' ||
-          modelFilter !== 'all' ||
-          topModelNames.has(item.model),
-      )
       .sort(
         (a, b) =>
           STATUS_META[a.status].order - STATUS_META[b.status].order ||
           getRecordVolume(b) - getRecordVolume(a),
       );
-  }, [baseRecords, modelFilter, scopeTab, topModelNames]);
+  }, [baseRecords]);
 
   const providerStats = useMemo(
-    () => buildProviderStats(baseRecords),
-    [baseRecords],
+    () => buildProviderStats(filteredRecords),
+    [filteredRecords],
   );
 
   const errorBreakdown = useMemo(
     () => buildErrorBreakdown(filteredRecords),
     [filteredRecords],
   );
+
+  const focusRecords = useMemo(() => {
+    const issues = filteredRecords.filter(
+      (item) => item.status !== 'healthy' || item.errors > 0,
+    );
+    const source = issues.length ? issues : filteredRecords;
+    return source
+      .slice()
+      .sort(
+        (a, b) =>
+          STATUS_META[a.status].order - STATUS_META[b.status].order ||
+          b.errors - a.errors ||
+          getRecordVolume(b) - getRecordVolume(a),
+      )
+      .slice(0, 6);
+  }, [filteredRecords]);
 
   const summary = useMemo(() => {
     const totalRequests = filteredRecords.reduce(
@@ -1166,80 +1146,19 @@ export default function ModelChannelMonitor() {
     };
   }, [filteredRecords]);
 
-  const tableColumns = [
-    {
-      title: 'Key',
-      dataIndex: 'keyName',
-      render: (_, record) => (
-        <div className='mcm-table-key'>
-          <strong>{record.keyName}</strong>
-          <span>
-            ID {record.keyId} · {record.keyHint}
-          </span>
-        </div>
-      ),
-    },
-    {
-      title: '渠道',
-      dataIndex: 'channelName',
-      render: (_, record) => (
-        <div className='mcm-table-key'>
-          <strong>{record.channelName}</strong>
-          <span>ID {record.channelId} · {record.channelType}</span>
-        </div>
-      ),
-    },
-    { title: '模型', dataIndex: 'model' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      render: (status) => <StatusBadge status={status} />,
-    },
-    {
-      title: '请求数',
-      render: (_, record) => formatCount(record.requests + record.errors),
-      sorter: (a, b) => a.requests + a.errors - (b.requests + b.errors),
-    },
-    {
-      title: '成功率',
-      dataIndex: 'successRate',
-      render: (value) => `${value}%`,
-      sorter: (a, b) => a.successRate - b.successRate,
-    },
-    {
-      title: '平均耗时',
-      dataIndex: 'useMs',
-      render: formatMs,
-      sorter: (a, b) => (a.useMs || 0) - (b.useMs || 0),
-    },
-    {
-      title: 'P95 耗时',
-      dataIndex: 'p95UseMs',
-      render: formatMs,
-      sorter: (a, b) => (a.p95UseMs || 0) - (b.p95UseMs || 0),
-    },
-    {
-      title: 'Top 错误',
-      render: (_, record) => record.errorsTop[0]?.text || '-',
-    },
-  ];
-
-  const matrixModels = Array.from(
-    new Set(filteredRecords.map((item) => item.model)),
-  );
-  const matrixKeys = Array.from(
-    new Set(filteredRecords.map((item) => getMatrixLabel(item))),
-  );
+  const overviewRecords = internalView ? filteredRecords : focusRecords;
 
   return (
     <div className='mcm-page'>
       <div className='mcm-header'>
         <div>
           <Title heading={3} className='!mb-1'>
-            模型渠道监控
+            {internalView ? '内部渠道监控' : '模型渠道监控'}
           </Title>
           <Text type='secondary'>
-            线上样本映射：按 Key、渠道、模型聚合健康状态、耗时、成功率和错误原因。
+            {internalView
+              ? '内部排障视角：展示渠道名、详细错误和模型可用性趋势。'
+              : '外部可用性视角：按 Key、渠道、模型聚合健康状态、耗时与成功率。'}
           </Text>
         </div>
         <div className='mcm-refresh-note'>
@@ -1250,13 +1169,14 @@ export default function ModelChannelMonitor() {
 
       <Card className='mcm-toolbar' bodyStyle={{ padding: 14 }}>
         <Tabs
-          activeKey={scopeTab}
+          activeKey={scene}
           className='mcm-head-tabs'
-          onChange={setScopeTab}
+          onChange={setScene}
           type='button'
         >
-          <TabPane tab='Top 调用模型' itemKey='topModels' />
-          <TabPane tab='厂商可用性' itemKey='providers' />
+          <TabPane tab='健康总览' itemKey='overview' />
+          <TabPane tab='错误渠道' itemKey='errors' />
+          <TabPane tab='厂商概览' itemKey='providers' />
         </Tabs>
         <div className='mcm-filter-grid'>
           <label>
@@ -1265,43 +1185,28 @@ export default function ModelChannelMonitor() {
               <Select.Option value='24h'>过去 24 小时</Select.Option>
               <Select.Option value='6h'>过去 6 小时</Select.Option>
               <Select.Option value='1h'>过去 1 小时</Select.Option>
-              <Select.Option value='15m'>过去 15 分钟</Select.Option>
             </Select>
           </label>
           <label>
-            <span>展示模型</span>
+            <span>厂商</span>
             <Select
-              disabled={scopeTab !== 'topModels'}
-              value={topLimit}
-              onChange={setTopLimit}
+              value={providerFilter}
+              onChange={setProviderFilter}
               style={{ width: '100%' }}
-            >
-              <Select.Option value={5}>Top 5</Select.Option>
-              <Select.Option value={8}>Top 8</Select.Option>
-              <Select.Option value={10}>Top 10</Select.Option>
-              <Select.Option value='all'>全部</Select.Option>
-            </Select>
+              optionList={[{ label: '全部厂商', value: 'all' }, ...providerOptions]}
+            />
           </label>
           <label>
-            <span>分组方式</span>
+            <span>关注模型</span>
             <Select
-              value={groupMode}
-              onChange={setGroupMode}
+              multiple
+              filter
+              maxTagCount={2}
+              value={selectedModels}
+              onChange={(value) => setSelectedModels(Array.isArray(value) ? value : [])}
+              placeholder='勾选要展示的模型'
               style={{ width: '100%' }}
-            >
-              <Select.Option value='key'>按 Key</Select.Option>
-              <Select.Option value='channel'>按渠道</Select.Option>
-              <Select.Option value='model'>按模型</Select.Option>
-              <Select.Option value='provider'>按厂商</Select.Option>
-            </Select>
-          </label>
-          <label>
-            <span>模型</span>
-            <Select
-              value={modelFilter}
-              onChange={setModelFilter}
-              style={{ width: '100%' }}
-              optionList={[{ label: '全部模型', value: 'all' }, ...modelOptions]}
+              optionList={modelOptions}
             />
           </label>
           <label>
@@ -1326,9 +1231,9 @@ export default function ModelChannelMonitor() {
 
       <div className='mcm-summary-grid'>
         <MetricCard
-          label='组合数'
+          label='关注组合'
           value={filteredRecords.length}
-          hint={scopeTab === 'topModels' ? '当前 Top 模型组合' : '当前筛选下全部组合'}
+          hint={`${selectedModels.length} 个关注模型`}
           icon={<LayoutGrid size={16} />}
         />
         <MetricCard
@@ -1341,7 +1246,7 @@ export default function ModelChannelMonitor() {
         <MetricCard
           label='平均耗时'
           value={formatMs(Math.round(summary.avgUse))}
-          hint='当前生产 logs.use_time 口径'
+          hint='核心组合平均 use_time'
           tone='warn'
           icon={<Gauge size={16} />}
         />
@@ -1355,120 +1260,62 @@ export default function ModelChannelMonitor() {
         <MetricCard
           label='异常 / 波动'
           value={`${summary.down} / ${summary.degraded}`}
-          hint='异常优先展示'
+          hint='需要优先排查'
           icon={<ListFilter size={16} />}
         />
       </div>
 
-      <ErrorChannelStrip errors={errorBreakdown} onOpen={setSelected} />
-
-      {scopeTab === 'topModels' ? (
-        <ModelRankStrip
-          activeModel={modelFilter}
-          models={topModelStats}
-          onSelect={setModelFilter}
-        />
-      ) : (
-        <ProviderGrid providers={providerStats} />
-      )}
-
-      <Tabs activeKey={activeTab} onChange={setActiveTab} type='button'>
-        <TabPane tab='卡片视图' itemKey='cards'>
-          <div className='mcm-groups'>
-            {groupRecords(filteredRecords, groupMode).map(([group, items]) => {
-              const healthy = items.filter(
-                (item) => item.status === 'healthy',
-              ).length;
-              return (
-                <section key={group}>
-                  <div className='mcm-group-title'>
-                    <div>
-                      <strong>{group}</strong>
-                      <Tag size='small' color='grey'>
-                        {healthy} / {items.length} 健康
-                      </Tag>
-                    </div>
-                    <span>{items.length} 个组合</span>
-                  </div>
-                  <div className='mcm-card-grid'>
-                    {items.map((item) => (
-                      <MonitorCard
-                        key={`${item.keyId}-${item.channelId}-${item.model}`}
-                        record={item}
-                        onOpen={setSelected}
-                      />
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        </TabPane>
-        <TabPane tab='表格视图' itemKey='table'>
-          <Card bodyStyle={{ padding: 0 }} className='mcm-table-card'>
-            <Table
-              rowKey={(record) => `${record.keyId}-${record.channelId}-${record.model}`}
-              columns={tableColumns}
-              dataSource={filteredRecords}
-              pagination={false}
-              size='small'
-            />
-          </Card>
-        </TabPane>
-        <TabPane tab='矩阵视图' itemKey='matrix'>
-          <Card bodyStyle={{ padding: 0 }} className='mcm-matrix-card'>
-            <div className='mcm-matrix'>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Key / 渠道 \\ 模型</th>
-                    {matrixModels.map((model) => (
-                      <th key={model}>{model}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {matrixKeys.map((keyLabel) => (
-                    <tr key={keyLabel}>
-                      <td>{keyLabel}</td>
-                      {matrixModels.map((model) => {
-                        const record = filteredRecords.find(
-                          (item) =>
-                            getMatrixLabel(item) === keyLabel &&
-                            item.model === model,
-                        );
-                        return (
-                          <td key={`${keyLabel}-${model}`}>
-                            {record ? (
-                              <button
-                                className={`mcm-matrix-cell ${record.status}`}
-                                type='button'
-                                onClick={() => setSelected(record)}
-                              >
-                                <strong>
-                                  {STATUS_META[record.status].text} ·{' '}
-                                  {record.successRate}%
-                                </strong>
-                                <span>P95 {formatMs(record.p95UseMs)}</span>
-                                <span>错误 {formatCount(record.errors)} 次</span>
-                              </button>
-                            ) : (
-                              <div className='mcm-matrix-cell unknown'>
-                                <strong>未知</strong>
-                                <span>无样本</span>
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {scene === 'overview' ? (
+        <section className='mcm-focus-section'>
+          <div className='mcm-group-title'>
+            <div>
+              <strong>{internalView ? '内部全量视角' : '异常优先'}</strong>
+              <Tag size='small' color='grey'>
+                {overviewRecords.length} 个关注组合
+              </Tag>
             </div>
-          </Card>
-        </TabPane>
-      </Tabs>
+            <span>
+              {internalView
+                ? '展示已筛选模型下的全部渠道组合，方便内部排障'
+                : '按勾选模型过滤后异常优先'}
+            </span>
+          </div>
+          {overviewRecords.length ? (
+            <div className='mcm-card-grid'>
+              {overviewRecords.map((item) => (
+                <MonitorCard
+                  key={`${item.keyId}-${item.channelId}-${item.model}`}
+                  record={item}
+                  onOpen={setSelected}
+                  showSensitive={internalView}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className='mcm-empty-state'>当前没有选中的模型组合。</div>
+          )}
+        </section>
+      ) : null}
+
+      {scene === 'errors' ? (
+        <Card bodyStyle={{ padding: 14 }} className='mcm-table-card'>
+          <ErrorChannelStrip
+            errors={errorBreakdown}
+            limit={Math.min(errorBreakdown.length, 9)}
+            onOpen={setSelected}
+            showSensitive={internalView}
+          />
+          <ChannelErrorTable
+            errors={errorBreakdown.slice(0, 12)}
+            onOpen={setSelected}
+            showSensitive={internalView}
+          />
+        </Card>
+      ) : null}
+
+      {scene === 'providers' ? (
+        <ProviderGrid providers={providerStats} showSensitive={internalView} />
+      ) : null}
 
       <SideSheet
         title={selected ? selected.model : '模型渠道详情'}
@@ -1479,7 +1326,10 @@ export default function ModelChannelMonitor() {
         {selected ? (
           <div className='mcm-detail'>
             <Text type='secondary'>
-              {getKeyLabel(selected)} · {selected.channelName}
+              {getKeyLabel(selected)} ·{' '}
+              {internalView
+                ? `${selected.channelName} · ID ${selected.channelId}`
+                : `渠道 ID ${selected.channelId}`}
             </Text>
             <div className='mcm-detail-grid'>
               <div>
@@ -1520,32 +1370,20 @@ export default function ModelChannelMonitor() {
               <TrendChart record={selected} />
             </section>
             <section className='mcm-detail-section'>
-              <h3>错误原因</h3>
-              <ErrorList record={selected} limit={5} />
+              <h3>{internalView ? '错误原因' : '错误概览'}</h3>
+              <ErrorList
+                record={selected}
+                limit={5}
+                showSensitive={internalView}
+              />
             </section>
             <section className='mcm-detail-section'>
               <h3>渠道错误明细</h3>
               <ChannelErrorTable
                 errors={buildErrorBreakdown([selected])}
                 onOpen={setSelected}
+                showSensitive={internalView}
               />
-            </section>
-            <section className='mcm-detail-section'>
-              <h3>最近样本</h3>
-              <div className='mcm-samples'>
-                {buildSamples(selected).map((sample) => (
-                  <div className='mcm-sample' key={`${sample.time}-${sample.title}`}>
-                    <strong>{sample.time}</strong>
-                    <div>
-                      <span>{sample.title}</span>
-                      <p>{sample.text}</p>
-                    </div>
-                    <Tag color={sample.ok ? 'green' : 'red'}>
-                      {sample.ok ? '成功' : '错误'}
-                    </Tag>
-                  </div>
-                ))}
-              </div>
             </section>
           </div>
         ) : null}

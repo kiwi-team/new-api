@@ -84,6 +84,7 @@ import {
   Wallet,
   Receipt,
   Activity,
+  WalletCards,
 } from 'lucide-react';
 
 // 侧边栏图标颜色映射
@@ -158,6 +159,10 @@ export function getLucideIcon(key, selected = false) {
       return <Server {...commonProps} color={iconColor} />;
     case 'modelChannelMonitor':
       return <Activity {...commonProps} color={iconColor} />;
+    case 'internalChannelMonitor':
+      return <Activity {...commonProps} color={iconColor} />;
+    case 'modelUsageAnalysis':
+      return <WalletCards {...commonProps} color={iconColor} />;
     case 'subscription':
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'setting':

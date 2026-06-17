@@ -38,16 +38,18 @@ const (
 	PageBillSelf   = "bill_self" // 普通用户的账单(看自己)
 
 	// 仅管理员可见的页面 — 系统 admin/root 的完整菜单要包含。
-	PageChannel             = "channel"
-	PageModels              = "models"
-	PageDeployment          = "deployment"
-	PageModelChannelMonitor = "modelChannelMonitor"
-	PageRedemption          = "redemption"
-	PageSubscription        = "subscription"
-	PageUser                = "user"
-	PageModelRouteConfig    = "model_route_config"
-	PageSetting             = "setting"
-	PageSettlementConfig    = "settlement_config" // 可编辑(root)
+	PageChannel                = "channel"
+	PageModels                 = "models"
+	PageDeployment             = "deployment"
+	PageModelChannelMonitor    = "modelChannelMonitor"
+	PageInternalChannelMonitor = "internalChannelMonitor"
+	PageModelUsageAnalysis     = "modelUsageAnalysis"
+	PageRedemption             = "redemption"
+	PageSubscription           = "subscription"
+	PageUser                   = "user"
+	PageModelRouteConfig       = "model_route_config"
+	PageSetting                = "setting"
+	PageSettlementConfig       = "settlement_config" // 可编辑(root)
 )
 
 // TopbarMode 顶栏行为
@@ -106,7 +108,11 @@ var allAdminPages = append(append([]string{}, defaultUserPages...),
 	PageBill,
 )
 
-var allRootPages = append(append([]string{}, allAdminPages...), PageModelChannelMonitor)
+var allRootPages = append(append([]string{}, allAdminPages...),
+	PageModelChannelMonitor,
+	PageInternalChannelMonitor,
+	PageModelUsageAnalysis,
+)
 
 // GetUserMenu 返回当前用户能看到的菜单 + 顶栏模式。
 // 设计核心:权限策略只在这里,一个 switch case,改权限就改这里。
