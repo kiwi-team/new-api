@@ -61,11 +61,13 @@ import CliendUserQuotaPage from './pages/CliendUserQuota';
 import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
 import SettlementConfig from './pages/SettlementConfig';
+import ModelChannelMonitor from './pages/ModelChannelMonitor';
+import ModelUsageAnalysis from './pages/ModelUsageAnalysis';
 
 // Debug module pages
 import DebugExecutor from './pages/Debug/Executor';
 import DebugTemplates from './pages/Debug/Templates';
-import DebugLogs from './pages/Debug/Logs';
+import DebugLogs from './pages/Debug/LogPage';
 
 // Sync module pages
 import SyncEnvironment from './pages/SyncEnvironment';
@@ -368,6 +370,30 @@ function App() {
             <AdminRoute>
               <ModelRouteConfig />
             </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/model-channel-monitor'
+          element={
+            <RootRoute>
+              <ModelChannelMonitor />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/internal-channel-monitor'
+          element={
+            <RootRoute>
+              <ModelChannelMonitor internalView />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/model-usage-analysis'
+          element={
+            <RootRoute>
+              <ModelUsageAnalysis />
+            </RootRoute>
           }
         />
         {/* Debug Module Routes - Root Only */}

@@ -33,47 +33,76 @@ import { StatusContext } from '../../../context/Status';
 
 const { Text } = Typography;
 
+const DEFAULT_SIDEBAR_MODULES_ADMIN = {
+  chat: {
+    enabled: true,
+    playground: true,
+    chat: true,
+  },
+  console: {
+    enabled: true,
+    detail: true,
+    token: true,
+    log: true,
+    errorlog: true,
+    midjourney: true,
+    task: true,
+  },
+  personal: {
+    enabled: true,
+    topup: true,
+    personal: true,
+  },
+  admin: {
+    enabled: true,
+    channel: true,
+    channelByModel: true,
+    models: true,
+    deployment: true,
+    modelChannelMonitor: true,
+    internalChannelMonitor: true,
+    modelUsageAnalysis: true,
+    redemption: true,
+    user: true,
+    subscription: true,
+    cuquota: true,
+    project: true,
+    setting: true,
+    modelRouteConfig: true,
+    settlementConfig: true,
+  },
+};
+
+const mergeSidebarModulesAdmin = (config) => ({
+  ...DEFAULT_SIDEBAR_MODULES_ADMIN,
+  ...config,
+  chat: {
+    ...DEFAULT_SIDEBAR_MODULES_ADMIN.chat,
+    ...config?.chat,
+  },
+  console: {
+    ...DEFAULT_SIDEBAR_MODULES_ADMIN.console,
+    ...config?.console,
+  },
+  personal: {
+    ...DEFAULT_SIDEBAR_MODULES_ADMIN.personal,
+    ...config?.personal,
+  },
+  admin: {
+    ...DEFAULT_SIDEBAR_MODULES_ADMIN.admin,
+    ...config?.admin,
+  },
+});
+
 export default function SettingsSidebarModulesAdmin(props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [statusState, statusDispatch] = useContext(StatusContext);
 
   // 左侧边栏模块管理状态（管理员全局控制）
-  const [sidebarModulesAdmin, setSidebarModulesAdmin] = useState({
-    chat: {
-      enabled: true,
-      playground: true,
-      chat: true,
-    },
-    console: {
-      enabled: true,
-      detail: true,
-      token: true,
-      log: true,
-      errorlog: true,
-      midjourney: true,
-      task: true,
-    },
-    personal: {
-      enabled: true,
-      topup: true,
-      personal: true,
-    },
-    admin: {
-      enabled: true,
-      channel: true,
-      channelByModel: true,
-      models: true,
-      deployment: true,
-      redemption: true,
-      user: true,
-      subscription: true,
-      cuquota: true,
-      project: true,
-      setting: true,
-      settlementConfig: true,
-    },
-  });
+  const [sidebarModulesAdmin, setSidebarModulesAdmin] = useState(
+    DEFAULT_SIDEBAR_MODULES_ADMIN,
+  );
 
   // 处理区域级别开关变更
   function handleSectionChange(sectionKey) {
@@ -105,41 +134,7 @@ export default function SettingsSidebarModulesAdmin(props) {
 
   // 重置为默认配置
   function resetSidebarModules() {
-    const defaultModules = {
-      chat: {
-        enabled: true,
-        playground: true,
-        chat: true,
-      },
-      console: {
-        enabled: true,
-        detail: true,
-        token: true,
-        log: true,
-        errorlog: true,
-        midjourney: true,
-        task: true,
-      },
-      personal: {
-        enabled: true,
-        topup: true,
-        personal: true,
-      },
-      admin: {
-        enabled: true,
-        channel: true,
-        models: true,
-        //channelByModel: true,
-        deployment: true,
-        redemption: true,
-        user: true,
-        subscription: true,
-        cuquota: true,
-        project: true,
-        setting: true,
-      },
-    };
-    setSidebarModulesAdmin(defaultModules);
+    setSidebarModulesAdmin(DEFAULT_SIDEBAR_MODULES_ADMIN);
     showSuccess(t('已重置为默认配置'));
   }
 
@@ -183,36 +178,9 @@ export default function SettingsSidebarModulesAdmin(props) {
     if (props.options && props.options.SidebarModulesAdmin) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
-        setSidebarModulesAdmin(modules);
+        setSidebarModulesAdmin(mergeSidebarModulesAdmin(modules));
       } catch (error) {
-        // 使用默认配置
-        const defaultModules = {
-          chat: { enabled: true, playground: true, chat: true },
-          console: {
-            enabled: true,
-            detail: true,
-            token: true,
-            log: true,
-            errorlog: true,
-            midjourney: true,
-            task: true,
-          },
-          personal: { enabled: true, topup: true, personal: true },
-          admin: {
-            enabled: true,
-            channel: true,
-            channelByModel: true,
-            models: true,
-            deployment: true,
-            redemption: true,
-            user: true,
-            subscription: true,
-            cuquota: true,
-            project: true,
-            setting: true,
-          },
-        };
-        setSidebarModulesAdmin(defaultModules);
+        setSidebarModulesAdmin(DEFAULT_SIDEBAR_MODULES_ADMIN);
       }
     }
   }, [props.options]);
@@ -283,6 +251,21 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'deployment',
           title: t('模型部署'),
           description: t('模型部署管理'),
+        },
+        {
+          key: 'modelChannelMonitor',
+          title: t('模型渠道监控'),
+          description: t('模型与Key健康监控'),
+        },
+        {
+          key: 'internalChannelMonitor',
+          title: t('内部渠道监控'),
+          description: t('展示渠道名与详细错误'),
+        },
+        {
+          key: 'modelUsageAnalysis',
+          title: t('用量分析'),
+          description: t('成本与Token用量分析'),
         },
         {
           key: 'subscription',
