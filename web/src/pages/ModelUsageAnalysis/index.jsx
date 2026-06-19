@@ -17,13 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Card,
+  DatePicker,
   Select,
   Table,
-  Tag,
   Typography,
 } from '@douyinfe/semi-ui';
 import {
@@ -33,182 +33,17 @@ import {
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
+import { API, showError } from '../../helpers';
 import './style.css';
 
 const { Text, Title } = Typography;
 
-const TOKEN_META = {
-  cc1: { provider: 'Claude', keyId: 52, keyHint: '0mtTyBA***TGGg' },
-  BcCeAf: { provider: 'Minimax', keyId: 19, keyHint: 'm83fTuc***CeAf' },
-  '123CbBa': { provider: 'Claude', keyId: 17, keyHint: 'LfUBAup***CbBa' },
-  'tools-调用': { provider: 'Qwen', keyId: 27, keyHint: 'qwen***tool' },
-};
-
-const USAGE_DATA = [
-  {
-    dayIndex: 3,
-    date: '6月3日',
-    tokenName: 'cc1',
-    costUsd: 9519.55,
-    totalRequests: 24203,
-    cacheWriteRequests: 21866,
-    cacheReadRequests: 16898,
-    cacheWriteTokens: 1181928092,
-    cacheReadTokens: 1850328539,
-    inputTokens: 27447530,
-    outputTokens: 20246318,
-  },
-  {
-    dayIndex: 4,
-    date: '6月4日',
-    tokenName: 'cc1',
-    costUsd: 26367.24,
-    totalRequests: 73176,
-    cacheWriteRequests: 62239,
-    cacheReadRequests: 46968,
-    cacheWriteTokens: 3339784080,
-    cacheReadTokens: 5984220208,
-    inputTokens: 68355631,
-    outputTokens: 56689744,
-  },
-  {
-    dayIndex: 5,
-    date: '6月5日',
-    tokenName: 'cc1',
-    costUsd: 29232.68,
-    totalRequests: 109535,
-    cacheWriteRequests: 92390,
-    cacheReadRequests: 79599,
-    cacheWriteTokens: 3279075306,
-    cacheReadTokens: 9370647384,
-    inputTokens: 282007361,
-    outputTokens: 105507757,
-  },
-  {
-    dayIndex: 6,
-    date: '6月6日',
-    tokenName: 'cc1',
-    costUsd: 15012.7,
-    totalRequests: 55606,
-    cacheWriteRequests: 40730,
-    cacheReadRequests: 37044,
-    cacheWriteTokens: 1378406524,
-    cacheReadTokens: 6328731212,
-    inputTokens: 310882713,
-    outputTokens: 66654905,
-  },
-  {
-    dayIndex: 7,
-    date: '6月7日',
-    tokenName: 'cc1',
-    costUsd: 17406.47,
-    totalRequests: 66116,
-    cacheWriteRequests: 43239,
-    cacheReadRequests: 38483,
-    cacheWriteTokens: 1577787486,
-    cacheReadTokens: 6125791296,
-    inputTokens: 566239644,
-    outputTokens: 64445088,
-  },
-  {
-    dayIndex: 8,
-    date: '6月8日',
-    tokenName: 'cc1',
-    costUsd: 28363.76,
-    totalRequests: 141773,
-    cacheWriteRequests: 96947,
-    cacheReadRequests: 87079,
-    cacheWriteTokens: 2361971679,
-    cacheReadTokens: 13667933785,
-    inputTokens: 621225999,
-    outputTokens: 136386810,
-  },
-  {
-    dayIndex: 9,
-    date: '6月9日',
-    tokenName: 'cc1',
-    costUsd: 32950.69,
-    totalRequests: 126381,
-    cacheWriteRequests: 119617,
-    cacheReadRequests: 108177,
-    cacheWriteTokens: 3059710950,
-    cacheReadTokens: 17130071942,
-    inputTokens: 513544326,
-    outputTokens: 105816399,
-  },
-  {
-    dayIndex: 10,
-    date: '6月10日',
-    tokenName: 'cc1',
-    costUsd: 40735.71,
-    totalRequests: 149483,
-    cacheWriteRequests: 136928,
-    cacheReadRequests: 131979,
-    cacheWriteTokens: 4102322584,
-    cacheReadTokens: 18813590748,
-    inputTokens: 372312052,
-    outputTokens: 151121020,
-  },
-  {
-    dayIndex: 11,
-    date: '6月11日',
-    tokenName: 'cc1',
-    costUsd: 31043.15,
-    totalRequests: 154737,
-    cacheWriteRequests: 141228,
-    cacheReadRequests: 144877,
-    cacheWriteTokens: 2546606087,
-    cacheReadTokens: 19777639725,
-    inputTokens: 355905354,
-    outputTokens: 130631460,
-  },
-  {
-    dayIndex: 11,
-    date: '6月11日',
-    tokenName: 'BcCeAf',
-    costUsd: 4838.22,
-    totalRequests: 43943,
-    cacheWriteRequests: 12890,
-    cacheReadRequests: 11642,
-    cacheWriteTokens: 331204800,
-    cacheReadTokens: 894220112,
-    inputTokens: 72180444,
-    outputTokens: 24310572,
-  },
-  {
-    dayIndex: 11,
-    date: '6月11日',
-    tokenName: '123CbBa',
-    costUsd: 2119.84,
-    totalRequests: 12522,
-    cacheWriteRequests: 8234,
-    cacheReadRequests: 7712,
-    cacheWriteTokens: 188340221,
-    cacheReadTokens: 560113920,
-    inputTokens: 31890341,
-    outputTokens: 11840220,
-  },
-  {
-    dayIndex: 11,
-    date: '6月11日',
-    tokenName: 'tools-调用',
-    costUsd: 1763.38,
-    totalRequests: 13023,
-    cacheWriteRequests: 9410,
-    cacheReadRequests: 8054,
-    cacheWriteTokens: 233903117,
-    cacheReadTokens: 620145900,
-    inputTokens: 27900118,
-    outputTokens: 9434201,
-  },
-];
-
 function formatCount(value) {
-  return Number(value).toLocaleString();
+  return Number(value || 0).toLocaleString();
 }
 
 function formatUsd(value) {
-  return `$${Number(value).toLocaleString(undefined, {
+  return `$${Number(value || 0).toLocaleString(undefined, {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   })}`;
@@ -218,25 +53,20 @@ function formatPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`;
 }
 
-function getTokenMeta(tokenName) {
-  return TOKEN_META[tokenName] || {
-    provider: '其他',
-    keyId: '-',
-    keyHint: '-',
-  };
-}
-
 function buildUsageSummary(rows) {
   return rows.reduce(
     (summary, row) => ({
-      costUsd: summary.costUsd + row.costUsd,
-      totalRequests: summary.totalRequests + row.totalRequests,
-      cacheWriteRequests: summary.cacheWriteRequests + row.cacheWriteRequests,
-      cacheReadRequests: summary.cacheReadRequests + row.cacheReadRequests,
-      cacheWriteTokens: summary.cacheWriteTokens + row.cacheWriteTokens,
-      cacheReadTokens: summary.cacheReadTokens + row.cacheReadTokens,
-      inputTokens: summary.inputTokens + row.inputTokens,
-      outputTokens: summary.outputTokens + row.outputTokens,
+      costUsd: summary.costUsd + (row.cost_usd || 0),
+      totalRequests: summary.totalRequests + (row.total_requests || 0),
+      cacheWriteRequests:
+        summary.cacheWriteRequests + (row.cache_write_requests || 0),
+      cacheReadRequests:
+        summary.cacheReadRequests + (row.cache_read_requests || 0),
+      cacheWriteTokens:
+        summary.cacheWriteTokens + (row.cache_write_tokens || 0),
+      cacheReadTokens: summary.cacheReadTokens + (row.cache_read_tokens || 0),
+      inputTokens: summary.inputTokens + (row.input_tokens || 0),
+      outputTokens: summary.outputTokens + (row.output_tokens || 0),
     }),
     {
       costUsd: 0,
@@ -265,46 +95,70 @@ function SummaryCard({ label, value, hint, icon, tone = 'default' }) {
 }
 
 export default function ModelUsageAnalysis() {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+
+  const [dateRange, setDateRange] = useState([weekAgo, now]);
+  const [rawData, setRawData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
   const [tokenFilter, setTokenFilter] = useState('all');
-  const [providerFilter, setProviderFilter] = useState('all');
-  const [rangeFilter, setRangeFilter] = useState('all');
+
+  const fetchData = async () => {
+    if (
+      !dateRange ||
+      dateRange.length !== 2 ||
+      !dateRange[0] ||
+      !dateRange[1]
+    ) {
+      showError('请先选择日期范围');
+      return;
+    }
+    setLoading(true);
+    const startTimestamp = Math.floor(dateRange[0].getTime() / 1000);
+    const endTimestamp = Math.floor(dateRange[1].getTime() / 1000);
+    try {
+      const res = await API.get('/api/data/model-usage-analysis', {
+        params: {
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp,
+        },
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setRawData(Array.isArray(data) ? data : []);
+      } else {
+        showError(message);
+      }
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tokenOptions = useMemo(
     () =>
-      Array.from(new Set(USAGE_DATA.map((item) => item.tokenName))).map(
-        (tokenName) => ({
-          label: `${tokenName} · Key ID ${getTokenMeta(tokenName).keyId}`,
-          value: tokenName,
-        }),
-      ),
-    [],
-  );
-
-  const providerOptions = useMemo(
-    () =>
       Array.from(
-        new Set(USAGE_DATA.map((item) => getTokenMeta(item.tokenName).provider)),
-      ).map((provider) => ({ label: provider, value: provider })),
-    [],
+        new Set(rawData.map((item) => item.token_name).filter(Boolean)),
+      ).map((tokenName) => ({ label: tokenName, value: tokenName })),
+    [rawData],
   );
 
   const rows = useMemo(() => {
-    const minDay = rangeFilter === '3d' ? 9 : rangeFilter === '7d' ? 5 : 0;
-    return USAGE_DATA.filter(
-      (item) => tokenFilter === 'all' || item.tokenName === tokenFilter,
-    )
-      .filter(
-        (item) =>
-          providerFilter === 'all' ||
-          getTokenMeta(item.tokenName).provider === providerFilter,
-      )
-      .filter((item) => item.dayIndex >= minDay)
-      .sort((a, b) => b.dayIndex - a.dayIndex || a.tokenName.localeCompare(b.tokenName));
-  }, [providerFilter, rangeFilter, tokenFilter]);
+    return rawData.filter(
+      (item) => tokenFilter === 'all' || item.token_name === tokenFilter,
+    );
+  }, [rawData, tokenFilter]);
 
   const summary = useMemo(() => buildUsageSummary(rows), [rows]);
   const tokenCount = useMemo(
-    () => new Set(rows.map((item) => item.tokenName)).size,
+    () => new Set(rows.map((item) => item.token_name)).size,
     [rows],
   );
   const writeRatio = summary.totalRequests
@@ -315,64 +169,72 @@ export default function ModelUsageAnalysis() {
     : 0;
 
   const columns = [
-    { title: '日期', dataIndex: 'date', fixed: 'left', width: 96 },
+    { title: '日期', dataIndex: 'date', fixed: 'left', width: 132 },
     {
       title: 'TokenName',
-      dataIndex: 'tokenName',
+      dataIndex: 'token_name',
       fixed: 'left',
-      width: 158,
-      render: (tokenName) => {
-        const meta = getTokenMeta(tokenName);
-        return (
-          <div className='mua-token-cell'>
-            <strong>{tokenName}</strong>
-            <span>Key ID {meta.keyId} · {meta.keyHint}</span>
-          </div>
-        );
-      },
-    },
-    {
-      title: '厂商',
-      width: 98,
-      render: (_, row) => (
-        <Tag color='blue' size='small'>
-          {getTokenMeta(row.tokenName).provider}
-        </Tag>
+      width: 168,
+      render: (tokenName, row) => (
+        <div className='mua-token-cell'>
+          <strong>{tokenName || '-'}</strong>
+          <span>Key ID {row.token_id || '-'}</span>
+        </div>
       ),
     },
     {
+      title: '模型',
+      dataIndex: 'model_name',
+      width: 180,
+      render: (modelName) => modelName || '-',
+    },
+    {
       title: '消耗 (USD)',
-      dataIndex: 'costUsd',
+      dataIndex: 'cost_usd',
       align: 'right',
       render: formatUsd,
-      sorter: (a, b) => a.costUsd - b.costUsd,
+      sorter: (a, b) => (a.cost_usd || 0) - (b.cost_usd || 0),
       width: 132,
     },
     {
       title: '总请求',
-      dataIndex: 'totalRequests',
+      dataIndex: 'total_requests',
       align: 'right',
       render: formatCount,
-      sorter: (a, b) => a.totalRequests - b.totalRequests,
+      sorter: (a, b) => (a.total_requests || 0) - (b.total_requests || 0),
       width: 118,
     },
     {
       title: '缓存写请求',
-      dataIndex: 'cacheWriteRequests',
+      dataIndex: 'cache_write_requests',
       align: 'right',
-      render: formatCount,
-      width: 132,
+      sorter: (a, b) =>
+        (a.cache_write_requests || 0) - (b.cache_write_requests || 0),
+      render: (_, row) => (
+        <div className='mua-token-cell' style={{ alignItems: 'flex-end' }}>
+          <strong>{formatCount(row.cache_write_requests)}</strong>
+          <span>
+            5m {formatCount(row.cache_write_5m_requests)} · 1h{' '}
+            {formatCount(row.cache_write_1h_requests)}
+          </span>
+        </div>
+      ),
+      width: 150,
     },
     {
       title: '写占比',
       align: 'right',
       render: (_, row) =>
-        formatPercent((row.cacheWriteRequests / row.totalRequests) * 100),
+        formatPercent(
+          row.total_requests
+            ? (row.cache_write_requests / row.total_requests) * 100
+            : 0,
+        ),
       width: 100,
     },
     {
       title: '缓存读请求',
-      dataIndex: 'cacheReadRequests',
+      dataIndex: 'cache_read_requests',
       align: 'right',
       render: formatCount,
       width: 132,
@@ -381,33 +243,37 @@ export default function ModelUsageAnalysis() {
       title: '读占比',
       align: 'right',
       render: (_, row) =>
-        formatPercent((row.cacheReadRequests / row.totalRequests) * 100),
+        formatPercent(
+          row.total_requests
+            ? (row.cache_read_requests / row.total_requests) * 100
+            : 0,
+        ),
       width: 100,
     },
     {
       title: '缓存写 tokens',
-      dataIndex: 'cacheWriteTokens',
+      dataIndex: 'cache_write_tokens',
       align: 'right',
       render: formatCount,
       width: 150,
     },
     {
       title: '缓存读 tokens',
-      dataIndex: 'cacheReadTokens',
+      dataIndex: 'cache_read_tokens',
       align: 'right',
       render: formatCount,
       width: 150,
     },
     {
       title: '输入 tokens',
-      dataIndex: 'inputTokens',
+      dataIndex: 'input_tokens',
       align: 'right',
       render: formatCount,
       width: 132,
     },
     {
       title: '输出 tokens',
-      dataIndex: 'outputTokens',
+      dataIndex: 'output_tokens',
       align: 'right',
       render: formatCount,
       width: 132,
@@ -422,12 +288,9 @@ export default function ModelUsageAnalysis() {
             用量分析
           </Title>
           <Text type='secondary'>
-            按 TokenName 和日期查看成本、请求量、缓存读写与输入输出 tokens。
+            按日期、TokenName 与模型查看成本、请求量、缓存读写与输入输出
+            tokens。
           </Text>
-        </div>
-        <div className='mua-refresh-note'>
-          <span />
-          线上样本 mock · 2026-06-11
         </div>
       </div>
 
@@ -435,11 +298,12 @@ export default function ModelUsageAnalysis() {
         <div className='mua-filter-grid'>
           <label>
             <span>时间范围</span>
-            <Select value={rangeFilter} onChange={setRangeFilter} style={{ width: '100%' }}>
-              <Select.Option value='all'>全部样本</Select.Option>
-              <Select.Option value='7d'>最近 7 天</Select.Option>
-              <Select.Option value='3d'>最近 3 天</Select.Option>
-            </Select>
+            <DatePicker
+              type='dateTimeRange'
+              value={dateRange}
+              onChange={setDateRange}
+              style={{ width: '100%' }}
+            />
           </label>
           <label>
             <span>TokenName</span>
@@ -447,19 +311,19 @@ export default function ModelUsageAnalysis() {
               value={tokenFilter}
               onChange={setTokenFilter}
               style={{ width: '100%' }}
-              optionList={[{ label: '全部 TokenName', value: 'all' }, ...tokenOptions]}
+              optionList={[
+                { label: '全部 TokenName', value: 'all' },
+                ...tokenOptions,
+              ]}
             />
           </label>
-          <label>
-            <span>厂商</span>
-            <Select
-              value={providerFilter}
-              onChange={setProviderFilter}
-              style={{ width: '100%' }}
-              optionList={[{ label: '全部厂商', value: 'all' }, ...providerOptions]}
-            />
-          </label>
-          <Button icon={<RefreshCw size={15} />} theme='solid' type='primary'>
+          <Button
+            icon={<RefreshCw size={15} />}
+            theme='solid'
+            type='primary'
+            loading={loading}
+            onClick={fetchData}
+          >
             刷新
           </Button>
         </div>
@@ -469,7 +333,7 @@ export default function ModelUsageAnalysis() {
         <SummaryCard
           label='总消耗 (USD)'
           value={formatUsd(summary.costUsd)}
-          hint={`${tokenCount} 个 TokenName，${rows.length} 条按日记录`}
+          hint={`${tokenCount} 个 TokenName，${rows.length} 条记录`}
           tone='warn'
           icon={<DollarSign size={16} />}
         />
@@ -501,11 +365,14 @@ export default function ModelUsageAnalysis() {
 
       <Card bodyStyle={{ padding: 0 }} className='mua-table-card'>
         <Table
-          rowKey={(record) => `${record.date}-${record.tokenName}`}
+          rowKey={(record) =>
+            `${record.date}-${record.token_id}-${record.model_name}`
+          }
           columns={columns}
           dataSource={rows}
+          loading={loading}
           pagination={false}
-          scroll={{ x: 1680 }}
+          scroll={{ x: 1762 }}
           size='small'
         />
       </Card>

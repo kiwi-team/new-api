@@ -364,6 +364,42 @@ func GetChannelQuotaStatistics(c *gin.Context) {
 	})
 }
 
+// GetChannelMonitor 模型渠道监控数据（按 Token × 渠道 × 模型 聚合，全局）
+func GetChannelMonitor(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+
+	records, err := model.GetChannelMonitor(startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    records,
+	})
+}
+
+// GetModelUsageAnalysis 用量分析页数据（按 日期 + Token + 模型 聚合，全局）
+func GetModelUsageAnalysis(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+
+	rows, err := model.GetModelUsageAnalysis(startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    rows,
+	})
+}
+
 // GetDistinctProjectNames 获取所有不重复的项目名称
 func GetDistinctProjectNames(c *gin.Context) {
 	names, err := model.GetDistinctProjectNames()

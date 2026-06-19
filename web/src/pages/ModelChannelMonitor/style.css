@@ -1,7 +1,11 @@
 .mcm-page {
   min-height: 100%;
   padding: 76px 16px 32px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(244, 246, 250, 0.94));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.7),
+    rgba(244, 246, 250, 0.94)
+  );
 }
 
 .mcm-header {
@@ -42,7 +46,7 @@
 
 .mcm-filter-grid {
   display: grid;
-  grid-template-columns: 0.85fr 1fr 2.1fr 1fr auto;
+  grid-template-columns: 0.85fr 2.4fr 0.9fr auto;
   gap: 10px;
   align-items: end;
 }
@@ -273,7 +277,10 @@
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
 }
 
 .mcm-card:hover {

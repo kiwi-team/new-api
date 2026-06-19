@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -115,7 +117,77 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			request.Temperature = &tmp
 		}
 	}
+
+	// Moonshot(Kimi) 系列模型默认只接受 base64 形式的多模态数据
+	// （如 data:video/mp4;base64,xxx），不支持直接传入 http(s) URL，
+	// 因此在转发前把消息里的远程图片/视频 URL 下载并转换为 base64 data URL。
+	if err := convertMediaURLToBase64(c, request); err != nil {
+		return nil, err
+	}
 	return request, nil
+}
+
+// convertMediaURLToBase64 遍历消息内容，把远程的图片/视频 URL 下载并替换为 base64 data URL。
+// 已经是 base64 data URL 的内容会被原样保留。
+func convertMediaURLToBase64(c *gin.Context, request *dto.GeneralOpenAIRequest) error {
+	for i := range request.Messages {
+		msg := &request.Messages[i]
+		content := msg.ParseContent()
+		if len(content) == 0 {
+			continue
+		}
+		changed := false
+		for j := range content {
+			item := &content[j]
+			switch item.Type {
+			case dto.ContentTypeImageURL:
+				img := item.GetImageMedia()
+				if img == nil || !isRemoteURL(img.Url) {
+					continue
+				}
+				dataURL, err := fetchAsDataURL(c, img.Url)
+				if err != nil {
+					return fmt.Errorf("convert image url to base64 failed: %w", err)
+				}
+				img.Url = dataURL
+				item.ImageUrl = img
+				changed = true
+			case dto.ContentTypeVideoUrl:
+				video := item.GetVideoUrl()
+				if video == nil || !isRemoteURL(video.Url) {
+					continue
+				}
+				dataURL, err := fetchAsDataURL(c, video.Url)
+				if err != nil {
+					return fmt.Errorf("convert video url to base64 failed: %w", err)
+				}
+				video.Url = dataURL
+				item.VideoUrl = video
+				changed = true
+			}
+		}
+		if changed {
+			msg.SetMediaContent(content)
+		}
+	}
+	return nil
+}
+
+func isRemoteURL(u string) bool {
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
+
+// fetchAsDataURL 下载文件并返回 data:{mime};base64,{data} 形式的字符串。
+func fetchAsDataURL(c *gin.Context, url string) (string, error) {
+	fileData, err := service.GetFileBase64FromUrl(c, url, "moonshot media base64 conversion")
+	if err != nil {
+		return "", err
+	}
+	mimeType := fileData.MimeType
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, fileData.Base64Data), nil
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {

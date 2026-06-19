@@ -19,35 +19,38 @@ import (
 )
 
 type Log struct {
-	Id               int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId           int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt        int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type             int     `json:"type" gorm:"index:idx_created_at_type"`
-	Content          string  `json:"content"`
-	Username         string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName        string  `json:"token_name" gorm:"index;default:''"`
-	ModelName        string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota            int     `json:"quota" gorm:"default:0"`
-	PromptTokens     int     `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int     `json:"completion_tokens" gorm:"default:0"`
-	UseTime          int     `json:"use_time" gorm:"default:0"`
-	IsStream         bool    `json:"is_stream"`
-	ChannelId        int     `json:"channel" gorm:"index"`
-	ChannelName      string  `json:"channel_name" gorm:"->"`
-	TokenId          int     `json:"token_id" gorm:"default:0;index"`
-	Group            string  `json:"group" gorm:"index"`
-	Ip               string  `json:"ip" gorm:"index;default:''"`
-	RequestId        string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	Other            string  `json:"other"`
-	Request          string  `json:"request" gorm:"type:text"`
-	Response         string  `json:"response" gorm:"type:text"`
-	ClientUserId     string  `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
-	ClientScenairo   string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	ProjectName      string  `json:"project_name" gorm:"index;size:100;default:''"`
-	PlanId           int     `json:"plan_id" gorm:"default:0;index"`
-	Usage            string  `json:"usage" gorm:"type:text"`
-	Extra            *string `json:"extra,omitempty" gorm:"type:jsonb"`
-	Header           *string `json:"header,omitempty" gorm:"type:jsonb"`
+	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId           int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
+	Content          string `json:"content"`
+	Username         string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName        string `json:"token_name" gorm:"index;default:''"`
+	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota            int    `json:"quota" gorm:"default:0"`
+	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
+	UseTime          int    `json:"use_time" gorm:"default:0"`
+	// FirstTokenMs 首字延迟（毫秒），来源于 other.frt，仅流式请求有意义（非流式为 0）。
+	// 单独成列以便监控面板做跨库聚合/分位数，避免解析 other JSON。
+	FirstTokenMs   int     `json:"first_token_ms" gorm:"default:0"`
+	IsStream       bool    `json:"is_stream"`
+	ChannelId      int     `json:"channel" gorm:"index"`
+	ChannelName    string  `json:"channel_name" gorm:"->"`
+	TokenId        int     `json:"token_id" gorm:"default:0;index"`
+	Group          string  `json:"group" gorm:"index"`
+	Ip             string  `json:"ip" gorm:"index;default:''"`
+	RequestId      string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	Other          string  `json:"other"`
+	Request        string  `json:"request" gorm:"type:text"`
+	Response       string  `json:"response" gorm:"type:text"`
+	ClientUserId   string  `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
+	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName    string  `json:"project_name" gorm:"index;size:100;default:''"`
+	PlanId         int     `json:"plan_id" gorm:"default:0;index"`
+	Usage          string  `json:"usage" gorm:"type:text"`
+	Extra          *string `json:"extra,omitempty" gorm:"type:jsonb"`
+	Header         *string `json:"header,omitempty" gorm:"type:jsonb"`
 }
 
 // normalizeJsonbString 把任意字符串规整成可写入 jsonb 列的形态：
@@ -204,6 +207,13 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	username := c.GetString("username")
 	otherStr := common.MapToJsonStr(params.Other)
+	// 首字延迟单独落列：frt 已在 other 中算好（毫秒），仅流式请求有意义。
+	firstTokenMs := 0
+	if params.IsStream && params.Other != nil {
+		if frt, ok := params.Other["frt"].(float64); ok && frt > 0 {
+			firstTokenMs = int(frt)
+		}
+	}
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
 	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
 	// 判断是否需要记录 IP
@@ -226,6 +236,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ChannelId:        params.ChannelId,
 		TokenId:          params.TokenId,
 		UseTime:          params.UseTimeSeconds,
+		FirstTokenMs:     firstTokenMs,
 		IsStream:         params.IsStream,
 		Group:            params.Group,
 		Ip:               clientIp,
@@ -555,7 +566,7 @@ type Stat struct {
 // scopeUids 控制范围(详见 org.md 4.2.1):
 //   - nil         → 用 username 过滤(其他 org / 系统 admin 走老路径,与现有行为完全一致)
 //   - 空切片(非 nil 但 len=0) → mt org 用户但 scope 为空(比如 mt-admin 但 org 内无人配 uid,
-//                                 或 mt-member 自己 uid 是空串),直接返回 Stat{} 不查 DB
+//     或 mt-member 自己 uid 是空串),直接返回 Stat{} 不查 DB
 //   - 非空切片  → mt org 用户,改为 WHERE client_user_id IN scopeUids(取代 username 过滤)
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, scopeUids []string) (stat Stat, err error) {
 	// 空 scope 早返 0/0/0,避免 IN () 语法错误也避免误命中 NULL/空 client_user_id

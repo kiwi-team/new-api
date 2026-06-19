@@ -24,15 +24,22 @@ type QuotaData struct {
 	CachedTokens                int    `json:"cached_tokens" gorm:"default:0"`
 	ClaudeCacheCreation5mTokens int    `json:"claude_cache_creation_5_m_tokens" gorm:"default:0"`
 	ClaudeCacheCreation1hTokens int    `json:"claude_cache_creation_1_h_tokens" gorm:"default:0"`
-	TokenName                   string `json:"token_name" gorm:"size:64;default:''"`
-	Count                       int    `json:"count" gorm:"default:0"`
-	Quota                       int    `json:"quota" gorm:"default:0"`
-	TokenId                     int    `json:"token_id" gorm:"index"`
-	ChannelId                   int    `json:"channel_id" gorm:"index"`
-	ClientUserId                string `json:"client_user_id" gorm:"index;size:200;default:''"`
-	ClientScenairo              string `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	ProjectName                 string `json:"project_name" gorm:"index;size:200;default:''"`
-	PlanId                      int    `json:"plan_id" gorm:"index;default:0"`
+	// 缓存请求次数（按请求计数，区别于上面的 token 数）：
+	// 单次请求只要对应 token 数 > 0 即计一次。Claude 单次请求可能同时写 5m 与 1h 缓存，
+	// 因此 5m/1h 两个计数会分别 +1；列表展示的"缓存写请求总数"= 5m + 1h。
+	// 显式声明 gorm 列名，避免数字与下划线的映射歧义（参见 QuotaDataStatistics 注释）。
+	CacheWrite5mRequestCount int    `json:"cache_write_5m_request_count" gorm:"column:cache_write_5m_request_count;default:0"`
+	CacheWrite1hRequestCount int    `json:"cache_write_1h_request_count" gorm:"column:cache_write_1h_request_count;default:0"`
+	CacheReadRequestCount    int    `json:"cache_read_request_count" gorm:"column:cache_read_request_count;default:0"`
+	TokenName                string `json:"token_name" gorm:"size:64;default:''"`
+	Count                    int    `json:"count" gorm:"default:0"`
+	Quota                    int    `json:"quota" gorm:"default:0"`
+	TokenId                  int    `json:"token_id" gorm:"index"`
+	ChannelId                int    `json:"channel_id" gorm:"index"`
+	ClientUserId             string `json:"client_user_id" gorm:"index;size:200;default:''"`
+	ClientScenairo           string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName              string `json:"project_name" gorm:"index;size:200;default:''"`
+	PlanId                   int    `json:"plan_id" gorm:"index;default:0"`
 }
 
 type LogQuotaDataCache struct {
@@ -77,6 +84,17 @@ var CacheQuotaDataLock = sync.Mutex{}
 
 func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%d", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo, projectName, planId)
+	// 按请求派生缓存命中次数：本次调用即一次请求，对应 token 数 > 0 则计一次。
+	cacheWrite5mReq, cacheWrite1hReq, cacheReadReq := 0, 0, 0
+	if claudeCacheCreation5mTokens > 0 {
+		cacheWrite5mReq = 1
+	}
+	if claudeCacheCreation1hTokens > 0 {
+		cacheWrite1hReq = 1
+	}
+	if cachedTokens > 0 {
+		cacheReadReq = 1
+	}
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
 		quotaData.Count += 1
@@ -87,6 +105,9 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 		quotaData.CachedTokens += cachedTokens
 		quotaData.ClaudeCacheCreation5mTokens += claudeCacheCreation5mTokens
 		quotaData.ClaudeCacheCreation1hTokens += claudeCacheCreation1hTokens
+		quotaData.CacheWrite5mRequestCount += cacheWrite5mReq
+		quotaData.CacheWrite1hRequestCount += cacheWrite1hReq
+		quotaData.CacheReadRequestCount += cacheReadReq
 	} else {
 		quotaData = &QuotaData{
 			UserID:                      userId,
@@ -102,6 +123,9 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 			CachedTokens:                cachedTokens,
 			ClaudeCacheCreation5mTokens: claudeCacheCreation5mTokens,
 			ClaudeCacheCreation1hTokens: claudeCacheCreation1hTokens,
+			CacheWrite5mRequestCount:    cacheWrite5mReq,
+			CacheWrite1hRequestCount:    cacheWrite1hReq,
+			CacheReadRequestCount:       cacheReadReq,
 			TokenId:                     tokenId,
 			ChannelId:                   channelId,
 			ClientUserId:                clientUserId,
@@ -180,7 +204,7 @@ func SaveQuotaDataCache() {
 		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
-			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
+			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.CacheWrite5mRequestCount, quotaData.CacheWrite1hRequestCount, quotaData.CacheReadRequestCount, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
@@ -526,7 +550,7 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, clientUserId string, clientScenairo string, projectName string, planId int) {
+func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, cacheWrite5mRequestCount int, cacheWrite1hRequestCount int, cacheReadRequestCount int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName, planId).Updates(map[string]interface{}{
 		"count":                          gorm.Expr("count + ?", count),
@@ -537,6 +561,9 @@ func increaseQuotaData(userId int, username string, modelName string, count int,
 		"cached_tokens":                  gorm.Expr("cached_tokens + ?", cachedTokens),
 		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", claudeCacheCreation5mTokens),
 		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", claudeCacheCreation1hTokens),
+		"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", cacheWrite5mRequestCount),
+		"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", cacheWrite1hRequestCount),
+		"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", cacheReadRequestCount),
 	}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())
@@ -646,6 +673,73 @@ func GetChannelQuotaStatistics(startTime int64, endTime int64) ([]*ChannelQuotaS
 		statistics = make([]*ChannelQuotaStatistics, 0)
 	}
 	return statistics, nil
+}
+
+// ModelUsageAnalysisRow 用量分析页（/console/model-usage-analysis）单行数据，
+// 按 日期 + Token + 模型 聚合。
+type ModelUsageAnalysisRow struct {
+	Date      string `json:"date" gorm:"column:date"`
+	TokenId   int    `json:"token_id" gorm:"column:token_id"`
+	TokenName string `json:"token_name" gorm:"column:token_name"`
+	ModelName string `json:"model_name" gorm:"column:model_name"`
+	// 费用（美元）= quota / QuotaPerUnit
+	CostUsd float64 `json:"cost_usd" gorm:"column:cost_usd"`
+	// 请求次数
+	TotalRequests int64 `json:"total_requests" gorm:"column:total_requests"`
+	// 缓存写请求总数 = 5m + 1h（同一请求若同时写 5m/1h 会被分别计入）
+	CacheWriteRequests   int64 `json:"cache_write_requests" gorm:"-"`
+	CacheWrite5mRequests int64 `json:"cache_write_5m_requests" gorm:"column:cache_write_5m_requests"`
+	CacheWrite1hRequests int64 `json:"cache_write_1h_requests" gorm:"column:cache_write_1h_requests"`
+	CacheReadRequests    int64 `json:"cache_read_requests" gorm:"column:cache_read_requests"`
+	// token 数
+	CacheWriteTokens int64 `json:"cache_write_tokens" gorm:"column:cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`
+	InputTokens      int64 `json:"input_tokens" gorm:"column:input_tokens"`
+	OutputTokens     int64 `json:"output_tokens" gorm:"column:output_tokens"`
+}
+
+// GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合（全局，仅管理员可见）。
+func GetModelUsageAnalysis(startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
+	rows := make([]*ModelUsageAnalysisRow, 0)
+
+	// 日期字段按 +8 时区格式化，与 GetQuotaDataStatistics 保持一致
+	dateField := ""
+	if common.UsingSQLite {
+		dateField = "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
+	} else if common.UsingMySQL {
+		dateField = "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
+	} else if common.UsingPostgreSQL {
+		dateField = "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
+	} else {
+		dateField = "DATE(created_at)"
+	}
+
+	selectFields := dateField + " as date, token_id, MAX(token_name) as token_name, model_name, " +
+		"sum(quota) as cost_usd, sum(count) as total_requests, " +
+		"sum(cache_write_5m_request_count) as cache_write_5m_requests, " +
+		"sum(cache_write_1h_request_count) as cache_write_1h_requests, " +
+		"sum(cache_read_request_count) as cache_read_requests, " +
+		"sum(claude_cache_creation5m_tokens + claude_cache_creation1h_tokens) as cache_write_tokens, " +
+		"sum(cached_tokens) as cache_read_tokens, " +
+		"sum(prompt_tokens) as input_tokens, sum(completion_tokens) as output_tokens"
+
+	err := DB.Model(&QuotaData{}).
+		Select(selectFields).
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Group("date, token_id, model_name").
+		Order("date DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return rows, err
+	}
+
+	// quota 转换为美元单位；写请求总数 = 5m + 1h
+	for _, r := range rows {
+		r.CostUsd /= common.QuotaPerUnit
+		r.CacheWriteRequests = r.CacheWrite5mRequests + r.CacheWrite1hRequests
+	}
+
+	return rows, nil
 }
 
 // GetDistinctProjectNames 获取所有不重复的项目名称
