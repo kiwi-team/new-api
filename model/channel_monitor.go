@@ -23,15 +23,15 @@ type ChannelMonitorErrorTop struct {
 }
 
 type ChannelMonitorRecord struct {
-	KeyId        int    `json:"keyId"`
-	KeyName      string `json:"keyName"`
-	KeyHint      string `json:"keyHint"`
+	KeyId         int    `json:"keyId"`
+	KeyName       string `json:"keyName"`
+	KeyHint       string `json:"keyHint"`
 	ChannelId     int    `json:"channelId"`
 	ChannelName   string `json:"channelName"`
 	ChannelTypeId int    `json:"channelTypeId"`
 	ChannelGroup  string `json:"channelGroup"`
-	Group        string `json:"group"`
-	Model        string `json:"model"`
+	Group         string `json:"group"`
+	Model         string `json:"model"`
 
 	Requests    int64   `json:"requests"`
 	Errors      int64   `json:"errors"`
@@ -98,6 +98,8 @@ func maskTokenKey(key string) string {
 
 // GetChannelMonitor 返回模型渠道监控数据（全局，管理员可见）。
 // 模型/状态过滤交给前端，这里返回时间窗内全部聚合组合。
+// 仅统计真实业务流量：所有查询都过滤 token_id > 0，排除渠道测试
+// （controller/channel-test.go 以 token_id=0、token_name="模型测试" 写入消费日志）。
 func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord, error) {
 	cstZone := time.FixedZone("CST", 8*3600)
 	hhmm := func(ts int64) string {
@@ -153,7 +155,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 		"sum(CASE WHEN first_token_ms > 0 THEN 1 ELSE 0 END) as frt_samples"
 	if err := LOG_DB.Table("logs").
 		Select(successSelect).
-		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Where("type = ? AND token_id > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
 		Group("token_id, channel_id, model_name").
 		Scan(&successRows).Error; err != nil {
 		return nil, err
@@ -187,7 +189,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var errorRows []errorRow
 	if err := LOG_DB.Table("error_logs").
 		Select("token_id, channel_id, model_name, count(*) as errors, max(created_at) as last_error").
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Where("token_id > 0 AND created_at >= ? AND created_at <= ?", startTime, endTime).
 		Group("token_id, channel_id, model_name").
 		Scan(&errorRows).Error; err != nil {
 		return nil, err
@@ -212,7 +214,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var errorTopRows []errorTopRow
 	if err := LOG_DB.Table("error_logs").
 		Select("token_id, channel_id, model_name, code, count(*) as total, max(message) as message, max(status_code) as status_code, max(created_at) as last").
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Where("token_id > 0 AND created_at >= ? AND created_at <= ?", startTime, endTime).
 		Group("token_id, channel_id, model_name, code").
 		Order("total desc").
 		Scan(&errorTopRows).Error; err != nil {
@@ -248,7 +250,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var trendRows []trendRow
 	if err := LOG_DB.Table("logs").
 		Select("token_id, channel_id, model_name, FLOOR((created_at - ?) / ?) as bkt, avg(use_time) as avg_use", startTime, bucketSize).
-		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Where("type = ? AND token_id > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
 		Group("token_id, channel_id, model_name, bkt").
 		Scan(&trendRows).Error; err != nil {
 		return nil, err
@@ -274,7 +276,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var markRows []markRow
 	if err := LOG_DB.Table("error_logs").
 		Select("token_id, channel_id, model_name, FLOOR((created_at - ?) / ?) as bkt, count(*) as cnt", startTime, bucketSize).
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Where("token_id > 0 AND created_at >= ? AND created_at <= ?", startTime, endTime).
 		Group("token_id, channel_id, model_name, bkt").
 		Scan(&markRows).Error; err != nil {
 		return nil, err
@@ -312,7 +314,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var frtHistRows []frtHistRow
 	if err := LOG_DB.Table("logs").
 		Select("token_id, channel_id, model_name, FLOOR(first_token_ms / 100) as bkt, count(*) as cnt").
-		Where("type = ? AND first_token_ms > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Where("type = ? AND first_token_ms > 0 AND token_id > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
 		Group("token_id, channel_id, model_name, bkt").
 		Scan(&frtHistRows).Error; err != nil {
 		return nil, err
@@ -342,7 +344,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 	var useHistRows []useHistRow
 	if err := LOG_DB.Table("logs").
 		Select("token_id, channel_id, model_name, use_time as sec, count(*) as cnt").
-		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Where("type = ? AND token_id > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
 		Group("token_id, channel_id, model_name, use_time").
 		Scan(&useHistRows).Error; err != nil {
 		return nil, err

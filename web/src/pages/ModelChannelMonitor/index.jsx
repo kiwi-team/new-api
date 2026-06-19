@@ -60,12 +60,7 @@ const STATUS_META = {
   unknown: { text: '未知', color: 'grey', order: 4 },
 };
 
-function formatMs(value) {
-  if (value === null || value === undefined) return '-';
-  return `${Number(value).toLocaleString()} ms`;
-}
-
-// 总耗时类指标以秒展示（入参为毫秒）
+// 总耗时类指标以秒展示（入参为毫秒），最多 1 位小数
 function formatSeconds(value) {
   if (value === null || value === undefined) return '-';
   return `${Number(value / 1000).toLocaleString(undefined, {
@@ -73,9 +68,27 @@ function formatSeconds(value) {
   })} s`;
 }
 
-function formatFirstMs(value) {
+// 首字耗时也以秒展示（入参为毫秒），最多 2 位小数；无流式样本显示"待埋点"
+function formatFirstSeconds(value) {
   if (value === null || value === undefined) return '待埋点';
-  return formatMs(value);
+  return `${Number(value / 1000).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })} s`;
+}
+
+// 各指标按自身阈值上色（入参为毫秒）；无数据返回空（中性色）
+function useTimeTone(ms) {
+  if (ms === null || ms === undefined) return '';
+  if (ms > 120000) return 'bad';
+  if (ms > 60000) return 'warn';
+  return 'good';
+}
+
+function firstTokenTone(ms) {
+  if (ms === null || ms === undefined) return '';
+  if (ms > 5000) return 'bad';
+  if (ms > 2000) return 'warn';
+  return 'good';
 }
 
 function formatCount(value) {
@@ -370,12 +383,6 @@ function MonitorCard({
   axisLabels = [],
   rangeLabel = '过去 24 小时',
 }) {
-  const useTone =
-    record.p95UseMs > 120000
-      ? 'bad'
-      : record.p95UseMs > 60000
-        ? 'warn'
-        : 'good';
   const successTone =
     record.successRate < 90 ? 'bad' : record.successRate < 98 ? 'warn' : 'good';
 
@@ -419,10 +426,20 @@ function MonitorCard({
         </div>
         <div className='focus'>
           <span>P95 耗时</span>
-          <strong className={`tone-${useTone}`}>
-            {formatSeconds(record.p95UseMs)}
-          </strong>
-          <p>当前日志 use_time 口径</p>
+          <div className='mcm-dual'>
+            <div>
+              <small>总耗时</small>
+              <strong className={`tone-${useTimeTone(record.p95UseMs)}`}>
+                {formatSeconds(record.p95UseMs)}
+              </strong>
+            </div>
+            <div>
+              <small>首字</small>
+              <strong className={`tone-${firstTokenTone(record.p95FirstMs)}`}>
+                {formatFirstSeconds(record.p95FirstMs)}
+              </strong>
+            </div>
+          </div>
         </div>
         <div>
           <span>最近错误</span>
@@ -591,11 +608,20 @@ export default function ModelChannelMonitor({ internalView = false }) {
       ? useSamples.reduce((sum, item) => sum + item.useMs, 0) /
         useSamples.length
       : 0;
+    // 首字耗时仅流式请求有值（firstMs 为 null 表示无流式样本，不参与平均）
+    const firstSamples = filteredRecords.filter(
+      (item) => item.firstMs !== null && item.firstMs !== undefined,
+    );
+    const avgFirst = firstSamples.length
+      ? firstSamples.reduce((sum, item) => sum + item.firstMs, 0) /
+        firstSamples.length
+      : null;
     return {
       totalRequests,
       totalErrors,
       successRate,
       avgUse,
+      avgFirst,
       down: filteredRecords.filter((item) => item.status === 'down').length,
       degraded: filteredRecords.filter((item) => item.status === 'degraded')
         .length,
@@ -701,13 +727,26 @@ export default function ModelChannelMonitor({ internalView = false }) {
           tone='good'
           icon={<Activity size={16} />}
         />
-        <MetricCard
-          label='平均耗时'
-          value={formatSeconds(summary.avgUse)}
-          hint='核心组合平均 use_time'
-          tone='warn'
-          icon={<Gauge size={16} />}
-        />
+        <div className='mcm-summary-card'>
+          <div className='mcm-summary-head'>
+            <span>平均耗时</span>
+            <Gauge size={16} />
+          </div>
+          <div className='mcm-dual'>
+            <div>
+              <small>总耗时</small>
+              <strong className={`tone-${useTimeTone(summary.avgUse)}`}>
+                {formatSeconds(summary.avgUse)}
+              </strong>
+            </div>
+            <div>
+              <small>首字</small>
+              <strong className={`tone-${firstTokenTone(summary.avgFirst)}`}>
+                {formatFirstSeconds(summary.avgFirst)}
+              </strong>
+            </div>
+          </div>
+        </div>
         <MetricCard
           label='错误请求数'
           value={summary.totalErrors.toLocaleString()}
@@ -806,8 +845,12 @@ export default function ModelChannelMonitor({ internalView = false }) {
                 <strong>{formatSeconds(selected.p95UseMs)}</strong>
               </div>
               <div>
-                <span>首字延迟</span>
-                <strong>{formatFirstMs(selected.firstMs)}</strong>
+                <span>平均首字</span>
+                <strong>{formatFirstSeconds(selected.firstMs)}</strong>
+              </div>
+              <div>
+                <span>P95 首字</span>
+                <strong>{formatFirstSeconds(selected.p95FirstMs)}</strong>
               </div>
               <div>
                 <span>输出速度</span>
