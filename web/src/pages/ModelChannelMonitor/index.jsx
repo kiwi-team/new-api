@@ -189,11 +189,12 @@ function StatusBadge({ status }) {
   );
 }
 
-function TrendChart({ record, axisLabels = [] }) {
+function TrendChart({ record, axisLabels = [], series }) {
   const width = 500;
   const height = 96;
   const pad = 8;
-  const values = record.trend.length ? record.trend : Array(24).fill(0);
+  const data = series && series.length ? series : record.trend;
+  const values = data && data.length ? data : Array(24).fill(0);
   const max = Math.max(...values, 1000);
   const min = Math.min(...values, 0);
   const span = Math.max(max - min, 1);
@@ -244,7 +245,7 @@ function TrendChart({ record, axisLabels = [] }) {
             strokeDasharray='4 4'
           />
         ) : null}
-        {record.trend.length ? (
+        {values.length ? (
           <polyline
             fill='none'
             stroke='#2f6df6'
@@ -383,6 +384,7 @@ function MonitorCard({
   axisLabels = [],
   rangeLabel = '过去 24 小时',
 }) {
+  const [trendTab, setTrendTab] = useState('first');
   const successTone =
     record.successRate < 90 ? 'bad' : record.successRate < 98 ? 'warn' : 'good';
 
@@ -449,12 +451,42 @@ function MonitorCard({
           <p>{formatCount(record.errors)} 次错误</p>
         </div>
       </div>
-      <div className='mcm-card-chart compact'>
-        <div className='mcm-section-line'>
-          <span>总耗时趋势 · {rangeLabel}</span>
-          <span>{formatCount(record.samples)} 个样本点</span>
+      <div
+        className='mcm-card-chart compact'
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className='mcm-chart-tabs'>
+          <button
+            type='button'
+            className={trendTab === 'first' ? 'active' : ''}
+            onClick={() => setTrendTab('first')}
+          >
+            首字耗时趋势
+          </button>
+          <button
+            type='button'
+            className={trendTab === 'total' ? 'active' : ''}
+            onClick={() => setTrendTab('total')}
+          >
+            总耗时趋势
+          </button>
         </div>
-        <TrendChart record={record} axisLabels={axisLabels} />
+        <div className='mcm-section-line'>
+          <span>
+            {trendTab === 'first' ? '首字耗时' : '总耗时'} · {rangeLabel}
+          </span>
+          <span>
+            {formatCount(
+              trendTab === 'first' ? record.firstSamples : record.requests,
+            )}{' '}
+            个样本点
+          </span>
+        </div>
+        <TrendChart
+          record={record}
+          axisLabels={axisLabels}
+          series={trendTab === 'first' ? record.firstTrend : record.trend}
+        />
       </div>
       <div className='mcm-card-errors'>
         <h3>{showSensitive ? '错误原因' : '错误概览'}</h3>
@@ -468,6 +500,7 @@ export default function ModelChannelMonitor({ internalView = false }) {
   const [scene, setScene] = useState('overview');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(null);
+  const [detailTrendTab, setDetailTrendTab] = useState('first');
 
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -866,8 +899,31 @@ export default function ModelChannelMonitor({ internalView = false }) {
               </div>
             </div>
             <section className='mcm-detail-section'>
-              <h3>总耗时趋势</h3>
-              <TrendChart record={selected} axisLabels={axisLabels} />
+              <div className='mcm-chart-tabs'>
+                <button
+                  type='button'
+                  className={detailTrendTab === 'first' ? 'active' : ''}
+                  onClick={() => setDetailTrendTab('first')}
+                >
+                  首字耗时趋势
+                </button>
+                <button
+                  type='button'
+                  className={detailTrendTab === 'total' ? 'active' : ''}
+                  onClick={() => setDetailTrendTab('total')}
+                >
+                  总耗时趋势
+                </button>
+              </div>
+              <TrendChart
+                record={selected}
+                axisLabels={axisLabels}
+                series={
+                  detailTrendTab === 'first'
+                    ? selected.firstTrend
+                    : selected.trend
+                }
+              />
             </section>
             <section className='mcm-detail-section'>
               <h3>{internalView ? '错误原因' : '错误概览'}</h3>

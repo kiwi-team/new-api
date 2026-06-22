@@ -314,7 +314,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/statistics/export", middleware.MixRouterAuth(), controller.ExportQuotaDataStatistics)
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
 		dataRoute.GET("/model-usage-analysis", middleware.RootAuth(), controller.GetModelUsageAnalysis)
-		dataRoute.GET("/channel-monitor", middleware.AdminAuth(), controller.GetChannelMonitor)
+		dataRoute.GET("/channel-monitor", middleware.RootAuth(), controller.GetChannelMonitor)
 		dataRoute.GET("/project-names", middleware.MixRouterAuth(), controller.GetDistinctProjectNames)
 		dataRoute.GET("/token-list", middleware.MixRouterAuth(), controller.GetTokenListForStatistics)
 		// /api/toio/data/* 路由已删除(组织标签系统替代,详见 org.md)。

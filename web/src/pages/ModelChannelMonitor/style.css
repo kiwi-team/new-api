@@ -469,6 +469,39 @@
   height: 88px;
 }
 
+/* 趋势图 tab 切换（首字耗时 / 总耗时） */
+.mcm-chart-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 4px 8px;
+}
+
+.mcm-chart-tabs button {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 6px;
+  background: var(--semi-color-bg-2);
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.mcm-chart-tabs button:hover {
+  color: var(--semi-color-text-0);
+}
+
+.mcm-chart-tabs button.active {
+  background: var(--semi-color-primary-light-default);
+  border-color: var(--semi-color-primary);
+  color: var(--semi-color-primary);
+}
+
 .mcm-section-line {
   display: flex;
   justify-content: space-between;

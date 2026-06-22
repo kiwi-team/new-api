@@ -33,11 +33,13 @@ type ChannelMonitorRecord struct {
 	Group         string `json:"group"`
 	Model         string `json:"model"`
 
-	Requests    int64   `json:"requests"`
-	Errors      int64   `json:"errors"`
-	Samples     int64   `json:"samples"`
-	SuccessRate float64 `json:"successRate"`
-	Status      string  `json:"status"`
+	Requests int64 `json:"requests"`
+	Errors   int64 `json:"errors"`
+	Samples  int64 `json:"samples"`
+	// FirstSamples 流式请求数（first_token_ms>0），即首字趋势的样本数
+	FirstSamples int64   `json:"firstSamples"`
+	SuccessRate  float64 `json:"successRate"`
+	Status       string  `json:"status"`
 
 	UseMs    int64 `json:"useMs"`
 	P95UseMs int64 `json:"p95UseMs"`
@@ -49,7 +51,9 @@ type ChannelMonitorRecord struct {
 	LastSuccess string `json:"lastSuccess"`
 	LastError   string `json:"lastError"`
 
+	// Trend 总耗时趋势（毫秒，所有成功请求）；FirstTrend 首字耗时趋势（毫秒，仅流式请求）
 	Trend      []int64                  `json:"trend"`
+	FirstTrend []int64                  `json:"firstTrend"`
 	ErrorMarks []int                    `json:"errorMarks"`
 	ErrorsTop  []ChannelMonitorErrorTop `json:"errorsTop"`
 }
@@ -124,6 +128,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 				ChannelId:  channelId,
 				Model:      model,
 				Trend:      make([]int64, channelMonitorBuckets),
+				FirstTrend: make([]int64, channelMonitorBuckets),
 				ErrorMarks: make([]int, 0),
 				ErrorsTop:  make([]ChannelMonitorErrorTop, 0),
 			}
@@ -165,6 +170,7 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 		r.KeyName = s.TokenName
 		r.Group = s.GroupVal
 		r.Requests = s.Requests
+		r.FirstSamples = s.FrtSamples
 		r.LastSuccess = hhmm(s.LastSuccess)
 		if s.Requests > 0 {
 			r.UseMs = int64(math.Round(float64(s.UseSum) / float64(s.Requests) * 1000))
@@ -262,6 +268,32 @@ func GetChannelMonitor(startTime int64, endTime int64) ([]*ChannelMonitorRecord,
 		key := channelMonitorKey(t.TokenId, t.ChannelId, t.ModelName)
 		if r, ok := records[key]; ok {
 			r.Trend[t.Bkt] = int64(math.Round(t.AvgUse * 1000))
+		}
+	}
+
+	// 4b. 首字耗时趋势：仅流式请求（first_token_ms>0），按时间桶取平均（毫秒）
+	type firstTrendRow struct {
+		TokenId   int     `gorm:"column:token_id"`
+		ChannelId int     `gorm:"column:channel_id"`
+		ModelName string  `gorm:"column:model_name"`
+		Bkt       int     `gorm:"column:bkt"`
+		AvgFirst  float64 `gorm:"column:avg_first"`
+	}
+	var firstTrendRows []firstTrendRow
+	if err := LOG_DB.Table("logs").
+		Select("token_id, channel_id, model_name, FLOOR((created_at - ?) / ?) as bkt, avg(first_token_ms) as avg_first", startTime, bucketSize).
+		Where("type = ? AND token_id > 0 AND first_token_ms > 0 AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Group("token_id, channel_id, model_name, bkt").
+		Scan(&firstTrendRows).Error; err != nil {
+		return nil, err
+	}
+	for _, t := range firstTrendRows {
+		if t.Bkt < 0 || t.Bkt >= channelMonitorBuckets {
+			continue
+		}
+		key := channelMonitorKey(t.TokenId, t.ChannelId, t.ModelName)
+		if r, ok := records[key]; ok {
+			r.FirstTrend[t.Bkt] = int64(math.Round(t.AvgFirst))
 		}
 	}
 
