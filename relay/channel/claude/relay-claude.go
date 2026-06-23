@@ -150,10 +150,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	}
 
 	isOpus47 := strings.HasPrefix(textRequest.Model, "claude-opus-4-7")
+	isOpus48 := strings.HasPrefix(textRequest.Model, "claude-opus-4-8")
 	isOpus46 := strings.HasPrefix(textRequest.Model, "claude-opus-4-6")
+	isFable5 := strings.HasPrefix(textRequest.Model, "claude-fable-5")
+	isMythos5 := strings.HasPrefix(textRequest.Model, "claude-mythos-5")
+	isAdaptive := isOpus47 || isOpus48 || isOpus46 || isFable5 || isMythos5
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		(isOpus46 || isOpus47) {
+		(isAdaptive) {
 		claudeRequest.Model = baseModel
 		claudeRequest.Thinking = &dto.Thinking{
 			Type:    "adaptive",
@@ -411,8 +415,12 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						claudeMediaMessage.Type = "thinking"
 						claudeMediaMessage.Thinking = &message.ReasoningContent
 						claudeMediaMessage.Signature = message.Signature
-					} else {
+					} else if mediaMessage.Type == dto.ContentTypeImageURL {
 						imageUrl := mediaMessage.GetImageMedia()
+						if imageUrl == nil {
+							// 无法解析图片内容（如缺失 image_url 字段），跳过该 block 防止 nil 解引用
+							continue
+						}
 						claudeMediaMessage.Type = "image"
 						claudeMediaMessage.Source = &dto.ClaudeMessageSource{
 							Type: "base64",
@@ -430,6 +438,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						}
 						claudeMediaMessage.Source.MediaType = mimeType
 						claudeMediaMessage.Source.Data = base64Data
+					} else {
+						// Claude 原生不支持的 content 类型（如 video_url/audio_url/input_audio），跳过以避免发送无效 block
+						continue
 					}
 					claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
 				}
@@ -468,7 +479,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	// claude-opus-4-7 breaking changes:
 	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
 	// 2. temperature/top_p/top_k non-default values return 400
-	if isOpus47 {
+	if isAdaptive {
 		// claude-opus-4-7 仅支持 adaptive thinking，统一设置为 {type: adaptive, display: summarized}
 		if claudeRequest.Thinking == nil || claudeRequest.Thinking.Type != "adaptive" {
 			wasEnabled := claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled"
@@ -901,7 +912,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		//
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
-			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, *claudeInfo.Usage)
+			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, buildClientFacingUsage(*claudeInfo.Usage))
 			err := helper.ObjectData(c, response)
 			if err != nil {
 				common.SysLog("send final response failed: " + err.Error())
@@ -935,6 +946,17 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	return claudeInfo.Usage, nil
 }
 
+// buildClientFacingUsage 返回一份用于回传给 OpenAI 格式客户端的 usage 副本。
+// Claude 上游的 input_tokens 不含缓存命中 tokens，而 OpenAI 原生语义里
+// prompt_tokens 应包含 cached_tokens（cached_tokens 是 prompt_tokens 的子集）。
+// 这里仅调整对外输出，使其对齐 OpenAI 语义；不修改入参本体，因此计费与
+// QuotaData 统计仍使用原始 input_tokens，不受影响。
+func buildClientFacingUsage(usage dto.Usage) dto.Usage {
+	usage.PromptTokens += usage.PromptTokensDetails.CachedTokens
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	return usage
+}
+
 func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, httpResp *http.Response, data []byte) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.Unmarshal(data, &claudeResponse)
@@ -962,7 +984,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
-		openaiResponse.Usage = *claudeInfo.Usage
+		openaiResponse.Usage = buildClientFacingUsage(*claudeInfo.Usage)
 		responseData, err = json.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
