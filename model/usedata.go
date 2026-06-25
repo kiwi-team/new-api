@@ -2,6 +2,8 @@ package model
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -696,6 +698,10 @@ type ModelUsageAnalysisRow struct {
 	CacheReadTokens  int64 `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`
 	InputTokens      int64 `json:"input_tokens" gorm:"column:input_tokens"`
 	OutputTokens     int64 `json:"output_tokens" gorm:"column:output_tokens"`
+	// 平均首字耗时（毫秒，仅统计流式请求）；无流式样本时为 0。来源于 logs 表，由 merge 填充。
+	AvgFirstTokenMs int64 `json:"avg_first_token_ms" gorm:"-"`
+	// 平均请求耗时（毫秒，统计所有请求）。来源于 logs 表，由 merge 填充。
+	AvgUseTimeMs int64 `json:"avg_use_time_ms" gorm:"-"`
 }
 
 // GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合（全局，仅管理员可见）。
@@ -739,7 +745,70 @@ func GetModelUsageAnalysis(startTime int64, endTime int64) ([]*ModelUsageAnalysi
 		r.CacheWriteRequests = r.CacheWrite5mRequests + r.CacheWrite1hRequests
 	}
 
+	// 额外聚合耗时指标：quota_data 表无耗时字段，从 logs 表(LOG_DB，可能为独立库，
+	// 不能与 quota_data JOIN)按相同维度聚合后在内存中合并。
+	// - 平均请求耗时：统计所有请求 = sum(use_time)/count * 1000（秒→毫秒）
+	// - 平均首字耗时：仅统计流式请求（first_token_ms>0）= sum(frt)/samples
+	// 失败不阻断主流程：耗时为附加指标，查询出错时记录日志并让相关列为 0。
+	mergeModelUsageLatency(rows, dateField, startTime, endTime)
+
 	return rows, nil
+}
+
+// mergeModelUsageLatency 从 logs 表聚合平均首字耗时/平均请求耗时，并按
+// 日期 + Token + 模型 合并进用量分析结果。dateField 必须与主查询使用的日期
+// 格式化表达式完全一致，以保证 date key 对齐。
+func mergeModelUsageLatency(rows []*ModelUsageAnalysisRow, dateField string, startTime, endTime int64) {
+	if len(rows) == 0 {
+		return
+	}
+
+	type latencyRow struct {
+		Date       string `gorm:"column:date"`
+		TokenId    int    `gorm:"column:token_id"`
+		ModelName  string `gorm:"column:model_name"`
+		Requests   int64  `gorm:"column:requests"`
+		UseSum     int64  `gorm:"column:use_sum"`
+		FrtSum     int64  `gorm:"column:frt_sum"`
+		FrtSamples int64  `gorm:"column:frt_samples"`
+	}
+
+	latencySelect := dateField + " as date, token_id, model_name, " +
+		"count(*) as requests, sum(use_time) as use_sum, " +
+		"sum(CASE WHEN first_token_ms > 0 THEN first_token_ms ELSE 0 END) as frt_sum, " +
+		"sum(CASE WHEN first_token_ms > 0 THEN 1 ELSE 0 END) as frt_samples"
+
+	var latRows []latencyRow
+	if err := LOG_DB.Table("logs").
+		Select(latencySelect).
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Group("date, token_id, model_name").
+		Scan(&latRows).Error; err != nil {
+		common.SysLog("GetModelUsageAnalysis: aggregate latency from logs failed: " + err.Error())
+		return
+	}
+
+	key := func(date string, tokenId int, model string) string {
+		return date + "\x1f" + strconv.Itoa(tokenId) + "\x1f" + model
+	}
+	latMap := make(map[string]*latencyRow, len(latRows))
+	for i := range latRows {
+		l := &latRows[i]
+		latMap[key(l.Date, l.TokenId, l.ModelName)] = l
+	}
+
+	for _, r := range rows {
+		l, ok := latMap[key(r.Date, r.TokenId, r.ModelName)]
+		if !ok {
+			continue
+		}
+		if l.Requests > 0 {
+			r.AvgUseTimeMs = int64(math.Round(float64(l.UseSum) / float64(l.Requests) * 1000))
+		}
+		if l.FrtSamples > 0 {
+			r.AvgFirstTokenMs = int64(math.Round(float64(l.FrtSum) / float64(l.FrtSamples)))
+		}
+	}
 }
 
 // GetDistinctProjectNames 获取所有不重复的项目名称

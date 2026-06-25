@@ -53,6 +53,11 @@ function formatPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`;
 }
 
+function formatMs(value) {
+  const v = Number(value || 0);
+  return v > 0 ? `${v.toLocaleString()} ms` : '-';
+}
+
 function buildUsageSummary(rows) {
   return rows.reduce(
     (summary, row) => ({
@@ -277,6 +282,17 @@ export default function ModelUsageAnalysis() {
       align: 'right',
       render: formatCount,
       width: 132,
+    },
+    {
+      title: '平均耗时',
+      align: 'right',
+      width: 160,
+      render: (_, row) => (
+        <div className='mua-token-cell' style={{ alignItems: 'flex-end' }}>
+          <strong>首字 {formatMs(row.avg_first_token_ms)}</strong>
+          <span>请求 {formatMs(row.avg_use_time_ms)}</span>
+        </div>
+      ),
     },
   ];
 

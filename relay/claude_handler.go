@@ -115,9 +115,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	isOpus47 := strings.HasPrefix(request.Model, "claude-opus-4-7")
 	isOpus46 := strings.HasPrefix(request.Model, "claude-opus-4-6")
+	isOpus48 := strings.HasPrefix(request.Model, "claude-opus-4-8")
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
-		(isOpus46 || isOpus47) {
+		(isOpus46 || isOpus47 || isOpus48) {
 		request.Model = baseModel
 		request.Thinking = &dto.Thinking{
 			Type: "adaptive",
@@ -150,10 +151,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		info.UpstreamModelName = request.Model
 	}
 
-	// claude-opus-4-7 breaking changes:
+	// claude-opus-4-7 / claude-opus-4-8 breaking changes:
 	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
 	// 2. temperature/top_p/top_k non-default values return 400
-	if isOpus47 {
+	if isOpus47 || isOpus48 {
 		if request.Thinking != nil && request.Thinking.Type == "enabled" {
 			request.Thinking = &dto.Thinking{
 				Type: "adaptive",
