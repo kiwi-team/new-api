@@ -1144,6 +1144,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
 	requestId := ctx.GetString(common.RequestIdKey)
 
 	var usageStr string
@@ -1173,6 +1174,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		Response:                    responseStr,
 		ClientUserId:                clientUserId,
 		ClientScenairo:              clientScenairo,
+		SessionId:                   sessionId,
 		RequestId:                   requestId,
 		ProjectName:                 projectName,
 		PlanId:                      planId,

@@ -194,14 +194,6 @@ export default function ModelUsageAnalysis() {
       render: (modelName) => modelName || '-',
     },
     {
-      title: '消耗 (USD)',
-      dataIndex: 'cost_usd',
-      align: 'right',
-      render: formatUsd,
-      sorter: (a, b) => (a.cost_usd || 0) - (b.cost_usd || 0),
-      width: 132,
-    },
-    {
       title: '总请求',
       dataIndex: 'total_requests',
       align: 'right',
@@ -293,6 +285,14 @@ export default function ModelUsageAnalysis() {
           <span>请求 {formatMs(row.avg_use_time_ms)}</span>
         </div>
       ),
+    },
+    {
+      title: '消耗 (USD)',
+      dataIndex: 'cost_usd',
+      align: 'right',
+      render: formatUsd,
+      sorter: (a, b) => (a.cost_usd || 0) - (b.cost_usd || 0),
+      width: 132,
     },
   ];
 

@@ -124,6 +124,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('绘图日志'), itemKey: 'midjourney', to: '/midjourney', className: localStorage.getItem('enable_drawing') === 'true' ? '' : 'tableHiddle' },
       { text: t('任务日志'), itemKey: 'task', to: '/task', className: localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle' },
       { text: t('消耗统计'), itemKey: 'quotaStatistics', to: '/quota-statistics' },
+      { text: t('用量分析'), itemKey: 'modelUsageAnalysis', to: '/console/model-usage-analysis' },
       { text: t('账单查询'), itemKey: 'bill', to: '/console/bill' },
     ];
 
@@ -177,7 +178,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('模型部署'), itemKey: 'deployment', to: '/deployment', className: isAdmin() ? '' : 'tableHiddle' },
       { text: t('模型渠道监控'), itemKey: 'modelChannelMonitor', to: '/console/model-channel-monitor', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('内部渠道监控'), itemKey: 'internalChannelMonitor', to: '/console/internal-channel-monitor', className: isRoot() ? '' : 'tableHiddle' },
-      { text: t('用量分析'), itemKey: 'modelUsageAnalysis', to: '/console/model-usage-analysis', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('兑换码管理'), itemKey: 'redemption', to: '/redemption', className: isAdmin() ? '' : 'tableHiddle' },
       {
         text: t('订阅管理'),

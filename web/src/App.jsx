@@ -391,9 +391,9 @@ function App() {
         <Route
           path='/console/model-usage-analysis'
           element={
-            <RootRoute>
+            <PrivateRoute>
               <ModelUsageAnalysis />
-            </RootRoute>
+            </PrivateRoute>
           }
         />
         {/* Debug Module Routes - Root Only */}

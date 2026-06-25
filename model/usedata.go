@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,18 +29,26 @@ type QuotaData struct {
 	// 单次请求只要对应 token 数 > 0 即计一次。Claude 单次请求可能同时写 5m 与 1h 缓存，
 	// 因此 5m/1h 两个计数会分别 +1；列表展示的"缓存写请求总数"= 5m + 1h。
 	// 显式声明 gorm 列名，避免数字与下划线的映射歧义（参见 QuotaDataStatistics 注释）。
-	CacheWrite5mRequestCount int    `json:"cache_write_5m_request_count" gorm:"column:cache_write_5m_request_count;default:0"`
-	CacheWrite1hRequestCount int    `json:"cache_write_1h_request_count" gorm:"column:cache_write_1h_request_count;default:0"`
-	CacheReadRequestCount    int    `json:"cache_read_request_count" gorm:"column:cache_read_request_count;default:0"`
-	TokenName                string `json:"token_name" gorm:"size:64;default:''"`
-	Count                    int    `json:"count" gorm:"default:0"`
-	Quota                    int    `json:"quota" gorm:"default:0"`
-	TokenId                  int    `json:"token_id" gorm:"index"`
-	ChannelId                int    `json:"channel_id" gorm:"index"`
-	ClientUserId             string `json:"client_user_id" gorm:"index;size:200;default:''"`
-	ClientScenairo           string `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	ProjectName              string `json:"project_name" gorm:"index;size:200;default:''"`
-	PlanId                   int    `json:"plan_id" gorm:"index;default:0"`
+	CacheWrite5mRequestCount int `json:"cache_write_5m_request_count" gorm:"column:cache_write_5m_request_count;default:0"`
+	CacheWrite1hRequestCount int `json:"cache_write_1h_request_count" gorm:"column:cache_write_1h_request_count;default:0"`
+	CacheReadRequestCount    int `json:"cache_read_request_count" gorm:"column:cache_read_request_count;default:0"`
+	// 耗时聚合埋点（写入时累加，避免读取时扫描明细 logs 表）：
+	//   StreamRequestCount 有首字测量(frt>0)的流式请求次数，作为平均首字耗时的分母；
+	//   FrtSum             上述请求的首字耗时累加（毫秒）；
+	//   RequestTimeSum     所有请求的请求耗时累加（毫秒 = use_time 秒 × 1000）。
+	// 平均首字耗时 = sum(frt_sum)/sum(stream_request_count)，平均请求耗时 = sum(request_time_sum)/sum(count)。
+	StreamRequestCount int    `json:"stream_request_count" gorm:"column:stream_request_count;default:0"`
+	FrtSum             int    `json:"frt_sum" gorm:"column:frt_sum;default:0"`
+	RequestTimeSum     int    `json:"request_time_sum" gorm:"column:request_time_sum;default:0"`
+	TokenName          string `json:"token_name" gorm:"size:64;default:''"`
+	Count              int    `json:"count" gorm:"default:0"`
+	Quota              int    `json:"quota" gorm:"default:0"`
+	TokenId            int    `json:"token_id" gorm:"index"`
+	ChannelId          int    `json:"channel_id" gorm:"index"`
+	ClientUserId       string `json:"client_user_id" gorm:"index;size:200;default:''"`
+	ClientScenairo     string `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	ProjectName        string `json:"project_name" gorm:"index;size:200;default:''"`
+	PlanId             int    `json:"plan_id" gorm:"index;default:0"`
 }
 
 type LogQuotaDataCache struct {
@@ -63,6 +70,10 @@ type LogQuotaDataCache struct {
 	ClientScenairo              string
 	ProjectName                 string
 	PlanId                      int
+	// 耗时埋点原始值：FirstTokenMs 首字耗时（毫秒，仅流式且测到首字时 >0）；
+	// UseTimeSeconds 请求总耗时（秒）。用于累加 stream_request_count / frt_sum / request_time_sum。
+	FirstTokenMs   int
+	UseTimeSeconds int
 }
 
 func UpdateQuotaData() {
@@ -84,7 +95,7 @@ func UpdateQuotaData() {
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
-func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int) {
+func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int, firstTokenMs int, useTimeSeconds int) {
 	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%d", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo, projectName, planId)
 	// 按请求派生缓存命中次数：本次调用即一次请求，对应 token 数 > 0 则计一次。
 	cacheWrite5mReq, cacheWrite1hReq, cacheReadReq := 0, 0, 0
@@ -97,6 +108,15 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 	if cachedTokens > 0 {
 		cacheReadReq = 1
 	}
+	// 耗时埋点：仅当测到首字（firstTokenMs>0，即流式请求）才计入首字样本与首字耗时累加，
+	// 保证 frt_sum 与 stream_request_count 样本集一致，平均值不被无首字请求稀释。
+	// 请求耗时统计所有请求，以毫秒累加（use_time 为秒，×1000）。
+	streamReq, frtSum := 0, 0
+	if firstTokenMs > 0 {
+		streamReq = 1
+		frtSum = firstTokenMs
+	}
+	requestTimeSum := useTimeSeconds * 1000
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
 		quotaData.Count += 1
@@ -110,6 +130,9 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 		quotaData.CacheWrite5mRequestCount += cacheWrite5mReq
 		quotaData.CacheWrite1hRequestCount += cacheWrite1hReq
 		quotaData.CacheReadRequestCount += cacheReadReq
+		quotaData.StreamRequestCount += streamReq
+		quotaData.FrtSum += frtSum
+		quotaData.RequestTimeSum += requestTimeSum
 	} else {
 		quotaData = &QuotaData{
 			UserID:                      userId,
@@ -128,6 +151,9 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 			CacheWrite5mRequestCount:    cacheWrite5mReq,
 			CacheWrite1hRequestCount:    cacheWrite1hReq,
 			CacheReadRequestCount:       cacheReadReq,
+			StreamRequestCount:          streamReq,
+			FrtSum:                      frtSum,
+			RequestTimeSum:              requestTimeSum,
 			TokenId:                     tokenId,
 			ChannelId:                   channelId,
 			ClientUserId:                clientUserId,
@@ -161,12 +187,14 @@ func LogQuotaData(logQuotaData *LogQuotaDataCache) {
 	clientScenairo := logQuotaData.ClientScenairo
 	projectName := logQuotaData.ProjectName
 	planId := logQuotaData.PlanId
+	firstTokenMs := logQuotaData.FirstTokenMs
+	useTimeSeconds := logQuotaData.UseTimeSeconds
 	// 只精确到小时
 	createdAt = createdAt - (createdAt % 3600)
 
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
-	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, cachedTokens, claudeCacheCreation5mTokens, claudeCacheCreation1hTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId)
+	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, cachedTokens, claudeCacheCreation5mTokens, claudeCacheCreation1hTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId, firstTokenMs, useTimeSeconds)
 }
 
 // RefundQuotaData writes a negative quota entry to offset the original quota_data record
@@ -206,7 +234,7 @@ func SaveQuotaDataCache() {
 		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
-			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.CacheWrite5mRequestCount, quotaData.CacheWrite1hRequestCount, quotaData.CacheReadRequestCount, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
+			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.CacheWrite5mRequestCount, quotaData.CacheWrite1hRequestCount, quotaData.CacheReadRequestCount, quotaData.StreamRequestCount, quotaData.FrtSum, quotaData.RequestTimeSum, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
@@ -552,7 +580,7 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, cacheWrite5mRequestCount int, cacheWrite1hRequestCount int, cacheReadRequestCount int, clientUserId string, clientScenairo string, projectName string, planId int) {
+func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, cacheWrite5mRequestCount int, cacheWrite1hRequestCount int, cacheReadRequestCount int, streamRequestCount int, frtSum int, requestTimeSum int, clientUserId string, clientScenairo string, projectName string, planId int) {
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
 		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName, planId).Updates(map[string]interface{}{
 		"count":                          gorm.Expr("count + ?", count),
@@ -566,6 +594,9 @@ func increaseQuotaData(userId int, username string, modelName string, count int,
 		"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", cacheWrite5mRequestCount),
 		"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", cacheWrite1hRequestCount),
 		"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", cacheReadRequestCount),
+		"stream_request_count":           gorm.Expr("stream_request_count + ?", streamRequestCount),
+		"frt_sum":                        gorm.Expr("frt_sum + ?", frtSum),
+		"request_time_sum":               gorm.Expr("request_time_sum + ?", requestTimeSum),
 	}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())
@@ -698,14 +729,21 @@ type ModelUsageAnalysisRow struct {
 	CacheReadTokens  int64 `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`
 	InputTokens      int64 `json:"input_tokens" gorm:"column:input_tokens"`
 	OutputTokens     int64 `json:"output_tokens" gorm:"column:output_tokens"`
-	// 平均首字耗时（毫秒，仅统计流式请求）；无流式样本时为 0。来源于 logs 表，由 merge 填充。
+	// 以下三列为耗时聚合的求和中间值（来源于 quota_data 的求和），仅用于计算下方均值，不下发前端。
+	// frt_sum / request_time_sum 均以毫秒为单位。
+	StreamRequests   int64 `json:"-" gorm:"column:stream_request_count"`
+	FrtSumMs         int64 `json:"-" gorm:"column:frt_sum"`
+	RequestTimeSumMs int64 `json:"-" gorm:"column:request_time_sum"`
+	// 平均首字耗时（毫秒，仅统计有首字测量的流式请求）；无样本时为 0。
 	AvgFirstTokenMs int64 `json:"avg_first_token_ms" gorm:"-"`
-	// 平均请求耗时（毫秒，统计所有请求）。来源于 logs 表，由 merge 填充。
+	// 平均请求耗时（毫秒，统计所有请求）。
 	AvgUseTimeMs int64 `json:"avg_use_time_ms" gorm:"-"`
 }
 
-// GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合（全局，仅管理员可见）。
-func GetModelUsageAnalysis(startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
+// GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合。
+// userId > 0 时仅统计该用户创建的 key（token）的数据（非 root 自限范围）；
+// userId == 0 表示不限用户，返回全量（root 可见）。
+func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
 	rows := make([]*ModelUsageAnalysisRow, 0)
 
 	// 日期字段按 +8 时区格式化，与 GetQuotaDataStatistics 保持一致
@@ -727,11 +765,18 @@ func GetModelUsageAnalysis(startTime int64, endTime int64) ([]*ModelUsageAnalysi
 		"sum(cache_read_request_count) as cache_read_requests, " +
 		"sum(claude_cache_creation5m_tokens + claude_cache_creation1h_tokens) as cache_write_tokens, " +
 		"sum(cached_tokens) as cache_read_tokens, " +
-		"sum(prompt_tokens) as input_tokens, sum(completion_tokens) as output_tokens"
+		"sum(prompt_tokens) as input_tokens, sum(completion_tokens) as output_tokens, " +
+		"sum(stream_request_count) as stream_request_count, " +
+		"sum(frt_sum) as frt_sum, sum(request_time_sum) as request_time_sum"
 
-	err := DB.Model(&QuotaData{}).
+	db := DB.Model(&QuotaData{}).
 		Select(selectFields).
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime).
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+	if userId > 0 {
+		// 非 root：仅限当前用户自己创建的 key 的数据
+		db = db.Where("user_id = ?", userId)
+	}
+	err := db.
 		Group("date, token_id, model_name").
 		Order("date DESC").
 		Scan(&rows).Error
@@ -739,76 +784,23 @@ func GetModelUsageAnalysis(startTime int64, endTime int64) ([]*ModelUsageAnalysi
 		return rows, err
 	}
 
-	// quota 转换为美元单位；写请求总数 = 5m + 1h
+	// quota 转换为美元单位；写请求总数 = 5m + 1h；耗时均值由聚合后的求和列计算。
+	// 耗时口径（写入时已埋点到 quota_data，避免读取时扫描明细 logs 表）：
+	//   - 平均请求耗时(ms) = sum(request_time_sum) / sum(count)（所有请求）
+	//   - 平均首字耗时(ms) = sum(frt_sum) / sum(stream_request_count)（仅有首字测量的流式请求）
+	// frt_sum 与 request_time_sum 均以毫秒存储，可直接相除得到毫秒均值。
 	for _, r := range rows {
 		r.CostUsd /= common.QuotaPerUnit
 		r.CacheWriteRequests = r.CacheWrite5mRequests + r.CacheWrite1hRequests
+		if r.TotalRequests > 0 {
+			r.AvgUseTimeMs = int64(math.Round(float64(r.RequestTimeSumMs) / float64(r.TotalRequests)))
+		}
+		if r.StreamRequests > 0 {
+			r.AvgFirstTokenMs = int64(math.Round(float64(r.FrtSumMs) / float64(r.StreamRequests)))
+		}
 	}
-
-	// 额外聚合耗时指标：quota_data 表无耗时字段，从 logs 表(LOG_DB，可能为独立库，
-	// 不能与 quota_data JOIN)按相同维度聚合后在内存中合并。
-	// - 平均请求耗时：统计所有请求 = sum(use_time)/count * 1000（秒→毫秒）
-	// - 平均首字耗时：仅统计流式请求（first_token_ms>0）= sum(frt)/samples
-	// 失败不阻断主流程：耗时为附加指标，查询出错时记录日志并让相关列为 0。
-	mergeModelUsageLatency(rows, dateField, startTime, endTime)
 
 	return rows, nil
-}
-
-// mergeModelUsageLatency 从 logs 表聚合平均首字耗时/平均请求耗时，并按
-// 日期 + Token + 模型 合并进用量分析结果。dateField 必须与主查询使用的日期
-// 格式化表达式完全一致，以保证 date key 对齐。
-func mergeModelUsageLatency(rows []*ModelUsageAnalysisRow, dateField string, startTime, endTime int64) {
-	if len(rows) == 0 {
-		return
-	}
-
-	type latencyRow struct {
-		Date       string `gorm:"column:date"`
-		TokenId    int    `gorm:"column:token_id"`
-		ModelName  string `gorm:"column:model_name"`
-		Requests   int64  `gorm:"column:requests"`
-		UseSum     int64  `gorm:"column:use_sum"`
-		FrtSum     int64  `gorm:"column:frt_sum"`
-		FrtSamples int64  `gorm:"column:frt_samples"`
-	}
-
-	latencySelect := dateField + " as date, token_id, model_name, " +
-		"count(*) as requests, sum(use_time) as use_sum, " +
-		"sum(CASE WHEN first_token_ms > 0 THEN first_token_ms ELSE 0 END) as frt_sum, " +
-		"sum(CASE WHEN first_token_ms > 0 THEN 1 ELSE 0 END) as frt_samples"
-
-	var latRows []latencyRow
-	if err := LOG_DB.Table("logs").
-		Select(latencySelect).
-		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
-		Group("date, token_id, model_name").
-		Scan(&latRows).Error; err != nil {
-		common.SysLog("GetModelUsageAnalysis: aggregate latency from logs failed: " + err.Error())
-		return
-	}
-
-	key := func(date string, tokenId int, model string) string {
-		return date + "\x1f" + strconv.Itoa(tokenId) + "\x1f" + model
-	}
-	latMap := make(map[string]*latencyRow, len(latRows))
-	for i := range latRows {
-		l := &latRows[i]
-		latMap[key(l.Date, l.TokenId, l.ModelName)] = l
-	}
-
-	for _, r := range rows {
-		l, ok := latMap[key(r.Date, r.TokenId, r.ModelName)]
-		if !ok {
-			continue
-		}
-		if l.Requests > 0 {
-			r.AvgUseTimeMs = int64(math.Round(float64(l.UseSum) / float64(l.Requests) * 1000))
-		}
-		if l.FrtSamples > 0 {
-			r.AvgFirstTokenMs = int64(math.Round(float64(l.FrtSum) / float64(l.FrtSamples)))
-		}
-	}
 }
 
 // GetDistinctProjectNames 获取所有不重复的项目名称

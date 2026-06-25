@@ -47,6 +47,7 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     errorlog: true,
     midjourney: true,
     task: true,
+    modelUsageAnalysis: true,
   },
   personal: {
     enabled: true,
@@ -61,7 +62,6 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     deployment: true,
     modelChannelMonitor: true,
     internalChannelMonitor: true,
-    modelUsageAnalysis: true,
     redemption: true,
     user: true,
     subscription: true,
@@ -220,6 +220,11 @@ export default function SettingsSidebarModulesAdmin(props) {
         },
         { key: 'task', title: t('任务日志'), description: t('系统任务记录') },
         { key: 'statistics', title: t('统计日志'), description: t('系统统计记录') },
+        {
+          key: 'modelUsageAnalysis',
+          title: t('用量分析'),
+          description: t('成本与Token用量分析'),
+        },
       ],
     },
     {
@@ -261,11 +266,6 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'internalChannelMonitor',
           title: t('内部渠道监控'),
           description: t('展示渠道名与详细错误'),
-        },
-        {
-          key: 'modelUsageAnalysis',
-          title: t('用量分析'),
-          description: t('成本与Token用量分析'),
         },
         {
           key: 'subscription',

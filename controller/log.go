@@ -57,8 +57,9 @@ func GetAllLogs(c *gin.Context) {
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
+	sessionId := strings.TrimSpace(c.Query("session_id"))
 	isAdmin := isAdmin(c)
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, mtSessionId, traceId, trajId, export, isAdmin)
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, mtSessionId, traceId, trajId, sessionId, export, isAdmin)
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group)
 	//requestId := c.Query("request_id")
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
@@ -235,6 +236,7 @@ func GetUserLogs(c *gin.Context) {
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
+	sessionId := strings.TrimSpace(c.Query("session_id"))
 	// 自助视图数据范围:
 	//   - mt-admin: 扩展到 mt 全组织成员的 uid + related_uids 并集(详见 org.md 4.2.1)
 	//   - 其他用户: 沿用 GetScopeUids(自己 uid + 自己 related_uids)
@@ -249,7 +251,7 @@ func GetUserLogs(c *gin.Context) {
 			scopeUids = u.GetScopeUids()
 		}
 	}
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids, clientUserId, mtSessionId, traceId, trajId)
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids, clientUserId, mtSessionId, traceId, trajId, sessionId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -424,6 +426,7 @@ func ExportLogsCSV(c *gin.Context) {
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
+	sessionId := strings.TrimSpace(c.Query("session_id"))
 
 	if startTimestamp == 0 || endTimestamp == 0 {
 		c.JSON(http.StatusOK, gin.H{
@@ -448,7 +451,7 @@ func ExportLogsCSV(c *gin.Context) {
 		return
 	}
 
-	logs, err := model.GetLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, clientUserId, requestId, mtSessionId, traceId, trajId)
+	logs, err := model.GetLogsForExport(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, clientUserId, requestId, mtSessionId, traceId, trajId, sessionId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

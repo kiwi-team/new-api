@@ -99,6 +99,7 @@ func GetAllErrorLogs(c *gin.Context) {
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
+	sessionId := strings.TrimSpace(c.Query("session_id"))
 	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
 		RequestId:    requestId,
 		ChannelId:    channel,
@@ -112,6 +113,7 @@ func GetAllErrorLogs(c *gin.Context) {
 		MtSessionId:  mtSessionId,
 		TraceId:      traceId,
 		TrajId:       trajId,
+		SessionId:    sessionId,
 	})
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -179,6 +181,7 @@ func GetSelfErrorLogs(c *gin.Context) {
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
+	sessionId := strings.TrimSpace(c.Query("session_id"))
 
 	scopeUserId, scopeUids := resolveErrorLogSelfScope(c)
 	if scopeUserId <= 0 {
@@ -199,6 +202,7 @@ func GetSelfErrorLogs(c *gin.Context) {
 		MtSessionId:  mtSessionId,
 		TraceId:      traceId,
 		TrajId:       trajId,
+		SessionId:    sessionId,
 		ScopeUserId:  scopeUserId,
 		ScopeUids:    scopeUids,
 	})

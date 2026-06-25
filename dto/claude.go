@@ -15,6 +15,41 @@ type ClaudeMetadata struct {
 	UserId string `json:"user_id"`
 }
 
+// ExtractSessionIdFromMetadata 从 Claude 请求体的 metadata 中旁路提取 session_id。
+// metadata.user_id 有两种格式：
+//  1. JSON 字符串：{"device_id":"...","account_uuid":"","session_id":"<uuid>"} —— 取 session_id 字段
+//  2. 形如 user_<hex>_account__session_<uuid> —— 取 _session_ 之后的部分
+//
+// 任意解析失败均返回空串，绝不阻断请求。
+func ExtractSessionIdFromMetadata(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta ClaudeMetadata
+	if err := common.Unmarshal(metadata, &meta); err != nil {
+		return ""
+	}
+	userId := strings.TrimSpace(meta.UserId)
+	if userId == "" {
+		return ""
+	}
+	// 格式一：user_id 本身是一段 JSON
+	if strings.HasPrefix(userId, "{") {
+		var inner struct {
+			SessionId string `json:"session_id"`
+		}
+		if err := common.UnmarshalJsonStr(userId, &inner); err == nil {
+			return strings.TrimSpace(inner.SessionId)
+		}
+		return ""
+	}
+	// 格式二：..._session_<uuid>
+	if idx := strings.LastIndex(userId, "_session_"); idx >= 0 {
+		return strings.TrimSpace(userId[idx+len("_session_"):])
+	}
+	return ""
+}
+
 type ClaudeMediaMessage struct {
 	Type         string               `json:"type,omitempty"`
 	Text         *string              `json:"text,omitempty"`

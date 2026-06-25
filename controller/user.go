@@ -206,10 +206,9 @@ func Register(c *gin.Context) {
 		Role:           common.RoleCommonUser,                              // 明确设置角色为普通用户
 		ToioRegistered: common.String2Int(os.Getenv("IS_TOIO_REGISTERED")), // 标记为已注册Toio
 	}
-	// 开启uid检查注册的用户默认为Leader角色
-	if common.RegisterUidCheckEnabled {
-		cleanUser.Role = common.RoleLeaderUser
-	}
+	// if common.RegisterUidCheckEnabled {
+	// 	cleanUser.Role = common.RoleCommonUser
+	// }
 	if strings.Contains(c.Request.URL.Path, "/toio/register") {
 		cleanUser.ToioRegistered = 1
 	}

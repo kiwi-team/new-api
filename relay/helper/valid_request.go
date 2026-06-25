@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -239,6 +240,12 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 		return nil, errors.New("field model is required")
 	}
 
+	// 旁路提取 metadata 中的 session_id 写入 context，供后续 logs / error_logs 落库使用。
+	// 放在这里能保证即使后续 relay 出错走 error_logs，也已写入 context。
+	if sessionId := dto.ExtractSessionIdFromMetadata(textRequest.Metadata); sessionId != "" {
+		common.SetContextKey(c, constant.ContextKeyClaudeSessionId, sessionId)
+	}
+
 	//if textRequest.Stream {
 	//	relayInfo.IsStream = true
 	//}
@@ -301,6 +308,13 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 			return nil, errors.New("field instruction is required")
 		}
 	}
+
+	// 旁路提取 metadata 中的 session_id 写入 context，供后续 logs / error_logs 落库使用。
+	// 与 Claude 复用同一套解析逻辑（metadata.user_id 两种格式）。
+	if sessionId := dto.ExtractSessionIdFromMetadata(textRequest.Metadata); sessionId != "" {
+		common.SetContextKey(c, constant.ContextKeyClaudeSessionId, sessionId)
+	}
+
 	return textRequest, nil
 }
 

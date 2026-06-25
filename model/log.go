@@ -46,6 +46,7 @@ type Log struct {
 	Response       string  `json:"response" gorm:"type:text"`
 	ClientUserId   string  `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	SessionId      string  `json:"session_id" gorm:"index:idx_logs_session_id;size:128;default:''"`
 	ProjectName    string  `json:"project_name" gorm:"index;size:100;default:''"`
 	PlanId         int     `json:"plan_id" gorm:"default:0;index"`
 	Usage          string  `json:"usage" gorm:"type:text"`
@@ -127,6 +128,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	requestId := c.GetString(common.RequestIdKey)
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
 	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
+	sessionId := common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := true
@@ -159,6 +161,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		}(),
 		RequestId: requestId,
 		Other:     otherStr,
+		SessionId: sessionId,
 		Extra:     normalizeJsonbString(extra),
 		Header:    normalizeJsonbString(header),
 	}
@@ -195,6 +198,7 @@ type RecordConsumeLogParams struct {
 	Response                    string                 `json:"response"`
 	ClientUserId                string                 `json:"client_user_id"`
 	ClientScenairo              string                 `json:"client_scenairo"`
+	SessionId                   string                 `json:"session_id"`
 	RequestId                   string                 `json:"request_id"`
 	ProjectName                 string                 `json:"project_name"`
 	PlanId                      int                    `json:"plan_id"`
@@ -245,6 +249,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Response:         strings.TrimSpace(params.Response),
 		ClientUserId:     params.ClientUserId,
 		ClientScenairo:   params.ClientScenairo,
+		SessionId:        params.SessionId,
 		RequestId:        params.RequestId,
 		ProjectName:      params.ProjectName,
 		PlanId:           params.PlanId,
@@ -283,13 +288,15 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 				ClientScenairo:              params.ClientScenairo,
 				ProjectName:                 params.ProjectName,
 				PlanId:                      params.PlanId,
+				FirstTokenMs:                firstTokenMs,
+				UseTimeSeconds:              params.UseTimeSeconds,
 			})
 			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string, sessionId string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
 	//func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
@@ -338,6 +345,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if trajId != "" {
 		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
 	}
+	if sessionId != "" {
+		tx = tx.Where("logs.session_id = ?", sessionId)
+	}
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
@@ -383,7 +393,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 }
 
 // GetLogsForExport 导出日志专用查询：按筛选条件返回日志（不分页），且不携带 request/response/usage 大字段。
-func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string) (logs []*Log, err error) {
+func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string, sessionId string) (logs []*Log, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -425,6 +435,9 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 	}
 	if trajId != "" {
 		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
+	}
+	if sessionId != "" {
+		tx = tx.Where("logs.session_id = ?", sessionId)
 	}
 
 	err = tx.Omit("request", "response", "usage").Order("logs.id asc").Find(&logs).Error
@@ -470,7 +483,7 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 //   - mtSessionId / traceId / trajId — 按 extra jsonb 嵌套字段精确匹配
 //
 // 这些是空串时不施加额外 WHERE,无 org 上下文用户传空也不影响。
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, scopeUids []string, clientUserId string, mtSessionId string, traceId string, trajId string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, scopeUids []string, clientUserId string, mtSessionId string, traceId string, trajId string, sessionId string) (logs []*Log, total int64, err error) {
 	const logSearchCountLimit = 10000
 
 	var tx *gorm.DB
@@ -517,6 +530,9 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	}
 	if trajId != "" {
 		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
+	}
+	if sessionId != "" {
+		tx = tx.Where("logs.session_id = ?", sessionId)
 	}
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {

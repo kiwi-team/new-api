@@ -39,6 +39,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     midjourney: true,
     task: true,
     errorlog: true,
+    modelUsageAnalysis: true,
   },
   personal: {
     enabled: true,
@@ -52,7 +53,6 @@ export const DEFAULT_ADMIN_CONFIG = {
     deployment: true,
     modelChannelMonitor: true,
     internalChannelMonitor: true,
-    modelUsageAnalysis: true,
     redemption: true,
     user: true,
     subscription: true,

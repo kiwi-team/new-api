@@ -320,6 +320,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
 	requestId := ctx.GetString(common.RequestIdKey)
 
 	var usageStr string
@@ -346,6 +347,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Response:         strings.Join(relayInfo.WsResponseMessages, "\n"),
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		SessionId:        sessionId,
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,
@@ -468,6 +470,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
 	requestId := ctx.GetString(common.RequestIdKey)
 
 	var usageStr string
@@ -497,6 +500,7 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		Response:                    responseStr,
 		ClientUserId:                clientUserId,
 		ClientScenairo:              clientScenairo,
+		SessionId:                   sessionId,
 		RequestId:                   requestId,
 		ProjectName:                 projectName,
 		PlanId:                      planId,
@@ -628,6 +632,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
+	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
 	requestId := ctx.GetString(common.RequestIdKey)
 
 	var usageStr string
@@ -654,6 +659,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Response:         responseStr,
 		ClientUserId:     clientUserId,
 		ClientScenairo:   clientScenairo,
+		SessionId:        sessionId,
 		RequestId:        requestId,
 		ProjectName:      projectName,
 		PlanId:           planId,

@@ -313,7 +313,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/statistics", middleware.MixRouterAuth(), controller.GetQuotaDataStatistics)
 		dataRoute.GET("/statistics/export", middleware.MixRouterAuth(), controller.ExportQuotaDataStatistics)
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
-		dataRoute.GET("/model-usage-analysis", middleware.RootAuth(), controller.GetModelUsageAnalysis)
+		dataRoute.GET("/model-usage-analysis", middleware.UserAuth(), controller.GetModelUsageAnalysis)
 		dataRoute.GET("/channel-monitor", middleware.RootAuth(), controller.GetChannelMonitor)
 		dataRoute.GET("/project-names", middleware.MixRouterAuth(), controller.GetDistinctProjectNames)
 		dataRoute.GET("/token-list", middleware.MixRouterAuth(), controller.GetTokenListForStatistics)

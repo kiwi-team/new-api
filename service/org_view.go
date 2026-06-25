@@ -74,6 +74,7 @@ var defaultUserPages = []string{
 	PageLog,
 	PageMidjourney,
 	PageTask,
+	PageModelUsageAnalysis,
 	PageBillSelf,
 	PageTopup,
 	PagePersonal,
@@ -111,7 +112,6 @@ var allAdminPages = append(append([]string{}, defaultUserPages...),
 var allRootPages = append(append([]string{}, allAdminPages...),
 	PageModelChannelMonitor,
 	PageInternalChannelMonitor,
-	PageModelUsageAnalysis,
 )
 
 // GetUserMenu 返回当前用户能看到的菜单 + 顶栏模式。

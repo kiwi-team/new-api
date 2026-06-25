@@ -382,12 +382,19 @@ func GetChannelMonitor(c *gin.Context) {
 	})
 }
 
-// GetModelUsageAnalysis 用量分析页数据（按 日期 + Token + 模型 聚合，全局）
+// GetModelUsageAnalysis 用量分析页数据（按 日期 + Token + 模型 聚合）
+// 非 root 用户仅能查看自己创建的 key（token）的数据，root 用户查看全部。
 func GetModelUsageAnalysis(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 
-	rows, err := model.GetModelUsageAnalysis(startTimestamp, endTimestamp)
+	// scopeUserId=0 表示不限用户（全量）；非 root 限定为当前用户自己
+	scopeUserId := 0
+	if c.GetInt("role") < common.RoleRootUser {
+		scopeUserId = c.GetInt("id")
+	}
+
+	rows, err := model.GetModelUsageAnalysis(scopeUserId, startTimestamp, endTimestamp)
 	if err != nil {
 		common.ApiError(c, err)
 		return

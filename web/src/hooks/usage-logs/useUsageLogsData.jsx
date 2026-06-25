@@ -108,6 +108,7 @@ export const useLogsData = () => {
     mt_session_id: '',
     trace_id: '',
     traj_id: '',
+    session_id: '',
     dateRange: [
       timestamp2string(getTodayStartTimestamp()),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -263,6 +264,7 @@ export const useLogsData = () => {
       mt_session_id: (formValues.mt_session_id || '').trim(),
       trace_id: (formValues.trace_id || '').trim(),
       traj_id: (formValues.traj_id || '').trim(),
+      session_id: (formValues.session_id || '').trim(),
       logType: formValues.logType ? parseInt(formValues.logType) : 0,
     };
   };
@@ -711,6 +713,7 @@ export const useLogsData = () => {
       mt_session_id,
       trace_id,
       traj_id,
+      session_id,
       logType: formLogType,
     } = getFormValues();
 
@@ -741,6 +744,7 @@ export const useLogsData = () => {
         mt_session_id: mt_session_id || '',
         trace_id: trace_id || '',
         traj_id: traj_id || '',
+        session_id: session_id || '',
       });
       url = `/api/log/?${params.toString()}`;
     } else {
@@ -760,6 +764,7 @@ export const useLogsData = () => {
         mt_session_id: mt_session_id || '',
         trace_id: trace_id || '',
         traj_id: traj_id || '',
+        session_id: session_id || '',
       });
       url = `/api/log/self/?${params.toString()}`;
     }
@@ -798,6 +803,7 @@ export const useLogsData = () => {
       mt_session_id,
       trace_id,
       traj_id,
+      session_id,
       logType: formLogType,
     } = getFormValues();
 
@@ -842,6 +848,7 @@ export const useLogsData = () => {
         mt_session_id: mt_session_id || '',
         trace_id: trace_id || '',
         traj_id: traj_id || '',
+        session_id: session_id || '',
       });
       const res = await API.get(`/api/log/export?${params.toString()}`, {
         responseType: 'blob',

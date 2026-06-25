@@ -36,6 +36,7 @@ type ErrorLog struct {
 	Ip             string  `json:"ip" gorm:"default:''"`
 	ClientUserId   string  `json:"client_user_id" gorm:"default:''"`
 	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	SessionId      string  `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
 	Extra          *string `json:"extra,omitempty" gorm:"type:jsonb"`
 	Header         *string `json:"header,omitempty" gorm:"type:jsonb"`
 }
@@ -124,6 +125,9 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	if req.TrajId != "" {
 		query = query.Where("extra->>'traj_id' = ?", req.TrajId)
+	}
+	if req.SessionId != "" {
+		query = query.Where("session_id = ?", req.SessionId)
 	}
 	var total int64
 	_ = query.Count(&total)
@@ -300,7 +304,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, useTimeMs int64, includeBody bool) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -327,6 +331,7 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		RequestId:      requestId,
 		ClientUserId:   clientUserId,
 		ClientScenairo: clientScenairo,
+		SessionId:      sessionId,
 		Extra:          normalizeJsonbString(extra),
 		Header:         normalizeJsonbString(header),
 	}

@@ -503,6 +503,7 @@ const ErrorLogsTable = () => {
     mt_session_id: '',
     trace_id: '',
     traj_id: '',
+    session_id: '',
     dateRange: [
       timestamp2string(now.getTime() / 1000 - 3600),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -548,6 +549,7 @@ const ErrorLogsTable = () => {
       mt_session_id: (formValues.mt_session_id || '').trim(),
       trace_id: (formValues.trace_id || '').trim(),
       traj_id: (formValues.traj_id || '').trim(),
+      session_id: (formValues.session_id || '').trim(),
     };
   };
 
@@ -614,7 +616,7 @@ const ErrorLogsTable = () => {
     setLoading(true);
 
     let url = '';
-    const { model_name, start_timestamp, end_timestamp, channel, request_id, token_id, client_user_id, mt_session_id, trace_id, traj_id } =
+    const { model_name, start_timestamp, end_timestamp, channel, request_id, token_id, client_user_id, mt_session_id, trace_id, traj_id, session_id } =
       getFormValues();
 
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
@@ -632,6 +634,7 @@ const ErrorLogsTable = () => {
       mt_session_id: mt_session_id || '',
       trace_id: trace_id || '',
       traj_id: traj_id || '',
+      session_id: session_id || '',
     });
     // 非管理员走自助接口，仅能看到本账号或其关联 uid 的错误日志
     url = isAdminUser
@@ -910,6 +913,14 @@ const ErrorLogsTable = () => {
                     field='traj_id'
                     prefix={<IconSearch />}
                     placeholder={t('Traj ID')}
+                    className='!rounded-full'
+                    showClear
+                    pure
+                  />
+                   <Form.Input
+                    field='session_id'
+                    prefix={<IconSearch />}
+                    placeholder={t('Session ID')}
                     className='!rounded-full'
                     showClear
                     pure
