@@ -328,6 +328,7 @@ func SetApiRouter(router *gin.Engine) {
 		logRootRoute.Use(middleware.RootAuth())
 		{
 			logRootRoute.GET("/export", controller.ExportLogsCSV)
+			logRootRoute.GET("/error-logs/export", controller.ExportErrorLogsCSV)
 			logRootRoute.GET("/:id/request", controller.GetLogRequest)
 			logRootRoute.GET("/:id/response", controller.GetLogResponse)
 			// header 仅 root 可查；同组复用 RootAuth 中间件

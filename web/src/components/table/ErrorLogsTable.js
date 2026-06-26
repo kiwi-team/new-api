@@ -52,6 +52,7 @@ import {
   IconHelpCircle,
   IconEyeOpened,
   IconCopy,
+  IconDownload,
 } from '@douyinfe/semi-icons';
 
 const ErrorLogsTable = () => {
@@ -86,6 +87,7 @@ const ErrorLogsTable = () => {
   const [detailContent, setDetailContent] = useState('');
   const [loadingBodyId, setLoadingBodyId] = useState(null);
   const [loadingHeaderId, setLoadingHeaderId] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   // Load saved column preferences from localStorage
   useEffect(() => {
@@ -677,6 +679,110 @@ const ErrorLogsTable = () => {
     await loadLogs(1, pageSize); // 不传入logType，让其从表单获取最新值
   };
 
+  // 导出错误日志为 CSV（仅 root，时间范围 ≤ 24 小时）
+  const handleExportErrorLogs = async () => {
+    if (!isRoot()) {
+      showError(t('仅超级管理员可导出错误日志'));
+      return;
+    }
+
+    const {
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+      request_id,
+      token_id,
+      client_user_id,
+      mt_session_id,
+      trace_id,
+      traj_id,
+    } = getFormValues();
+
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+
+    if (
+      !Number.isFinite(localStartTimestamp) ||
+      !Number.isFinite(localEndTimestamp) ||
+      !localStartTimestamp ||
+      !localEndTimestamp
+    ) {
+      showError(t('请选择导出时间范围'));
+      return;
+    }
+    if (localEndTimestamp < localStartTimestamp) {
+      showError(t('结束时间必须晚于开始时间'));
+      return;
+    }
+    const maxRangeSeconds = 24 * 3600;
+    if (localEndTimestamp - localStartTimestamp > maxRangeSeconds) {
+      showError(t('导出时间范围不能超过 24 小时'));
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({
+        model_name: model_name || '',
+        start_timestamp: String(localStartTimestamp),
+        end_timestamp: String(localEndTimestamp),
+        channel: channel ? String(channel) : '',
+        request_id: request_id || '',
+        token_id: token_id ? String(token_id) : '',
+        client_user_id: client_user_id || '',
+        mt_session_id: mt_session_id || '',
+        trace_id: trace_id || '',
+        traj_id: traj_id || '',
+      });
+      const res = await API.get(
+        `/api/log/error-logs/export?${params.toString()}`,
+        { responseType: 'blob' },
+      );
+
+      // 校验/权限失败时后端返回 JSON（status 200, success=false）
+      const contentType =
+        (res.headers &&
+          (res.headers['content-type'] || res.headers['Content-Type'])) ||
+        '';
+      if (contentType.includes('application/json')) {
+        const text = await res.data.text();
+        try {
+          const errBody = JSON.parse(text);
+          showError(errBody.message || t('导出失败'));
+        } catch (e) {
+          showError(t('导出失败'));
+        }
+        return;
+      }
+
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmtTs = (ts) => {
+        const d = new Date(ts * 1000);
+        return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(
+          d.getDate(),
+        )}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      };
+      const filename = `error-log-${fmtTs(localStartTimestamp)}-${fmtTs(
+        localEndTimestamp,
+      )}.csv`;
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showSuccess(t('导出成功'));
+    } catch (e) {
+      showError(t('导出失败'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const copyText = async (e, text) => {
     e.stopPropagation();
     if (await copy(text)) {
@@ -965,6 +1071,18 @@ const ErrorLogsTable = () => {
                     >
                       {t('列设置')}
                     </Button>
+                    {isRoot() && (
+                      <Button
+                        theme='light'
+                        type='secondary'
+                        icon={<IconDownload />}
+                        loading={exporting}
+                        onClick={handleExportErrorLogs}
+                        className='!rounded-full'
+                      >
+                        {t('导出CSV')}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>

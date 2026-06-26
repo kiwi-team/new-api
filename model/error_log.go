@@ -161,6 +161,74 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	return errorLogs, total, err
 }
 
+// GetErrorLogsForExport 按筛选条件返回 error_logs 全量记录（不分页），用于 root 导出 CSV。
+// 调用方（控制器）已校验时间范围 ≤ 24 小时，这里仅负责按条件查询。
+// 与列表查询不同：导出需要 body 字段，故不 Omit。
+func GetErrorLogsForExport(req *dto.ErrorLogsRequest) ([]*ErrorLog, error) {
+	query := LOG_DB.Model(&ErrorLog{})
+	if req.ChannelId > 0 {
+		query = query.Where("channel_id = ?", req.ChannelId)
+	}
+	if req.StartTime > 0 {
+		query = query.Where("created_at >= ?", req.StartTime)
+	}
+	if req.EndTime > 0 {
+		query = query.Where("created_at <= ?", req.EndTime)
+	}
+	if req.RequestId != "" {
+		query = query.Where("request_id = ?", req.RequestId)
+	}
+	if req.ModelName != "" {
+		query = query.Where("model_name = ?", req.ModelName)
+	}
+	if req.TokenId > 0 {
+		query = query.Where("token_id = ?", req.TokenId)
+	}
+	if req.ClientUserId != "" {
+		query = query.Where("client_user_id = ?", req.ClientUserId)
+	}
+	if req.MtSessionId != "" {
+		query = query.Where("extra->>'mt_session_id' = ?", req.MtSessionId)
+	}
+	if req.TraceId != "" {
+		query = query.Where("extra->>'trace_id' = ?", req.TraceId)
+	}
+	if req.TrajId != "" {
+		query = query.Where("extra->>'traj_id' = ?", req.TrajId)
+	}
+
+	var errorLogs []*ErrorLog
+	if err := query.Order("id asc").Find(&errorLogs).Error; err != nil {
+		return nil, err
+	}
+
+	// 解析 token 名称：tokens 表始终在主库 DB（无独立 LOG_SQL_DSN 时 DB==LOG_DB），故统一走 DB 查询。
+	tokenIds := make([]int, 0)
+	for _, log := range errorLogs {
+		if log.TokenId > 0 && !slices.Contains(tokenIds, log.TokenId) {
+			tokenIds = append(tokenIds, log.TokenId)
+		}
+	}
+	if len(tokenIds) > 0 {
+		var tokens []struct {
+			Id   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := DB.Model(&Token{}).Select("id, name").Where("id IN ?", tokenIds).Find(&tokens).Error; err == nil {
+			tokenNames := make(map[int]string, len(tokens))
+			for _, tk := range tokens {
+				tokenNames[tk.Id] = tk.Name
+			}
+			for i := range errorLogs {
+				if name, ok := tokenNames[errorLogs[i].TokenId]; ok {
+					errorLogs[i].TokenName = name
+				}
+			}
+		}
+	}
+	return errorLogs, nil
+}
+
 var LogList []*ErrorLog
 
 // multipartFileInfo 描述 multipart 上传中文件 part 的元信息（不含原始字节）。

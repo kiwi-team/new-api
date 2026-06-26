@@ -15,7 +15,7 @@ var (
 	ErrProjectNotFound         = errors.New("project not found")
 	ErrProjectPaused           = errors.New("project is paused")
 	ErrUserNotAllocatedProject = errors.New("user not allocated to project")
-	ErrProjectQuotaExceeded    = errors.New("project quota exceeded")
+	ErrProjectQuotaExceeded    = errors.New("project 余额不足，请联系管理员")
 	ErrAllocationExceedsBudget = errors.New("allocation exceeds project budget")
 	ErrInvalidAllocationQuota  = errors.New("invalid allocation quota")
 	ErrNoActivePlan            = errors.New("no active allocation plan for this project")

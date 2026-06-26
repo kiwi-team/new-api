@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"os"
@@ -138,6 +139,105 @@ func GetAllErrorLogs(c *gin.Context) {
 			"page_size": pageSize,
 		},
 	})
+}
+
+// ExportErrorLogsCSV 仅 root：导出当前筛选条件下的 error_logs 为 CSV。
+// 时间范围强制 ≤ 24 小时；使用 encoding/csv 写出，字段内的逗号/引号/换行由其自动转义，避免破坏列结构。
+func ExportErrorLogsCSV(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	modelName := c.Query("model_name")
+	requestId := c.Query("request_id")
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	tokenId, _ := strconv.Atoi(c.Query("token_id"))
+	clientUserId := c.Query("client_user_id")
+	// uid 可能含 +，URL 解码后 + 会被还原成空格，这里还原回来
+	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
+	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
+	traceId := strings.TrimSpace(c.Query("trace_id"))
+	trajId := strings.TrimSpace(c.Query("traj_id"))
+
+	if startTimestamp == 0 || endTimestamp == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "请指定导出时间范围"})
+		return
+	}
+	if endTimestamp < startTimestamp {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "结束时间必须晚于开始时间"})
+		return
+	}
+	const maxRangeSeconds int64 = 24 * 3600
+	if endTimestamp-startTimestamp > maxRangeSeconds {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "导出时间范围不能超过 24 小时"})
+		return
+	}
+
+	logs, err := model.GetErrorLogsForExport(&dto.ErrorLogsRequest{
+		RequestId:    requestId,
+		ChannelId:    channel,
+		ModelName:    modelName,
+		StartTime:    startTimestamp,
+		EndTime:      endTimestamp,
+		TokenId:      tokenId,
+		ClientUserId: clientUserId,
+		MtSessionId:  mtSessionId,
+		TraceId:      traceId,
+		TrajId:       trajId,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	lc, _ := time.LoadLocation("Asia/Shanghai")
+	startStr := time.Unix(startTimestamp, 0).In(lc).Format("20060102-150405")
+	endStr := time.Unix(endTimestamp, 0).In(lc).Format("20060102-150405")
+	filename := fmt.Sprintf("error-log-%s-%s.csv", startStr, endStr)
+
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	// UTF-8 BOM 让 Excel 正确识别中文
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{
+		"ID", "CreatedAt", "UserID", "ChannelId", "ChannelName", "TokenId", "TokenName",
+		"ModelName", "StatusCode", "Code", "Type", "Message", "Param", "UseTimeMs",
+		"RequestId", "IP", "ClientUserId", "ClientScenairo", "Body", "Extra", "Header",
+	})
+	for _, log := range logs {
+		_ = w.Write([]string{
+			strconv.Itoa(log.Id),
+			time.Unix(log.CreatedAt, 0).In(lc).Format("2006-01-02 15:04:05"),
+			strconv.Itoa(log.UserId),
+			strconv.Itoa(log.ChannelId),
+			log.ChannelName,
+			strconv.Itoa(log.TokenId),
+			log.TokenName,
+			log.ModelName,
+			strconv.Itoa(log.StatusCode),
+			log.Code,
+			log.Type,
+			log.Message,
+			log.Param,
+			strconv.FormatInt(log.UseTimeMs, 10),
+			log.RequestId,
+			log.Ip,
+			log.ClientUserId,
+			log.ClientScenairo,
+			log.Body,
+			deref(log.Extra),
+			deref(log.Header),
+		})
+	}
+	w.Flush()
 }
 
 // resolveErrorLogSelfScope 返回当前登录用户的 id 及其可见 uid 集合。
