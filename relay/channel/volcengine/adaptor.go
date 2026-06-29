@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -133,113 +134,44 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	switch info.RelayMode {
-	case constant.RelayModeImagesGenerations:
-		return request, nil
-	// 根据官方文档,并没有发现豆包生图支持表单请求:https://www.volcengine.com/docs/82379/1824121
-	//case constant.RelayModeImagesEdits:
-	//
-	//	var requestBody bytes.Buffer
-	//	writer := multipart.NewWriter(&requestBody)
-	//
-	//	writer.WriteField("model", request.Model)
-	//
-	//	formData := c.Request.PostForm
-	//	for key, values := range formData {
-	//		if key == "model" {
-	//			continue
-	//		}
-	//		for _, value := range values {
-	//			writer.WriteField(key, value)
-	//		}
-	//	}
-	//
-	//	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
-	//		return nil, errors.New("failed to parse multipart form")
-	//	}
-	//
-	//	if c.Request.MultipartForm != nil && c.Request.MultipartForm.File != nil {
-	//		var imageFiles []*multipart.FileHeader
-	//		var exists bool
-	//
-	//		if imageFiles, exists = c.Request.MultipartForm.File["image"]; !exists || len(imageFiles) == 0 {
-	//			if imageFiles, exists = c.Request.MultipartForm.File["image[]"]; !exists || len(imageFiles) == 0 {
-	//				foundArrayImages := false
-	//				for fieldName, files := range c.Request.MultipartForm.File {
-	//					if strings.HasPrefix(fieldName, "image[") && len(files) > 0 {
-	//						foundArrayImages = true
-	//						for _, file := range files {
-	//							imageFiles = append(imageFiles, file)
-	//						}
-	//					}
-	//				}
-	//
-	//				if !foundArrayImages && (len(imageFiles) == 0) {
-	//					return nil, errors.New("image is required")
-	//				}
-	//			}
-	//		}
-	//
-	//		for i, fileHeader := range imageFiles {
-	//			file, err := fileHeader.Open()
-	//			if err != nil {
-	//				return nil, fmt.Errorf("failed to open image file %d: %w", i, err)
-	//			}
-	//			defer file.Close()
-	//
-	//			fieldName := "image"
-	//			if len(imageFiles) > 1 {
-	//				fieldName = "image[]"
-	//			}
-	//
-	//			mimeType := detectImageMimeType(fileHeader.Filename)
-	//
-	//			h := make(textproto.MIMEHeader)
-	//			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fieldName, fileHeader.Filename))
-	//			h.Set("Content-Type", mimeType)
-	//
-	//			part, err := writer.CreatePart(h)
-	//			if err != nil {
-	//				return nil, fmt.Errorf("create form part failed for image %d: %w", i, err)
-	//			}
-	//
-	//			if _, err := io.Copy(part, file); err != nil {
-	//				return nil, fmt.Errorf("copy file failed for image %d: %w", i, err)
-	//			}
-	//		}
-	//
-	//		if maskFiles, exists := c.Request.MultipartForm.File["mask"]; exists && len(maskFiles) > 0 {
-	//			maskFile, err := maskFiles[0].Open()
-	//			if err != nil {
-	//				return nil, errors.New("failed to open mask file")
-	//			}
-	//			defer maskFile.Close()
-	//
-	//			mimeType := detectImageMimeType(maskFiles[0].Filename)
-	//
-	//			h := make(textproto.MIMEHeader)
-	//			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="mask"; filename="%s"`, maskFiles[0].Filename))
-	//			h.Set("Content-Type", mimeType)
-	//
-	//			maskPart, err := writer.CreatePart(h)
-	//			if err != nil {
-	//				return nil, errors.New("create form file failed for mask")
-	//			}
-	//
-	//			if _, err := io.Copy(maskPart, maskFile); err != nil {
-	//				return nil, errors.New("copy mask file failed")
-	//			}
-	//		}
-	//	} else {
-	//		return nil, errors.New("no multipart form data found")
-	//	}
-	//
-	//	writer.Close()
-	//	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	//	return bytes.NewReader(requestBody.Bytes()), nil
-
+	// 豆包文生图/图生图均走 /api/v3/images/generations。
+	// 透传 image（单张 string 或多张 []string）以及 sequential_image_generation
+	// 等额外参数（落在 request.Extra），dto.MarshalJSON 默认不合并 Extra，这里手动合并。
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+		return mergeImageRequestExtra(request)
 	default:
 		return request, nil
 	}
+}
+
+// mergeImageRequestExtra 将 dto.ImageRequest 的已定义字段与 Extra（额外透传参数，
+// 如 sequential_image_generation / sequential_image_generation_options）平铺合并为单个 JSON map，
+// 供火山豆包 seedream 单图/组图、多图生图使用。
+// 火山原生仅识别 image 字段（单张 string 或多张 []string），这里把 OpenAI 风格的 images 归一化到 image。
+func mergeImageRequestExtra(request dto.ImageRequest) (any, error) {
+	base, err := common.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("volcengine: marshal image request failed: %w", err)
+	}
+	var merged map[string]json.RawMessage
+	if err = common.Unmarshal(base, &merged); err != nil {
+		return nil, fmt.Errorf("volcengine: unmarshal image request failed: %w", err)
+	}
+	// 归一化 images -> image：火山只认 image 字段
+	if len(request.Image) == 0 && len(request.Images) > 0 {
+		merged["image"] = request.Images
+	}
+	delete(merged, "images")
+	for k, v := range request.Extra {
+		if v == nil {
+			continue
+		}
+		// 已定义字段优先，避免 Extra 覆盖
+		if _, exists := merged[k]; !exists {
+			merged[k] = v
+		}
+	}
+	return merged, nil
 }
 
 func detectImageMimeType(filename string) string {
