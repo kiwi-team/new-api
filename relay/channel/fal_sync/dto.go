@@ -95,3 +95,33 @@ type NanoBanana2Request struct {
 // GenericFALRequest represents a generic FAL request for unknown models
 // Uses map for maximum flexibility
 type GenericFALRequest map[string]any
+
+// GptImage2Request represents the request for openai/gpt-image-2/edit model.
+// API endpoint: openai/gpt-image-2/edit
+// Docs: https://fal.ai/models/openai/gpt-image-2/edit
+type GptImage2Request struct {
+	Prompt       string   `json:"prompt"`
+	ImageURLs    []string `json:"image_urls"`
+	ImageSize    string   `json:"image_size,omitempty"` // size string or "auto"
+	Quality      string   `json:"quality,omitempty"`    // auto | low | medium | high
+	NumImages    int      `json:"num_images,omitempty"` // 1-4
+	OutputFormat string   `json:"output_format,omitempty"`
+	SyncMode     bool     `json:"sync_mode,omitempty"`
+	MaskURL      string   `json:"mask_url,omitempty"`
+}
+
+// ============================================================================
+// FAL CDN Upload Types
+// ============================================================================
+
+// FALCDNTokenResponse is returned by the fal CDN token endpoint.
+type FALCDNTokenResponse struct {
+	Token     string `json:"token"`
+	TokenType string `json:"token_type"`
+	BaseURL   string `json:"base_url"`
+}
+
+// FALCDNUploadResponse is returned by the fal CDN simple upload endpoint.
+type FALCDNUploadResponse struct {
+	AccessURL string `json:"access_url"`
+}

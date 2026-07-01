@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -264,7 +266,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError == nil {
 			// 请求成功，处理之前收集的错误（不包含request body，因为消耗日志会记录）
 			for _, pe := range pendingErrors {
-				processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, false)
+				processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, false, false)
 			}
 			return
 		}
@@ -288,7 +290,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// 只有最后一个错误记录request body
 	for i, pe := range pendingErrors {
 		includeBody := (i == len(pendingErrors)-1) // 只有最后一个错误包含body
-		processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, includeBody)
+		processChannelError(c, pe.channelError, pe.apiError, pe.useTimeMs, includeBody, true)
 	}
 
 	// Check if no valid channel was found when using tokenChannelIds
@@ -481,7 +483,7 @@ func sendFeishuQianfeiNotify(channelError types.ChannelError, err *types.NewAPIE
 	})
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool, notifySlow bool) {
 	openaiError := err.ToOpenAIError()
 	requestStorage, _ := common.GetBodyStorage(c)
 	var requestBytes []byte
@@ -573,7 +575,69 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, false, userGroup, other)
 	}
 
+	// 慢错误预警：某渠道耗时超过阈值才报错，飞书提醒（仅在最终失败路径触发，重试后整体成功的不报）
+	if notifySlow {
+		notifyFeishuSlowError(channelError, err, useTimeMs, requestId)
+	}
 }
+
+var slowErrorSendMap = map[int]int64{}
+var slowErrorSendMapMutex sync.Mutex
+
+// 默认慢错误阈值（秒），当 options 表未配置 slow_error_threshold_seconds 时使用
+const defaultSlowErrorThresholdSeconds = 180
+
+// notifyFeishuSlowError 当单个渠道本次尝试耗时超过阈值后才报错时，发送飞书提醒。
+// 配置读取自 options 表：
+//   - slow_error_feishu_webhook_url：飞书机器人地址（为空则功能关闭）
+//   - slow_error_feishu_secret：可选签名密钥
+//   - slow_error_threshold_seconds：阈值（秒），默认 180
+func notifyFeishuSlowError(channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, requestId string) {
+	webhookUrl := common.OptionMap["slow_error_feishu_webhook_url"]
+	if webhookUrl == "" {
+		return
+	}
+
+	thresholdSeconds := defaultSlowErrorThresholdSeconds
+	if v := strings.TrimSpace(common.OptionMap["slow_error_threshold_seconds"]); v != "" {
+		if parsed, parseErr := strconv.Atoi(v); parseErr == nil && parsed > 0 {
+			thresholdSeconds = parsed
+		}
+	}
+	if useTimeMs < int64(thresholdSeconds)*1000 {
+		return
+	}
+
+	// 防刷屏：同一渠道推送一次后休息 10 分钟
+	now := time.Now().Unix()
+	slowErrorSendMapMutex.Lock()
+	if prev, exist := slowErrorSendMap[channelError.ChannelId]; exist && now-prev < 600 {
+		slowErrorSendMapMutex.Unlock()
+		return
+	}
+	slowErrorSendMap[channelError.ChannelId] = now
+	slowErrorSendMapMutex.Unlock()
+
+	secret := common.OptionMap["slow_error_feishu_secret"]
+	envName := common.OptionMap["ErrorWarningEnvName"]
+	useTimeSeconds := useTimeMs / 1000
+	content := fmt.Sprintf("【慢错误预警】渠道 %s（%d）耗时 %d 秒后才报错，超过阈值 %d 秒\nStatusCode：%d\nRequestId：%s\n错误信息：%s",
+		channelError.ChannelName, channelError.ChannelId, useTimeSeconds, thresholdSeconds, err.StatusCode, requestId, err.Error())
+	if envName != "" {
+		content = envName + "\n" + content
+	}
+
+	gopool.Go(func() {
+		notifyErr := service.SendFeishuNotify(webhookUrl, secret, dto.FeishuNotify{
+			MsgType: "text",
+			Content: dto.FeishuContent{Text: content},
+		})
+		if notifyErr != nil {
+			common.SysError("failed to send slow error feishu notify: " + notifyErr.Error())
+		}
+	})
+}
+
 
 func RelayMidjourney(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatMjProxy, nil, nil)

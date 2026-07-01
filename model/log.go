@@ -70,6 +70,21 @@ func normalizeJsonbString(s string) *string {
 	return &s
 }
 
+// sanitizeLogBody 规整 Request/Response 等直接透传上游原始字节的大字段：
+//   1. 去除首尾空白；
+//   2. 替换非法 UTF-8 字节序列、剔除 NUL 字节（复用 sanitizeForPGText）。
+//
+// 流式响应由 StreamResponseRecorder 原样抄录上游字节（不做任何编码校验），
+// 一旦流在多字节字符（如汉字）中途被切断（客户端取消、上游断连、超时），
+// 录制到的字符串就会残留孤立的续字节序列；NUL 字节虽是合法 UTF-8 但 PG 的
+// TEXT 列同样拒绝。二者都会触发 PostgreSQL 22021、让整条日志写入失败
+//（MySQL/SQLite 宽容处理，故该问题仅在 PG 环境暴露）。这里统一兜底，
+// 保证三库都能落库、且不因个别非法字节丢弃整条日志。
+// 字符串本就合法时 strings.ToValidUTF8 原样返回、零分配，正常日志无额外开销。
+func sanitizeLogBody(s string) string {
+	return sanitizeForPGText(strings.TrimSpace(s))
+}
+
 // don't use iota, avoid change log type value
 const (
 	LogTypeUnknown = 0
@@ -245,8 +260,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Group:            params.Group,
 		Ip:               clientIp,
 		Other:            otherStr,
-		Request:          strings.TrimSpace(params.Request),
-		Response:         strings.TrimSpace(params.Response),
+		Request:          sanitizeLogBody(params.Request),
+		Response:         sanitizeLogBody(params.Response),
 		ClientUserId:     params.ClientUserId,
 		ClientScenairo:   params.ClientScenairo,
 		SessionId:        params.SessionId,

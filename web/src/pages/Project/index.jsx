@@ -791,6 +791,7 @@ const ProjectPage = () => {
         footer={null}
         width={1000}
         centered
+        bodyStyle={{ maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' }}
       >
         {currentProject && (
           <>
@@ -816,6 +817,7 @@ const ProjectPage = () => {
               rowKey="id"
               size="small"
               pagination={false}
+              scroll={{ y: 'calc(100vh - 360px)' }}
             />
           </>
         )}

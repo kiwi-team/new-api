@@ -91,4 +91,12 @@ const (
 	ContextKeyRequestBodyReadTime ContextKey = "request_body_read_time_ms"
 	// ContextKeyRequestArrivalTime stores the time when the request first arrived (before body is read)
 	ContextKeyRequestArrivalTime ContextKey = "request_arrival_time"
+
+	// ContextKeyFalNanoBananaResolution stores the requested nano-banana-2 output
+	// resolution (e.g. "1K"/"2K"/"4K"), used to reverse-engineer token usage from
+	// fal's per-image price at DoResponse time.
+	ContextKeyFalNanoBananaResolution ContextKey = "fal_nano_banana_resolution"
+	// ContextKeyFalNanoBananaWebSearch records whether fal's web-search add-on was
+	// requested for a nano-banana-2 call (adds a one-time fee).
+	ContextKeyFalNanoBananaWebSearch ContextKey = "fal_nano_banana_web_search"
 )

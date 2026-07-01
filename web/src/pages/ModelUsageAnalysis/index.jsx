@@ -29,11 +29,12 @@ import {
 import {
   Database,
   DollarSign,
+  Download,
   RefreshCw,
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
-import { API, showError } from '../../helpers';
+import { API, showError, showWarning } from '../../helpers';
 import './style.css';
 
 const { Text, Title } = Typography;
@@ -85,6 +86,57 @@ function buildUsageSummary(rows) {
     },
   );
 }
+
+function csvCell(value) {
+  const str = value == null ? '' : String(value);
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function fileStamp(date) {
+  return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(
+    date.getDate(),
+  )}${pad2(date.getHours())}`;
+}
+
+const EXPORT_COLUMNS = [
+  { header: '日期', get: (row) => row.date },
+  { header: 'TokenName', get: (row) => row.token_name },
+  { header: 'Key ID', get: (row) => row.token_id },
+  { header: '模型', get: (row) => row.model_name },
+  { header: '总请求', get: (row) => row.total_requests || 0 },
+  { header: '缓存写请求', get: (row) => row.cache_write_requests || 0 },
+  { header: '缓存写5m请求', get: (row) => row.cache_write_5m_requests || 0 },
+  { header: '缓存写1h请求', get: (row) => row.cache_write_1h_requests || 0 },
+  {
+    header: '写占比(%)',
+    get: (row) =>
+      row.total_requests
+        ? ((row.cache_write_requests / row.total_requests) * 100).toFixed(2)
+        : '0.00',
+  },
+  { header: '缓存读请求', get: (row) => row.cache_read_requests || 0 },
+  {
+    header: '读占比(%)',
+    get: (row) =>
+      row.total_requests
+        ? ((row.cache_read_requests / row.total_requests) * 100).toFixed(2)
+        : '0.00',
+  },
+  { header: '缓存写tokens', get: (row) => row.cache_write_tokens || 0 },
+  { header: '缓存读tokens', get: (row) => row.cache_read_tokens || 0 },
+  { header: '输入tokens', get: (row) => row.input_tokens || 0 },
+  { header: '输出tokens', get: (row) => row.output_tokens || 0 },
+  { header: '平均首字耗时(ms)', get: (row) => row.avg_first_token_ms || 0 },
+  { header: '平均请求耗时(ms)', get: (row) => row.avg_use_time_ms || 0 },
+  { header: '消耗(USD)', get: (row) => Number(row.cost_usd || 0).toFixed(6) },
+];
 
 function SummaryCard({ label, value, hint, icon, tone = 'default' }) {
   return (
@@ -166,6 +218,28 @@ export default function ModelUsageAnalysis() {
     () => new Set(rows.map((item) => item.token_name)).size,
     [rows],
   );
+
+  const handleExport = () => {
+    if (!rows.length) {
+      showWarning('当前没有可导出的数据');
+      return;
+    }
+    const lines = [EXPORT_COLUMNS.map((col) => csvCell(col.header)).join(',')];
+    rows.forEach((row) => {
+      lines.push(EXPORT_COLUMNS.map((col) => csvCell(col.get(row))).join(','));
+    });
+    const csv = '﻿' + lines.join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `用量分析-${fileStamp(dateRange[0])}-${fileStamp(dateRange[1])}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
   const writeRatio = summary.totalRequests
     ? (summary.cacheWriteRequests / summary.totalRequests) * 100
     : 0;
@@ -316,6 +390,8 @@ export default function ModelUsageAnalysis() {
             <span>时间范围</span>
             <DatePicker
               type='dateTimeRange'
+              format='yyyy-MM-dd HH:00'
+              timePickerOpts={{ format: 'HH' }}
               value={dateRange}
               onChange={setDateRange}
               style={{ width: '100%' }}
@@ -341,6 +417,15 @@ export default function ModelUsageAnalysis() {
             onClick={fetchData}
           >
             刷新
+          </Button>
+          <Button
+            icon={<Download size={15} />}
+            theme='light'
+            type='tertiary'
+            disabled={loading || !rows.length}
+            onClick={handleExport}
+          >
+            导出
           </Button>
         </div>
       </Card>

@@ -392,7 +392,7 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		ModelName:      modelName,
 		Code:           fmt.Sprintf("%v", err.Code),
 		StatusCode:     err.StatusCode,
-		Body:           bodyToSave,
+		Body:           sanitizeLogBody(bodyToSave),
 		Ip:             ip,
 		UseTimeMs:      useTimeMs,
 		TokenId:        tokenId,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -45,6 +46,7 @@ func (a *Adaptor) GetModelList() []string {
 //   - flux-2-pro -> fal-ai/flux-2-pro/edit
 //   - hunyuan-image-v3 -> fal-ai/hunyuan-image/v3/instruct/edit
 //   - qwen-image-max -> fal-ai/qwen-image-edit-2511
+//   - gpt-image-2 -> openai/gpt-image-2/edit
 //   - gemini-3.1-flash-image-preview (nano-banana-2):
 //     no input images -> fal-ai/nano-banana-2
 //     with input images -> fal-ai/nano-banana-2/edit
@@ -76,6 +78,8 @@ func submitEndpoint(modelName string, info *relaycommon.RelayInfo) string {
 			return "fal-ai/nano-banana-2/edit"
 		}
 		return "fal-ai/nano-banana-2"
+	case isGptImage2Model(modelName):
+		return "openai/gpt-image-2/edit"
 	case strings.Contains(modelName, "hunyuan"):
 		return "fal-ai/hunyuan-image/v3/instruct/edit"
 	case strings.Contains(modelName, "qwen"):
@@ -190,25 +194,60 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		}
 	}
 
-	// Extract image URLs from request (supports both image and images fields)
+	// Extract image URLs from request (supports both image and images fields).
+	// For JSON requests these are passed through directly to fal (fal downloads
+	// the public URLs itself).
 	imageURLs, err := request.GetImageURLs()
 	if err != nil {
 		return nil, fmt.Errorf("fal_sync adaptor: failed to get image URLs: %w", err)
 	}
 
+	// For multipart/form-data requests (OpenAI /v1/images/edits with file
+	// uploads), upload each file to the fal CDN and append the resulting URLs.
+	formURLs, err := resolveFormImageURLs(c, info)
+	if err != nil {
+		return nil, err
+	}
+	imageURLs = append(imageURLs, formURLs...)
+
 	// Extract size field
 	imageSize := strings.TrimSpace(request.Size)
 
 	// Build model-specific request using typed structs
-	return buildModelRequest(modelName, prompt, imageURLs, imageSize, extraFields, extraMap)
+	converted, err := buildModelRequest(modelName, prompt, imageURLs, imageSize, request.Quality, extraFields, extraMap)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stash nano-banana-2 resolution / web-search on the context so DoResponse
+	// can reverse-engineer token usage from fal's per-image price.
+	if nb, ok := converted.(*NanoBanana2Request); ok {
+		stashNanoBananaBilling(c, nb)
+	}
+
+	return converted, nil
+}
+
+// stashNanoBananaBilling records the resolution and web-search flag of a
+// nano-banana-2 request on the gin context for later usage computation.
+func stashNanoBananaBilling(c *gin.Context, req *NanoBanana2Request) {
+	if c == nil || req == nil {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyFalNanoBananaResolution, req.Resolution)
+	if req.EnableWebSearch != nil {
+		common.SetContextKey(c, constant.ContextKeyFalNanoBananaWebSearch, *req.EnableWebSearch)
+	}
 }
 
 // buildModelRequest creates the appropriate typed request struct based on model name
-func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize string, extraFields, extraMap map[string]any) (any, error) {
+func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize, quality string, extraFields, extraMap map[string]any) (any, error) {
 	// Determine model type and build appropriate request
 	switch {
 	case isNanoBanana2Model(modelName):
 		return buildNanoBanana2Request(prompt, imageURLs, imageSize, extraFields, extraMap), nil
+	case isGptImage2Model(modelName):
+		return buildGptImage2Request(prompt, imageURLs, imageSize, quality, extraFields, extraMap), nil
 	case isFlux2ProModel(modelName):
 		return buildFlux2ProRequest(prompt, imageURLs, imageSize, extraFields, extraMap), nil
 	case isHunyuanImageV3Model(modelName):
@@ -328,6 +367,73 @@ func applyNanoBanana2ExtraFields(req *NanoBanana2Request, extra map[string]any) 
 // isFlux2ProModel checks if the model is flux-2-pro
 func isFlux2ProModel(model string) bool {
 	return strings.Contains(model, "flux")
+}
+
+// isGptImage2Model recognises the openai/gpt-image-2 edit model.
+func isGptImage2Model(model string) bool {
+	return strings.Contains(strings.ToLower(model), "gpt-image-2")
+}
+
+// buildGptImage2Request builds a GptImage2Request for the openai/gpt-image-2/edit
+// endpoint. The OpenAI image-edits `size` and `quality` fields map onto fal's
+// `image_size` and `quality`. Extra fields (mask_url, num_images, output_format,
+// sync_mode) can be supplied via extra_fields/extra.
+func buildGptImage2Request(prompt string, imageURLs []string, imageSize, quality string, extraFields, extraMap map[string]any) *GptImage2Request {
+	req := &GptImage2Request{
+		Prompt:    prompt,
+		ImageURLs: imageURLs,
+	}
+
+	if imageSize != "" {
+		req.ImageSize = imageSize
+	}
+	if q := strings.TrimSpace(quality); q != "" && !strings.EqualFold(q, "standard") {
+		// "standard" is an OpenAI default that gpt-image-2 doesn't accept; skip it.
+		req.Quality = q
+	}
+
+	applyGptImage2ExtraFields(req, extraFields)
+	applyGptImage2ExtraFields(req, extraMap)
+
+	return req
+}
+
+// applyGptImage2ExtraFields applies extra fields to GptImage2Request.
+func applyGptImage2ExtraFields(req *GptImage2Request, extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	for key, val := range extra {
+		if strings.HasPrefix(key, "_") {
+			continue // Skip internal fields
+		}
+		switch key {
+		case "image_size":
+			if v, ok := val.(string); ok {
+				req.ImageSize = v
+			}
+		case "quality":
+			if v, ok := val.(string); ok {
+				req.Quality = v
+			}
+		case "num_images":
+			if v, ok := toInt(val); ok {
+				req.NumImages = v
+			}
+		case "output_format":
+			if v, ok := val.(string); ok {
+				req.OutputFormat = v
+			}
+		case "sync_mode":
+			if v, ok := val.(bool); ok {
+				req.SyncMode = v
+			}
+		case "mask_url":
+			if v, ok := val.(string); ok {
+				req.MaskURL = v
+			}
+		}
+	}
 }
 
 // isHunyuanImageV3Model checks if the model is hunyuan-image-v3
@@ -853,6 +959,8 @@ func getModelEndpoint(model string) string {
 	switch {
 	case isNanoBanana2Model(model):
 		return "fal-ai/nano-banana-2"
+	case isGptImage2Model(model):
+		return "openai/gpt-image-2"
 	case strings.Contains(model, "hunyuan"):
 		return "fal-ai/hunyuan-image"
 	case strings.Contains(model, "qwen"):
@@ -968,12 +1076,20 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return writeGeminiResponse(c, info, &falResult, imageURLs)
 	}
 
-	// Check if user requested b64_json response format - Requirement 4.3
+	// Check if user requested b64_json response format - Requirement 4.3.
+	// gpt-image-2 returns base64 by default (matching OpenAI's gpt-image
+	// behaviour, which always returns b64_json), unless the caller explicitly
+	// asks for a url.
 	var wantsBase64 bool
 	if info != nil {
+		responseFormat := ""
 		if req, ok := info.Request.(*dto.ImageRequest); ok {
-			wantsBase64 = strings.EqualFold(req.ResponseFormat, "b64_json")
+			responseFormat = strings.TrimSpace(req.ResponseFormat)
 		}
+		if responseFormat == "" && isGptImage2Model(info.UpstreamModelName) {
+			responseFormat = "b64_json"
+		}
+		wantsBase64 = strings.EqualFold(responseFormat, "b64_json")
 	}
 
 	// Build OpenAI ImageResponse - Requirements 4.1, 4.4
@@ -1015,6 +1131,17 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 	}
 
+	// For token-billed models (gpt-image-2, nano-banana-2) reverse-engineer an
+	// OpenAI-style token usage from fal's per-image/per-call price so that this
+	// channel can be billed by token like the other (OpenAI-compatible) channels.
+	// We attach it both to the response body (`usage`) and to the billing Usage
+	// returned below.
+	var billing *dto.Usage
+	if imgUsage := computeFalUsage(c, info, len(imageResponse.Data)); imgUsage != nil {
+		imageResponse.Usage = imgUsage
+		billing = imageUsageToBilling(imgUsage)
+	}
+
 	// Write response to client
 	responseBytes, marshalErr := common.Marshal(imageResponse)
 	if marshalErr != nil {
@@ -1025,12 +1152,83 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = c.Writer.Write(responseBytes)
 
+	// gpt-image-2 is billed by token (see above); other models keep the legacy
+	// per-call proxy usage.
+	if billing != nil {
+		return billing, nil
+	}
+
 	// Return usage for billing. PromptTokens must be > 0 so that
 	// postConsumeQuota's `totalTokens == 0` short-circuit doesn't zero out
 	// per-call (按次) billing. The OpenAI image handler also patches this
 	// before postConsumeQuota, but we set it here so the gemini-format path
 	// (which has no such patch) is also billed correctly.
 	return billingUsage(len(imageResponse.Data)), nil
+}
+
+// computeFalUsage returns a reverse-engineered OpenAI-style images usage for the
+// token-billed fal models (gpt-image-2, nano-banana-2), or nil for models that
+// keep the legacy per-call proxy usage. numOutputImages is the number of images
+// fal actually generated.
+func computeFalUsage(c *gin.Context, info *relaycommon.RelayInfo, numOutputImages int) *dto.ImageUsage {
+	if info == nil {
+		return nil
+	}
+	switch {
+	case isGptImage2Model(info.UpstreamModelName):
+		return computeGptImage2Usage(gptImage2RequestedSize(info), gptImage2InputImageCount(info), numOutputImages)
+	case isNanoBanana2Model(info.UpstreamModelName):
+		resolution := common.GetContextKeyString(c, constant.ContextKeyFalNanoBananaResolution)
+		webSearch := common.GetContextKeyBool(c, constant.ContextKeyFalNanoBananaWebSearch)
+		return computeNanoBananaUsage(resolution, webSearch, numOutputImages)
+	}
+	return nil
+}
+
+// imageUsageToBilling maps a reverse-engineered OpenAI images usage onto the
+// internal dto.Usage so that postConsumeQuota's token-based pricing
+// (input image tokens * imageRatio + output tokens * completionRatio) is applied.
+func imageUsageToBilling(u *dto.ImageUsage) *dto.Usage {
+	if u == nil {
+		return nil
+	}
+	usage := &dto.Usage{
+		PromptTokens:     u.InputTokens,
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+	if u.InputTokensDetails != nil {
+		usage.PromptTokensDetails.ImageTokens = u.InputTokensDetails.ImageTokens
+		usage.PromptTokensDetails.TextTokens = u.InputTokensDetails.TextTokens
+	}
+	return usage
+}
+
+// gptImage2RequestedSize extracts the requested output size from the original
+// image request (empty when unavailable; the pricing code falls back to
+// 1024x1024).
+func gptImage2RequestedSize(info *relaycommon.RelayInfo) string {
+	if info == nil || info.Request == nil {
+		return ""
+	}
+	if req, ok := info.Request.(*dto.ImageRequest); ok {
+		return strings.TrimSpace(req.Size)
+	}
+	return ""
+}
+
+// gptImage2InputImageCount returns how many reference images were supplied in
+// the original request (defaults to 1 for the edit endpoint).
+func gptImage2InputImageCount(info *relaycommon.RelayInfo) int {
+	if info == nil || info.Request == nil {
+		return 1
+	}
+	if req, ok := info.Request.(*dto.ImageRequest); ok {
+		if urls, err := req.GetImageURLs(); err == nil && len(urls) > 0 {
+			return len(urls)
+		}
+	}
+	return 1
 }
 
 // billingUsage returns a non-zero Usage so that per-call pricing is honoured
@@ -1095,6 +1293,13 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 		},
 	}
 
+	// Reverse-engineer token usage (nano-banana-2 is billed by token) so both the
+	// client-facing usageMetadata and the internal billing are populated.
+	imgUsage := computeFalUsage(c, info, imageCount)
+	if imgUsage != nil {
+		geminiResp.UsageMetadata = imageUsageToGeminiMetadata(imgUsage)
+	}
+
 	respBytes, marshalErr := common.Marshal(geminiResp)
 	if marshalErr != nil {
 		return nil, types.NewError(fmt.Errorf("fal_sync adaptor: encode gemini response failed: %w", marshalErr), types.ErrorCodeBadResponseBody)
@@ -1104,7 +1309,29 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = c.Writer.Write(respBytes)
 
+	// Bill nano-banana-2 by token (reverse-engineered from fal's per-image
+	// price); fall back to the legacy per-call proxy usage for other models.
+	if billing := imageUsageToBilling(imgUsage); billing != nil {
+		return billing, nil
+	}
 	return billingUsage(imageCount), nil
+}
+
+// imageUsageToGeminiMetadata maps a reverse-engineered OpenAI images usage onto
+// the Gemini usageMetadata shape returned by the native generateContent
+// endpoint.
+func imageUsageToGeminiMetadata(u *dto.ImageUsage) dto.GeminiUsageMetadata {
+	meta := dto.GeminiUsageMetadata{
+		PromptTokenCount:     u.InputTokens,
+		CandidatesTokenCount: u.OutputTokens,
+		TotalTokenCount:      u.TotalTokens,
+	}
+	if u.InputTokensDetails != nil && u.InputTokensDetails.ImageTokens > 0 {
+		meta.PromptTokensDetails = []dto.GeminiPromptTokensDetails{
+			{Modality: "IMAGE", TokenCount: u.InputTokensDetails.ImageTokens},
+		}
+	}
+	return meta
 }
 
 // ConvertOpenAIRequest is not implemented for FAL Sync channel
@@ -1167,6 +1394,8 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	applyGeminiGenerationConfig(req, request)
+
+	stashNanoBananaBilling(c, req)
 
 	return req, nil
 }

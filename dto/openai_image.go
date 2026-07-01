@@ -201,9 +201,26 @@ type ImageResponse struct {
 	Data     []ImageData     `json:"data"`
 	Created  int64           `json:"created"`
 	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Usage    *ImageUsage     `json:"usage,omitempty"`
 }
 type ImageData struct {
 	Url           string `json:"url"`
 	B64Json       string `json:"b64_json"`
 	RevisedPrompt string `json:"revised_prompt"`
+}
+
+// ImageUsage mirrors the OpenAI images (generate/edit) `usage` object for
+// gpt-image models. See
+// https://developers.openai.com/api/reference/resources/images/methods/edit
+type ImageUsage struct {
+	InputTokens        int                     `json:"input_tokens"`
+	OutputTokens       int                     `json:"output_tokens"`
+	TotalTokens        int                     `json:"total_tokens"`
+	InputTokensDetails *ImageInputTokenDetails `json:"input_tokens_details,omitempty"`
+}
+
+// ImageInputTokenDetails is the breakdown of input tokens by modality.
+type ImageInputTokenDetails struct {
+	ImageTokens int `json:"image_tokens"`
+	TextTokens  int `json:"text_tokens"`
 }
