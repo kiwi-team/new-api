@@ -659,6 +659,11 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	if token.ModelLimitsEnabled {
 		c.Set("token_model_limit_enabled", true)
 		c.Set("token_model_limit", token.GetModelLimitsMap())
+	} else if us, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting); ok &&
+		us.ModelLimitsEnabled && len(us.ModelLimits) > 0 {
+		// 令牌未启用模型限制时，回退到用户级模型限制
+		c.Set("token_model_limit_enabled", true)
+		c.Set("token_model_limit", us.GetModelLimitsMap())
 	} else {
 		c.Set("token_model_limit_enabled", false)
 	}

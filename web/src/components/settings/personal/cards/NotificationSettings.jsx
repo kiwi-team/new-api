@@ -33,7 +33,13 @@ import {
   Col,
 } from '@douyinfe/semi-ui';
 import { IconMail, IconKey, IconBell, IconLink } from '@douyinfe/semi-icons';
-import { ShieldCheck, Bell, DollarSign, Settings } from 'lucide-react';
+import {
+  ShieldCheck,
+  Bell,
+  DollarSign,
+  Settings,
+  ListFilter,
+} from 'lucide-react';
 import {
   renderQuotaWithPrompt,
   API,
@@ -92,6 +98,8 @@ const NotificationSettings = ({
     },
   });
   const [adminConfig, setAdminConfig] = useState(null);
+  // 用户可请求的模型列表（用于模型限制下拉）
+  const [modelOptions, setModelOptions] = useState([]);
 
   // 使用后端权限验证替代前端角色判断
   const {
@@ -220,6 +228,24 @@ const NotificationSettings = ({
       formApiRef.current.setValues(notificationSettings);
     }
   }, [notificationSettings]);
+
+  // 加载用户可请求的模型列表
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const res = await API.get('/api/user/models');
+        const { success, data } = res.data;
+        if (success && Array.isArray(data)) {
+          setModelOptions(
+            data.map((model) => ({ label: model, value: model })),
+          );
+        }
+      } catch (error) {
+        console.error('加载模型列表失败:', error);
+      }
+    };
+    loadModels();
+  }, []);
 
   // 处理表单字段变化
   const handleFormChange = (field, value) => {
@@ -781,6 +807,48 @@ const NotificationSettings = ({
                     '开启后，仅"消费"和"错误"日志将记录您的客户端IP地址',
                   )}
                 />
+              </div>
+            </TabPane>
+
+            {/* 模型限制 Tab */}
+            <TabPane
+              tab={
+                <div className='flex items-center'>
+                  <ListFilter size={16} className='mr-2' />
+                  {t('模型限制')}
+                </div>
+              }
+              itemKey='modelLimit'
+            >
+              <div className='py-4'>
+                <Form.Switch
+                  field='modelLimitsEnabled'
+                  label={t('启用模型限制')}
+                  checkedText={t('开')}
+                  uncheckedText={t('关')}
+                  onChange={(value) =>
+                    handleFormChange('modelLimitsEnabled', value)
+                  }
+                  extraText={t(
+                    '开启后，该账号下所有令牌仅能请求下方选择的模型；令牌单独设置了模型限制时，以令牌的限制为准',
+                  )}
+                />
+                {notificationSettings.modelLimitsEnabled && (
+                  <Form.Select
+                    field='modelLimits'
+                    label={t('允许请求的模型')}
+                    placeholder={t('请选择允许请求的模型，留空则不限制')}
+                    multiple
+                    filter
+                    searchPosition='dropdown'
+                    autoClearSearchValue={false}
+                    optionList={modelOptions}
+                    onChange={(value) => handleFormChange('modelLimits', value)}
+                    extraText={t('留空则不限制，允许请求所有模型')}
+                    showClear
+                    style={{ width: '100%' }}
+                  />
+                )}
               </div>
             </TabPane>
 
