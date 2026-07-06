@@ -20,12 +20,66 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useState, useMemo } from 'react';
 import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
 import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Switch, Descriptions, Card, Popconfirm, Select } from '@douyinfe/semi-ui';
+import { IconChevronDown, IconChevronRight } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 
 const { Title, Text } = Typography;
 
 const ProjectStatusEnabled = 1;
 const ProjectStatusPaused = 2;
+
+// Renders the "已分配" cell. Active plans are expanded by default; inactive
+// plans are collapsed and can be toggled open by clicking the plan header.
+const PlanAllocationsCell = ({ plans, formatDate, t }) => {
+  const visiblePlans = (plans || []).filter((p) => (p.allocations || []).length > 0);
+  const [expanded, setExpanded] = useState({});
+
+  if (visiblePlans.length === 0) return <Text type='tertiary'>-</Text>;
+
+  const toggle = (planId) => setExpanded((prev) => ({ ...prev, [planId]: !prev[planId] }));
+
+  return (
+    <div style={{ lineHeight: '1.6' }}>
+      {visiblePlans.map((plan, pi) => {
+        const allocs = plan.allocations || [];
+        // Active plans default to open; inactive collapsed. Local state overrides.
+        const isOpen = expanded[plan.plan_id] ?? !!plan.is_active;
+        return (
+          <div key={plan.plan_id} style={{
+            marginBottom: pi < visiblePlans.length - 1 ? 8 : 0,
+            paddingBottom: pi < visiblePlans.length - 1 ? 8 : 0,
+            borderBottom: pi < visiblePlans.length - 1 ? '1px dashed var(--semi-color-border)' : 'none',
+          }}>
+            <div
+              style={{ marginBottom: 2, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center' }}
+              onClick={() => toggle(plan.plan_id)}
+            >
+              {isOpen
+                ? <IconChevronDown size='small' style={{ marginRight: 2, color: 'var(--semi-color-text-2)' }} />
+                : <IconChevronRight size='small' style={{ marginRight: 2, color: 'var(--semi-color-text-2)' }} />}
+              <Tag size='small' color={plan.is_active ? 'green' : 'grey'} style={{ marginRight: 4 }}>
+                {plan.plan_name}
+              </Tag>
+              <Text type='tertiary' size='small'>
+                {formatDate(plan.start_date)}~{formatDate(plan.end_date)}
+              </Text>
+              {!isOpen && (
+                <Text type='tertiary' size='small' style={{ marginLeft: 4 }}>
+                  ({t('共 {{count}} 项', { count: allocs.length })})
+                </Text>
+              )}
+            </div>
+            {isOpen && allocs.map((a, i) => (
+              <div key={i} style={{ paddingLeft: 20 }}>
+                <Text type='success'>{a.client_user_id}: {a.allocated_quota}</Text>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const ProjectPage = () => {
   const { t } = useTranslation();
@@ -600,39 +654,9 @@ const ProjectPage = () => {
       title: t('已分配'),
       dataIndex: 'plans',
       width: 280,
-      render: (_, record) => {
-        const plans = record.plans || [];
-        if (plans.length === 0) return <Text type='tertiary'>-</Text>;
-        return (
-          <div style={{ lineHeight: '1.6' }}>
-            {plans.map((plan, pi) => {
-              const allocs = plan.allocations || [];
-              if (allocs.length === 0) return null;
-              return (
-                <div key={plan.plan_id} style={{
-                  marginBottom: pi < plans.length - 1 ? 8 : 0,
-                  paddingBottom: pi < plans.length - 1 ? 8 : 0,
-                  borderBottom: pi < plans.length - 1 ? '1px dashed var(--semi-color-border)' : 'none',
-                }}>
-                  <div style={{ marginBottom: 2 }}>
-                    <Tag size='small' color={plan.is_active ? 'green' : 'grey'} style={{ marginRight: 4 }}>
-                      {plan.plan_name}
-                    </Tag>
-                    <Text type='tertiary' size='small'>
-                      {formatDate(plan.start_date)}~{formatDate(plan.end_date)}
-                    </Text>
-                  </div>
-                  {allocs.map((a, i) => (
-                    <div key={i} style={{ paddingLeft: 8 }}>
-                      <Text type='success'>{a.client_user_id}: {a.allocated_quota}</Text>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        );
-      },
+      render: (_, record) => (
+        <PlanAllocationsCell plans={record.plans} formatDate={formatDate} t={t} />
+      ),
     },
     {
       title: t('剩余可分配'),
