@@ -1026,6 +1026,7 @@ export const getLogsColumns = ({
               other?.tiered_input_price || 0,
               other?.tiered_output_price || 0,
               other?.tiered_max_tokens || 0,
+              other?.settlement_ratio || 1,
             )
           : renderModelPriceSimple(
               other.model_ratio,
@@ -1051,6 +1052,7 @@ export const getLogsColumns = ({
               other?.tiered_input_price || 0,
               other?.tiered_output_price || 0,
               other?.tiered_max_tokens || 0,
+              other?.settlement_ratio || 1,
             );
         return (
             <Typography.Paragraph

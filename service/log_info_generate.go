@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// appendSettlementRatio 将结算价格管理配置的用户模型折扣作为独立的「结算倍率」写入日志 other。
+// 该折扣在计费时已折进 group ratio（保证 quota 折后正确），此处把它从 group_ratio 中还原出来：
+//   - other["settlement_ratio"] = 折扣系数
+//   - other["group_ratio"]      = 折前分组倍率（= 当前 group_ratio / 折扣）
+//
+// 这样日志明细可分别展示「分组倍率」与「结算倍率」两个因子，二者乘积仍等于实际计费倍率。
+func appendSettlementRatio(other map[string]interface{}, gi types.GroupRatioInfo) {
+	sr := gi.SettlementDiscount
+	if sr <= 0 || sr == 1 || other == nil {
+		return
+	}
+	other["settlement_ratio"] = sr
+	if gr, ok := other["group_ratio"].(float64); ok && sr != 0 {
+		// 还原折前分组倍率并做 6 位小数规整，避免浮点误差产生 0.6999999 之类的展示
+		other["group_ratio"] = math.Round(gr/sr*1e6) / 1e6
+	}
+}
 
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
 	if other == nil {
@@ -55,6 +74,8 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if relayInfo.PriceData.GroupRatioInfo.UserModelExtraDiscount > 0 {
 		other["user_model_extra_discount"] = relayInfo.PriceData.GroupRatioInfo.UserModelExtraDiscount
 	}
+	// 结算倍率：单独成列，不并入 group_ratio（group_ratio 回退为折前值）。
+	appendSettlementRatio(other, relayInfo.PriceData.GroupRatioInfo)
 	if relayInfo.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = relayInfo.UpstreamModelName
@@ -235,6 +256,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PerCa
 	if priceData.GroupRatioInfo.UserModelExtraDiscount > 0 {
 		other["user_model_extra_discount"] = priceData.GroupRatioInfo.UserModelExtraDiscount
 	}
+	appendSettlementRatio(other, priceData.GroupRatioInfo)
 	appendRequestPath(nil, relayInfo, other)
 	return other
 }

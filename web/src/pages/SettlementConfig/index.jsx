@@ -55,6 +55,7 @@ const SettlementConfigPage = () => {
   const initFormValues = {
     user_id: '',
     model_name: '',
+    discount: 1,
     input_price: 0,
     output_price: 0,
     request_price: 0,
@@ -144,6 +145,7 @@ const SettlementConfigPage = () => {
     setFormValues({
       user_id: record.user_id,
       model_name: record.model_name,
+      discount: record.discount != null ? record.discount : 1,
       input_price: record.input_price,
       output_price: record.output_price,
       request_price: record.request_price,
@@ -156,6 +158,7 @@ const SettlementConfigPage = () => {
     setFormValues({
       user_id: record.user_id,
       model_name: record.model_name + '_copy',
+      discount: record.discount != null ? record.discount : 1,
       input_price: record.input_price,
       output_price: record.output_price,
       request_price: record.request_price,
@@ -176,6 +179,15 @@ const SettlementConfigPage = () => {
       const payload = formApi ? formApi.getValues() : { ...formValues };
       // Ensure numeric types
       payload.user_id = parseInt(payload.user_id, 10);
+      payload.discount = parseFloat(payload.discount);
+      if (!payload.discount || Number.isNaN(payload.discount)) {
+        payload.discount = 1;
+      }
+      if (payload.discount < 0.01 || payload.discount > 10) {
+        showError(t('模型折扣必须在 0.01 到 10.00 之间'));
+        setSubmitLoading(false);
+        return;
+      }
       payload.input_price = parseFloat(payload.input_price) || 0;
       payload.output_price = parseFloat(payload.output_price) || 0;
       payload.request_price = parseFloat(payload.request_price) || 0;
@@ -261,6 +273,12 @@ const SettlementConfigPage = () => {
     { title: 'ID', dataIndex: 'id', width: 80 },
     { title: t('用户ID'), dataIndex: 'user_id', width: 100 },
     { title: t('模型名称'), dataIndex: 'model_name', width: 250 },
+    {
+      title: t('模型折扣'),
+      dataIndex: 'discount',
+      width: 120,
+      render: (v) => (v != null ? Number(v).toFixed(2) : '1.00'),
+    },
     {
       title: t('输入价格') + ' ($/1M tokens)',
       dataIndex: 'input_price',
@@ -391,6 +409,15 @@ const SettlementConfigPage = () => {
             rules={[{ required: true, message: t('模型名称') }]}
           />
           <Form.InputNumber
+            field='discount'
+            label={t('模型折扣')}
+            min={0.01}
+            max={10}
+            step={0.01}
+            placeholder='1'
+            extraText={t('如 0.8 表示按 8 折计费；范围 0.01 ~ 10.00，1 为不打折')}
+          />
+          <Form.InputNumber
             field='input_price'
             label={t('输入价格') + ' ($/1M tokens)'}
             min={0}
@@ -437,8 +464,8 @@ const SettlementConfigPage = () => {
           {`{
   "user_id": 1,
   "configs": [
-    {"model_name": "gpt-4o*", "input_price": 2.5, "output_price": 10.0, "request_price": 0},
-    {"model_name": "gpt-image-1", "input_price": 0, "output_price": 0, "request_price": 0.02}
+    {"model_name": "gpt-4o*", "discount": 0.8, "input_price": 2.5, "output_price": 10.0, "request_price": 0},
+    {"model_name": "gpt-image-1", "discount": 1, "input_price": 0, "output_price": 0, "request_price": 0.02}
   ]
 }`}
         </div>

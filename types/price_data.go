@@ -8,6 +8,7 @@ type GroupRatioInfo struct {
 	HasSpecialRatio        bool
 	UserGroupDiscount      float64 // 用户分组折扣
 	UserModelExtraDiscount float64 // 用户模型额外折扣
+	SettlementDiscount     float64 // 结算价格管理配置的用户模型折扣（0 表示未配置/不打折）
 	OriginalGroupRatio     float64 // 折扣前的分组倍率
 }
 

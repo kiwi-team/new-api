@@ -225,6 +225,7 @@ type batchImportConfigItem struct {
 	InputPrice   float64 `json:"input_price"`
 	OutputPrice  float64 `json:"output_price"`
 	RequestPrice float64 `json:"request_price"`
+	Discount     float64 `json:"discount"`
 }
 
 // BatchImportSettlementConfigs POST /api/settlement/config/batch
@@ -298,6 +299,7 @@ func BatchImportSettlementConfigs(c *gin.Context) {
 			InputPrice:   item.InputPrice,
 			OutputPrice:  item.OutputPrice,
 			RequestPrice: item.RequestPrice,
+			Discount:     item.Discount,
 		})
 	}
 	if err := model.BatchCreateSettlementConfigs(configs); err != nil {

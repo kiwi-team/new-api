@@ -131,9 +131,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
     // tableHiddle/isModuleVisible 是后端 menu 之外的额外细分(数据看板的功能开关等)
     const filteredItems = items.filter((item) => {
+      // 账单查询:普通用户(仅 bill_self)隐藏,仅系统 admin / 组织管理员(org 级 bill 授权)可见
+      if (item.itemKey === 'bill') {
+        if (isAdmin() || isRoot()) return true;
+        return !!userMenu?.pages?.includes('bill');
+      }
       if (!itemAllowedByMenu(item.itemKey)) return false;
       if (item.itemKey === 'quotaStatistics') return true;
-      if (item.itemKey === 'bill') return true;
       const configVisible = isModuleVisible('console', item.itemKey);
       return configVisible;
     });

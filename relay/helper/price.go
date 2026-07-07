@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -111,6 +112,19 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 				groupRatioInfo.UserModelExtraDiscount = discount
 				groupRatioInfo.GroupRatio *= discount
 			}
+		}
+	}
+
+	// apply settlement discount (结算价格管理里配置的用户模型折扣)
+	// 折进 group ratio 后，预扣费/实扣/日志 quota 全链路自动生效并落库。
+	{
+		modelName := ctx.GetString("original_model")
+		if modelName == "" {
+			modelName = relayInfo.OriginModelName
+		}
+		if discount := model.GetUserModelSettlementDiscount(relayInfo.UserId, modelName); discount > 0 && discount != 1 {
+			groupRatioInfo.SettlementDiscount = discount
+			groupRatioInfo.GroupRatio *= discount
 		}
 	}
 

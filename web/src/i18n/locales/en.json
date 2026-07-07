@@ -1,5 +1,14 @@
 {
   "translation": {
+    "限制有结算价格的模型": "Restrict models with settlement pricing",
+    "将已配置结算价格/折扣的模型增量加入下方限制列表（自动去重）": "Incrementally add models with configured settlement pricing/discount to the list below (auto-deduplicated)",
+    "暂无配置结算价格的模型": "No models with settlement pricing configured",
+    "已添加 {{count}} 个结算价格模型": "Added {{count}} settlement-priced model(s)",
+    "结算价格模型已全部在列表中": "All settlement-priced models are already in the list",
+    "结算倍率": "Settlement Ratio",
+    "模型折扣": "Model Discount",
+    "如 0.8 表示按 8 折计费；范围 0.01 ~ 10.00，1 为不打折": "e.g. 0.8 means billing at 80%; range 0.01 ~ 10.00, 1 means no discount",
+    "模型折扣必须在 0.01 到 10.00 之间": "Model discount must be between 0.01 and 10.00",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web search {{count}} time / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Web search {{count}} times / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Image generation call {{symbol}}{{price}} / 1 time * {{ratioType}} {{ratio}}",

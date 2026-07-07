@@ -100,6 +100,8 @@ const NotificationSettings = ({
   const [adminConfig, setAdminConfig] = useState(null);
   // 用户可请求的模型列表（用于模型限制下拉）
   const [modelOptions, setModelOptions] = useState([]);
+  // “限制有结算价格的模型”按钮 loading
+  const [addSettlementLoading, setAddSettlementLoading] = useState(false);
 
   // 使用后端权限验证替代前端角色判断
   const {
@@ -250,6 +252,54 @@ const NotificationSettings = ({
   // 处理表单字段变化
   const handleFormChange = (field, value) => {
     handleNotificationSettingChange(field, value);
+  };
+
+  // 一键把“配置了结算价格/折扣”的模型增量加入模型限制列表（去重、不覆盖）
+  const handleAddSettlementModels = async () => {
+    setAddSettlementLoading(true);
+    try {
+      const res = await API.get('/api/settlement/config/self');
+      const { success, data, message } = res.data;
+      if (!success) {
+        showError(message || t('加载失败'));
+        return;
+      }
+      const settlementModels = Array.from(
+        new Set((data || []).map((c) => c.model_name).filter(Boolean)),
+      );
+      if (settlementModels.length === 0) {
+        showError(t('暂无配置结算价格的模型'));
+        return;
+      }
+      // 增量合并 + 去重
+      const current = Array.isArray(notificationSettings.modelLimits)
+        ? notificationSettings.modelLimits
+        : [];
+      const merged = Array.from(new Set([...current, ...settlementModels]));
+      const addedCount = merged.length - current.length;
+      // 把不在下拉选项中的结算模型补进选项，保证正确显示为标签
+      setModelOptions((prev) => {
+        const existing = new Set(prev.map((o) => o.value));
+        const additions = settlementModels
+          .filter((m) => !existing.has(m))
+          .map((m) => ({ label: m, value: m }));
+        return additions.length ? [...prev, ...additions] : prev;
+      });
+      handleFormChange('modelLimits', merged);
+      // 未开启模型限制时自动开启，确保新增模型可见并生效
+      if (!notificationSettings.modelLimitsEnabled) {
+        handleFormChange('modelLimitsEnabled', true);
+      }
+      if (addedCount > 0) {
+        showSuccess(t('已添加 {{count}} 个结算价格模型', { count: addedCount }));
+      } else {
+        showSuccess(t('结算价格模型已全部在列表中'));
+      }
+    } catch (e) {
+      showError(t('加载失败'));
+    } finally {
+      setAddSettlementLoading(false);
+    }
   };
 
   // 检查功能是否被管理员允许
@@ -833,6 +883,28 @@ const NotificationSettings = ({
                     '开启后，该账号下所有令牌仅能请求下方选择的模型；令牌单独设置了模型限制时，以令牌的限制为准',
                   )}
                 />
+                <div className='mt-3'>
+                  <Button
+                    theme='light'
+                    type='primary'
+                    loading={addSettlementLoading}
+                    onClick={handleAddSettlementModels}
+                  >
+                    {t('限制有结算价格的模型')}
+                  </Button>
+                  <Typography.Text
+                    type='secondary'
+                    size='small'
+                    style={{
+                      display: 'block',
+                      marginTop: 4,
+                      fontSize: '12px',
+                      color: 'var(--semi-color-text-2)',
+                    }}
+                  >
+                    {t('将已配置结算价格/折扣的模型增量加入下方限制列表（自动去重）')}
+                  </Typography.Text>
+                </div>
                 {notificationSettings.modelLimitsEnabled && (
                   <Form.Select
                     field='modelLimits'
