@@ -48,6 +48,7 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     midjourney: true,
     task: true,
     modelUsageAnalysis: true,
+    bill: false,
   },
   personal: {
     enabled: true,
@@ -224,6 +225,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'modelUsageAnalysis',
           title: t('用量分析'),
           description: t('成本与Token用量分析'),
+        },
+        {
+          key: 'bill',
+          title: t('账单查询'),
+          description: t('普通用户默认隐藏，开启后对普通用户展示'),
         },
       ],
     },

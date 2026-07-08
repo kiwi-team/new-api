@@ -131,10 +131,14 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
     // tableHiddle/isModuleVisible 是后端 menu 之外的额外细分(数据看板的功能开关等)
     const filteredItems = items.filter((item) => {
-      // 账单查询:普通用户(仅 bill_self)隐藏,仅系统 admin / 组织管理员(org 级 bill 授权)可见
+      // 账单查询:
+      //   - 系统 admin / root、组织管理员(org 级 bill 授权,如 wl-admin)始终可见;
+      //   - 普通用户默认隐藏,需 root 在「侧边栏模块」开启 bill 开关后才展示(且用户本身有 bill_self 授权)。
       if (item.itemKey === 'bill') {
         if (isAdmin() || isRoot()) return true;
-        return !!userMenu?.pages?.includes('bill');
+        if (userMenu?.pages?.includes('bill')) return true;
+        if (!itemAllowedByMenu('bill')) return false;
+        return isModuleVisible('console', 'bill');
       }
       if (!itemAllowedByMenu(item.itemKey)) return false;
       if (item.itemKey === 'quotaStatistics') return true;

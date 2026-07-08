@@ -40,6 +40,8 @@ export const DEFAULT_ADMIN_CONFIG = {
     task: true,
     errorlog: true,
     modelUsageAnalysis: true,
+    // 账单查询:普通用户默认隐藏,由 root 在「侧边栏模块」中开启后才对普通用户展示
+    bill: false,
   },
   personal: {
     enabled: true,

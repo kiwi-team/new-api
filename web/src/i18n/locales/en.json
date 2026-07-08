@@ -1,5 +1,6 @@
 {
   "translation": {
+    "普通用户默认隐藏，开启后对普通用户展示": "Hidden from regular users by default; enable to show it to them",
     "限制有结算价格的模型": "Restrict models with settlement pricing",
     "将已配置结算价格/折扣的模型增量加入下方限制列表（自动去重）": "Incrementally add models with configured settlement pricing/discount to the list below (auto-deduplicated)",
     "暂无配置结算价格的模型": "No models with settlement pricing configured",
