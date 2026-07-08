@@ -159,7 +159,7 @@ export default function ModelUsageAnalysis() {
   const [rawData, setRawData] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [tokenFilter, setTokenFilter] = useState('all');
+  const [tokenFilter, setTokenFilter] = useState([]);
 
   const fetchData = async () => {
     if (
@@ -208,9 +208,9 @@ export default function ModelUsageAnalysis() {
   );
 
   const rows = useMemo(() => {
-    return rawData.filter(
-      (item) => tokenFilter === 'all' || item.token_name === tokenFilter,
-    );
+    if (!tokenFilter.length) return rawData;
+    const selected = new Set(tokenFilter);
+    return rawData.filter((item) => selected.has(item.token_name));
   }, [rawData, tokenFilter]);
 
   const summary = useMemo(() => buildUsageSummary(rows), [rows]);
@@ -402,11 +402,13 @@ export default function ModelUsageAnalysis() {
             <Select
               value={tokenFilter}
               onChange={setTokenFilter}
+              multiple
+              filter
+              showClear
+              placeholder='全部 TokenName'
+              maxTagCount={3}
               style={{ width: '100%' }}
-              optionList={[
-                { label: '全部 TokenName', value: 'all' },
-                ...tokenOptions,
-              ]}
+              optionList={tokenOptions}
             />
           </label>
           <Button

@@ -67,7 +67,7 @@ const NotificationSettings = ({
 
   // 左侧边栏设置相关状态
   const [sidebarLoading, setSidebarLoading] = useState(false);
-  const [activeTabKey, setActiveTabKey] = useState('notification');
+  const [activeTabKey, setActiveTabKey] = useState('modelLimit');
   const [sidebarModulesUser, setSidebarModulesUser] = useState({
     chat: {
       enabled: true,
@@ -315,6 +315,24 @@ const NotificationSettings = ({
     }
   };
 
+  // 个人中心各 Tab 的可见性（管理员全局控制）
+  const isTabVisible = (moduleKey) => isAllowedByAdmin('personal', moduleKey);
+  const visibleTabKeys = [
+    isTabVisible('notification') && 'notification',
+    isTabVisible('pricing') && 'pricing',
+    isTabVisible('privacy') && 'privacy',
+    isTabVisible('modelLimit') && 'modelLimit',
+    hasSidebarSettingsPermission() && 'sidebar',
+  ].filter(Boolean);
+
+  // 当前激活 Tab 若被隐藏，则切换到第一个可见 Tab，避免默认指向已隐藏的 Tab
+  useEffect(() => {
+    if (visibleTabKeys.length === 0) return;
+    if (!visibleTabKeys.includes(activeTabKey)) {
+      setActiveTabKey(visibleTabKeys[0]);
+    }
+  }, [visibleTabKeys.join(','), activeTabKey]);
+
   // 区域配置数据（根据权限过滤）
   const sectionConfigs = [
     {
@@ -485,10 +503,11 @@ const NotificationSettings = ({
         {() => (
           <Tabs
             type='card'
-            defaultActiveKey='notification'
+            activeKey={activeTabKey}
             onChange={(key) => setActiveTabKey(key)}
           >
             {/* 通知配置 Tab */}
+            {isTabVisible('notification') && (
             <TabPane
               tab={
                 <div className='flex items-center'>
@@ -809,8 +828,10 @@ const NotificationSettings = ({
                 )}
               </div>
             </TabPane>
+            )}
 
             {/* 价格设置 Tab */}
+            {isTabVisible('pricing') && (
             <TabPane
               tab={
                 <div className='flex items-center'>
@@ -835,8 +856,10 @@ const NotificationSettings = ({
                 />
               </div>
             </TabPane>
+            )}
 
             {/* 隐私设置 Tab */}
+            {isTabVisible('privacy') && (
             <TabPane
               tab={
                 <div className='flex items-center'>
@@ -859,8 +882,10 @@ const NotificationSettings = ({
                 />
               </div>
             </TabPane>
+            )}
 
             {/* 模型限制 Tab */}
+            {isTabVisible('modelLimit') && (
             <TabPane
               tab={
                 <div className='flex items-center'>
@@ -923,6 +948,7 @@ const NotificationSettings = ({
                 )}
               </div>
             </TabPane>
+            )}
 
             {/* 左侧边栏设置 Tab - 根据后端权限控制显示 */}
             {hasSidebarSettingsPermission() && (

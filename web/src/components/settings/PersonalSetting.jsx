@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   API,
@@ -34,6 +34,7 @@ import {
 import { UserContext } from '../../context/User';
 import { Modal } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
+import { mergeAdminConfig } from '../../hooks/common/useSidebar';
 
 // 导入子组件
 import UserInfoHeader from './personal/components/UserInfoHeader';
@@ -61,6 +62,18 @@ const PersonalSetting = () => {
     set_new_password_confirmation: '',
   });
   const [status, setStatus] = useState({});
+  // 个人中心页面内功能可见性（管理员全局控制，来源于 SidebarModulesAdmin.personal）
+  const adminPersonal = useMemo(() => {
+    let saved = null;
+    try {
+      saved = status?.SidebarModulesAdmin
+        ? JSON.parse(status.SidebarModulesAdmin)
+        : null;
+    } catch (e) {
+      saved = null;
+    }
+    return mergeAdminConfig(saved).personal;
+  }, [status?.SidebarModulesAdmin]);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const [showWeChatBindModal, setShowWeChatBindModal] = useState(false);
   const [showEmailBindModal, setShowEmailBindModal] = useState(false);
@@ -470,31 +483,42 @@ const PersonalSetting = () => {
           )}
 
           {/* 账户管理和其他设置 */}
-          <div className='grid grid-cols-1 xl:grid-cols-2 items-start gap-4 md:gap-6 mt-4 md:mt-6'>
+          <div
+            className={`grid grid-cols-1 ${
+              adminPersonal?.accountManagement || adminPersonal?.preferences
+                ? 'xl:grid-cols-2'
+                : ''
+            } items-start gap-4 md:gap-6 mt-4 md:mt-6`}
+          >
             {/* 左侧：账户管理设置 */}
-            <div className='flex flex-col gap-4 md:gap-6'>
-              <AccountManagement
-                t={t}
-                userState={userState}
-                status={status}
-                systemToken={systemToken}
-                setShowEmailBindModal={setShowEmailBindModal}
-                setShowWeChatBindModal={setShowWeChatBindModal}
-                generateAccessToken={generateAccessToken}
-                handleSystemTokenClick={handleSystemTokenClick}
-                setShowChangePasswordModal={setShowChangePasswordModal}
-                setShowAccountDeleteModal={setShowAccountDeleteModal}
-                passkeyStatus={passkeyStatus}
-                passkeySupported={passkeySupported}
-                passkeyRegisterLoading={passkeyRegisterLoading}
-                passkeyDeleteLoading={passkeyDeleteLoading}
-                onPasskeyRegister={handleRegisterPasskey}
-                onPasskeyDelete={handleRemovePasskey}
-              />
+            {(adminPersonal?.accountManagement ||
+              adminPersonal?.preferences) && (
+              <div className='flex flex-col gap-4 md:gap-6'>
+                {adminPersonal?.accountManagement && (
+                  <AccountManagement
+                    t={t}
+                    userState={userState}
+                    status={status}
+                    systemToken={systemToken}
+                    setShowEmailBindModal={setShowEmailBindModal}
+                    setShowWeChatBindModal={setShowWeChatBindModal}
+                    generateAccessToken={generateAccessToken}
+                    handleSystemTokenClick={handleSystemTokenClick}
+                    setShowChangePasswordModal={setShowChangePasswordModal}
+                    setShowAccountDeleteModal={setShowAccountDeleteModal}
+                    passkeyStatus={passkeyStatus}
+                    passkeySupported={passkeySupported}
+                    passkeyRegisterLoading={passkeyRegisterLoading}
+                    passkeyDeleteLoading={passkeyDeleteLoading}
+                    onPasskeyRegister={handleRegisterPasskey}
+                    onPasskeyDelete={handleRemovePasskey}
+                  />
+                )}
 
-              {/* 偏好设置（语言等） */}
-              <PreferencesSettings t={t} />
-            </div>
+                {/* 偏好设置（语言等） */}
+                {adminPersonal?.preferences && <PreferencesSettings t={t} />}
+              </div>
+            )}
 
             {/* 右侧：其他设置 */}
             <NotificationSettings

@@ -54,6 +54,13 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     enabled: true,
     topup: true,
     personal: true,
+    // 个人中心页面内功能可见性（默认隐藏，仅保留模型限制）
+    accountManagement: false,
+    notification: false,
+    pricing: false,
+    privacy: false,
+    preferences: false,
+    modelLimit: true,
   },
   admin: {
     enabled: true,
@@ -243,6 +250,36 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'personal',
           title: t('个人设置'),
           description: t('个人信息设置'),
+        },
+        {
+          key: 'accountManagement',
+          title: t('账户管理'),
+          description: t('账户绑定与安全设置'),
+        },
+        {
+          key: 'notification',
+          title: t('通知配置'),
+          description: t('额度预警通知方式'),
+        },
+        {
+          key: 'pricing',
+          title: t('价格设置'),
+          description: t('未设价模型调用开关'),
+        },
+        {
+          key: 'privacy',
+          title: t('隐私设置'),
+          description: t('请求与错误日志IP记录'),
+        },
+        {
+          key: 'preferences',
+          title: t('偏好设置'),
+          description: t('界面语言等个人偏好'),
+        },
+        {
+          key: 'modelLimit',
+          title: t('模型限制'),
+          description: t('用户级可用模型限制'),
         },
       ],
     },

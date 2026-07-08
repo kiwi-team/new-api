@@ -67,6 +67,12 @@ const Bill = () => {
   const [pricingLoaded, setPricingLoaded] = useState(false);
   const [pricingKeyword, setPricingKeyword] = useState('');
 
+  // ----- 结算折扣 tab state -----
+  const [discountLoading, setDiscountLoading] = useState(false);
+  const [discountData, setDiscountData] = useState([]);
+  const [discountLoaded, setDiscountLoaded] = useState(false);
+  const [discountKeyword, setDiscountKeyword] = useState('');
+
   const [activeTab, setActiveTab] = useState('bill');
 
   const handleQuery = async (range = dateRange) => {
@@ -159,6 +165,49 @@ const Bill = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
+  // 结算折扣：展示模型折扣，并用站内配置的倍率换算输入/输出价格（$/1M tokens）
+  const loadDiscount = async () => {
+    setDiscountLoading(true);
+    try {
+      const res = await API.get('/api/settlement/config/self');
+      const { success, data, message } = res.data;
+      if (!success) {
+        Toast.error(message || t('查询结算价格失败'));
+        return;
+      }
+      const configs = Array.isArray(data) ? data : [];
+      const merged = configs.map((cfg) => {
+        let inputPrice = null;
+        let outputPrice = null;
+        // 站内已配置且为按量计费（非按次）才有输入/输出 token 价格：倍率 × 2 = $/1M tokens
+        if (cfg.site_configured && !cfg.site_is_per_call) {
+          const modelRatio = cfg.site_model_ratio || 0;
+          const completionRatio = cfg.site_completion_ratio || 0;
+          inputPrice = modelRatio * 2;
+          outputPrice = modelRatio * completionRatio * 2;
+        }
+        return {
+          ...cfg,
+          input_ratio_price: inputPrice,
+          output_ratio_price: outputPrice,
+        };
+      });
+      setDiscountData(merged);
+      setDiscountLoaded(true);
+    } catch (err) {
+      Toast.error(err.response?.data?.message || t('查询结算价格失败'));
+    } finally {
+      setDiscountLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'discount' && !discountLoaded && !discountLoading) {
+      loadDiscount();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
   const filteredItems = useMemo(() => {
     if (!billData?.items) return [];
     if (!modelKeyword.trim()) return billData.items;
@@ -182,6 +231,14 @@ const Bill = () => {
       (item.model_name || '').toLowerCase().includes(kw),
     );
   }, [pricingData, pricingKeyword]);
+
+  const filteredDiscount = useMemo(() => {
+    if (!discountKeyword.trim()) return discountData;
+    const kw = discountKeyword.trim().toLowerCase();
+    return discountData.filter((item) =>
+      (item.model_name || '').toLowerCase().includes(kw),
+    );
+  }, [discountData, discountKeyword]);
 
   const handleExport = async () => {
     if (!dateRange || dateRange.length !== 2) {
@@ -323,6 +380,13 @@ const Bill = () => {
       key: 'model_name',
     },
     {
+      title: t('模型折扣'),
+      dataIndex: 'discount',
+      key: 'discount',
+      render: (v) => (v != null ? Number(v).toFixed(2) : '1.00'),
+      align: 'right',
+    },
+    {
       title: t('输入价格') + ' (1M tokens)',
       dataIndex: 'input_price',
       key: 'input_price',
@@ -341,6 +405,35 @@ const Bill = () => {
       dataIndex: 'request_price',
       key: 'request_price',
       render: formatPrice,
+      align: 'right',
+    },
+  ];
+
+  const discountColumns = [
+    {
+      title: t('模型名称'),
+      dataIndex: 'model_name',
+      key: 'model_name',
+    },
+    {
+      title: t('模型输入价格（美金原价）') + ' (1M tokens)',
+      dataIndex: 'input_ratio_price',
+      key: 'input_ratio_price',
+      render: (v) => (v != null ? formatPrice(v) : '-'),
+      align: 'right',
+    },
+    {
+      title: t('模型输出价格（美金原价）') + ' (1M tokens)',
+      dataIndex: 'output_ratio_price',
+      key: 'output_ratio_price',
+      render: (v) => (v != null ? formatPrice(v) : '-'),
+      align: 'right',
+    },
+    {
+      title: t('模型折扣'),
+      dataIndex: 'discount',
+      key: 'discount',
+      render: (v) => (v != null ? Number(v).toFixed(2) : '1.00'),
       align: 'right',
     },
   ];
@@ -514,6 +607,54 @@ const Bill = () => {
               <Table
                 columns={pricingColumns}
                 dataSource={filteredPricing}
+                rowKey='id'
+                pagination={false}
+                size='middle'
+              />
+            )}
+          </TabPane>
+
+          <TabPane tab={t('结算折扣')} itemKey='discount'>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                margin: '16px 0 20px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <Input
+                placeholder={t('模型关键词筛选')}
+                prefix={<IconSearch />}
+                value={discountKeyword}
+                onChange={(val) => setDiscountKeyword(val)}
+                showClear
+                style={{ width: 200 }}
+              />
+              <Button
+                icon={<IconRefresh />}
+                loading={discountLoading}
+                onClick={loadDiscount}
+              >
+                {t('刷新')}
+              </Button>
+            </div>
+
+            {discountLoading ? (
+              <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                <Spin size='large' />
+              </div>
+            ) : discountLoaded && discountData.length === 0 ? (
+              <Empty
+                title={t('暂无结算价格配置')}
+                description={t('当前账号尚未配置任何模型的结算价格')}
+                style={{ padding: '60px 0' }}
+              />
+            ) : (
+              <Table
+                columns={discountColumns}
+                dataSource={filteredDiscount}
                 rowKey='id'
                 pagination={false}
                 size='middle'
