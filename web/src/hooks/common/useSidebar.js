@@ -42,6 +42,10 @@ export const DEFAULT_ADMIN_CONFIG = {
     modelUsageAnalysis: true,
     // 账单查询:普通用户默认隐藏,由 root 在「侧边栏模块」中开启后才对普通用户展示
     bill: false,
+    // 账单页内 Tab 可见性（对所有人生效，默认只显示结算折扣）
+    billQuery: false,
+    billPricing: false,
+    billDiscount: true,
   },
   personal: {
     enabled: true,

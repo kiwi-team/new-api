@@ -49,6 +49,10 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     task: true,
     modelUsageAnalysis: true,
     bill: false,
+    // 账单页内 Tab 可见性（对所有人生效，默认只显示结算折扣）
+    billQuery: false,
+    billPricing: false,
+    billDiscount: true,
   },
   personal: {
     enabled: true,
@@ -238,6 +242,21 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'bill',
           title: t('账单查询'),
           description: t('普通用户默认隐藏，开启后对普通用户展示'),
+        },
+        {
+          key: 'billQuery',
+          title: t('账单页-账单查询'),
+          description: t('账单页内的账单查询Tab'),
+        },
+        {
+          key: 'billPricing',
+          title: t('账单页-结算价格'),
+          description: t('账单页内的结算价格Tab'),
+        },
+        {
+          key: 'billDiscount',
+          title: t('账单页-结算折扣'),
+          description: t('账单页内的结算折扣Tab'),
         },
       ],
     },
