@@ -47,6 +47,13 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     topup: true,
     personal: true,
+    // 个人中心页面内功能可见性（默认隐藏，仅保留模型限制）
+    accountManagement: false,
+    notification: false,
+    pricing: false,
+    privacy: false,
+    preferences: false,
+    modelLimit: true,
   },
   admin: {
     enabled: true,

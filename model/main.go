@@ -316,8 +316,6 @@ func migrateDB() error {
 		&Project{},
 		&ProjectAllocationPlan{},
 		&ProjectAllocation{},
-		// Settlement pricing tables
-		&SettlementConfig{},
 	)
 	if err != nil {
 		return err
@@ -337,6 +335,18 @@ func migrateDB() error {
 		}
 	} else {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
+			return err
+		}
+	}
+	// settlement_configs 含 decimal(20,10) 列，GORM 的 SQLite 驱动在二次迁移时无法解析
+	// 该类型（invalid DDL, unbalanced brackets），故 SQLite 用原生 SQL 建表/补列，
+	// 不走 AutoMigrate；MySQL/PostgreSQL 仍走 AutoMigrate。参见 ensureSubscriptionPlanTableSQLite。
+	if common.UsingSQLite {
+		if err := ensureSettlementConfigTableSQLite(); err != nil {
+			return err
+		}
+	} else {
+		if err := DB.AutoMigrate(&SettlementConfig{}); err != nil {
 			return err
 		}
 	}
@@ -501,6 +511,74 @@ PRIMARY KEY (` + "`id`" + `)
 		if err := DB.Exec("ALTER TABLE `" + tableName + "` ADD COLUMN " + col.DDL).Error; err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ensureSettlementConfigTableSQLite 在 SQLite 下用原生 SQL 建表/补列，避免 GORM AutoMigrate
+// 解析 decimal(20,10) 列导致的 "invalid DDL, unbalanced brackets"（首次建表成功、每次重启必挂）。
+// 与 ensureSubscriptionPlanTableSQLite 同一套路。幂等，可重复执行。
+func ensureSettlementConfigTableSQLite() error {
+	if !common.UsingSQLite {
+		return nil
+	}
+	tableName := "settlement_configs"
+	if !DB.Migrator().HasTable(tableName) {
+		createSQL := `CREATE TABLE ` + "`" + tableName + "`" + ` (
+` + "`id`" + ` integer,
+` + "`user_id`" + ` integer NOT NULL,
+` + "`model_name`" + ` text NOT NULL,
+` + "`input_price`" + ` decimal(20,10) NOT NULL DEFAULT 0,
+` + "`output_price`" + ` decimal(20,10) NOT NULL DEFAULT 0,
+` + "`request_price`" + ` decimal(20,10) NOT NULL DEFAULT 0,
+` + "`discount`" + ` decimal(20,10) NOT NULL DEFAULT 1,
+` + "`created_at`" + ` bigint,
+` + "`updated_at`" + ` bigint,
+PRIMARY KEY (` + "`id`" + `)
+)`
+		if err := DB.Exec(createSQL).Error; err != nil {
+			return err
+		}
+		if err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS `idx_settlement_user_model` ON `" + tableName + "`(`user_id`,`model_name`)").Error; err != nil {
+			return err
+		}
+		if err := DB.Exec("CREATE INDEX IF NOT EXISTS `idx_settlement_configs_user_id` ON `" + tableName + "`(`user_id`)").Error; err != nil {
+			return err
+		}
+		return nil
+	}
+	// 表已存在（可能由旧版 AutoMigrate 建立）：仅补齐缺失列，绝不重建（重建会再次触发解析 bug）。
+	var cols []struct {
+		Name string `gorm:"column:name"`
+	}
+	if err := DB.Raw("PRAGMA table_info(`" + tableName + "`)").Scan(&cols).Error; err != nil {
+		return err
+	}
+	existing := make(map[string]struct{}, len(cols))
+	for _, c := range cols {
+		existing[c.Name] = struct{}{}
+	}
+	required := []sqliteColumnDef{
+		{Name: "user_id", DDL: "`user_id` integer NOT NULL DEFAULT 0"},
+		{Name: "model_name", DDL: "`model_name` text NOT NULL DEFAULT ''"},
+		{Name: "input_price", DDL: "`input_price` decimal(20,10) NOT NULL DEFAULT 0"},
+		{Name: "output_price", DDL: "`output_price` decimal(20,10) NOT NULL DEFAULT 0"},
+		{Name: "request_price", DDL: "`request_price` decimal(20,10) NOT NULL DEFAULT 0"},
+		{Name: "discount", DDL: "`discount` decimal(20,10) NOT NULL DEFAULT 1"},
+		{Name: "created_at", DDL: "`created_at` bigint"},
+		{Name: "updated_at", DDL: "`updated_at` bigint"},
+	}
+	for _, col := range required {
+		if _, ok := existing[col.Name]; ok {
+			continue
+		}
+		if err := DB.Exec("ALTER TABLE `" + tableName + "` ADD COLUMN " + col.DDL).Error; err != nil {
+			return err
+		}
+	}
+	// 补齐唯一索引（幂等）
+	if err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS `idx_settlement_user_model` ON `" + tableName + "`(`user_id`,`model_name`)").Error; err != nil {
+		return err
 	}
 	return nil
 }

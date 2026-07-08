@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -336,10 +337,37 @@ func GetSelfSettlementConfigs(c *gin.Context) {
 		})
 		return
 	}
+	// 附带站内配置的倍率信息（来源于「倍率设置」，与渠道无关），供「结算折扣」页换算输入/输出价格。
+	type selfSettlementItem struct {
+		*model.SettlementConfig
+		SiteConfigured      bool    `json:"site_configured"`       // 站内是否配置了倍率/价格
+		SiteIsPerCall       bool    `json:"site_is_per_call"`      // true=按次计费（无 token 价格）
+		SiteModelRatio      float64 `json:"site_model_ratio"`      // 输入倍率
+		SiteCompletionRatio float64 `json:"site_completion_ratio"` // 补全倍率
+		SiteModelPrice      float64 `json:"site_model_price"`      // 按次计费价格
+	}
+	items := make([]selfSettlementItem, 0, len(configs))
+	for _, cfg := range configs {
+		item := selfSettlementItem{SettlementConfig: cfg}
+		// 优先取站内显式配置的「模型倍率」（用户在倍率设置里配的即为此项）；
+		// 仅当没有配置倍率、但配置了「按次固定价格」时，才按按次计费处理。
+		modelRatio, ratioConfigured, _ := ratio_setting.GetModelRatio(cfg.ModelName)
+		if ratioConfigured {
+			item.SiteConfigured = true
+			item.SiteIsPerCall = false
+			item.SiteModelRatio = modelRatio
+			item.SiteCompletionRatio = ratio_setting.GetCompletionRatio(cfg.ModelName)
+		} else if price, ok := ratio_setting.GetModelPrice(cfg.ModelName, false); ok {
+			item.SiteConfigured = true
+			item.SiteIsPerCall = true
+			item.SiteModelPrice = price
+		}
+		items = append(items, item)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    configs,
+		"data":    items,
 	})
 }
 
