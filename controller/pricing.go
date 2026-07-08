@@ -1,6 +1,10 @@
 package controller
 
 import (
+	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -72,4 +76,143 @@ func ResetModelRatio(c *gin.Context) {
 		"success": true,
 		"message": "重置模型倍率成功",
 	})
+}
+
+// modelPriceUpdateTimeOption 存储每个模型价格的最近修改时间（unix 秒）。
+// 形如 {"gpt-4o": 1783500000}，仅由价格中心的行内编辑维护，供「修改时间」列展示。
+const modelPriceUpdateTimeOption = "ModelPriceUpdateTime"
+
+// saveModelPriceMap 将某个价格 map 持久化到 option 并热更新运行时倍率表。
+func saveModelPriceMap(key string, m map[string]float64) error {
+	b, err := common.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return model.UpdateOption(key, string(b))
+}
+
+// touchModelPriceUpdateTime 记录/更新某模型价格的修改时间。
+func touchModelPriceUpdateTime(modelName string, ts int64) error {
+	common.OptionMapRWMutex.RLock()
+	cur := common.OptionMap[modelPriceUpdateTimeOption]
+	common.OptionMapRWMutex.RUnlock()
+	tsMap := map[string]int64{}
+	if cur != "" {
+		_ = common.UnmarshalJsonStr(cur, &tsMap)
+	}
+	tsMap[modelName] = ts
+	b, err := common.Marshal(tsMap)
+	if err != nil {
+		return err
+	}
+	return model.UpdateOption(modelPriceUpdateTimeOption, string(b))
+}
+
+type updateModelPricingRequest struct {
+	ModelName    string  `json:"model_name"`
+	IsPerCall    bool    `json:"is_per_call"`    // true=按次计费
+	InputPrice   float64 `json:"input_price"`    // 按量：输入 $/1M tokens
+	OutputPrice  float64 `json:"output_price"`   // 按量：输出 $/1M tokens
+	PerCallPrice float64 `json:"per_call_price"` // 按次：$/次
+}
+
+// UpdateModelPricing PUT /api/pricing/model —— 行内即时保存单个模型的官方价格。
+// 前端传美金价，后端换算成倍率（ratio = 输入价/2，completion = 输出价/输入价）并落库，
+// 同时记录修改时间。root only。
+func UpdateModelPricing(c *gin.Context) {
+	var req updateModelPricingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(200, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	req.ModelName = strings.TrimSpace(req.ModelName)
+	if req.ModelName == "" {
+		c.JSON(200, gin.H{"success": false, "message": "模型名称不能为空"})
+		return
+	}
+	if req.InputPrice < 0 || req.OutputPrice < 0 || req.PerCallPrice < 0 {
+		c.JSON(200, gin.H{"success": false, "message": "价格不能为负数"})
+		return
+	}
+
+	ratioMap := ratio_setting.GetModelRatioCopy()
+	completionMap := ratio_setting.GetCompletionRatioCopy()
+	priceMap := ratio_setting.GetModelPriceCopy()
+
+	if req.IsPerCall {
+		priceMap[req.ModelName] = req.PerCallPrice
+		delete(ratioMap, req.ModelName)
+		delete(completionMap, req.ModelName)
+	} else {
+		ratio := req.InputPrice / 2
+		completion := 1.0
+		if req.InputPrice > 0 {
+			completion = req.OutputPrice / req.InputPrice
+		}
+		ratioMap[req.ModelName] = ratio
+		completionMap[req.ModelName] = completion
+		delete(priceMap, req.ModelName)
+	}
+
+	for key, m := range map[string]map[string]float64{
+		"ModelRatio":      ratioMap,
+		"CompletionRatio": completionMap,
+		"ModelPrice":      priceMap,
+	} {
+		if err := saveModelPriceMap(key, m); err != nil {
+			c.JSON(200, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	}
+
+	now := time.Now().Unix()
+	if err := touchModelPriceUpdateTime(req.ModelName, now); err != nil {
+		c.JSON(200, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"success": true,
+		"message": "",
+		"data":    gin.H{"updated_at": now},
+	})
+}
+
+// DeleteModelPricing DELETE /api/pricing/model?model_name= —— 删除某模型的官方价格。root only。
+func DeleteModelPricing(c *gin.Context) {
+	modelName := strings.TrimSpace(c.Query("model_name"))
+	if modelName == "" {
+		c.JSON(200, gin.H{"success": false, "message": "模型名称不能为空"})
+		return
+	}
+	ratioMap := ratio_setting.GetModelRatioCopy()
+	completionMap := ratio_setting.GetCompletionRatioCopy()
+	priceMap := ratio_setting.GetModelPriceCopy()
+	delete(ratioMap, modelName)
+	delete(completionMap, modelName)
+	delete(priceMap, modelName)
+	for key, m := range map[string]map[string]float64{
+		"ModelRatio":      ratioMap,
+		"CompletionRatio": completionMap,
+		"ModelPrice":      priceMap,
+	} {
+		if err := saveModelPriceMap(key, m); err != nil {
+			c.JSON(200, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	}
+	// 同步清理修改时间记录
+	common.OptionMapRWMutex.RLock()
+	cur := common.OptionMap[modelPriceUpdateTimeOption]
+	common.OptionMapRWMutex.RUnlock()
+	if cur != "" {
+		tsMap := map[string]int64{}
+		if err := common.UnmarshalJsonStr(cur, &tsMap); err == nil {
+			delete(tsMap, modelName)
+			if b, err := common.Marshal(tsMap); err == nil {
+				_ = model.UpdateOption(modelPriceUpdateTimeOption, string(b))
+			}
+		}
+	}
+	c.JSON(200, gin.H{"success": true, "message": ""})
 }

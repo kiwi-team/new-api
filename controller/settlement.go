@@ -73,6 +73,54 @@ func GetSettlementConfigs(c *gin.Context) {
 	})
 }
 
+// GetAllSettlementConfigsHandler GET /api/settlement/config/all?model_name=
+// Root-only. Returns every settlement config across all users, each enriched with
+// the owner's username, for the "price center" per-model aggregation view.
+func GetAllSettlementConfigsHandler(c *gin.Context) {
+	modelName := c.Query("model_name")
+	configs, err := model.GetAllSettlementConfigs(modelName)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	// 收集去重 user_id，一次查询取用户名，避免 N+1
+	idSet := make(map[int]struct{}, len(configs))
+	ids := make([]int, 0, len(configs))
+	for _, cfg := range configs {
+		if _, ok := idSet[cfg.UserId]; !ok {
+			idSet[cfg.UserId] = struct{}{}
+			ids = append(ids, cfg.UserId)
+		}
+	}
+	usernameMap, err := model.GetUsernamesByIds(ids)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	type allSettlementItem struct {
+		*model.SettlementConfig
+		Username string `json:"username"`
+	}
+	items := make([]allSettlementItem, 0, len(configs))
+	for _, cfg := range configs {
+		items = append(items, allSettlementItem{
+			SettlementConfig: cfg,
+			Username:         usernameMap[cfg.UserId],
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    items,
+	})
+}
+
 // CreateSettlementConfigHandler POST /api/settlement/config
 // Create a settlement config. Validates non-negative prices, user exists, model_name not empty.
 func CreateSettlementConfigHandler(c *gin.Context) {

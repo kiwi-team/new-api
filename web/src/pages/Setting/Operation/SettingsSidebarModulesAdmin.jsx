@@ -78,6 +78,7 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     setting: true,
     modelRouteConfig: true,
     settlementConfig: true,
+    pricingCenter: true,
   },
 };
 
@@ -335,6 +336,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'setting',
           title: t('系统设置'),
           description: t('系统参数配置'),
+        },
+        {
+          key: 'pricingCenter',
+          title: t('价格中心'),
+          description: t('官方价格与客户折扣'),
         },
       ],
     },

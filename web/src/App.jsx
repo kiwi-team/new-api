@@ -61,6 +61,7 @@ import CliendUserQuotaPage from './pages/CliendUserQuota';
 import ProjectPage from './pages/Project';
 import ModelRouteConfig from './pages/ModelRouteConfig';
 import SettlementConfig from './pages/SettlementConfig';
+import PricingCenter from './pages/PricingCenter';
 import ModelChannelMonitor from './pages/ModelChannelMonitor';
 import ModelUsageAnalysis from './pages/ModelUsageAnalysis';
 
@@ -427,6 +428,14 @@ function App() {
           element={
             <RootRoute>
               <SettlementConfig />
+            </RootRoute>
+          }
+        />
+        <Route
+          path='/console/pricing-center'
+          element={
+            <RootRoute>
+              <PricingCenter />
             </RootRoute>
           }
         />

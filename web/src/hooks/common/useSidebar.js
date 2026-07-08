@@ -70,6 +70,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     project: true,
     modelRouteConfig: true,
     settlementConfig: true,
+    pricingCenter: true,
   },
 };
 
