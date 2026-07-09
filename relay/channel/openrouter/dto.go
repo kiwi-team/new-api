@@ -17,3 +17,26 @@ type OpenRouterEnterpriseResponse struct {
 	Data    json.RawMessage `json:"data"`
 	Success bool            `json:"success"`
 }
+
+// ImageGenerationRequest 是 OpenRouter 统一生图接口 (POST /api/v1/images) 的请求体。
+// 生成 (/v1/images/generations) 不带 InputReferences；
+// 编辑 (/v1/images/edits) 通过 InputReferences 携带参考图。
+// 参考：https://openrouter.ai/docs/api/api-reference/images/generate-an-image
+type ImageGenerationRequest struct {
+	Model           string                `json:"model"`
+	Prompt          string                `json:"prompt"`
+	N               uint                  `json:"n,omitempty"`
+	Size            string                `json:"size,omitempty"`
+	InputReferences []ImageInputReference `json:"input_references,omitempty"`
+}
+
+// ImageInputReference 为参考图元素，Type 固定为 "image_url"。
+type ImageInputReference struct {
+	Type     string            `json:"type"`
+	ImageUrl ImageReferenceUrl `json:"image_url"`
+}
+
+// ImageReferenceUrl.Url 支持 HTTP(S) 链接或 base64 data URL。
+type ImageReferenceUrl struct {
+	Url string `json:"url"`
+}

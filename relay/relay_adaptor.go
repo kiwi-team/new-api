@@ -35,6 +35,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
+	"github.com/QuantumNous/new-api/relay/channel/reve"
 	"github.com/QuantumNous/new-api/relay/channel/sensenova"
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
@@ -158,6 +159,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &volcengine.RealtimeAdaptor{}
 	case constant.APITypePPIO:
 		return &ppioImage.Adaptor{}
+	case constant.APITypeReve:
+		return &reve.Adaptor{}
 	}
 	return nil
 }

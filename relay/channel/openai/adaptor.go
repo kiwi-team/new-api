@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,6 +172,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
+		if info.ChannelType == constant.ChannelTypeOpenRouter &&
+			(info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits) {
+			// OpenRouter 统一生图接口，生成与编辑均走 /api/v1/images
+			return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, "/v1/images", info.ChannelType), nil
+		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -714,6 +720,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if info.ChannelType == constant.ChannelTypeOpenRouter {
+		return convertOpenRouterImageRequest(c, info, request)
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
 
@@ -841,6 +850,104 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+// convertOpenRouterImageRequest 将 OpenAI 风格的生图/改图请求转换为 OpenRouter 统一生图接口
+// (POST /api/v1/images) 的 JSON 请求体。
+//   - 生成 (RelayModeImagesGenerations)：不携带 input_references。
+//   - 编辑 (RelayModeImagesEdits)：从 multipart 上传的图片文件（转为 base64 data URL）
+//     以及 JSON 请求体中的 image/images 字段收集 input_references。
+func convertOpenRouterImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	openRouterReq := openrouter.ImageGenerationRequest{
+		Model:  request.Model,
+		Prompt: request.Prompt,
+		N:      request.N,
+		Size:   request.Size,
+	}
+
+	if info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return openRouterReq, nil
+	}
+
+	// 编辑请求：收集参考图
+	references := make([]openrouter.ImageInputReference, 0)
+
+	// 1. multipart 上传的图片文件，转为 base64 data URL
+	if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		mf := c.Request.MultipartForm
+		if mf == nil {
+			if _, err := c.MultipartForm(); err != nil {
+				return nil, errors.New("failed to parse multipart form")
+			}
+			mf = c.Request.MultipartForm
+		}
+		if mf != nil && mf.File != nil {
+			imageFiles := collectImageFileHeaders(mf)
+			for i, fileHeader := range imageFiles {
+				dataURL, err := imageFileHeaderToDataURL(fileHeader)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read image file %d: %w", i, err)
+				}
+				references = append(references, openrouter.ImageInputReference{
+					Type:     "image_url",
+					ImageUrl: openrouter.ImageReferenceUrl{Url: dataURL},
+				})
+			}
+		}
+	}
+
+	// 2. JSON 请求体中的 image/images 字段（HTTP(S) 链接或 base64 data URL）
+	if urls, err := request.GetImageURLs(); err == nil {
+		for _, url := range urls {
+			references = append(references, openrouter.ImageInputReference{
+				Type:     "image_url",
+				ImageUrl: openrouter.ImageReferenceUrl{Url: url},
+			})
+		}
+	}
+
+	if len(references) == 0 {
+		return nil, errors.New("image is required for image edits")
+	}
+	openRouterReq.InputReferences = references
+
+	// 请求体已转为 JSON，覆盖 multipart 的 Content-Type
+	c.Request.Header.Set("Content-Type", "application/json")
+	return openRouterReq, nil
+}
+
+// collectImageFileHeaders 从已解析的 multipart 表单中收集 image / image[] / image[N] 字段的文件。
+func collectImageFileHeaders(mf *multipart.Form) []*multipart.FileHeader {
+	if files, ok := mf.File["image"]; ok && len(files) > 0 {
+		return files
+	}
+	if files, ok := mf.File["image[]"]; ok && len(files) > 0 {
+		return files
+	}
+	var imageFiles []*multipart.FileHeader
+	for fieldName, files := range mf.File {
+		if strings.HasPrefix(fieldName, "image[") && len(files) > 0 {
+			imageFiles = append(imageFiles, files...)
+		}
+	}
+	return imageFiles
+}
+
+// imageFileHeaderToDataURL 读取上传的图片文件并编码为 base64 data URL。
+func imageFileHeaderToDataURL(fileHeader *multipart.FileHeader) (string, error) {
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+
+	mimeType := detectImageMimeType(fileHeader.Filename)
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
 // detectImageMimeType determines the MIME type based on the file extension
 func detectImageMimeType(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
@@ -881,6 +988,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	// OpenRouter 生图/改图统一走 JSON 接口，改图不再使用 multipart 表单
+	if info.ChannelType == constant.ChannelTypeOpenRouter &&
+		(info.RelayMode == relayconstant.RelayModeImagesGenerations || info.RelayMode == relayconstant.RelayModeImagesEdits) {
+		return channel.DoApiRequest(a, c, info, requestBody)
+	}
 	if info.RelayMode == relayconstant.RelayModeAudioTranscription ||
 		info.RelayMode == relayconstant.RelayModeAudioTranslation ||
 		info.RelayMode == relayconstant.RelayModeImagesEdits {

@@ -70,6 +70,7 @@ const (
 	ChannelTypePPIO             = 70
 	ChannelTypeHedra            = 71
 	ChannelTypeHeyGen           = 72
+	ChannelTypeReve             = 73
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -149,6 +150,7 @@ var ChannelBaseURLs = []string{
 	"https://api.ppio.com",              // 70 ppio
 	"https://api.hedra.com/web-app/public", // 71 hedra
 	"https://api.heygen.com",               // 72 heygen
+	"https://api.reve.com",                 // 73 reve
 }
 
 var ChannelTypeNames = map[int]string{
@@ -218,6 +220,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypePPIO:           "PPIO",
 	ChannelTypeHedra:          "Hedra",
 	ChannelTypeHeyGen:         "HeyGen",
+	ChannelTypeReve:           "Reve",
 }
 
 func GetChannelTypeName(channelType int) string {

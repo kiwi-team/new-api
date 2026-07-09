@@ -254,6 +254,10 @@ export const CHANNEL_OPTIONS = [
     value: 72,
     color: 'green',
     label: 'heygen'
+  }, {
+    value: 73,
+    color: 'purple',
+    label: 'Reve'
   }
 ];
 
