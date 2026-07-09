@@ -74,7 +74,6 @@ const routerMap = {
   project: '/console/project',
   // Settlement config route
   settlementConfig: '/console/settlement-config',
-  pricingCenter: '/console/pricing-center',
   // Debug module routes
   debugExecutor: '/console/debug/executor',
   debugTemplates: '/console/debug/templates',
@@ -200,7 +199,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       { text: t('模型路由配置'), itemKey: 'modelRouteConfig', to: '/console/model-route-config', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('系统设置'), itemKey: 'setting', to: '/setting', className: isRoot() ? '' : 'tableHiddle' },
       { text: t('结算价格管理'), itemKey: 'settlementConfig', to: '/console/settlement-config' },
-      { text: t('价格中心'), itemKey: 'pricingCenter', to: '/console/pricing-center', className: isRoot() ? '' : 'tableHiddle' },
     ];
 
     // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
