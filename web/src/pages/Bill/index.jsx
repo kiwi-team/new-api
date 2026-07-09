@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Table,
@@ -36,8 +36,6 @@ import {
 } from '@douyinfe/semi-ui';
 import { IconSearch, IconDownload, IconRefresh } from '@douyinfe/semi-icons';
 import { API } from '../../helpers/api';
-import { StatusContext } from '../../context/Status';
-import { mergeAdminConfig } from '../../hooks/common/useSidebar';
 
 const { Title, Text } = Typography;
 
@@ -76,37 +74,6 @@ const Bill = () => {
   const [discountKeyword, setDiscountKeyword] = useState('');
 
   const [activeTab, setActiveTab] = useState('bill');
-
-  // 账单页各 Tab 可见性（管理员全局控制，对所有人生效）
-  const [statusState] = useContext(StatusContext);
-  const adminConsole = useMemo(() => {
-    let saved = null;
-    try {
-      saved = statusState?.status?.SidebarModulesAdmin
-        ? JSON.parse(statusState.status.SidebarModulesAdmin)
-        : null;
-    } catch (e) {
-      saved = null;
-    }
-    return mergeAdminConfig(saved).console;
-  }, [statusState?.status?.SidebarModulesAdmin]);
-
-  const tabVisible = {
-    bill: adminConsole?.billQuery !== false,
-    pricing: adminConsole?.billPricing !== false,
-    discount: adminConsole?.billDiscount !== false,
-  };
-  const visibleTabKeys = ['bill', 'pricing', 'discount'].filter(
-    (k) => tabVisible[k],
-  );
-
-  // 当前激活 Tab 若被隐藏，切到第一个可见 Tab
-  useEffect(() => {
-    if (visibleTabKeys.length && !visibleTabKeys.includes(activeTab)) {
-      setActiveTab(visibleTabKeys[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleTabKeys.join(','), activeTab]);
 
   const handleQuery = async (range = dateRange) => {
     if (!range || range.length !== 2) {
@@ -483,7 +450,6 @@ const Bill = () => {
           activeKey={activeTab}
           onChange={(key) => setActiveTab(key)}
         >
-          {tabVisible.bill && (
           <TabPane tab={t('账单查询')} itemKey='bill'>
             <div
               style={{
@@ -599,9 +565,7 @@ const Bill = () => {
               />
             )}
           </TabPane>
-          )}
 
-          {tabVisible.pricing && (
           <TabPane tab={t('结算价格')} itemKey='pricing'>
             <div
               style={{
@@ -649,9 +613,7 @@ const Bill = () => {
               />
             )}
           </TabPane>
-          )}
 
-          {tabVisible.discount && (
           <TabPane tab={t('结算折扣')} itemKey='discount'>
             <div
               style={{
@@ -699,7 +661,6 @@ const Bill = () => {
               />
             )}
           </TabPane>
-          )}
         </Tabs>
 
         <style>{`
