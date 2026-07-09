@@ -130,6 +130,39 @@ func GetSettlementConfigsByUserId(userId int) ([]*SettlementConfig, error) {
 	return configs, err
 }
 
+// GetAllSettlementConfigs returns every settlement config (all users). Optionally
+// filtered by modelName (exact) when non-empty. Ordered by model_name then user_id
+// so the "price center" per-model aggregation is stable.
+func GetAllSettlementConfigs(modelName string) ([]*SettlementConfig, error) {
+	var configs []*SettlementConfig
+	tx := DB.Model(&SettlementConfig{})
+	if modelName != "" {
+		tx = tx.Where("model_name = ?", modelName)
+	}
+	err := tx.Order("model_name asc").Order("user_id asc").Find(&configs).Error
+	return configs, err
+}
+
+// GetUsernamesByIds batch-loads id -> username for the given user ids (deduped).
+// Missing ids simply won't appear in the returned map.
+func GetUsernamesByIds(ids []int) (map[int]string, error) {
+	result := make(map[int]string, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		Id       int
+		Username string
+	}
+	if err := DB.Model(&User{}).Where("id IN ?", ids).Select("id", "username").Find(&rows).Error; err != nil {
+		return result, err
+	}
+	for _, r := range rows {
+		result[r.Id] = r.Username
+	}
+	return result, nil
+}
+
 // GetSettlementConfigByUserAndModel retrieves a settlement config by user_id and model_name.
 func GetSettlementConfigByUserAndModel(userId int, modelName string) (*SettlementConfig, error) {
 	var config SettlementConfig
