@@ -49,6 +49,10 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     task: true,
     modelUsageAnalysis: true,
     bill: false,
+    // 账单页内 Tab 可见性（对所有人生效，默认只显示结算折扣）
+    billQuery: false,
+    billPricing: false,
+    billDiscount: true,
   },
   personal: {
     enabled: true,
@@ -78,6 +82,7 @@ const DEFAULT_SIDEBAR_MODULES_ADMIN = {
     setting: true,
     modelRouteConfig: true,
     settlementConfig: true,
+    pricingCenter: true,
   },
 };
 
@@ -238,6 +243,21 @@ export default function SettingsSidebarModulesAdmin(props) {
           title: t('账单查询'),
           description: t('普通用户默认隐藏，开启后对普通用户展示'),
         },
+        {
+          key: 'billQuery',
+          title: t('账单页-账单查询'),
+          description: t('账单页内的账单查询Tab'),
+        },
+        {
+          key: 'billPricing',
+          title: t('账单页-结算价格'),
+          description: t('账单页内的结算价格Tab'),
+        },
+        {
+          key: 'billDiscount',
+          title: t('账单页-结算折扣'),
+          description: t('账单页内的结算折扣Tab'),
+        },
       ],
     },
     {
@@ -335,6 +355,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'setting',
           title: t('系统设置'),
           description: t('系统参数配置'),
+        },
+        {
+          key: 'pricingCenter',
+          title: t('价格中心'),
+          description: t('官方价格与客户折扣'),
         },
       ],
     },
