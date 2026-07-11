@@ -35,6 +35,11 @@ const LogsFilters = ({
   isRootUser,
   exporting,
   handleExportLogs,
+  tokenNameOptions,
+  channelOptions,
+  usernameOptions,
+  usernameLoading,
+  handleUsernameSearch,
   t,
 }) => {
   // mt org 任意角色都能看到 UID / MT Session / Trace / Traj 4 个筛选;系统 admin 也能看。
@@ -80,15 +85,31 @@ const LogsFilters = ({
           </div>
 
           {/* 其他搜索字段 */}
-          <Form.Input
-            field='token_name'
-            prefix={<IconSearch />}
-            placeholder={t('令牌名称')}
-            showClear
-            pure
-            size='small'
-          />
+          {/* root 用户使用下拉+模糊搜索,减少输入;其他用户维持输入框 */}
+          {isRootUser ? (
+            <Form.Select
+              field='token_name'
+              prefix={<IconSearch />}
+              placeholder={t('令牌名称')}
+              optionList={tokenNameOptions}
+              filter
+              showClear
+              pure
+              size='small'
+              className='w-full'
+            />
+          ) : (
+            <Form.Input
+              field='token_name'
+              prefix={<IconSearch />}
+              placeholder={t('令牌名称')}
+              showClear
+              pure
+              size='small'
+            />
+          )}
 
+          {/* 模型名称后端为模糊匹配,保持文本框输入(所有用户一致) */}
           <Form.Input
             field='model_name'
             prefix={<IconSearch />}
@@ -118,25 +139,44 @@ const LogsFilters = ({
 
           {/* 渠道 ID 筛选仅 root 可见,与渠道信息整体的 root-only 可见性保持一致 */}
           {isRootUser && (
-            <Form.Input
+            <Form.Select
               field='channel'
               prefix={<IconSearch />}
               placeholder={t('渠道 ID')}
+              optionList={channelOptions}
+              filter
               showClear
               pure
               size='small'
+              className='w-full'
             />
           )}
-          {isAdminUser && (
-            <Form.Input
-              field='username'
-              prefix={<IconSearch />}
-              placeholder={t('用户名称')}
-              showClear
-              pure
-              size='small'
-            />
-          )}
+          {isAdminUser &&
+            (isRootUser ? (
+              <Form.Select
+                field='username'
+                prefix={<IconSearch />}
+                placeholder={t('用户名称')}
+                optionList={usernameOptions}
+                filter
+                remote
+                loading={usernameLoading}
+                onSearch={handleUsernameSearch}
+                showClear
+                pure
+                size='small'
+                className='w-full'
+              />
+            ) : (
+              <Form.Input
+                field='username'
+                prefix={<IconSearch />}
+                placeholder={t('用户名称')}
+                showClear
+                pure
+                size='small'
+              />
+            ))}
           {/* UID/MT Session/Trace/Traj 筛选:对 mt org 任意角色 + 系统 admin 开放,其他 org 不放开 */}
           {showMtFilters && (
             <>

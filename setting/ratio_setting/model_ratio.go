@@ -338,9 +338,11 @@ var completionRatioMap = types.NewRWMap[string, float64]()
 
 // PriceTier 单个价格档位
 type PriceTier struct {
-	MaxTokens   int     `json:"max_tokens"`   // 输入 Token 上限阈值
-	InputPrice  float64 `json:"input_price"`  // 输入价格（每百万 Token，单位：美元）
-	OutputPrice float64 `json:"output_price"` // 输出价格（每百万 Token，单位：美元）
+	MaxTokens        int     `json:"max_tokens"`                   // 输入 Token 上限阈值
+	InputPrice       float64 `json:"input_price"`                  // 输入价格（每百万 Token，单位：美元）
+	OutputPrice      float64 `json:"output_price"`                 // 输出价格（每百万 Token，单位：美元）
+	CachedInputPrice float64 `json:"cached_input_price,omitempty"` // 缓存读取价格（每百万 Token，美元）；0=未配置，回退模型级缓存倍率
+	CacheWritePrice  float64 `json:"cache_write_price,omitempty"`  // 缓存创建价格（每百万 Token，美元，5m 基准，1h 自动×1.6）；0=未配置，回退模型级缓存创建倍率
 }
 
 // tieredPriceMap 存储模型名称 → 阶梯价格列表的映射
@@ -363,6 +365,12 @@ func ValidateTieredPriceConfig(tiers []PriceTier) error {
 		}
 		if t.OutputPrice < 0 {
 			return fmt.Errorf("output_price must not be negative, got %v", t.OutputPrice)
+		}
+		if t.CachedInputPrice < 0 {
+			return fmt.Errorf("cached_input_price must not be negative, got %v", t.CachedInputPrice)
+		}
+		if t.CacheWritePrice < 0 {
+			return fmt.Errorf("cache_write_price must not be negative, got %v", t.CacheWritePrice)
 		}
 		if _, exists := seen[t.MaxTokens]; exists {
 			return fmt.Errorf("duplicate max_tokens: %d", t.MaxTokens)

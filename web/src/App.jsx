@@ -478,9 +478,9 @@ function App() {
         <Route
           path='/console/errorlog'
           element={
-            <PrivateRoute>
+            <RootRoute>
               <ErrorLog />
-            </PrivateRoute>
+            </RootRoute>
           }
         />
         <Route

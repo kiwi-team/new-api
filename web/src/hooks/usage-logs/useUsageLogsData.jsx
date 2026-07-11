@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
 import {
@@ -115,6 +115,96 @@ export const useLogsData = () => {
     ],
     logType: '0',
   };
+
+  // 下拉筛选选项(仅 root 用户使用):令牌名称、模型名称、渠道 ID、用户名称
+  // 通过下拉+模糊搜索代替纯文本输入,减少输入量。非 root 用户仍使用输入框。
+  const [tokenNameOptions, setTokenNameOptions] = useState([]);
+  const [channelOptions, setChannelOptions] = useState([]);
+  const [usernameOptions, setUsernameOptions] = useState([]);
+  const [usernameLoading, setUsernameLoading] = useState(false);
+  const usernameSearchTimerRef = useRef(null);
+
+  // 令牌名称列表:后端按 token_name 精确匹配,这里用 name 去重作为选项值
+  const fetchTokenNameOptions = async () => {
+    try {
+      const res = await API.get('/api/data/token-list');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const seen = new Set();
+        const options = [];
+        data.forEach((token) => {
+          const name = token.name;
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            options.push({ value: name, label: name });
+          }
+        });
+        setTokenNameOptions(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch token name options:', error);
+    }
+  };
+
+  // 模型名称:后端为模糊匹配,保持文本框输入,无需拉取选项
+
+  // 渠道列表(root only):后端按 channel_id 精确匹配,选项值为渠道 ID
+  const fetchChannelOptions = async () => {
+    try {
+      const res = await API.get('/api/channel/channel-name-list');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data.map((ch) => ({
+          value: ch.id,
+          label: `${ch.name || '[未知]'} (ID: ${ch.id})`,
+        }));
+        setChannelOptions(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch channel options:', error);
+    }
+  };
+
+  // 用户名称列表:后端按 username 精确匹配,选项值为 username;远程模糊搜索
+  const fetchUsernameOptions = async (keyword = '') => {
+    setUsernameLoading(true);
+    try {
+      const url = keyword.trim()
+        ? `/api/user/search?keyword=${encodeURIComponent(keyword.trim())}&p=1&page_size=20`
+        : `/api/user/?p=1&page_size=20`;
+      const res = await API.get(url);
+      const { success, data } = res.data;
+      const items = data?.items || data || [];
+      if (success && Array.isArray(items)) {
+        const options = items.map((user) => ({
+          value: user.username,
+          label: `${user.username} (ID: ${user.id})`,
+        }));
+        setUsernameOptions(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch username options:', error);
+    } finally {
+      setUsernameLoading(false);
+    }
+  };
+
+  const handleUsernameSearch = (val) => {
+    if (usernameSearchTimerRef.current)
+      clearTimeout(usernameSearchTimerRef.current);
+    usernameSearchTimerRef.current = setTimeout(() => {
+      fetchUsernameOptions(val);
+    }, 300);
+  };
+
+  // 仅 root 用户加载下拉选项;其他用户维持输入框,无需请求
+  useEffect(() => {
+    if (isRootUser) {
+      fetchTokenNameOptions();
+      fetchChannelOptions();
+      fetchUsernameOptions();
+    }
+  }, [isRootUser]);
 
   // Column visibility state
   const [visibleColumns, setVisibleColumns] = useState({});
@@ -1018,6 +1108,13 @@ export const useLogsData = () => {
     setLogsFormat,
     hasExpandableRows,
     setLogType,
+
+    // Root-only 下拉筛选选项
+    tokenNameOptions,
+    channelOptions,
+    usernameOptions,
+    usernameLoading,
+    handleUsernameSearch,
 
     // Translation
     t,

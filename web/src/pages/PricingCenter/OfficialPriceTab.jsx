@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Table,
   Button,
@@ -27,6 +27,8 @@ import {
   Typography,
   Popconfirm,
   Tag,
+  Modal,
+  Form,
 } from '@douyinfe/semi-ui';
 import { IconSearch, IconRefresh, IconPlus } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
@@ -34,6 +36,13 @@ import { API, showError, showSuccess } from '../../helpers';
 
 const DEFAULT_RATE = 7.3;
 const round6 = (n) => Math.round((Number(n) + Number.EPSILON) * 1e6) / 1e6;
+
+const formatTokens = (n) => {
+  if (n >= 1_000_000)
+    return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}K`;
+  return String(n);
+};
 
 /**
  * 双币种（美金/人民币）行内编辑单元：修改任一按汇率换算另一个，失焦/回车即提交。
@@ -105,7 +114,12 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
 
   // 新增模型行内表单
   const [newName, setNewName] = useState('');
-  const [newMode, setNewMode] = useState('token'); // token | call
+  const [newMode, setNewMode] = useState('token'); // token | call | tiered
+
+  // 阶梯档位编辑弹窗状态
+  const [tierModalModel, setTierModalModel] = useState(null); // 正在编辑档位的模型名
+  const [tierEditIndex, setTierEditIndex] = useState(-1); // -1=新增档位
+  const tierFormRef = useRef(null);
 
   useEffect(() => {
     const fetchRate = async () => {
@@ -125,6 +139,9 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
     let modelRatio = {};
     let completionRatio = {};
     let modelPrice = {};
+    let cacheRatio = {};
+    let createCacheRatio = {};
+    let tieredPrice = {};
     let updateTime = {};
     try {
       modelRatio = JSON.parse(inputs?.ModelRatio || '{}');
@@ -136,6 +153,15 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
       modelPrice = JSON.parse(inputs?.ModelPrice || '{}');
     } catch (e) {}
     try {
+      cacheRatio = JSON.parse(inputs?.CacheRatio || '{}');
+    } catch (e) {}
+    try {
+      createCacheRatio = JSON.parse(inputs?.CreateCacheRatio || '{}');
+    } catch (e) {}
+    try {
+      tieredPrice = JSON.parse(inputs?.TieredPrice || '{}');
+    } catch (e) {}
+    try {
       updateTime = JSON.parse(inputs?.ModelPriceUpdateTime || '{}');
     } catch (e) {}
 
@@ -143,9 +169,14 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
       ...Object.keys(modelRatio),
       ...Object.keys(completionRatio),
       ...Object.keys(modelPrice),
+      ...Object.keys(tieredPrice),
     ]);
     let arr = Array.from(names).map((name) => {
-      const isPerCall = modelPrice[name] !== undefined;
+      // 计费方式三态：阶梯 > 按次 > 按量
+      let billingMode = 'token';
+      if (Array.isArray(tieredPrice[name])) billingMode = 'tiered';
+      else if (modelPrice[name] !== undefined) billingMode = 'call';
+
       const ratio = modelRatio[name];
       const comp = completionRatio[name];
       const inputUSD = ratio !== undefined ? round6(ratio * 2) : null;
@@ -153,13 +184,23 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
         ratio !== undefined
           ? round6(ratio * (comp !== undefined ? comp : 1) * 2)
           : null;
+      // 缓存绝对价 = 缓存倍率 * 输入价（$/1M）
+      const cr = cacheRatio[name];
+      const ccr = createCacheRatio[name];
+      const cacheReadUSD =
+        cr !== undefined && inputUSD ? round6(cr * inputUSD) : null;
+      const cacheCreateUSD =
+        ccr !== undefined && inputUSD ? round6(ccr * inputUSD) : null;
       return {
         key: name,
         model: name,
-        isPerCall,
+        billingMode,
         inputUSD,
         outputUSD,
-        perCallUSD: isPerCall ? modelPrice[name] : null,
+        perCallUSD: billingMode === 'call' ? modelPrice[name] : null,
+        cacheReadUSD,
+        cacheCreateUSD,
+        tiers: Array.isArray(tieredPrice[name]) ? tieredPrice[name] : [],
         updatedAt: updateTime[name] || null,
       };
     });
@@ -177,17 +218,19 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
     return arr;
   }, [inputs, keyword]);
 
-  // 保存某模型（合并补丁后 PUT），成功后刷新 options
+  // 保存某模型（按量/按次，合并补丁后 PUT），成功后刷新 options
   const saveModel = async (row, patch = {}) => {
     const merged = { ...row, ...patch };
     setSavingModel(merged.model);
     try {
       const res = await API.put('/api/pricing/model', {
         model_name: merged.model,
-        is_per_call: merged.isPerCall,
+        is_per_call: merged.billingMode === 'call',
         input_price: merged.inputUSD || 0,
         output_price: merged.outputUSD || 0,
         per_call_price: merged.perCallUSD || 0,
+        cache_read_price: merged.cacheReadUSD || 0,
+        cache_create_price: merged.cacheCreateUSD || 0,
       });
       const { success, message } = res.data;
       if (success) {
@@ -203,10 +246,81 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
     }
   };
 
-  const handleDelete = async (model) => {
+  // 读取当前全量阶梯价 JSON（模型名 → tiers[]）
+  const readTieredMap = () => {
     try {
+      const parsed = JSON.parse(inputs?.TieredPrice || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  };
+
+  // 整体写回阶梯价 option（tiers 为空则删除该模型键）
+  const saveTiered = async (modelName, tiers) => {
+    setSavingModel(modelName);
+    try {
+      const map = readTieredMap();
+      if (Array.isArray(tiers) && tiers.length > 0) {
+        map[modelName] = [...tiers].sort((a, b) => a.max_tokens - b.max_tokens);
+      } else {
+        delete map[modelName];
+      }
+      const res = await API.put('/api/option/', {
+        key: 'TieredPrice',
+        value: JSON.stringify(map, null, 2),
+      });
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('已保存'));
+        await refresh();
+      } else {
+        showError(message || t('操作失败'));
+      }
+    } catch (e) {
+      showError(t('操作失败'));
+    } finally {
+      setSavingModel(null);
+    }
+  };
+
+  // 切换计费方式：清理另一套配置的残留，保证一个模型只有一份
+  const switchBillingMode = async (row, mode) => {
+    if (mode === row.billingMode) return;
+    if (mode === 'tiered') {
+      // 从 按量/按次 切到 阶梯：先清 ModelRatio/ModelPrice，再写入初始档位
+      setSavingModel(row.model);
+      try {
+        await API.delete('/api/pricing/model', {
+          params: { model_name: row.model },
+        });
+      } catch (e) {}
+      setSavingModel(null);
+      const initTiers = row.tiers?.length
+        ? row.tiers
+        : [{ max_tokens: 128000, input_price: 0, output_price: 0 }];
+      await saveTiered(row.model, initTiers);
+    } else if (row.billingMode === 'tiered') {
+      // 从 阶梯 切回 按量/按次：先清阶梯键，再按 saveModel 落一份基础价
+      await saveTiered(row.model, []);
+      await saveModel(
+        { model: row.model, billingMode: mode },
+        { inputUSD: 0, outputUSD: 0, perCallUSD: 0 },
+      );
+    } else {
+      // 按量 <-> 按次
+      await saveModel(row, { billingMode: mode });
+    }
+  };
+
+  const handleDelete = async (row) => {
+    try {
+      if (row.billingMode === 'tiered') {
+        await saveTiered(row.model, []);
+        return;
+      }
       const res = await API.delete('/api/pricing/model', {
-        params: { model_name: model },
+        params: { model_name: row.model },
       });
       const { success, message } = res.data;
       if (success) {
@@ -226,34 +340,96 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
       showError(t('模型名称不能为空'));
       return;
     }
-    await saveModel(
-      {
-        model: name,
-        isPerCall: newMode === 'call',
-        inputUSD: 0,
-        outputUSD: 0,
-        perCallUSD: 0,
-      },
-      {},
-    );
+    if (newMode === 'tiered') {
+      await saveTiered(name, [
+        { max_tokens: 128000, input_price: 0, output_price: 0 },
+      ]);
+    } else {
+      await saveModel(
+        {
+          model: name,
+          billingMode: newMode,
+          inputUSD: 0,
+          outputUSD: 0,
+          perCallUSD: 0,
+        },
+        {},
+      );
+    }
     setNewName('');
+  };
+
+  // ===== 阶梯档位编辑弹窗 =====
+  const openTierEditor = (modelName, tierIndex = -1) => {
+    setTierModalModel(modelName);
+    setTierEditIndex(tierIndex);
+    const row = rows.find((r) => r.model === modelName);
+    const tier = tierIndex >= 0 ? row?.tiers?.[tierIndex] : null;
+    setTimeout(() => {
+      tierFormRef.current?.setValues(
+        tier
+          ? {
+              max_tokens: tier.max_tokens,
+              input_price: tier.input_price,
+              output_price: tier.output_price,
+              cached_input_price: tier.cached_input_price,
+              cache_write_price: tier.cache_write_price,
+            }
+          : {
+              max_tokens: undefined,
+              input_price: undefined,
+              output_price: undefined,
+              cached_input_price: undefined,
+              cache_write_price: undefined,
+            },
+      );
+    }, 0);
+  };
+
+  const handleSaveTier = async (values) => {
+    const { max_tokens, input_price, output_price, cached_input_price, cache_write_price } = values;
+    const row = rows.find((r) => r.model === tierModalModel);
+    const tiers = row ? [...row.tiers] : [];
+    const tier = { max_tokens, input_price, output_price };
+    // 缓存价可选，未填不写入（配合后端 omitempty 与 0=回退倍率语义）
+    if (cached_input_price) tier.cached_input_price = cached_input_price;
+    if (cache_write_price) tier.cache_write_price = cache_write_price;
+    if (tierEditIndex >= 0) {
+      tiers[tierEditIndex] = tier;
+    } else {
+      if (tiers.some((t) => t.max_tokens === max_tokens)) {
+        showError(t('该阈值已存在'));
+        return;
+      }
+      tiers.push(tier);
+    }
+    setTierModalModel(null);
+    await saveTiered(row.model, tiers);
+  };
+
+  const handleDeleteTier = async (modelName, tierIndex) => {
+    const row = rows.find((r) => r.model === modelName);
+    if (!row) return;
+    const tiers = row.tiers.filter((_, i) => i !== tierIndex);
+    await saveTiered(modelName, tiers);
   };
 
   const columns = [
     { title: t('模型名称'), dataIndex: 'model', width: 240 },
     {
       title: t('计费方式'),
-      dataIndex: 'isPerCall',
+      dataIndex: 'billingMode',
       width: 130,
       render: (_, r) => (
         <Select
           size='small'
-          value={r.isPerCall ? 'call' : 'token'}
-          style={{ width: 100 }}
-          onChange={(v) => saveModel(r, { isPerCall: v === 'call' })}
+          value={r.billingMode}
+          style={{ width: 110 }}
+          onChange={(v) => switchBillingMode(r, v)}
           optionList={[
             { value: 'token', label: t('按量计费') },
             { value: 'call', label: t('按次计费') },
+            { value: 'tiered', label: t('阶梯计费') },
           ]}
         />
       ),
@@ -261,26 +437,100 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
     {
       title: t('输入价格') + ' ($/¥ /1M)',
       dataIndex: 'inputUSD',
-      width: 180,
-      render: (_, r) => (
-        <DualPriceCell
-          value={r.inputUSD}
-          rate={rate}
-          disabled={r.isPerCall}
-          onCommit={(usd) => saveModel(r, { inputUSD: usd })}
-        />
-      ),
+      width: 200,
+      render: (_, r) => {
+        if (r.billingMode === 'tiered') {
+          return (
+            <Button
+              size='small'
+              theme='light'
+              type='tertiary'
+              onClick={() => openTierEditor(r.model)}
+            >
+              {t('编辑档位')}（{r.tiers.length}）
+            </Button>
+          );
+        }
+        return (
+          <DualPriceCell
+            value={r.inputUSD}
+            rate={rate}
+            disabled={r.billingMode !== 'token'}
+            onCommit={(usd) => saveModel(r, { inputUSD: usd })}
+          />
+        );
+      },
     },
     {
       title: t('输出价格') + ' ($/¥ /1M)',
       dataIndex: 'outputUSD',
+      width: 200,
+      render: (_, r) => {
+        if (r.billingMode === 'tiered') {
+          // 阶梯模式：以档位标签形式展示各档，点击编辑
+          return (
+            <Space wrap>
+              {r.tiers.map((tier, idx) => (
+                <Tag
+                  key={idx}
+                  color='blue'
+                  closable
+                  onClose={() => handleDeleteTier(r.model, idx)}
+                  onClick={() => openTierEditor(r.model, idx)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  ≤{formatTokens(tier.max_tokens)}: ${tier.input_price}/$
+                  {tier.output_price}
+                  {tier.cached_input_price
+                    ? ` ${t('缓存读')} $${tier.cached_input_price}`
+                    : ''}
+                  {tier.cache_write_price
+                    ? ` ${t('缓存写')} $${tier.cache_write_price}`
+                    : ''}
+                </Tag>
+              ))}
+              <Button
+                icon={<IconPlus />}
+                size='small'
+                theme='borderless'
+                onClick={() => openTierEditor(r.model)}
+              />
+            </Space>
+          );
+        }
+        return (
+          <DualPriceCell
+            value={r.outputUSD}
+            rate={rate}
+            disabled={r.billingMode !== 'token'}
+            onCommit={(usd) => saveModel(r, { outputUSD: usd })}
+          />
+        );
+      },
+    },
+    {
+      title: t('缓存读取价') + ' ($/¥ /1M)',
+      dataIndex: 'cacheReadUSD',
       width: 180,
       render: (_, r) => (
         <DualPriceCell
-          value={r.outputUSD}
+          value={r.cacheReadUSD}
           rate={rate}
-          disabled={r.isPerCall}
-          onCommit={(usd) => saveModel(r, { outputUSD: usd })}
+          disabled={r.billingMode !== 'token'}
+          onCommit={(usd) => saveModel(r, { cacheReadUSD: usd })}
+        />
+      ),
+    },
+    {
+      title: t('缓存创建价') + ' ($/¥ /1M)',
+      dataIndex: 'cacheCreateUSD',
+      width: 180,
+      render: (_, r) => (
+        <DualPriceCell
+          value={r.cacheCreateUSD}
+          rate={rate}
+          disabled={r.billingMode !== 'token'}
+          onCommit={(usd) => saveModel(r, { cacheCreateUSD: usd })}
         />
       ),
     },
@@ -292,7 +542,7 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
         <DualPriceCell
           value={r.perCallUSD}
           rate={rate}
-          disabled={!r.isPerCall}
+          disabled={r.billingMode !== 'call'}
           onCommit={(usd) => saveModel(r, { perCallUSD: usd })}
         />
       ),
@@ -309,7 +559,7 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
       width: 100,
       fixed: 'right',
       render: (_, r) => (
-        <Popconfirm title={t('确认删除')} onConfirm={() => handleDelete(r.model)}>
+        <Popconfirm title={t('确认删除')} onConfirm={() => handleDelete(r)}>
           <Button size='small' type='danger'>
             {t('删除')}
           </Button>
@@ -353,6 +603,7 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
           optionList={[
             { value: 'token', label: t('按量计费') },
             { value: 'call', label: t('按次计费') },
+            { value: 'tiered', label: t('阶梯计费') },
           ]}
         />
         <Button type='primary' icon={<IconPlus />} onClick={handleAdd}>
@@ -372,6 +623,71 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
         empty={t('暂无已配置的价格')}
         scroll={{ x: 'max-content' }}
       />
+
+      {/* 阶梯档位 新增/编辑 弹窗 */}
+      <Modal
+        title={
+          tierEditIndex >= 0 ? t('编辑价格档位') : t('添加价格档位')
+        }
+        visible={!!tierModalModel}
+        onCancel={() => setTierModalModel(null)}
+        onOk={() => {
+          tierFormRef.current
+            ?.validate()
+            .then((values) => handleSaveTier(values))
+            .catch(() => showError(t('请检查输入')));
+        }}
+        width={450}
+      >
+        <Typography.Text type='tertiary' style={{ display: 'block', marginBottom: 8 }}>
+          {t('模型')}：{tierModalModel}
+        </Typography.Text>
+        <Form getFormApi={(api) => (tierFormRef.current = api)}>
+          <Form.InputNumber
+            field='max_tokens'
+            label={t('输入 Token 上限')}
+            placeholder='128000'
+            min={1}
+            style={{ width: '100%' }}
+            rules={[{ required: true, message: t('请输入 Token 上限') }]}
+            suffix='tokens'
+          />
+          <Form.InputNumber
+            field='input_price'
+            label={t('输入价格（$/1M tokens）')}
+            placeholder='0.5'
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
+            rules={[{ required: true, message: t('请输入输入价格') }]}
+          />
+          <Form.InputNumber
+            field='output_price'
+            label={t('输出价格（$/1M tokens）')}
+            placeholder='2.0'
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
+            rules={[{ required: true, message: t('请输入输出价格') }]}
+          />
+          <Form.InputNumber
+            field='cached_input_price'
+            label={t('缓存读取价（$/1M tokens）')}
+            placeholder={t('留空则回退缓存倍率')}
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
+          />
+          <Form.InputNumber
+            field='cache_write_price'
+            label={t('缓存创建价（$/1M tokens）')}
+            placeholder={t('留空则回退缓存创建倍率')}
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
+          />
+        </Form>
+      </Modal>
     </div>
   );
 };

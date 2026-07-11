@@ -288,7 +288,7 @@ func SetApiRouter(router *gin.Engine) {
 		redemptionRoute.Use(middleware.AdminAuth())
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
-			redemptionRoute.GET("/error-logs", middleware.AdminAuth(), controller.GetAllErrorLogs)
+			redemptionRoute.GET("/error-logs", middleware.RootAuth(), controller.GetAllErrorLogs)
 			redemptionRoute.GET("/:id", controller.GetRedemption)
 			redemptionRoute.POST("/", controller.AddRedemption)
 			redemptionRoute.PUT("/", controller.UpdateRedemption)
@@ -297,16 +297,14 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
-		logRoute.GET("/error-logs", middleware.AdminAuth(), controller.GetAllErrorLogs)
-		logRoute.GET("/error-logs/:id/body", middleware.AdminAuth(), controller.GetErrorLogBody)
+		logRoute.GET("/error-logs", middleware.RootAuth(), controller.GetAllErrorLogs)
+		logRoute.GET("/error-logs/:id/body", middleware.RootAuth(), controller.GetErrorLogBody)
 		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
-		logRoute.GET("/self/error-logs", middleware.UserAuth(), controller.GetSelfErrorLogs)
-		logRoute.GET("/self/error-logs/:id/body", middleware.UserAuth(), controller.GetSelfErrorLogBody)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 
 		dataRoute := apiRouter.Group("/data")

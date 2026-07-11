@@ -24,6 +24,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// tieredCacheCreation1hMultiplier 阶梯档位 1h 缓存创建价相对 5m 基准价的倍数。
+// 与 relay/helper.claudeCacheCreation1hMultiplier 保持一致（6/3.75 ≈ 1.6）。
+// 参见 https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+const tieredCacheCreation1hMultiplier = 6.0 / 3.75
+
 type TokenDetails struct {
 	TextTokens  int
 	AudioTokens int
@@ -403,19 +408,38 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 			inputQuota := float64(promptTokens) * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
 			outputQuota := float64(completionTokens) * (tier.OutputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
 			calculateQuota = inputQuota + outputQuota
-			// 缓存 tokens 使用阶梯输入价格 * 缓存倍率
+			// 缓存读取：档位绝对价优先，否则回退 模型级缓存倍率 * 阶梯输入价格
 			if cacheTokens > 0 {
-				calculateQuota += float64(cacheTokens) * cacheRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				if tier.CachedInputPrice > 0 {
+					calculateQuota += float64(cacheTokens) * (tier.CachedInputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+				} else {
+					calculateQuota += float64(cacheTokens) * cacheRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				}
 			}
+			// 缓存创建 5m：档位绝对价优先，否则回退
 			if cacheCreationTokens5m > 0 {
-				calculateQuota += float64(cacheCreationTokens5m) * cacheCreationRatio5m * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				if tier.CacheWritePrice > 0 {
+					calculateQuota += float64(cacheCreationTokens5m) * (tier.CacheWritePrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+				} else {
+					calculateQuota += float64(cacheCreationTokens5m) * cacheCreationRatio5m * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				}
 			}
+			// 缓存创建 1h：档位绝对价 × 1h 乘数（6/3.75≈1.6），否则回退
 			if cacheCreationTokens1h > 0 {
-				calculateQuota += float64(cacheCreationTokens1h) * cacheCreationRatio1h * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				if tier.CacheWritePrice > 0 {
+					calculateQuota += float64(cacheCreationTokens1h) * (tier.CacheWritePrice / 1_000_000) * tieredCacheCreation1hMultiplier * common.QuotaPerUnit * groupRatio
+				} else {
+					calculateQuota += float64(cacheCreationTokens1h) * cacheCreationRatio1h * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				}
 			}
+			// 剩余未标注 5m/1h 的缓存创建：按 5m 基准处理
 			remainingCacheCreationTokens := cacheCreationTokens - cacheCreationTokens5m - cacheCreationTokens1h
 			if remainingCacheCreationTokens > 0 {
-				calculateQuota += float64(remainingCacheCreationTokens) * cacheCreationRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				if tier.CacheWritePrice > 0 {
+					calculateQuota += float64(remainingCacheCreationTokens) * (tier.CacheWritePrice / 1_000_000) * common.QuotaPerUnit * groupRatio
+				} else {
+					calculateQuota += float64(remainingCacheCreationTokens) * cacheCreationRatio * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
+				}
 			}
 		}
 	} else if !relayInfo.PriceData.UsePrice {

@@ -947,13 +947,23 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			outputQuota := dCompletionTokens.Mul(dTieredOutputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
 			quotaCalculateDecimal = inputQuota.Add(outputQuota)
 
-			// 缓存 tokens 使用阶梯输入价格 * 缓存倍率
+			// 缓存 tokens：档位绝对价优先，否则回退 模型级缓存倍率 * 阶梯输入价格
 			if !dCacheTokens.IsZero() {
-				cachedQuota := dCacheTokens.Mul(dCacheRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				var cachedQuota decimal.Decimal
+				if tier.CachedInputPrice > 0 {
+					cachedQuota = dCacheTokens.Mul(decimal.NewFromFloat(tier.CachedInputPrice)).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				} else {
+					cachedQuota = dCacheTokens.Mul(dCacheRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				}
 				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedQuota)
 			}
 			if !dCachedCreationTokens.IsZero() {
-				cachedCreationQuota := dCachedCreationTokens.Mul(dCachedCreationRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				var cachedCreationQuota decimal.Decimal
+				if tier.CacheWritePrice > 0 {
+					cachedCreationQuota = dCachedCreationTokens.Mul(decimal.NewFromFloat(tier.CacheWritePrice)).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				} else {
+					cachedCreationQuota = dCachedCreationTokens.Mul(dCachedCreationRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
+				}
 				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedCreationQuota)
 			}
 			// 图片 tokens 使用阶梯输入价格 * 图片倍率

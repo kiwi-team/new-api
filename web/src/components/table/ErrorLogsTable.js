@@ -490,7 +490,54 @@ const ErrorLogsTable = () => {
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
   const isAdminUser = isAdmin();
+  const isRootUser = isRoot();
   let now = new Date();
+
+  // 渠道 / 令牌下拉选项(仅 root 用户使用,精确匹配);其他用户维持输入框
+  const [channelOptions, setChannelOptions] = useState([]);
+  const [tokenIdOptions, setTokenIdOptions] = useState([]);
+
+  // 渠道列表(root only):后端按 channel_id 精确匹配,选项值为渠道 ID
+  const fetchChannelOptions = async () => {
+    try {
+      const res = await API.get('/api/channel/channel-name-list');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data.map((ch) => ({
+          value: ch.id,
+          label: `${ch.name || '[未知]'} (ID: ${ch.id})`,
+        }));
+        setChannelOptions(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch channel options:', error);
+    }
+  };
+
+  // 令牌列表:后端按 token_id 精确匹配,选项值为令牌 ID
+  const fetchTokenIdOptions = async () => {
+    try {
+      const res = await API.get('/api/data/token-list');
+      const { success, data } = res.data;
+      if (success && Array.isArray(data)) {
+        const options = data.map((token) => ({
+          value: token.id,
+          label: `${token.name || '[未命名]'} (ID: ${token.id})`,
+        }));
+        setTokenIdOptions(options);
+      }
+    } catch (error) {
+      console.error('Failed to fetch token options:', error);
+    }
+  };
+
+  // 仅 root 用户加载下拉选项;其他用户维持输入框,无需请求
+  useEffect(() => {
+    if (isRootUser) {
+      fetchChannelOptions();
+      fetchTokenIdOptions();
+    }
+  }, [isRootUser]);
 
   // Form 初始值
   const formInitValues = {
@@ -638,10 +685,8 @@ const ErrorLogsTable = () => {
       traj_id: traj_id || '',
       session_id: session_id || '',
     });
-    // 非管理员走自助接口，仅能看到本账号或其关联 uid 的错误日志
-    url = isAdminUser
-      ? `/api/log/error-logs?${params.toString()}`
-      : `/api/log/self/error-logs?${params.toString()}`;
+    // 错误日志页为 root only,统一走管理员接口
+    url = `/api/log/error-logs?${params.toString()}`;
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
@@ -812,11 +857,7 @@ const ErrorLogsTable = () => {
   const fetchAndShowBody = async (id) => {
     setLoadingBodyId(id);
     try {
-      const res = await API.get(
-        isAdminUser
-          ? `/api/log/error-logs/${id}/body`
-          : `/api/log/self/error-logs/${id}/body`,
-      );
+      const res = await API.get(`/api/log/error-logs/${id}/body`);
       const { success, message, data } = res.data;
       if (success) {
         showDetailDialog(data, true);
@@ -975,22 +1016,49 @@ const ErrorLogsTable = () => {
                     pure
                   />
 
-                  <Form.Input
-                    field='channel'
-                    prefix={<IconSearch />}
-                    placeholder={t('channelID')}
-                    className='!rounded-full'
-                    showClear
-                    pure
-                  />
-                   <Form.Input
-                    field='token_id'
-                    prefix={<IconSearch />}
-                    placeholder={t('tokenID')}
-                    className='!rounded-full'
-                    showClear
-                    pure
-                  />
+                  {/* 渠道 / 令牌:root 用户下拉+模糊搜索(精确匹配),其他用户维持输入框 */}
+                  {isRootUser ? (
+                    <Form.Select
+                      field='channel'
+                      prefix={<IconSearch />}
+                      placeholder={t('channelID')}
+                      optionList={channelOptions}
+                      filter
+                      className='w-full !rounded-full'
+                      showClear
+                      pure
+                    />
+                  ) : (
+                    <Form.Input
+                      field='channel'
+                      prefix={<IconSearch />}
+                      placeholder={t('channelID')}
+                      className='!rounded-full'
+                      showClear
+                      pure
+                    />
+                  )}
+                  {isRootUser ? (
+                    <Form.Select
+                      field='token_id'
+                      prefix={<IconSearch />}
+                      placeholder={t('tokenID')}
+                      optionList={tokenIdOptions}
+                      filter
+                      className='w-full !rounded-full'
+                      showClear
+                      pure
+                    />
+                  ) : (
+                    <Form.Input
+                      field='token_id'
+                      prefix={<IconSearch />}
+                      placeholder={t('tokenID')}
+                      className='!rounded-full'
+                      showClear
+                      pure
+                    />
+                  )}
                    <Form.Input
                     field='client_user_id'
                     prefix={<IconSearch />}

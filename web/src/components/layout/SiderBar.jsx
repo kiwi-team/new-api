@@ -132,6 +132,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     // 组织标签:userMenu.pages 决定可见项(系统 admin bypass)
     // tableHiddle/isModuleVisible 是后端 menu 之外的额外细分(数据看板的功能开关等)
     const filteredItems = items.filter((item) => {
+      // 错误日志:仅超级管理员 (root) 可见,页面与后端接口均为 root only
+      if (item.itemKey === 'errorlog') {
+        return isRoot();
+      }
       // 账单查询:
       //   - 系统 admin / root、组织管理员(org 级 bill 授权,如 wl-admin)始终可见;
       //   - 普通用户默认隐藏,需 root 在「侧边栏模块」开启 bill 开关后才展示(且用户本身有 bill_self 授权)。

@@ -112,6 +112,8 @@ export default function TieredPriceVisualEditor({ value, onChange, onSave, loadi
           max_tokens: tier.max_tokens,
           input_price: tier.input_price,
           output_price: tier.output_price,
+          cached_input_price: tier.cached_input_price,
+          cache_write_price: tier.cache_write_price,
         });
       }, 0);
     }
@@ -119,11 +121,14 @@ export default function TieredPriceVisualEditor({ value, onChange, onSave, loadi
 
   // Save tier
   const handleSaveTier = (values) => {
-    const { max_tokens, input_price, output_price } = values;
+    const { max_tokens, input_price, output_price, cached_input_price, cache_write_price } = values;
     const updated = models.map((m) => {
       if (m.name !== editingModel) return m;
       const newTiers = [...m.tiers];
       const tier = { max_tokens, input_price, output_price };
+      // 缓存价可选，未填不写入（配合后端 omitempty 与 0=回退倍率语义）
+      if (cached_input_price) tier.cached_input_price = cached_input_price;
+      if (cache_write_price) tier.cache_write_price = cache_write_price;
 
       if (editingTierIndex >= 0) {
         newTiers[editingTierIndex] = tier;
@@ -195,6 +200,8 @@ export default function TieredPriceVisualEditor({ value, onChange, onSave, loadi
               style={{ cursor: 'pointer' }}
             >
               ≤{formatTokens(tier.max_tokens)}: ${tier.input_price}/${tier.output_price}
+              {tier.cached_input_price ? ` ${t('缓存读')} $${tier.cached_input_price}` : ''}
+              {tier.cache_write_price ? ` ${t('缓存写')} $${tier.cache_write_price}` : ''}
             </Tag>
           ))}
           <Button
@@ -331,6 +338,22 @@ export default function TieredPriceVisualEditor({ value, onChange, onSave, loadi
             step={0.01}
             style={{ width: '100%' }}
             rules={[{ required: true, message: t('请输入输出价格') }]}
+          />
+          <Form.InputNumber
+            field='cached_input_price'
+            label={t('缓存读取价（$/1M tokens）')}
+            placeholder={t('留空则回退缓存倍率')}
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
+          />
+          <Form.InputNumber
+            field='cache_write_price'
+            label={t('缓存创建价（$/1M tokens）')}
+            placeholder={t('留空则回退缓存创建倍率')}
+            min={0}
+            step={0.01}
+            style={{ width: '100%' }}
           />
         </Form>
       </Modal>

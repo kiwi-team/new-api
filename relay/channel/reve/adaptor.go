@@ -191,7 +191,6 @@ func resolveEditImage(c *gin.Context, request *dto.ImageRequest) (string, error)
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	common.PrintJson("reve", requestBody)
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 

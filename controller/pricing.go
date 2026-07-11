@@ -109,15 +109,18 @@ func touchModelPriceUpdateTime(modelName string, ts int64) error {
 }
 
 type updateModelPricingRequest struct {
-	ModelName    string  `json:"model_name"`
-	IsPerCall    bool    `json:"is_per_call"`    // true=按次计费
-	InputPrice   float64 `json:"input_price"`    // 按量：输入 $/1M tokens
-	OutputPrice  float64 `json:"output_price"`   // 按量：输出 $/1M tokens
-	PerCallPrice float64 `json:"per_call_price"` // 按次：$/次
+	ModelName        string  `json:"model_name"`
+	IsPerCall        bool    `json:"is_per_call"`        // true=按次计费
+	InputPrice       float64 `json:"input_price"`        // 按量：输入 $/1M tokens
+	OutputPrice      float64 `json:"output_price"`       // 按量：输出 $/1M tokens
+	PerCallPrice     float64 `json:"per_call_price"`     // 按次：$/次
+	CacheReadPrice   float64 `json:"cache_read_price"`   // 按量：缓存读取 $/1M tokens
+	CacheCreatePrice float64 `json:"cache_create_price"` // 按量：缓存创建 $/1M tokens
 }
 
 // UpdateModelPricing PUT /api/pricing/model —— 行内即时保存单个模型的官方价格。
-// 前端传美金价，后端换算成倍率（ratio = 输入价/2，completion = 输出价/输入价）并落库，
+// 前端传美金价，后端换算成倍率（ratio = 输入价/2，completion = 输出价/输入价，
+// cacheRatio = 缓存读取价/输入价，createCacheRatio = 缓存创建价/输入价）并落库，
 // 同时记录修改时间。root only。
 func UpdateModelPricing(c *gin.Context) {
 	var req updateModelPricingRequest
@@ -130,7 +133,8 @@ func UpdateModelPricing(c *gin.Context) {
 		c.JSON(200, gin.H{"success": false, "message": "模型名称不能为空"})
 		return
 	}
-	if req.InputPrice < 0 || req.OutputPrice < 0 || req.PerCallPrice < 0 {
+	if req.InputPrice < 0 || req.OutputPrice < 0 || req.PerCallPrice < 0 ||
+		req.CacheReadPrice < 0 || req.CacheCreatePrice < 0 {
 		c.JSON(200, gin.H{"success": false, "message": "价格不能为负数"})
 		return
 	}
@@ -138,11 +142,15 @@ func UpdateModelPricing(c *gin.Context) {
 	ratioMap := ratio_setting.GetModelRatioCopy()
 	completionMap := ratio_setting.GetCompletionRatioCopy()
 	priceMap := ratio_setting.GetModelPriceCopy()
+	cacheMap := ratio_setting.GetCacheRatioCopy()
+	createCacheMap := ratio_setting.GetCreateCacheRatioCopy()
 
 	if req.IsPerCall {
 		priceMap[req.ModelName] = req.PerCallPrice
 		delete(ratioMap, req.ModelName)
 		delete(completionMap, req.ModelName)
+		delete(cacheMap, req.ModelName)
+		delete(createCacheMap, req.ModelName)
 	} else {
 		ratio := req.InputPrice / 2
 		completion := 1.0
@@ -152,12 +160,26 @@ func UpdateModelPricing(c *gin.Context) {
 		ratioMap[req.ModelName] = ratio
 		completionMap[req.ModelName] = completion
 		delete(priceMap, req.ModelName)
+
+		// 缓存价格换算为倍率（相对输入价）；输入价为 0 或缓存价为 0 时不配置对应倍率
+		if req.InputPrice > 0 && req.CacheReadPrice > 0 {
+			cacheMap[req.ModelName] = req.CacheReadPrice / req.InputPrice
+		} else {
+			delete(cacheMap, req.ModelName)
+		}
+		if req.InputPrice > 0 && req.CacheCreatePrice > 0 {
+			createCacheMap[req.ModelName] = req.CacheCreatePrice / req.InputPrice
+		} else {
+			delete(createCacheMap, req.ModelName)
+		}
 	}
 
 	for key, m := range map[string]map[string]float64{
-		"ModelRatio":      ratioMap,
-		"CompletionRatio": completionMap,
-		"ModelPrice":      priceMap,
+		"ModelRatio":       ratioMap,
+		"CompletionRatio":  completionMap,
+		"ModelPrice":       priceMap,
+		"CacheRatio":       cacheMap,
+		"CreateCacheRatio": createCacheMap,
 	} {
 		if err := saveModelPriceMap(key, m); err != nil {
 			c.JSON(200, gin.H{"success": false, "message": err.Error()})
@@ -188,13 +210,19 @@ func DeleteModelPricing(c *gin.Context) {
 	ratioMap := ratio_setting.GetModelRatioCopy()
 	completionMap := ratio_setting.GetCompletionRatioCopy()
 	priceMap := ratio_setting.GetModelPriceCopy()
+	cacheMap := ratio_setting.GetCacheRatioCopy()
+	createCacheMap := ratio_setting.GetCreateCacheRatioCopy()
 	delete(ratioMap, modelName)
 	delete(completionMap, modelName)
 	delete(priceMap, modelName)
+	delete(cacheMap, modelName)
+	delete(createCacheMap, modelName)
 	for key, m := range map[string]map[string]float64{
-		"ModelRatio":      ratioMap,
-		"CompletionRatio": completionMap,
-		"ModelPrice":      priceMap,
+		"ModelRatio":       ratioMap,
+		"CompletionRatio":  completionMap,
+		"ModelPrice":       priceMap,
+		"CacheRatio":       cacheMap,
+		"CreateCacheRatio": createCacheMap,
 	} {
 		if err := saveModelPriceMap(key, m); err != nil {
 			c.JSON(200, gin.H{"success": false, "message": err.Error()})
