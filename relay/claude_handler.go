@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -110,10 +111,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	adaptor.Init(info)
 
 	// Claude Code 客户端检测：渠道开启后，仅放行真实 Claude Code 客户端请求。
+	// 检测以「客户端原始请求头叠加渠道 Header Override 后的合并结果」为准，即在请求头覆盖之后进行，
+	// 使渠道对头的改写/透传/{client_header} 占位符都能被检测感知。
 	// 未通过检测视为该渠道请求失败——用 channel: 前缀错误码触发跨渠道重试并写入 error_logs，
 	// 同时该错误码在 ShouldDisableChannel 中被显式跳过，不会误禁用当前渠道。
 	if info.ChannelSetting.ClaudeCodeGuardEnabled {
-		if guardErr := claude.DetectClaudeCode(request, c.Request.Header, c.Request.URL.Path); guardErr != nil {
+		guardHeader, headerErr := channel.BuildOverriddenClientHeader(c, info)
+		if headerErr != nil {
+			return types.NewErrorWithStatusCode(headerErr, types.ErrorCodeChannelHeaderOverrideInvalid, http.StatusBadRequest)
+		}
+		if guardErr := claude.DetectClaudeCode(request, guardHeader, c.Request.URL.Path); guardErr != nil {
 			return types.NewErrorWithStatusCode(guardErr, types.ErrorCodeChannelClaudeCodeGuardReject, http.StatusBadRequest)
 		}
 	}

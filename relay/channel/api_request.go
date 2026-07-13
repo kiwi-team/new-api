@@ -275,6 +275,31 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 	}
 }
 
+// BuildOverriddenClientHeader 以客户端原始请求头为基底，叠加渠道 Header Override
+// （改写 / 透传 / {client_header} 占位符）后返回合并结果，用于「以最终发往上游的头为准」的场景
+// （如 Claude Code 客户端检测）。
+//
+// 说明：这里复用与真实发送路径完全相同的 processHeaderOverride 计算逻辑，确保检测看到的头与
+// 上游最终收到的「客户端语义头」一致；差异仅在于本函数以 c.Request.Header 为基底（保留 UA、
+// X-App、Anthropic-Beta 等默认不透传但检测需要的字段），而真实发送路径的基底是新建的上游 req。
+func BuildOverriddenClientHeader(c *gin.Context, info *common.RelayInfo) (http.Header, error) {
+	merged := http.Header{}
+	if c != nil && c.Request != nil {
+		merged = c.Request.Header.Clone()
+		if merged == nil {
+			merged = http.Header{}
+		}
+	}
+	headerOverride, err := processHeaderOverride(info, c)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range headerOverride {
+		merged.Set(key, value)
+	}
+	return merged, nil
+}
+
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
