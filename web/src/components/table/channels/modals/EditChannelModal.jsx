@@ -164,6 +164,7 @@ const EditChannelModal = (props) => {
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    claude_code_guard_enabled: false,
     settings: '',
     // 仅 Vertex: 密钥格式（存入 settings.vertex_key_type）
     vertex_key_type: 'json',
@@ -392,6 +393,7 @@ const EditChannelModal = (props) => {
     system_prompt: '',
     google_file_upload: '',
     google_file_bucket: '',
+    claude_code_guard_enabled: false,
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
@@ -609,6 +611,8 @@ const EditChannelModal = (props) => {
           data.google_file_bucket = parsedSettings.google_file_bucket || '';
           data.google_file_upload = parsedSettings.google_file_upload || '';
           data.model_output_mapping = parsedSettings.model_output_mapping || '';
+          data.claude_code_guard_enabled =
+            parsedSettings.claude_code_guard_enabled || false;
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -618,6 +622,7 @@ const EditChannelModal = (props) => {
           data.system_prompt = '';
           data.system_prompt_override = false;
           data.model_output_mapping = '';
+          data.claude_code_guard_enabled = false;
         }
       } else {
         data.force_format = false;
@@ -629,6 +634,7 @@ const EditChannelModal = (props) => {
         data.google_file_bucket = '';
         data.google_file_upload = '';
         data.model_output_mapping = '';
+        data.claude_code_guard_enabled = false;
       }
 
       if (data.settings) {
@@ -702,6 +708,7 @@ const EditChannelModal = (props) => {
         system_prompt_override: data.system_prompt_override || false,
         google_file_bucket: data.google_file_bucket || '',
         google_file_upload: data.google_file_upload || '',
+        claude_code_guard_enabled: data.claude_code_guard_enabled || false,
       });
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
@@ -1047,6 +1054,7 @@ const EditChannelModal = (props) => {
       pass_through_body_enabled: false,
       system_prompt: '',
       system_prompt_override: false,
+      claude_code_guard_enabled: false,
     });
     // 重置密钥模式状态
     setKeyMode('append');
@@ -1377,6 +1385,8 @@ const EditChannelModal = (props) => {
       google_file_bucket: localInputs.google_file_bucket || '',
       google_file_upload: localInputs.google_file_upload || '',
       model_output_mapping: localInputs.model_output_mapping || '',
+      claude_code_guard_enabled:
+        localInputs.claude_code_guard_enabled || false,
     };
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
@@ -1432,6 +1442,7 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
     delete localInputs.model_output_mapping;
+    delete localInputs.claude_code_guard_enabled;
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -3403,6 +3414,24 @@ const EditChannelModal = (props) => {
                         }
                         extraText={t(
                           '开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）',
+                        )}
+                      />
+                    )}
+
+                    {inputs.type === 14 && (
+                      <Form.Switch
+                        field='claude_code_guard_enabled'
+                        label={t('Claude Code 客户端检测')}
+                        checkedText={t('开')}
+                        uncheckedText={t('关')}
+                        onChange={(value) =>
+                          handleChannelSettingsChange(
+                            'claude_code_guard_enabled',
+                            value,
+                          )
+                        }
+                        extraText={t(
+                          '开启后，分配到该渠道的请求将校验是否为真实 Claude Code 客户端，非 CC 请求会失败并转由其他渠道处理',
                         )}
                       />
                     )}

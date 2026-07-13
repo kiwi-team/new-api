@@ -109,6 +109,15 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
+	// Claude Code 客户端检测：渠道开启后，仅放行真实 Claude Code 客户端请求。
+	// 未通过检测视为该渠道请求失败——用 channel: 前缀错误码触发跨渠道重试并写入 error_logs，
+	// 同时该错误码在 ShouldDisableChannel 中被显式跳过，不会误禁用当前渠道。
+	if info.ChannelSetting.ClaudeCodeGuardEnabled {
+		if guardErr := claude.DetectClaudeCode(request, c.Request.Header, c.Request.URL.Path); guardErr != nil {
+			return types.NewErrorWithStatusCode(guardErr, types.ErrorCodeChannelClaudeCodeGuardReject, http.StatusBadRequest)
+		}
+	}
+
 	if request.MaxTokens == 0 {
 		request.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 	}

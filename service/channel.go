@@ -52,6 +52,11 @@ func ShouldDisableChannel(channelType int, err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
+	// Claude Code 客户端检测拒绝：只应触发跨渠道重试并记录 error_logs，
+	// 不代表该渠道本身不可用，因此显式跳过自动禁用。
+	if err.GetErrorCode() == types.ErrorCodeChannelClaudeCodeGuardReject {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}
