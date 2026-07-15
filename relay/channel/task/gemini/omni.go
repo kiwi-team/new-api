@@ -27,7 +27,28 @@ import (
 const (
 	omniModelPrefix  = "gemini-omni"
 	omniTaskIDPrefix = "omni:"
+	// omniDefaultSeconds is the default video length (seconds) billed when the client
+	// does not specify `seconds`. Omni generates 10-second videos by default.
+	omniDefaultSeconds = 10
 )
+
+// ApplyOmniSecondsRatio sets the per-second billing multiplier for an Omni video task.
+// It reads the top-level `seconds` field (defaulting to omniDefaultSeconds) and writes it
+// into info.PriceData.OtherRatios["seconds"], which the task billing path multiplies into
+// the final ratio (quota = modelPrice(per-second) × seconds × groupRatio).
+//
+// This MUST be called from ValidateRequestAndSetAction (which runs before the task pricing
+// step) rather than BuildRequestBody (which runs after pricing).
+func ApplyOmniSecondsRatio(info *relaycommon.RelayInfo, seconds string) {
+	sec := common.String2Int(seconds)
+	if sec <= 0 {
+		sec = omniDefaultSeconds
+	}
+	if info.PriceData.OtherRatios == nil {
+		info.PriceData.OtherRatios = map[string]float64{}
+	}
+	info.PriceData.OtherRatios["seconds"] = float64(sec)
+}
 
 // isOmniModel reports whether the model name refers to a Gemini Omni video model.
 func isOmniModel(name string) bool {

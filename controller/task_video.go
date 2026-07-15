@@ -123,7 +123,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
-	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
+	if r, ok := tryParseVideoGenerationsResponse(responseBody); ok {
+		// 上游是 new-api 级联/中转，返回 /v1/video/generations 的 {data:{url,status,task_id,format}} 结构。
+		// 该结构里视频地址在 data.url、状态用 succeeded/failed/processing 等语义，需要单独兼容。
+		logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask parsed as video generations response: %+v", r))
+		taskResult = r
+		task.Data = responseBody
+	} else if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
 		logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask parsed as new api response format: %+v", responseItems))
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
@@ -315,6 +321,87 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	}
 
 	return nil
+}
+
+// tryParseVideoGenerationsResponse 兼容上游为 new-api 级联/中转时返回的
+// /v1/video/generations 响应结构：{code:"success", data:{error,format,metadata,status,task_id,url}}。
+// 该结构里视频地址在 data.url，状态用 succeeded/failed/processing/queued 等语义字符串，
+// 与内部 TaskResponse[model.Task]（data 为 model.Task）不同，需要单独识别并转换。
+func tryParseVideoGenerationsResponse(body []byte) (*relaycommon.TaskInfo, bool) {
+	var wrapper struct {
+		Code string `json:"code"`
+		Data struct {
+			Status   string      `json:"status"`
+			TaskID   string      `json:"task_id"`
+			URL      string      `json:"url"`
+			Error    interface{} `json:"error"`
+			Progress string      `json:"progress"`
+		} `json:"data"`
+	}
+	if err := common.Unmarshal(body, &wrapper); err != nil {
+		return nil, false
+	}
+	if wrapper.Code != "success" {
+		return nil, false
+	}
+	// 仅当 data 携带 video-generations 独有特征时才认定为该格式，避免与内部
+	// TaskResponse[model.Task]（status 为大写 SUCCESS/QUEUED，转小写后会与部分值重合）混淆：
+	//   - data.url 非空（model.Task 无此字段），或
+	//   - status 为 OpenAI 风格的 succeeded/failed/processing（内部常量里没有这些值）。
+	d := wrapper.Data
+	statusLower := strings.ToLower(strings.TrimSpace(d.Status))
+	isVideoGenOnlyStatus := statusLower == "succeeded" || statusLower == "failed" || statusLower == "processing"
+	if d.URL == "" && !isVideoGenOnlyStatus {
+		return nil, false
+	}
+
+	ti := &relaycommon.TaskInfo{
+		TaskID:   d.TaskID,
+		Progress: d.Progress,
+	}
+	switch statusLower {
+	case "succeeded", "success":
+		ti.Status = model.TaskStatusSuccess
+		ti.Progress = "100%"
+		ti.Url = d.URL
+	case "failed", "error":
+		ti.Status = model.TaskStatusFailure
+		ti.Progress = "100%"
+		if msg := stringifyError(d.Error); msg != "" {
+			ti.Reason = msg
+		} else {
+			ti.Reason = "upstream task failed"
+		}
+	case "queued":
+		ti.Status = model.TaskStatusQueued
+	case "processing", "in_progress":
+		ti.Status = model.TaskStatusInProgress
+	default:
+		// 有 url 但状态未知：按成功处理
+		if d.URL != "" {
+			ti.Status = model.TaskStatusSuccess
+			ti.Progress = "100%"
+			ti.Url = d.URL
+		} else {
+			return nil, false
+		}
+	}
+	return ti, true
+}
+
+// stringifyError 尽量从任意形态的 error 字段中提取可读信息。
+func stringifyError(e interface{}) string {
+	switch v := e.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case map[string]any:
+		if msg, ok := v["message"].(string); ok {
+			return msg
+		}
+	}
+	return ""
 }
 
 func redactVideoResponseBody(body []byte) []byte {

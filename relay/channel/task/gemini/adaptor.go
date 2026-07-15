@@ -100,6 +100,15 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	// Omni models bill per second of generated video. Set the seconds ratio here (before
+	// the task pricing step) so the generated duration participates in quota calculation.
+	if isOmniModel(info.OriginModelName) {
+		var probe relaycommon.TaskSubmitReq
+		if err := common.UnmarshalBodyReusable(c, &probe); err != nil {
+			return service.TaskErrorWrapper(err, "invalid_request", http.StatusBadRequest)
+		}
+		ApplyOmniSecondsRatio(info, probe.Seconds)
+	}
 	// Use the standard validation method for TaskSubmitReq
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
 }

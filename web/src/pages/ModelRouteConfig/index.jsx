@@ -36,6 +36,9 @@ import {
   Popover,
   Spin,
   Select,
+  Tabs,
+  TabPane,
+  Layout,
 } from '@douyinfe/semi-ui';
 import {
   IconSearch,
@@ -46,13 +49,15 @@ import {
   IconRoute,
   IconSetting,
   IconChevronDown,
+  IconServer,
 } from '@douyinfe/semi-icons';
 import { API, showError, showSuccess, showInfo } from '../../helpers';
 import EditModal from './EditModal';
+import SpecialChannelsSetting from './SpecialChannelsSetting';
 
 const { Text, Title } = Typography;
 
-const ModelRouteConfig = () => {
+const RouteConfigSetting = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [configs, setConfigs] = useState([]);
@@ -427,7 +432,7 @@ const ModelRouteConfig = () => {
   ];
 
   return (
-    <div className='mt-[60px] px-4'>
+    <>
       <Card className='!rounded-2xl shadow-sm border-0 mb-6'>
         {/* Header */}
         <div className='flex items-center justify-between mb-6'>
@@ -542,6 +547,57 @@ const ModelRouteConfig = () => {
           loadConfigs(pagination.currentPage, searchKeyword, modelKeyword, selectedChannelId);
         }}
       />
+    </>
+  );
+};
+
+const ModelRouteConfig = () => {
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState('route');
+
+  return (
+    <div className='mt-[60px] px-2'>
+      <Layout>
+        <Layout.Content>
+          <Tabs
+            type='card'
+            collapsible
+            activeKey={activeTab}
+            onChange={(key) => setActiveTab(key)}
+          >
+            <TabPane
+              itemKey='route'
+              tab={
+                <span className='flex items-center gap-1'>
+                  <IconRoute />
+                  {t('模型路由配置')}
+                </span>
+              }
+            >
+              {activeTab === 'route' && (
+                <div className='px-2'>
+                  <RouteConfigSetting />
+                </div>
+              )}
+            </TabPane>
+            <TabPane
+              itemKey='special'
+              tab={
+                <span className='flex items-center gap-1'>
+                  <IconServer />
+                  {t('多模态渠道配置')}
+                </span>
+              }
+            >
+              {activeTab === 'special' && (
+                <div className='px-2'>
+                  <SpecialChannelsSetting />
+                </div>
+              )}
+            </TabPane>
+          </Tabs>
+        </Layout.Content>
+      </Layout>
     </div>
   );
 };
