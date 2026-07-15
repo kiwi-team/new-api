@@ -184,11 +184,30 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		if lo.Contains([]string{"1792x1024", "1024x1792"}, size) {
 			info.PriceData.OtherRatios["size"] = 1.666667
 		}
+	} else if isOmniVideoModel(model) {
+		// Gemini Omni 视频按秒计费（默认 10 秒）。级联到 OpenAI 类型渠道时走 Sora adaptor，
+		// 需在此补上 seconds 倍率，否则时长不参与计费。与 gemini/vertex adaptor 行为一致。
+		if seconds <= 0 {
+			seconds = omniDefaultSeconds
+		}
+		info.PriceData.OtherRatios = map[string]float64{
+			"seconds": float64(seconds),
+		}
 	}
 
 	info.Action = action
 
 	return nil
+}
+
+// omniDefaultSeconds 是 Gemini Omni 视频未指定时长时默认计费的秒数（默认生成 10 秒）。
+// 与 relay/channel/task/gemini 中的同名常量保持一致。此处单独定义以避免 relay/common
+// 反向 import task/gemini 造成的循环依赖。
+const omniDefaultSeconds = 10
+
+// isOmniVideoModel 判断是否为 Gemini Omni 视频模型（如 gemini-omni-flash-preview）。
+func isOmniVideoModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gemini-omni")
 }
 
 func isKnownTaskField(field string) bool {
