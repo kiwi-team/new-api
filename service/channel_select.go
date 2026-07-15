@@ -19,7 +19,8 @@ type RetryParam struct {
 	Retry        *int
 	resetNextTry bool
 	Tags         []string
-	ChannelIds   []int // 渠道ID列表,用户指定渠道ID时使用
+	ChannelIds   []int  // 渠道ID列表,用户指定渠道ID时使用
+	RequestPath  string // 请求路径，用于渠道路径白名单/黑名单过滤
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -138,7 +139,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.Tags)
+			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.Tags, param.RequestPath)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -177,7 +178,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	} else {
 		//channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, tags)
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.Tags)
+		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.Tags, param.RequestPath)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

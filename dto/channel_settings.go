@@ -17,6 +17,16 @@ type ChannelSettings struct {
 	// 开启后，分配到该渠道的请求会先经过 CC 真伪校验，不通过则视为该渠道请求失败，
 	// 记录 error_logs 并转由其他渠道重试。默认关闭。
 	ClaudeCodeGuardEnabled bool `json:"claude_code_guard_enabled,omitempty"`
+	// ClaudeCodeBillingHeader 当开启 Claude Code 客户端检测且请求通过检测后，若 system 中缺少
+	// billing 签名块（x-anthropic-billing-header: cc_version=...），则在 system 首位插入的文本。
+	// 留空时使用内置默认值。仅在 ClaudeCodeGuardEnabled 为 true 时生效。
+	ClaudeCodeBillingHeader string `json:"claude_code_billing_header,omitempty"`
+	// PathWhitelist 请求路径白名单（前缀匹配，忽略 query）。非空时，只有请求路径命中列表中
+	// 任意一项前缀的请求才会选中该渠道；未命中则跳过该渠道，交由其他渠道处理。为空则不生效。
+	PathWhitelist []string `json:"path_whitelist,omitempty"`
+	// PathBlacklist 请求路径黑名单（前缀匹配，忽略 query）。请求路径命中列表中任意一项前缀时，
+	// 该渠道被跳过，不处理该请求。为空则不生效。黑名单优先级高于白名单。
+	PathBlacklist []string `json:"path_blacklist,omitempty"`
 }
 
 type VertexKeyType string

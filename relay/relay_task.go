@@ -484,6 +484,31 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	func() {
+		// 任务已成功且已上传 S3（FailReason 存的是 https 地址）时，直接复用，避免每次
+		// fetch 都重新拉取上游并重复上传 S3（omni 的 GET interactions 每次都返回完整视频）。
+		if originTask.Status == model.TaskStatusSuccess && strings.HasPrefix(originTask.FailReason, "https://") {
+			if !strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") {
+				format := "mp4"
+				tmpArr := strings.Split(originTask.FailReason, "?")
+				arr := strings.Split(tmpArr[0], ".")
+				if len(arr) > 0 {
+					format = arr[len(arr)-1]
+				}
+				out := map[string]any{
+					"error":    nil,
+					"format":   format,
+					"metadata": nil,
+					"status":   "succeeded",
+					"task_id":  originTask.TaskID,
+					"url":      originTask.FailReason,
+				}
+				respBody, _ = json.Marshal(dto.TaskResponse[any]{
+					Code: "success",
+					Data: out,
+				})
+			}
+			return
+		}
 		channelModel, err2 := model.GetChannelById(originTask.ChannelId, true)
 		if err2 != nil {
 			return

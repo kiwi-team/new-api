@@ -165,6 +165,9 @@ const EditChannelModal = (props) => {
     system_prompt: '',
     system_prompt_override: false,
     claude_code_guard_enabled: false,
+    claude_code_billing_header: '',
+    path_whitelist: '',
+    path_blacklist: '',
     settings: '',
     // 仅 Vertex: 密钥格式（存入 settings.vertex_key_type）
     vertex_key_type: 'json',
@@ -394,6 +397,9 @@ const EditChannelModal = (props) => {
     google_file_upload: '',
     google_file_bucket: '',
     claude_code_guard_enabled: false,
+    claude_code_billing_header: '',
+    path_whitelist: '',
+    path_blacklist: '',
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
@@ -613,6 +619,14 @@ const EditChannelModal = (props) => {
           data.model_output_mapping = parsedSettings.model_output_mapping || '';
           data.claude_code_guard_enabled =
             parsedSettings.claude_code_guard_enabled || false;
+          data.claude_code_billing_header =
+            parsedSettings.claude_code_billing_header || '';
+          data.path_whitelist = Array.isArray(parsedSettings.path_whitelist)
+            ? parsedSettings.path_whitelist.join('\n')
+            : '';
+          data.path_blacklist = Array.isArray(parsedSettings.path_blacklist)
+            ? parsedSettings.path_blacklist.join('\n')
+            : '';
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -623,6 +637,9 @@ const EditChannelModal = (props) => {
           data.system_prompt_override = false;
           data.model_output_mapping = '';
           data.claude_code_guard_enabled = false;
+          data.claude_code_billing_header = '';
+          data.path_whitelist = '';
+          data.path_blacklist = '';
         }
       } else {
         data.force_format = false;
@@ -635,6 +652,9 @@ const EditChannelModal = (props) => {
         data.google_file_upload = '';
         data.model_output_mapping = '';
         data.claude_code_guard_enabled = false;
+        data.claude_code_billing_header = '';
+        data.path_whitelist = '';
+        data.path_blacklist = '';
       }
 
       if (data.settings) {
@@ -709,6 +729,9 @@ const EditChannelModal = (props) => {
         google_file_bucket: data.google_file_bucket || '',
         google_file_upload: data.google_file_upload || '',
         claude_code_guard_enabled: data.claude_code_guard_enabled || false,
+        claude_code_billing_header: data.claude_code_billing_header || '',
+        path_whitelist: data.path_whitelist || '',
+        path_blacklist: data.path_blacklist || '',
       });
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
@@ -1055,6 +1078,9 @@ const EditChannelModal = (props) => {
       system_prompt: '',
       system_prompt_override: false,
       claude_code_guard_enabled: false,
+      claude_code_billing_header: '',
+      path_whitelist: '',
+      path_blacklist: '',
     });
     // 重置密钥模式状态
     setKeyMode('append');
@@ -1387,6 +1413,16 @@ const EditChannelModal = (props) => {
       model_output_mapping: localInputs.model_output_mapping || '',
       claude_code_guard_enabled:
         localInputs.claude_code_guard_enabled || false,
+      claude_code_billing_header:
+        localInputs.claude_code_billing_header || '',
+      path_whitelist: (localInputs.path_whitelist || '')
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean),
+      path_blacklist: (localInputs.path_blacklist || '')
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean),
     };
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
@@ -1443,6 +1479,9 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt_override;
     delete localInputs.model_output_mapping;
     delete localInputs.claude_code_guard_enabled;
+    delete localInputs.claude_code_billing_header;
+    delete localInputs.path_whitelist;
+    delete localInputs.path_blacklist;
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -3436,6 +3475,28 @@ const EditChannelModal = (props) => {
                       />
                     )}
 
+                    {inputs.type === 14 &&
+                      inputs.claude_code_guard_enabled && (
+                        <Form.TextArea
+                          field='claude_code_billing_header'
+                          label={t('Claude Code Billing 签名块')}
+                          autosize
+                          rows={2}
+                          placeholder={t(
+                            '留空则使用内置默认值，例如：x-anthropic-billing-header: cc_version=2.1.77.a6c; cc_entrypoint=cli; cch=xxxxx;',
+                          )}
+                          onChange={(value) =>
+                            handleChannelSettingsChange(
+                              'claude_code_billing_header',
+                              value,
+                            )
+                          }
+                          extraText={t(
+                            '通过检测后，若请求 system 缺少 billing 签名块，将在 system 首位插入此文本；留空使用内置默认值',
+                          )}
+                        />
+                      )}
+
                     {inputs.type === 1 && (
                       <Form.Switch
                         field='force_format'
@@ -3551,6 +3612,32 @@ const EditChannelModal = (props) => {
                       }
                       extraText={t(
                         '如果用户请求中包含系统提示词，则使用此设置拼接到用户的系统提示词前面',
+                      )}
+                    />
+                    <Form.TextArea
+                      field='path_whitelist'
+                      label={t('请求路径白名单')}
+                      placeholder={t('每行一个路径，例如：\n/v1/messages')}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('path_whitelist', value)
+                      }
+                      autosize
+                      showClear
+                      extraText={t(
+                        '每行一个路径，前缀匹配（忽略 query）。非空时，只有请求路径命中列表中任意一项的请求才会选中该渠道；未命中则跳过该渠道。留空则不生效。',
+                      )}
+                    />
+                    <Form.TextArea
+                      field='path_blacklist'
+                      label={t('请求路径黑名单')}
+                      placeholder={t('每行一个路径，例如：\n/v1/chat/completions')}
+                      onChange={(value) =>
+                        handleChannelSettingsChange('path_blacklist', value)
+                      }
+                      autosize
+                      showClear
+                      extraText={t(
+                        '每行一个路径，前缀匹配（忽略 query）。请求路径命中列表中任意一项时，跳过该渠道。黑名单优先级高于白名单。留空则不生效。',
                       )}
                     />
                   </Card>

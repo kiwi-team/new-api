@@ -105,6 +105,19 @@ func Distribute() func(c *gin.Context) {
 				c.Set("new_retry_times", retryTimes)
 			}
 		}
+		// 按渠道路径白名单/黑名单过滤显式指定的渠道列表（Token 规则 / 全局模型路由）
+		if len(channelIds) > 0 {
+			reqPath := c.Request.URL.Path
+			filteredChannelIds := make([]int, 0, len(channelIds))
+			for _, cid := range channelIds {
+				ch, chErr := model.CacheGetChannel(cid)
+				if chErr != nil || ch == nil || ch.MatchPath(reqPath) {
+					// 查询失败时保留该渠道，避免误伤
+					filteredChannelIds = append(filteredChannelIds, cid)
+				}
+			}
+			channelIds = filteredChannelIds
+		}
 		c.Set("token_channel_ids", channelIds)
 
 		//userGroup := c.GetString(constant.ContextKeyUserGroup)
@@ -210,7 +223,7 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
+					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled && preferred.MatchPath(c.Request.URL.Path) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)
@@ -233,10 +246,11 @@ func Distribute() func(c *gin.Context) {
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:        c,
-						ModelName:  modelRequest.Model,
-						TokenGroup: usingGroup,
-						Retry:      common.GetPointer(0),
+						Ctx:         c,
+						ModelName:   modelRequest.Model,
+						TokenGroup:  usingGroup,
+						Retry:       common.GetPointer(0),
+						RequestPath: c.Request.URL.Path,
 					})
 					if err != nil {
 						showGroup := usingGroup

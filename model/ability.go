@@ -126,7 +126,7 @@ func getChannelQuery(group string, model string, retry int, tags []string) (*gor
 }
 
 // func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
-func GetChannel(group string, model string, retry int, tags []string) (*Channel, error) {
+func GetChannel(group string, model string, retry int, tags []string, path string) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -147,6 +147,7 @@ func GetChannel(group string, model string, retry int, tags []string) (*Channel,
 	if err != nil {
 		return nil, err
 	}
+	abilities = filterAbilitiesByPath(abilities, path)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -169,6 +170,47 @@ func GetChannel(group string, model string, retry int, tags []string) (*Channel,
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+// filterAbilitiesByPath 按渠道路径白名单/黑名单过滤 abilities（DB 选择路径使用）。
+// 仅查询候选渠道的 setting 字段，避免加载完整渠道；未配置 setting 的渠道直接放行。
+func filterAbilitiesByPath(abilities []Ability, path string) []Ability {
+	if len(abilities) == 0 {
+		return abilities
+	}
+	// 收集去重后的候选渠道 id
+	channelIds := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{}, len(abilities))
+	for _, a := range abilities {
+		if _, ok := seen[a.ChannelId]; ok {
+			continue
+		}
+		seen[a.ChannelId] = struct{}{}
+		channelIds = append(channelIds, a.ChannelId)
+	}
+	// 查询这些渠道的 setting
+	type channelSetting struct {
+		Id      int
+		Setting *string
+	}
+	var rows []channelSetting
+	if err := DB.Model(&Channel{}).Select("id", "setting").Where("id in (?)", channelIds).Find(&rows).Error; err != nil {
+		// 查询失败时不做过滤，保持原有行为，避免因路径规则导致全部不可用
+		common.SysLog(fmt.Sprintf("filterAbilitiesByPath query failed: %v", err))
+		return abilities
+	}
+	allowed := make(map[int]bool, len(rows))
+	for _, r := range rows {
+		ch := Channel{Id: r.Id, Setting: r.Setting}
+		allowed[r.Id] = ch.MatchPath(path)
+	}
+	filtered := make([]Ability, 0, len(abilities))
+	for _, a := range abilities {
+		if allowed[a.ChannelId] {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {

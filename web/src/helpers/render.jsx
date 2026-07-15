@@ -1174,6 +1174,8 @@ function renderPriceSimpleCore({
   tieredInputPrice = 0,
   tieredOutputPrice = 0,
   tieredMaxTokens = 0,
+  tieredCachedInputPrice = 0,
+  tieredCacheWritePrice = 0,
 }) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1200,6 +1202,32 @@ function renderPriceSimpleCore({
       ratioType: ratioLabel,
       ratio: finalGroupRatio,
     });
+    // 缓存读取：档位绝对单价优先，否则回退 阶梯输入价格 × 缓存倍率
+    if (cacheTokens > 0) {
+      const cacheReadPrice =
+        tieredCachedInputPrice > 0
+          ? tieredCachedInputPrice
+          : tieredInputPrice * cacheRatio;
+      priceText +=
+        '\n' +
+        i18next.t('缓存读取：{{symbol}}{{price}} /1M tokens', {
+          symbol: symbol,
+          price: (cacheReadPrice * rate).toFixed(6),
+        });
+    }
+    // 缓存写入：档位绝对单价优先，否则回退 阶梯输入价格 × 缓存创建倍率
+    if (cacheCreationTokens > 0) {
+      const cacheWritePrice =
+        tieredCacheWritePrice > 0
+          ? tieredCacheWritePrice
+          : tieredInputPrice * cacheCreationRatio;
+      priceText +=
+        '\n' +
+        i18next.t('缓存写入：{{symbol}}{{price}} /1M tokens', {
+          symbol: symbol,
+          price: (cacheWritePrice * rate).toFixed(6),
+        });
+    }
     priceText += settlementSuffix;
     if (hasDiscount) {
       priceText += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
@@ -1762,6 +1790,8 @@ export function renderModelPriceSimple(
   tieredOutputPrice = 0,
   tieredMaxTokens = 0,
   settlementRatio = 1,
+  tieredCachedInputPrice = 0,
+  tieredCacheWritePrice = 0,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -1787,6 +1817,8 @@ export function renderModelPriceSimple(
     tieredInputPrice,
     tieredOutputPrice,
     tieredMaxTokens,
+    tieredCachedInputPrice,
+    tieredCacheWritePrice,
   });
 }
 

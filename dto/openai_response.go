@@ -257,6 +257,7 @@ type OpenAIVideoResponse struct {
 
 type InputTokenDetails struct {
 	CachedTokens         int `json:"cached_tokens"`
+	CacheWriteTokens     int `json:"cache_write_tokens,omitempty"` // OpenAI /v1/responses 缓存写入 tokens（映射到计费用的 CachedCreationTokens）
 	CachedCreationTokens int `json:"-"`
 	TextTokens           int `json:"text_tokens"`
 	AudioTokens          int `json:"audio_tokens"`

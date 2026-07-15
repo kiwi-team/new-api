@@ -189,11 +189,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
-		ChannelIds: tokenChannelIds,
+		Ctx:         c,
+		TokenGroup:  relayInfo.TokenGroup,
+		ModelName:   relayInfo.OriginModelName,
+		Retry:       common.GetPointer(0),
+		ChannelIds:  tokenChannelIds,
+		RequestPath: c.Request.URL.Path,
 	}
 
 	// 用于收集重试过程中的错误信息，延迟处理以优化错误日志存储
@@ -729,11 +730,12 @@ func RelayTask(c *gin.Context) {
 	}
 
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
-		ChannelIds: tokenChannelIds,
+		Ctx:         c,
+		TokenGroup:  relayInfo.TokenGroup,
+		ModelName:   relayInfo.OriginModelName,
+		Retry:       common.GetPointer(0),
+		ChannelIds:  tokenChannelIds,
+		RequestPath: c.Request.URL.Path,
 	}
 	var taskErr *dto.TaskError
 	channelFound := false

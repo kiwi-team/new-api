@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskgemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	vertexcore "github.com/QuantumNous/new-api/relay/channel/vertex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -95,6 +96,23 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	if strings.TrimSpace(region) == "" {
 		region = "global"
 	}
+
+	// Omni models use the interactions API instead of predictLongRunning.
+	if taskgemini.IsOmniModel(modelName) {
+		if region == "global" {
+			return fmt.Sprintf(
+				"https://aiplatform.googleapis.com/v1beta1/projects/%s/locations/global/interactions",
+				adc.ProjectID,
+			), nil
+		}
+		return fmt.Sprintf(
+			"https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/interactions",
+			region,
+			adc.ProjectID,
+			region,
+		), nil
+	}
+
 	if region == "global" {
 		return fmt.Sprintf(
 			"https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:predictLongRunning",
@@ -141,6 +159,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("request not found in context")
 	}
 	req := v.(relaycommon.TaskSubmitReq)
+
+	// Omni models use the interactions API with a different payload shape.
+	if taskgemini.IsOmniModel(info.OriginModelName) {
+		data, err := taskgemini.BuildOmniRequestBody(req, info.OriginModelName)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
 
 	body := requestPayload{
 		Instances:  []map[string]any{{"prompt": req.Prompt}},
@@ -212,6 +239,43 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
+	// Omni interactions API returns an interaction object with an `id`.
+	if taskgemini.IsOmniModel(info.OriginModelName) {
+		var os struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(responseBody, &os); err != nil {
+			return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
+		}
+		if os.Error != nil && os.Error.Message != "" {
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", os.Error.Message), "upstream_error", http.StatusBadRequest)
+		}
+		if strings.TrimSpace(os.ID) == "" {
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("missing interaction id"), "invalid_response", http.StatusInternalServerError)
+		}
+		adc := &vertexcore.Credentials{}
+		if err := json.Unmarshal([]byte(a.apiKey), adc); err != nil {
+			return "", nil, service.TaskErrorWrapper(err, "decode_credentials_failed", http.StatusInternalServerError)
+		}
+		modelName := info.OriginModelName
+		region := vertexcore.GetModelRegion(info.ApiVersion, modelName)
+		if strings.TrimSpace(region) == "" {
+			region = "global"
+		}
+		localID := encodeOmniTaskID(region, adc.ProjectID, os.ID)
+		ov := dto.NewOpenAIVideo()
+		ov.ID = localID
+		ov.TaskID = localID
+		ov.Status = dto.VideoStatusQueued
+		ov.Model = modelName
+		c.JSON(http.StatusOK, ov)
+		return localID, responseBody, nil
+	}
+
 	var s submitResponse
 	if err := json.Unmarshal(responseBody, &s); err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
@@ -224,7 +288,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return localID, responseBody, nil
 }
 
-func (a *TaskAdaptor) GetModelList() []string { return []string{"veo-3.0-generate-001"} }
+func (a *TaskAdaptor) GetModelList() []string {
+	return []string{"veo-3.0-generate-001", "gemini-omni-flash-preview"}
+}
 func (a *TaskAdaptor) GetChannelName() string { return "vertex" }
 
 // FetchTask fetch task status
@@ -233,6 +299,44 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	if !ok {
 		return nil, fmt.Errorf("invalid task_id")
 	}
+
+	// Omni interactions API: GET the interaction by id.
+	if taskgemini.IsOmniTaskID(taskID) {
+		region, project, interactionID, derr := decodeOmniTaskID(taskID)
+		if derr != nil {
+			return nil, fmt.Errorf("decode omni task_id failed: %w", derr)
+		}
+		if region == "" {
+			region = "global"
+		}
+		var url string
+		if region == "global" {
+			url = fmt.Sprintf("https://aiplatform.googleapis.com/v1beta1/projects/%s/locations/global/interactions/%s", project, interactionID)
+		} else {
+			url = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/interactions/%s", region, project, region, interactionID)
+		}
+		adc := &vertexcore.Credentials{}
+		if err := json.Unmarshal([]byte(key), adc); err != nil {
+			return nil, fmt.Errorf("failed to decode credentials: %w", err)
+		}
+		token, err := vertexcore.AcquireAccessToken(*adc, proxy)
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire access token: %w", err)
+		}
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("x-goog-user-project", adc.ProjectID)
+		client, err := service.GetHttpClientWithProxy(proxy)
+		if err != nil {
+			return nil, fmt.Errorf("new proxy http client failed: %w", err)
+		}
+		return client.Do(req)
+	}
+
 	upstreamName, err := decodeLocalTaskID(taskID)
 	if err != nil {
 		return nil, fmt.Errorf("decode task_id failed: %w", err)
@@ -281,6 +385,12 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	// Omni interactions API has a different response shape. ParseOmniTaskResult already
+	// uploads the generated video to S3 and sets ti.Url to the S3 address on success.
+	if taskgemini.IsOmniResponseBody(respBody) {
+		return taskgemini.ParseOmniTaskResult(respBody)
+	}
+
 	var op operationResponse
 	if err := json.Unmarshal(respBody, &op); err != nil {
 		return nil, fmt.Errorf("unmarshal operation response failed: %w", err)
@@ -357,13 +467,21 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	upstreamName, err := decodeLocalTaskID(task.TaskID)
-	if err != nil {
-		upstreamName = ""
-	}
-	modelName := extractModelFromOperationName(upstreamName)
-	if strings.TrimSpace(modelName) == "" {
-		modelName = "veo-3.0-generate-001"
+	modelName := ""
+	if taskgemini.IsOmniTaskID(task.TaskID) {
+		modelName = task.Properties.OriginModelName
+		if strings.TrimSpace(modelName) == "" {
+			modelName = "gemini-omni-flash-preview"
+		}
+	} else {
+		upstreamName, err := decodeLocalTaskID(task.TaskID)
+		if err != nil {
+			upstreamName = ""
+		}
+		modelName = extractModelFromOperationName(upstreamName)
+		if strings.TrimSpace(modelName) == "" {
+			modelName = "veo-3.0-generate-001"
+		}
 	}
 	v := dto.NewOpenAIVideo()
 	v.ID = task.TaskID
@@ -385,6 +503,31 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 
 func encodeLocalTaskID(name string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(name))
+}
+
+// encodeOmniTaskID packs region/project/interactionID into an omni-tagged local task id
+// so FetchTask can rebuild the Vertex interactions polling URL. The decoded payload keeps
+// the shared "omni:" prefix so gemini.IsOmniTaskID recognizes it.
+func encodeOmniTaskID(region, project, interactionID string) string {
+	raw := fmt.Sprintf("omni:%s|%s|%s", region, project, interactionID)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeOmniTaskID recovers region/project/interactionID from a local task id.
+func decodeOmniTaskID(local string) (region, project, interactionID string, err error) {
+	b, derr := base64.RawURLEncoding.DecodeString(local)
+	if derr != nil {
+		return "", "", "", derr
+	}
+	s := string(b)
+	if !strings.HasPrefix(s, "omni:") {
+		return "", "", "", fmt.Errorf("not an omni task id")
+	}
+	parts := strings.SplitN(strings.TrimPrefix(s, "omni:"), "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid omni task id payload")
+	}
+	return parts[0], parts[1], parts[2], nil
 }
 
 func decodeLocalTaskID(local string) (string, error) {

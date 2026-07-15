@@ -171,3 +171,158 @@ func TestDiceCoefficient(t *testing.T) {
 		t.Fatalf("unrelated strings should be below threshold, got %v", d)
 	}
 }
+
+func TestNormalizeClaudeCodeMetadata_UnderscoreToJSON(t *testing.T) {
+	body := `{
+		"model": "claude-opus-4-8",
+		"metadata": {"user_id": "user_e4cd78f1517a6f52130047d93ac4f4b9f50b4aaa4155df2be738b37b033b937e_account__session_684fec4d-d682-4baa-be3a-e4ef4b2efe6e"}
+	}`
+	req := mustParseRequest(t, body)
+	NormalizeClaudeCodeMetadata(req)
+
+	var meta struct {
+		UserID string `json:"user_id"`
+	}
+	if err := common.Unmarshal(req.Metadata, &meta); err != nil {
+		t.Fatalf("metadata unmarshal: %v", err)
+	}
+	want := `{"device_id":"e4cd78f1517a6f52130047d93ac4f4b9f50b4aaa4155df2be738b37b033b937e","account_uuid":"","session_id":"684fec4d-d682-4baa-be3a-e4ef4b2efe6e"}`
+	if meta.UserID != want {
+		t.Fatalf("user_id mismatch:\n got: %s\nwant: %s", meta.UserID, want)
+	}
+}
+
+func TestNormalizeClaudeCodeMetadata_ThenPassesGuard(t *testing.T) {
+	// 下划线格式原本无法通过白名单（invalid_metadata_user_id），规整后应通过。
+	body := `{
+		"model": "claude-opus-4-8",
+		"messages": [{"role":"user","content":"hi"}],
+		"metadata": {"user_id": "user_dev123_account__session_sess-abc"},
+		"system": [{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.181.604;"}]
+	}`
+	req := mustParseRequest(t, body)
+
+	// 规整前：应被拒。
+	if err := DetectClaudeCode(req, ccHeader(), messagesPath); err == nil {
+		t.Fatalf("expected underscore metadata to be rejected before normalization")
+	}
+	// 规整后：应通过。
+	NormalizeClaudeCodeMetadata(req)
+	if err := DetectClaudeCode(req, ccHeader(), messagesPath); err != nil {
+		t.Fatalf("expected normalized request to pass guard, got: %v", err)
+	}
+}
+
+func TestNormalizeClaudeCodeMetadata_AlreadyJSONUnchanged(t *testing.T) {
+	orig := `{"user_id":"{\"device_id\":\"d\",\"account_uuid\":\"\",\"session_id\":\"s\"}"}`
+	body := `{"model":"claude-opus-4-8","metadata":` + orig + `}`
+	req := mustParseRequest(t, body)
+	before := string(req.Metadata)
+	NormalizeClaudeCodeMetadata(req)
+	// 已是 JSON 形态：user_id 内容不应被改动。
+	var meta struct {
+		UserID string `json:"user_id"`
+	}
+	_ = common.Unmarshal(req.Metadata, &meta)
+	if meta.UserID != `{"device_id":"d","account_uuid":"","session_id":"s"}` {
+		t.Fatalf("already-json user_id should be unchanged, got: %s (before=%s)", meta.UserID, before)
+	}
+}
+
+func TestNormalizeClaudeCodeMetadata_NonMatchingUnchanged(t *testing.T) {
+	body := `{"model":"claude-opus-4-8","metadata":{"user_id":"plain-123","extra":"keep"}}`
+	req := mustParseRequest(t, body)
+	NormalizeClaudeCodeMetadata(req)
+	var meta map[string]any
+	if err := common.Unmarshal(req.Metadata, &meta); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if meta["user_id"] != "plain-123" {
+		t.Fatalf("non-matching user_id should be unchanged, got: %v", meta["user_id"])
+	}
+	if meta["extra"] != "keep" {
+		t.Fatalf("other metadata fields should be preserved, got: %v", meta["extra"])
+	}
+}
+
+func TestNormalizeClaudeCodeMetadata_NoMetadataNoPanic(t *testing.T) {
+	req := mustParseRequest(t, `{"model":"claude-opus-4-8"}`)
+	NormalizeClaudeCodeMetadata(req) // 应安全返回
+	NormalizeClaudeCodeMetadata(nil) // 应安全返回
+}
+
+// firstSystemBlockText 返回 system 数组首块文本（若非数组返回空）。
+func firstSystemBlockText(t *testing.T, req *dto.ClaudeRequest) string {
+	t.Helper()
+	blocks := req.ParseSystem()
+	if len(blocks) == 0 {
+		t.Fatalf("expected structured system array, got: %#v", req.System)
+	}
+	return blocks[0].GetText()
+}
+
+func TestInsertBilling_NilSystem(t *testing.T) {
+	req := &dto.ClaudeRequest{Model: "claude-opus-4-8"}
+	InsertClaudeCodeBillingHeader(req, "")
+	got := firstSystemBlockText(t, req)
+	if got != defaultCCBillingHeader {
+		t.Fatalf("expected default billing block, got: %s", got)
+	}
+}
+
+func TestInsertBilling_StringSystemPrependsAndKeepsOriginal(t *testing.T) {
+	req := mustParseRequest(t, `{"model":"claude-opus-4-8","system":"You are Claude Code, Anthropic's official CLI for Claude."}`)
+	InsertClaudeCodeBillingHeader(req, "")
+	blocks := req.ParseSystem()
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks (billing + original), got %d", len(blocks))
+	}
+	if blocks[0].GetText() != defaultCCBillingHeader {
+		t.Fatalf("first block should be billing, got: %s", blocks[0].GetText())
+	}
+	if blocks[1].GetText() != "You are Claude Code, Anthropic's official CLI for Claude." {
+		t.Fatalf("original system text must be preserved, got: %s", blocks[1].GetText())
+	}
+}
+
+func TestInsertBilling_ArraySystemPrepends(t *testing.T) {
+	req := mustParseRequest(t, `{"model":"claude-opus-4-8","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}]}`)
+	InsertClaudeCodeBillingHeader(req, "")
+	blocks := req.ParseSystem()
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	if blocks[0].GetText() != defaultCCBillingHeader {
+		t.Fatalf("billing block must be first, got: %s", blocks[0].GetText())
+	}
+}
+
+func TestInsertBilling_AlreadyPresentNoOp(t *testing.T) {
+	body := `{"model":"claude-opus-4-8","system":[
+		{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.181.604;"},
+		{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}
+	]}`
+	req := mustParseRequest(t, body)
+	before := len(req.ParseSystem())
+	InsertClaudeCodeBillingHeader(req, "")
+	after := req.ParseSystem()
+	if len(after) != before {
+		t.Fatalf("should not insert when billing block already present: before=%d after=%d", before, len(after))
+	}
+	if after[0].GetText() != "x-anthropic-billing-header: cc_version=2.1.181.604;" {
+		t.Fatalf("existing billing block must remain first, got: %s", after[0].GetText())
+	}
+}
+
+func TestInsertBilling_CustomContent(t *testing.T) {
+	custom := "x-anthropic-billing-header: cc_version=9.9.9.xyz; cc_entrypoint=cli;"
+	req := &dto.ClaudeRequest{Model: "claude-opus-4-8"}
+	InsertClaudeCodeBillingHeader(req, custom)
+	if got := firstSystemBlockText(t, req); got != custom {
+		t.Fatalf("expected custom billing header, got: %s", got)
+	}
+}
+
+func TestInsertBilling_NilRequestNoPanic(t *testing.T) {
+	InsertClaudeCodeBillingHeader(nil, "")
+}

@@ -381,7 +381,7 @@ const ErrorLogsTable = () => {
         if (!ms || ms <= 0) {
           return <>-</>;
         }
-        return <>{ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`}</>;
+        return <>{`${parseFloat((ms / 1000).toFixed(2))}s`}</>;
       },
     },
   ];

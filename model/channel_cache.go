@@ -127,7 +127,7 @@ func SyncChannelCache(frequency int) {
 // }
 
 // func getRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
-func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, tags []string, path string) (*Channel, error) {
 	// if strings.HasPrefix(model, "gpt-4-gizmo") {
 	// 	model = "gpt-4-gizmo-*"
 	// }
@@ -138,7 +138,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, tags []str
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
 		//return GetRandomSatisfiedChannel(group, model, retry, tags)
-		return GetChannel(group, model, retry, tags)
+		return GetChannel(group, model, retry, tags, path)
 	}
 	// func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
 	// 	// if memory cache is disabled, get channel directly from database
@@ -151,7 +151,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, tags []str
 	//channels := make([]*Channel, 0)
 	channels := make([]int, 0)
 	for _, channelId := range channelList {
-		if CheckMultiTags(tags, channelsIDM[channelId].GetTag()) {
+		if CheckMultiTags(tags, channelsIDM[channelId].GetTag()) && channelsIDM[channelId].MatchPath(path) {
 			channels = append(channels, channelId)
 		}
 	}
@@ -165,7 +165,11 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, tags []str
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = group2model2channels[group][normalizedModel]
+		for _, channelId := range group2model2channels[group][normalizedModel] {
+			if CheckMultiTags(tags, channelsIDM[channelId].GetTag()) && channelsIDM[channelId].MatchPath(path) {
+				channels = append(channels, channelId)
+			}
+		}
 	}
 
 	if len(channels) == 0 {

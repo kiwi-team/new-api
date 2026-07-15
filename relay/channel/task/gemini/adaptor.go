@@ -109,6 +109,11 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	modelName := info.OriginModelName
 	version := model_setting.GetGeminiVersionSetting(modelName)
 
+	// Omni models use the interactions endpoint instead of predictLongRunning.
+	if isOmniModel(modelName) {
+		return fmt.Sprintf("%s/%s/interactions", a.baseURL, version), nil
+	}
+
 	return fmt.Sprintf(
 		"%s/%s/models/%s:predictLongRunning",
 		a.baseURL,
@@ -134,6 +139,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	req, ok := v.(relaycommon.TaskSubmitReq)
 	if !ok {
 		return nil, fmt.Errorf("unexpected task_request type")
+	}
+
+	// Omni models use the interactions API with a different payload shape.
+	if isOmniModel(info.OriginModelName) {
+		data, err := BuildOmniRequestBody(req, info.OriginModelName)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
 	}
 
 	// Create structured video generation request
@@ -174,6 +188,29 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
+	// Omni interactions API returns an interaction object with an `id`.
+	if isOmniModel(info.OriginModelName) {
+		var os omniSubmitResponse
+		if err := json.Unmarshal(responseBody, &os); err != nil {
+			return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
+		}
+		if os.Error != nil && os.Error.Message != "" {
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", os.Error.Message), "upstream_error", http.StatusBadRequest)
+		}
+		if strings.TrimSpace(os.ID) == "" {
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("missing interaction id"), "invalid_response", http.StatusInternalServerError)
+		}
+		taskID = encodeOmniTaskID(os.ID)
+		ov := dto.NewOpenAIVideo()
+		ov.ID = taskID
+		ov.TaskID = taskID
+		ov.Status = dto.VideoStatusQueued
+		ov.CreatedAt = time.Now().Unix()
+		ov.Model = info.OriginModelName
+		c.JSON(http.StatusOK, ov)
+		return taskID, responseBody, nil
+	}
+
 	var s submitResponse
 	if err := json.Unmarshal(responseBody, &s); err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
@@ -192,7 +229,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"veo-3.0-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"}
+	return []string{"veo-3.0-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "gemini-omni-flash-preview"}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -206,14 +243,23 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	upstreamName, err := decodeLocalTaskID(taskID)
-	if err != nil {
-		return nil, fmt.Errorf("decode task_id failed: %w", err)
-	}
-
-	// For Gemini API, we use GET request to the operations endpoint
+	// For Gemini API, we use GET request to the operations/interactions endpoint
 	version := model_setting.GetGeminiVersionSetting("default")
-	url := fmt.Sprintf("%s/%s/%s", baseUrl, version, upstreamName)
+
+	var url string
+	if IsOmniTaskID(taskID) {
+		interactionID, err := decodeOmniInteractionID(taskID)
+		if err != nil {
+			return nil, fmt.Errorf("decode omni task_id failed: %w", err)
+		}
+		url = fmt.Sprintf("%s/%s/interactions/%s", baseUrl, version, interactionID)
+	} else {
+		upstreamName, err := decodeLocalTaskID(taskID)
+		if err != nil {
+			return nil, fmt.Errorf("decode task_id failed: %w", err)
+		}
+		url = fmt.Sprintf("%s/%s/%s", baseUrl, version, upstreamName)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -231,6 +277,11 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	// Omni interactions API has a different response shape.
+	if isOmniResponseBody(respBody) {
+		return parseOmniTaskResult(respBody)
+	}
+
 	var op operationResponse
 	if err := json.Unmarshal(respBody, &op); err != nil {
 		return nil, fmt.Errorf("unmarshal operation response failed: %w", err)
@@ -269,13 +320,21 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	upstreamName, err := decodeLocalTaskID(task.TaskID)
-	if err != nil {
-		upstreamName = ""
-	}
-	modelName := extractModelFromOperationName(upstreamName)
-	if strings.TrimSpace(modelName) == "" {
-		modelName = "veo-3.0-generate-001"
+	modelName := ""
+	if IsOmniTaskID(task.TaskID) {
+		modelName = task.Properties.OriginModelName
+		if strings.TrimSpace(modelName) == "" {
+			modelName = "gemini-omni-flash-preview"
+		}
+	} else {
+		upstreamName, err := decodeLocalTaskID(task.TaskID)
+		if err != nil {
+			upstreamName = ""
+		}
+		modelName = extractModelFromOperationName(upstreamName)
+		if strings.TrimSpace(modelName) == "" {
+			modelName = "veo-3.0-generate-001"
+		}
 	}
 
 	video := dto.NewOpenAIVideo()

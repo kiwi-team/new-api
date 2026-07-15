@@ -30,10 +30,12 @@ type PriceData struct {
 	GroupRatioInfo       GroupRatioInfo
 
 	// 阶梯价格相关字段
-	UseTieredPrice    bool    // 是否使用阶梯价格
-	TieredInputPrice  float64 // 匹配到的档位输入价格（每百万 Token）
-	TieredOutputPrice float64 // 匹配到的档位输出价格（每百万 Token）
-	TieredMaxTokens   int     // 匹配到的档位阈值
+	UseTieredPrice         bool    // 是否使用阶梯价格
+	TieredInputPrice       float64 // 匹配到的档位输入价格（每百万 Token）
+	TieredOutputPrice      float64 // 匹配到的档位输出价格（每百万 Token）
+	TieredCachedInputPrice float64 // 匹配到的档位缓存读取价格（每百万 Token）；0=未配置，回退模型级缓存倍率
+	TieredCacheWritePrice  float64 // 匹配到的档位缓存写入价格（每百万 Token，5m 基准）；0=未配置，回退模型级缓存创建倍率
+	TieredMaxTokens        int     // 匹配到的档位阈值
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
@@ -53,5 +55,5 @@ type PerCallPriceData struct {
 }
 
 func (p *PriceData) ToSetting() string {
-	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, CacheCreation5mRatio: %f, CacheCreation1hRatio: %f, QuotaToPreConsume: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f, UseTieredPrice: %t, TieredInputPrice: %f, TieredOutputPrice: %f, TieredMaxTokens: %d", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.CacheCreation5mRatio, p.CacheCreation1hRatio, p.QuotaToPreConsume, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio, p.UseTieredPrice, p.TieredInputPrice, p.TieredOutputPrice, p.TieredMaxTokens)
+	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, CacheCreation5mRatio: %f, CacheCreation1hRatio: %f, QuotaToPreConsume: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f, UseTieredPrice: %t, TieredInputPrice: %f, TieredOutputPrice: %f, TieredCachedInputPrice: %f, TieredCacheWritePrice: %f, TieredMaxTokens: %d", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.CacheCreation5mRatio, p.CacheCreation1hRatio, p.QuotaToPreConsume, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio, p.UseTieredPrice, p.TieredInputPrice, p.TieredOutputPrice, p.TieredCachedInputPrice, p.TieredCacheWritePrice, p.TieredMaxTokens)
 }

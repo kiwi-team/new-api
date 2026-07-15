@@ -322,6 +322,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
 		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
 		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+		if relayInfo.PriceData.TieredCachedInputPrice > 0 {
+			other["tiered_cached_input_price"] = relayInfo.PriceData.TieredCachedInputPrice
+		}
+		if relayInfo.PriceData.TieredCacheWritePrice > 0 {
+			other["tiered_cache_write_price"] = relayInfo.PriceData.TieredCacheWritePrice
+		}
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
@@ -404,6 +410,12 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		if useTiered && len(tieredPriceTiers) > 0 {
 			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
 			tieredInputPricePerToken := tier.InputPrice / 1_000_000
+			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
+			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
+			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredCachedInputPrice = tier.CachedInputPrice
+			relayInfo.PriceData.TieredCacheWritePrice = tier.CacheWritePrice
+			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 			// 文本 input/output 使用阶梯价格
 			inputQuota := float64(promptTokens) * tieredInputPricePerToken * common.QuotaPerUnit * groupRatio
 			outputQuota := float64(completionTokens) * (tier.OutputPrice / 1_000_000) * common.QuotaPerUnit * groupRatio
@@ -492,6 +504,19 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		cacheCreationTokens5m, cacheCreationRatio5m,
 		cacheCreationTokens1h, cacheCreationRatio1h,
 		modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	if relayInfo.PriceData.UseTieredPrice {
+		other["use_tiered_price"] = true
+		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
+		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
+		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+		// 阶梯档位的缓存读/写绝对单价（每百万 Token）；0 表示未配置，前端回退模型级缓存倍率展示
+		if relayInfo.PriceData.TieredCachedInputPrice > 0 {
+			other["tiered_cached_input_price"] = relayInfo.PriceData.TieredCachedInputPrice
+		}
+		if relayInfo.PriceData.TieredCacheWritePrice > 0 {
+			other["tiered_cache_write_price"] = relayInfo.PriceData.TieredCacheWritePrice
+		}
+	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
 	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
@@ -602,6 +627,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
 			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
 			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredCachedInputPrice = tier.CachedInputPrice
+			relayInfo.PriceData.TieredCacheWritePrice = tier.CacheWritePrice
 			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 		}
 	}
@@ -653,6 +680,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
 		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
 		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+		if relayInfo.PriceData.TieredCachedInputPrice > 0 {
+			other["tiered_cached_input_price"] = relayInfo.PriceData.TieredCachedInputPrice
+		}
+		if relayInfo.PriceData.TieredCacheWritePrice > 0 {
+			other["tiered_cache_write_price"] = relayInfo.PriceData.TieredCacheWritePrice
+		}
 	}
 	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
 	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)

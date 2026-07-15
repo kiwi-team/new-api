@@ -269,7 +269,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 						chatItem.Usage.PromptTokens = responsesItem.Response.Usage.InputTokens
 						chatItem.Usage.CompletionTokens = responsesItem.Response.Usage.OutputTokens
 						chatItem.Usage.TotalTokens = responsesItem.Response.Usage.TotalTokens
-						chatItem.Usage.PromptTokensDetails = *responsesItem.Response.Usage.InputTokensDetails
+						if responsesItem.Response.Usage.InputTokensDetails != nil {
+							chatItem.Usage.PromptTokensDetails = *responsesItem.Response.Usage.InputTokensDetails
+							chatItem.Usage.PromptTokensDetails.CachedCreationTokens = responsesItem.Response.Usage.InputTokensDetails.CacheWriteTokens
+						}
 						chatItem.Usage.CompletionTokenDetails = responsesItem.Response.Usage.OutputTokenDetails
 					}
 				}

@@ -1027,6 +1027,8 @@ export const getLogsColumns = ({
               other?.tiered_output_price || 0,
               other?.tiered_max_tokens || 0,
               other?.settlement_ratio || 1,
+              other?.tiered_cached_input_price || 0,
+              other?.tiered_cache_write_price || 0,
             )
           : renderModelPriceSimple(
               other.model_ratio,
@@ -1035,8 +1037,8 @@ export const getLogsColumns = ({
               other?.user_group_ratio,
               other.cache_tokens || 0,
               other.cache_ratio || 1.0,
-              0,
-              1.0,
+              other.cache_creation_tokens || 0,
+              other.cache_creation_ratio || 1.0,
               0,
               1.0,
               0,
@@ -1053,6 +1055,8 @@ export const getLogsColumns = ({
               other?.tiered_output_price || 0,
               other?.tiered_max_tokens || 0,
               other?.settlement_ratio || 1,
+              other?.tiered_cached_input_price || 0,
+              other?.tiered_cache_write_price || 0,
             );
         return (
             <Typography.Paragraph

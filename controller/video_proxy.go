@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	taskgemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -144,6 +145,48 @@ func VideoProxy(c *gin.Context) {
 				},
 			})
 			return
+		}
+
+		// Omni interactions tasks: the video is returned inline as base64 or as a file uri.
+		if taskgemini.IsOmniTaskID(task.TaskID) {
+			omniURI, omniB64, _, oerr := getGeminiOmniVideo(channel, task, apiKey)
+			if oerr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Gemini Omni video for task %s: %s", taskID, oerr.Error()))
+				c.JSON(http.StatusBadGateway, gin.H{
+					"error": gin.H{
+						"message": "Failed to resolve Gemini video",
+						"type":    "server_error",
+					},
+				})
+				return
+			}
+			if omniB64 != "" {
+				// Inline base64 -> upload to S3 and return the S3 url.
+				s3url, upErr := service.SimpleUploadToS3(c.Request.Context(), omniB64)
+				if upErr != nil {
+					logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to upload Omni video to S3 for task %s: %s", taskID, upErr.Error()))
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error": gin.H{
+							"message": "Failed to upload video to S3",
+							"type":    "server_error",
+						},
+					})
+					return
+				}
+				if err := model.TaskUpdateVideoUrl(task.ID, s3url); err != nil {
+					logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to update task %s video url: %s", taskID, err.Error()))
+				}
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"url": s3url,
+					},
+				})
+				return
+			}
+			// File uri delivery -> stream through the existing upload path below.
+			videoURL = omniURI
+			req.Header.Set("x-goog-api-key", apiKey)
+			break
 		}
 
 		videoURL, err = getGeminiVideoURL(channel, task, apiKey)

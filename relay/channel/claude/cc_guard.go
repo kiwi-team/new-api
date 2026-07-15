@@ -47,6 +47,10 @@ var ccSystemPromptPrefixes = []string{
 // billing 签名块前缀：真实 CC 会把该块作为 system 的首个文本块下发。
 const ccBillingHeaderPrefix = "x-anthropic-billing-header: cc_version="
 
+// defaultCCBillingHeader 缺省的 billing 签名块文本。当渠道开启 CC 检测、请求通过检测后，
+// 若 system 中不含 billing 块，则在 system 首位插入本文本（渠道可通过配置覆盖）。
+const defaultCCBillingHeader = "x-anthropic-billing-header: cc_version=2.1.77.a6c; cc_entrypoint=cli; cch=2e011;"
+
 // anthropic-beta 中真实 CC 恒定携带的特征标记。
 const ccBetaMarker = "claude-code-20250219"
 
@@ -172,10 +176,8 @@ func validateIsClaudeCode(request *dto.ClaudeRequest, header http.Header, path s
 // 命中官方 prompt 前缀，或含 billing 签名块，或与官方模板 Dice 相似度达阈值。
 func looksLikeCCSystem(request *dto.ClaudeRequest) bool {
 	// billing 签名块：真实 CC 的强信号，任意 system 块命中即可。
-	for _, block := range systemBlocks(request) {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(block)), ccBillingHeaderPrefix) {
-			return true
-		}
+	if hasBillingBlock(request) {
+		return true
 	}
 
 	norm := normalizeText(systemText(request))
@@ -206,6 +208,126 @@ func hasValidCCMetadata(request *dto.ClaudeRequest) bool {
 	}
 	uid := strings.TrimSpace(meta.UserID)
 	return strings.HasPrefix(uid, "{") && strings.Contains(uid, "session_id")
+}
+
+// hasBillingBlock 判断 system 中是否已包含 billing 签名块（任意块命中即可）。
+func hasBillingBlock(request *dto.ClaudeRequest) bool {
+	for _, block := range systemBlocks(request) {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(block)), ccBillingHeaderPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// InsertClaudeCodeBillingHeader 若 system 中缺少 billing 签名块，则在 system 首位插入一个 billing 文本块。
+// billingHeader 为要插入的文本，留空时使用内置默认值 defaultCCBillingHeader。
+//
+// 兼容 system 的三种形态：
+//   - nil：置为仅含 billing 块的数组；
+//   - 字符串：转成 [billing 块, 原字符串文本块]；
+//   - 结构化数组：在首位前插 billing 块。
+//
+// 该函数仅应在请求已通过 CC 检测后调用（受渠道「Claude Code 客户端检测」开关控制）。
+func InsertClaudeCodeBillingHeader(request *dto.ClaudeRequest, billingHeader string) {
+	if request == nil {
+		return
+	}
+	if hasBillingBlock(request) {
+		return
+	}
+
+	text := strings.TrimSpace(billingHeader)
+	if text == "" {
+		text = defaultCCBillingHeader
+	}
+
+	billingBlock := dto.ClaudeMediaMessage{Type: dto.ContentTypeText}
+	billingBlock.SetText(text)
+
+	switch {
+	case request.System == nil:
+		request.System = []dto.ClaudeMediaMessage{billingBlock}
+	case request.IsStringSystem():
+		existing := request.GetStringSystem()
+		blocks := []dto.ClaudeMediaMessage{billingBlock}
+		if existing != "" {
+			original := dto.ClaudeMediaMessage{Type: dto.ContentTypeText}
+			original.SetText(existing)
+			blocks = append(blocks, original)
+		}
+		request.System = blocks
+	default:
+		request.System = append([]dto.ClaudeMediaMessage{billingBlock}, request.ParseSystem()...)
+	}
+}
+
+// ---------- metadata.user_id 格式规整 ----------
+
+// ccUserID 是真实 CC 的 metadata.user_id 内层 JSON 结构。字段顺序固定为
+// device_id → account_uuid → session_id，与真实 CC 形态一致。
+type ccUserID struct {
+	DeviceID    string `json:"device_id"`
+	AccountUUID string `json:"account_uuid"`
+	SessionID   string `json:"session_id"`
+}
+
+// underscoreUserID 匹配下划线连接格式：user_<device>_account_<account>_session_<session>。
+// device/account 用非贪婪匹配，靠字面标记 _account_ / _session_ 定界；account 可为空。
+var underscoreUserID = regexp.MustCompile(`^user_(.*?)_account_(.*?)_session_(.+)$`)
+
+// NormalizeClaudeCodeMetadata 把下划线连接格式的 metadata.user_id 规整为真实 CC 的
+// 序列化 JSON 字符串格式，就地修改 request.Metadata。
+//
+//	转换前: "user_id": "user_<device>_account_<account>_session_<session>"
+//	转换后: "user_id": "{\"device_id\":\"<device>\",\"account_uuid\":\"<account>\",\"session_id\":\"<session>\"}"
+//
+// 仅当 user_id 是字符串且命中下划线格式时才转换；已是 JSON 格式或不匹配的一律原样保留，
+// 避免误伤。该函数必须在 DetectClaudeCode 之前调用。
+func NormalizeClaudeCodeMetadata(request *dto.ClaudeRequest) {
+	if request == nil || len(request.Metadata) == 0 {
+		return
+	}
+
+	// 保留 metadata 中的其他字段，只改写 user_id。
+	var meta map[string]any
+	if err := common.Unmarshal(request.Metadata, &meta); err != nil || meta == nil {
+		return
+	}
+	rawUID, ok := meta["user_id"]
+	if !ok {
+		return
+	}
+	uid, ok := rawUID.(string)
+	if !ok {
+		return
+	}
+	uid = strings.TrimSpace(uid)
+
+	// 已是 JSON 形态则无需转换。
+	if strings.HasPrefix(uid, "{") {
+		return
+	}
+	m := underscoreUserID.FindStringSubmatch(uid)
+	if m == nil {
+		return
+	}
+
+	jsonUID, err := common.Marshal(ccUserID{
+		DeviceID:    m[1],
+		AccountUUID: m[2],
+		SessionID:   m[3],
+	})
+	if err != nil {
+		return
+	}
+
+	meta["user_id"] = string(jsonUID)
+	newMeta, err := common.Marshal(meta)
+	if err != nil {
+		return
+	}
+	request.Metadata = newMeta
 }
 
 // ---------- 工具方法 ----------

@@ -1083,6 +1083,51 @@ func (channel *Channel) SetSetting(setting dto.ChannelSettings) {
 	channel.Setting = common.GetPointer[string](string(settingBytes))
 }
 
+// MatchPath 根据渠道设置中的路径白名单/黑名单，判断给定请求路径是否允许由该渠道处理。
+// 匹配规则（前缀匹配，忽略 query）：
+//   - 黑名单命中 -> 不允许（黑名单优先级最高）
+//   - 白名单非空且未命中 -> 不允许
+//   - 其余情况 -> 允许
+//
+// 白名单与黑名单均为空时规则不生效，直接返回 true。
+func (channel *Channel) MatchPath(path string) bool {
+	// 快路径：未配置 Setting 的渠道占绝大多数，避免热路径反复 unmarshal。
+	if channel.Setting == nil || *channel.Setting == "" {
+		return true
+	}
+	setting := channel.GetSetting()
+	if len(setting.PathWhitelist) == 0 && len(setting.PathBlacklist) == 0 {
+		return true
+	}
+	// 去除 query，仅比较路径部分
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+	// 黑名单优先
+	for _, item := range setting.PathBlacklist {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if strings.HasPrefix(path, item) {
+			return false
+		}
+	}
+	// 白名单：非空时必须命中
+	hasWhitelist := false
+	for _, item := range setting.PathWhitelist {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		hasWhitelist = true
+		if strings.HasPrefix(path, item) {
+			return true
+		}
+	}
+	return !hasWhitelist
+}
+
 func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 	setting := dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {

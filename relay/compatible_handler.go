@@ -975,6 +975,8 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
 			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
 			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
+			relayInfo.PriceData.TieredCachedInputPrice = tier.CachedInputPrice
+			relayInfo.PriceData.TieredCacheWritePrice = tier.CacheWritePrice
 			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
 		}
 	} else if !relayInfo.PriceData.UsePrice {
@@ -1135,6 +1137,13 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage 
 		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
 		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
 		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
+		// 阶梯档位的缓存读/写绝对单价（每百万 Token）；0 表示未配置，前端回退模型级缓存倍率展示
+		if relayInfo.PriceData.TieredCachedInputPrice > 0 {
+			other["tiered_cached_input_price"] = relayInfo.PriceData.TieredCachedInputPrice
+		}
+		if relayInfo.PriceData.TieredCacheWritePrice > 0 {
+			other["tiered_cache_write_price"] = relayInfo.PriceData.TieredCacheWritePrice
+		}
 	}
 
 	// 记录请求体读取耗时（毫秒）

@@ -110,6 +110,12 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
+	// metadata.user_id 格式规整：把下划线连接格式
+	// （user_<device>_account_<account>_session_<session>）转换为真实 CC 的序列化 JSON 字符串格式，
+	// 使发往上游的请求能通过上游 nuwa-cc 的 CC 检测。仅命中下划线格式时转换，其余原样保留。
+	// 必须在下方 DetectClaudeCode 之前执行，使本地检测也认规整后的格式。
+	claude.NormalizeClaudeCodeMetadata(request)
+
 	// Claude Code 客户端检测：渠道开启后，仅放行真实 Claude Code 客户端请求。
 	// 检测以「客户端原始请求头叠加渠道 Header Override 后的合并结果」为准，即在请求头覆盖之后进行，
 	// 使渠道对头的改写/透传/{client_header} 占位符都能被检测感知。
@@ -123,6 +129,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if guardErr := claude.DetectClaudeCode(request, guardHeader, c.Request.URL.Path); guardErr != nil {
 			return types.NewErrorWithStatusCode(guardErr, types.ErrorCodeChannelClaudeCodeGuardReject, http.StatusBadRequest)
 		}
+		// 通过检测后：若 system 缺少 billing 签名块，则在 system 首位补一个（内容可按渠道配置）。
+		claude.InsertClaudeCodeBillingHeader(request, info.ChannelSetting.ClaudeCodeBillingHeader)
 	}
 
 	if request.MaxTokens == 0 {

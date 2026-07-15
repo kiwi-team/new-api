@@ -322,6 +322,28 @@ func redactVideoResponseBody(body []byte) []byte {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return body
 	}
+	// Gemini Omni interactions: strip inline base64 video data from steps[].content[].
+	if steps, ok := m["steps"].([]any); ok {
+		for _, s := range steps {
+			step, ok := s.(map[string]any)
+			if !ok {
+				continue
+			}
+			contents, ok := step["content"].([]any)
+			if !ok {
+				continue
+			}
+			for _, cc := range contents {
+				cm, ok := cc.(map[string]any)
+				if !ok {
+					continue
+				}
+				if v, ok := cm["data"].(string); ok {
+					cm["data"] = truncateBase64(v)
+				}
+			}
+		}
+	}
 	resp, _ := m["response"].(map[string]any)
 	if resp != nil {
 		delete(resp, "bytesBase64Encoded")
