@@ -291,15 +291,15 @@ func ParseOmniTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 		if uri != "" {
 			ti.RemoteUrl = uri
 		}
-		// Upload the generated video to S3 and expose the S3 address directly, so the
-		// task fetch response returns the S3 url instead of the content-proxy url.
-		if s3url := uploadOmniVideoToS3(uri, mimeType, b64); s3url != "" {
-			ti.Url = s3url
-		} else if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
+		// 上传到 S3 并直接暴露 S3 地址；上传重试后仍失败时，uploadOmniVideoToS3 会退回
+		// base64 字符串（内联数据）或原始 uri，而不是拼接 content 代理地址。
+		if url := uploadOmniVideoToS3(uri, mimeType, b64); url != "" {
+			ti.Url = url
+		} else if uri != "" {
+			// 仅有 gs:// 等非 http uri、且无内联数据：原样返回该 uri。
 			ti.Url = uri
 		} else {
-			// Fallback: no S3 result and no directly usable uri (e.g. inline base64 only
-			// or a gs:// uri) — serve via the content proxy.
+			// 兜底（正常成功不应到达）：退回内容代理地址。
 			ti.Url = fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
 		}
 		return ti, nil
@@ -317,8 +317,10 @@ func ParseOmniTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 }
 
 // uploadOmniVideoToS3 uploads a generated Omni video to S3 and returns the S3 url.
-// It prefers inline base64 data; otherwise a downloadable http(s) uri. Returns "" on
-// failure or when the source is not directly uploadable (e.g. a gs:// uri).
+// It retries up to omniS3UploadAttempts times and logs the failure reason each time.
+// On persistent failure it falls back to the raw base64 string (for inline data) or the
+// original http(s) uri, so the video is never lost. Returns "" only when there is no
+// directly usable video source (e.g. a gs:// uri with no inline data).
 func uploadOmniVideoToS3(uri, mimeType, base64Data string) string {
 	if base64Data != "" {
 		mime := strings.TrimSpace(mimeType)
@@ -326,15 +328,33 @@ func uploadOmniVideoToS3(uri, mimeType, base64Data string) string {
 			mime = "video/mp4"
 		}
 		dataURI := "data:" + mime + ";base64," + base64Data
-		if file, err := service.SimpleUploadToS3(context.Background(), dataURI); err == nil {
-			return file
+		if url := uploadOmniToS3WithRetry(dataURI); url != "" {
+			return url
 		}
-		return ""
+		// S3 上传重试后仍失败：直接返回 base64 字符串（不拼接 content 代理地址）。
+		return base64Data
 	}
 	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
-		if file, err := service.SimpleUploadToS3(context.Background(), uri); err == nil {
+		if url := uploadOmniToS3WithRetry(uri); url != "" {
+			return url
+		}
+		// 上传失败：退回原始 uri。
+		return uri
+	}
+	return ""
+}
+
+const omniS3UploadAttempts = 2
+
+// uploadOmniToS3WithRetry uploads to S3 up to omniS3UploadAttempts times, logging the
+// underlying error on each failure. Returns the S3 url on success, or "" if all attempts fail.
+func uploadOmniToS3WithRetry(data string) string {
+	for i := 0; i < omniS3UploadAttempts; i++ {
+		file, err := service.UploadOnceToS3(context.Background(), data)
+		if err == nil {
 			return file
 		}
+		common.SysError(fmt.Sprintf("omni video upload to S3 failed (attempt %d/%d): %s", i+1, omniS3UploadAttempts, err.Error()))
 	}
 	return ""
 }

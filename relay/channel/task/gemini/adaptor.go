@@ -357,6 +357,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	} else if task.UpdatedAt > 0 {
 		video.CompletedAt = task.UpdatedAt
 	}
+	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
+	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {
+		video.Error = &dto.OpenAIVideoError{Message: task.FailReason}
+	}
 
 	return common.Marshal(video)
 }

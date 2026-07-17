@@ -37,6 +37,21 @@ func getS3Client() (*s3.Client, string, string, error) {
 	return s3Client, bucket, endpoint, nil
 }
 
+// UploadOnceToS3 uploads a file (base64/data-uri or http url) to S3 exactly once and
+// returns the underlying error on failure. Unlike SimpleUploadToS3/UploadFileToS3 (which
+// retry internally and mask the root cause with a generic message), this surfaces the real
+// error so callers can log the actual failure reason.
+func UploadOnceToS3(ctx context.Context, file string) (string, error) {
+	s3Client, bucket, endpoint, err := getS3Client()
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(file, "http") {
+		return UploadeFromUrlToS3(ctx, s3Client, bucket, endpoint, file)
+	}
+	return UploadBase64ToS3(ctx, s3Client, bucket, endpoint, file)
+}
+
 func SimpleUploadToS3(ctx context.Context, file string) (string, error) {
 	// bucket := common.OptionMap["S3Bucket"]
 	// endpoint := common.OptionMap["S3Endpoint"]

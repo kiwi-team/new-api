@@ -502,6 +502,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if strings.HasPrefix(task.FailReason, "data:") && len(task.FailReason) > 0 {
 		v.SetMetadata("url", task.FailReason)
 	}
+	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
+	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {
+		v.Error = &dto.OpenAIVideoError{Message: task.FailReason}
+	}
 
 	return common.Marshal(v)
 }

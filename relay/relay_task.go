@@ -645,6 +645,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 					"task_id":  originTask.TaskID,
 					"url":      originTask.FailReason,
 				}
+				// 失败时 FailReason 存的是错误原因而非视频地址：放进 error 字段，url 置空。
+				if originTask.Status == model.TaskStatusFailure {
+					out["url"] = nil
+					if strings.TrimSpace(originTask.FailReason) != "" {
+						out["error"] = map[string]any{"message": originTask.FailReason}
+					}
+				}
 				// Add World Labs specific fields if available
 				if ti.ColliderMeshUrl != "" {
 					out["collider_mesh_url"] = ti.ColliderMeshUrl
