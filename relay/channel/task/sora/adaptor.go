@@ -183,7 +183,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
-
+	fmt.Printf("xxxx %#v", resTask)
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
 	}
@@ -221,5 +221,30 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	// 任务成功且 FailReason 存的是 S3 直链时，把地址合并进上游原始数据再返回。
+	// 否则 OpenAI 原生 /v1/videos/{id} 端点不会吐出视频地址，级联的下游渠道
+	// （同款代码互相代理时）拿不到 url，只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
+	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
+		obj := map[string]any{}
+		if len(task.Data) > 0 {
+			if err := common.Unmarshal(task.Data, &obj); err != nil || obj == nil {
+				obj = map[string]any{}
+			}
+		}
+		if _, ok := obj["id"]; !ok {
+			obj["id"] = task.TaskID
+		}
+		if v, ok := obj["video_url"].(string); !ok || v == "" {
+			obj["video_url"] = task.FailReason
+		}
+		if v, ok := obj["url"].(string); !ok || v == "" {
+			obj["url"] = task.FailReason
+		}
+		// 确保状态为 completed，避免下游因原始数据里的过期状态而误判。
+		obj["status"] = "completed"
+		if merged, err := common.Marshal(obj); err == nil {
+			return merged, nil
+		}
+	}
 	return task.Data, nil
 }

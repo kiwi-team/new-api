@@ -47,12 +47,13 @@ type operationResponse struct {
 	Name     string `json:"name"`
 	Done     bool   `json:"done"`
 	Response struct {
-		Type                  string           `json:"@type"`
-		RaiMediaFilteredCount int              `json:"raiMediaFilteredCount"`
-		Videos                []operationVideo `json:"videos"`
-		BytesBase64Encoded    string           `json:"bytesBase64Encoded"`
-		Encoding              string           `json:"encoding"`
-		Video                 string           `json:"video"`
+		Type                    string           `json:"@type"`
+		RaiMediaFilteredCount   int              `json:"raiMediaFilteredCount"`
+		RaiMediaFilteredReasons []string         `json:"raiMediaFilteredReasons"`
+		Videos                  []operationVideo `json:"videos"`
+		BytesBase64Encoded      string           `json:"bytesBase64Encoded"`
+		Encoding                string           `json:"encoding"`
+		Video                   string           `json:"video"`
 	} `json:"response"`
 	Error struct {
 		Message string `json:"message"`
@@ -181,6 +182,20 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	body := requestPayload{
 		Instances:  []map[string]any{{"prompt": req.Prompt}},
 		Parameters: map[string]any{},
+	}
+	// Image-to-video: attach the reference image to the instance when provided.
+	imageRef := strings.TrimSpace(req.Image)
+	if imageRef == "" && len(req.Images) > 0 {
+		imageRef = strings.TrimSpace(req.Images[0])
+	}
+	if imageRef != "" {
+		img, err := buildVeoImage(imageRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve image failed: %w", err)
+		}
+		if img != nil {
+			body.Instances[0]["image"] = img
+		}
 	}
 	seconds := common.String2Int(req.Seconds)
 	if seconds > 0 {
@@ -472,6 +487,17 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 		return ti, nil
 	}
+	// 走到这里说明 operation done 但没提取到任何视频产物。
+	// Veo 内容安全过滤（done 但视频被 RAI 拦截）会命中这里：带上过滤原因判失败，
+	// 否则会被误判为成功（既不退款，下游也拿不到视频地址）。
+	ti.Status = model.TaskStatusFailure
+	if op.Response.RaiMediaFilteredCount > 0 && len(op.Response.RaiMediaFilteredReasons) > 0 {
+		ti.Reason = strings.Join(op.Response.RaiMediaFilteredReasons, "; ")
+	} else if op.Response.RaiMediaFilteredCount > 0 {
+		ti.Reason = "video generation blocked by safety filter"
+	} else {
+		ti.Reason = "operation done but no video returned"
+	}
 	return ti, nil
 }
 
@@ -502,6 +528,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if strings.HasPrefix(task.FailReason, "data:") && len(task.FailReason) > 0 {
 		v.SetMetadata("url", task.FailReason)
 	}
+	// 成功且 FailReason 存的是 S3 直链时，输出顶层 video_url/url，供级联下游
+	// （openai/sora 类型渠道，其 ParseTaskResult 读顶层 video_url/url/result_url）取到真实地址，
+	// 否则下游只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
+	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
+		v.VideoUrl = task.FailReason
+		v.Url = task.FailReason
+	}
 	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
 	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {
 		v.Error = &dto.OpenAIVideoError{Message: task.FailReason}
@@ -513,6 +546,50 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 // ============================
 // helpers
 // ============================
+
+// buildVeoImage normalizes an image reference into the Vertex Veo predict image object.
+// Supports gs:// (gcsUri), data: URIs, http(s) URLs (downloaded to base64) and raw base64.
+// Returns nil when the reference is empty.
+func buildVeoImage(image string) (map[string]any, error) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return nil, nil
+	}
+	// GCS reference is passed through directly.
+	if strings.HasPrefix(image, "gs://") {
+		return map[string]any{"gcsUri": image}, nil
+	}
+	// data:<mime>;base64,<data>
+	if strings.HasPrefix(image, "data:") {
+		idx := strings.Index(image, ",")
+		if idx < 0 {
+			return nil, fmt.Errorf("invalid data uri")
+		}
+		meta := image[len("data:"):idx]
+		b64 := image[idx+1:]
+		mt := meta
+		if semi := strings.Index(meta, ";"); semi >= 0 {
+			mt = meta[:semi]
+		}
+		if strings.TrimSpace(mt) == "" {
+			mt = "image/jpeg"
+		}
+		return map[string]any{"bytesBase64Encoded": b64, "mimeType": mt}, nil
+	}
+	// http(s) URL: download and convert to base64.
+	if strings.HasPrefix(image, "http://") || strings.HasPrefix(image, "https://") {
+		mt, b64, err := service.GetImageFromUrl(image)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(mt) == "" {
+			mt = "image/jpeg"
+		}
+		return map[string]any{"bytesBase64Encoded": b64, "mimeType": mt}, nil
+	}
+	// assume raw base64 without a data-uri prefix
+	return map[string]any{"bytesBase64Encoded": image, "mimeType": "image/jpeg"}, nil
+}
 
 func encodeLocalTaskID(name string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(name))

@@ -1,55 +1,86 @@
-# CLAUDE.md — Project Conventions for new-api
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Overview
 
-This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
+This is an AI API gateway/proxy built with Go (module `github.com/QuantumNous/new-api`). It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
 
 ## Tech Stack
 
-- **Backend**: Go 1.22+, Gin web framework, GORM v2 ORM
+- **Backend**: Go (toolchain 1.25.x; codebase targets 1.22+), Gin web framework, GORM v2 ORM
 - **Frontend**: React 18, Vite, Semi Design UI (@douyinfe/semi-ui)
 - **Databases**: SQLite, MySQL, PostgreSQL (all three must be supported)
 - **Cache**: Redis (go-redis) + in-memory cache
 - **Auth**: JWT, WebAuthn/Passkeys, OAuth (GitHub, Discord, OIDC, etc.)
 - **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
 
+## Commands
+
+### Backend (Go)
+- **Run dev server**: `go run main.go` (listens on port `3000` by default; override with `PORT` env or `--port`)
+- **Live reload**: `air` (config in `.air.toml`; builds to `./tmp/main`, excludes `web/` and `_test.go`)
+- **Build binary**: `go build -o oneapi main.go` — or `./build.sh [arch] [ldflags]` for a Linux cross-compile (sets `GOOS=linux`, defaults `GOARCH=amd64`, restores darwin/arm64 after)
+- **Run all tests**: `go test ./...`
+- **Run one package's tests**: `go test ./model/` (e.g. `model`, `service`, `relay/channel`, `middleware`)
+- **Run a single test**: `go test ./model/ -run TestProjectBudget -v`
+- **Vet**: `go vet ./...`
+
+### Frontend (`web/`, use Bun)
+- **Install**: `bun install`
+- **Dev server**: `bun run dev`
+- **Build** (output embedded into the Go binary via `//go:embed web/dist`): `bun run build` — must be built before the backend can serve the UI
+- **Format check / fix**: `bun run lint` / `bun run lint:fix` (Prettier)
+- **ESLint**: `bun run eslint` / `bun run eslint:fix`
+- **i18n**: `bun run i18n:extract`, `bun run i18n:status`, `bun run i18n:sync`, `bun run i18n:lint`
+
+### Full build & Docker
+- **Frontend + backend together**: `make all` (runs `build-frontend` then `start-backend`)
+- **Docker**: `docker compose up -d` (bundles the app with PostgreSQL + Redis; see `docker-compose.yml`)
+
 ## Architecture
 
-Layered architecture: Router -> Controller -> Service -> Model
+Layered request flow: **Router → Middleware → Controller → Service → Model**, with the relay subsystem handling upstream AI providers.
 
 ```
-router/        — HTTP routing (API, relay, dashboard, web)
+main.go        — Entry point. InitResources() loads .env, InitEnv, DB (model.InitDB),
+                 options, ratio settings, HTTP client, token encoders; main() starts
+                 background goroutines (channel cache sync, quota tasks, task pollers) and
+                 the HTTP server. Frontend is embedded via //go:embed web/dist.
+router/        — HTTP routing (api-router, relay-router, dashboard, web-router, video, search)
 controller/    — Request handlers
 service/       — Business logic
-model/         — Data models and DB access (GORM)
-relay/         — AI API relay/proxy with provider adapters
-  relay/channel/ — Provider-specific adapters (openai/, claude/, gemini/, aws/, etc.)
-middleware/    — Auth, rate limiting, CORS, logging, distribution
+model/         — Data models and DB access (GORM); channel cache, option map, quota
+relay/         — AI API relay/proxy
+  relay/relay_adaptor.go — GetAdaptor() dispatches on constant.APIType to a provider adaptor
+  relay/channel/         — Provider-specific adapters (openai/, claude/, gemini/, aws/, ...),
+                           each implementing the channel.Adaptor interface (adapter.go)
+middleware/    — Auth, rate limiting, CORS, logging, distribution, raw-header capture
 setting/       — Configuration management (ratio, model, operation, system, performance)
-common/        — Shared utilities (JSON, crypto, Redis, env, rate-limit, etc.)
+common/        — Shared utilities (JSON wrapper, crypto, Redis, env, rate-limit, etc.)
 dto/           — Data transfer objects (request/response structs)
 constant/      — Constants (API types, channel types, context keys)
-types/         — Type definitions (relay formats, file sources, errors)
+types/         — Type definitions (relay formats, file sources, errors — types.NewAPIError)
 i18n/          — Backend internationalization (go-i18n, en/zh)
 oauth/         — OAuth provider implementations
 pkg/           — Internal packages (cachex, ionet)
-web/           — React frontend
-  web/src/i18n/  — Frontend internationalization (i18next, zh/en/fr/ru/ja/vi)
+web/           — React frontend (web/src/i18n/ for frontend i18n)
 ```
 
-## Internationalization (i18n)
+### The relay/adaptor pattern (core of the proxy)
 
-### Backend (`i18n/`)
-- Library: `nicksnyder/go-i18n/v2`
-- Languages: en, zh
+Adding or changing upstream provider support centers on the `channel.Adaptor` interface in `relay/channel/adapter.go`. Each provider under `relay/channel/<name>/adaptor.go` implements it:
 
-### Frontend (`web/src/i18n/`)
-- Library: `i18next` + `react-i18next` + `i18next-browser-languagedetector`
-- Languages: zh (fallback), en, fr, ru, ja, vi
-- Translation files: `web/src/i18n/locales/{lang}.json` — flat JSON, keys are Chinese source strings
-- Usage: `useTranslation()` hook, call `t('中文key')` in components
-- Semi UI locale synced via `SemiLocaleWrapper`
-- CLI tools: `bun run i18n:extract`, `bun run i18n:sync`, `bun run i18n:lint`
+- `Init`, `GetRequestURL`, `SetupRequestHeader`
+- `ConvertOpenAIRequest` / `ConvertClaudeRequest` / `ConvertGeminiRequest` / `ConvertRerankRequest` / `ConvertEmbeddingRequest` / `ConvertAudioRequest` / `ConvertImageRequest` / `ConvertOpenAIResponsesRequest` — translate the incoming unified request into the provider's format
+- `DoRequest` — send to upstream; `DoResponse` — parse the (possibly streaming) response back into unified DTOs and usage
+- `GetModelList`, `GetChannelName`
+
+`relay/relay_adaptor.go`'s `GetAdaptor()` maps a channel's `constant.APIType` to the concrete adaptor. Long-running/async providers (image/video/Midjourney) use the separate `TaskAdaptor` interface. Channel type constants live in `constant/` (`api_type.go`, `channel.go`).
+
+### Internationalization
+- **Backend** (`i18n/`): `nicksnyder/go-i18n/v2`; languages en, zh.
+- **Frontend** (`web/src/i18n/`): `i18next` + `react-i18next` + browser language detector; languages zh (fallback), en, fr, ru, ja, vi. Translation files `web/src/i18n/locales/{lang}.json` are flat JSON keyed by the Chinese source string. Use `useTranslation()` and call `t('中文key')`. Semi UI locale synced via `SemiLocaleWrapper`.
 
 ## Rules
 

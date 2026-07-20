@@ -144,7 +144,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		task.Data = redactVideoResponseBody(responseBody)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask taskResult: %+v", taskResult))
+	logger.LogDebug(ctx, fmt.Sprintf("6666 UpdateVideoSingleTask taskResult: %+v", taskResult))
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {

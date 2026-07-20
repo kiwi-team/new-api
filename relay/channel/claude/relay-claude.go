@@ -391,7 +391,23 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					}
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {
-				if len(message.StringContent()) > 0 {
+				// assistant 回传带 signature 的思考块时，需要还原为 thinking + text 的数组内容，
+				// 否则 Claude 会因缺少已签名的思考块而报错或无法复用上一轮推理
+				if message.Role == "assistant" && message.ReasoningContent != "" && message.Signature != "" {
+					contentBlocks := make([]dto.ClaudeMediaMessage, 0, 2)
+					contentBlocks = append(contentBlocks, dto.ClaudeMediaMessage{
+						Type:      "thinking",
+						Thinking:  common.GetPointer(message.ReasoningContent),
+						Signature: message.Signature,
+					})
+					if len(message.StringContent()) > 0 {
+						contentBlocks = append(contentBlocks, dto.ClaudeMediaMessage{
+							Type: "text",
+							Text: common.GetPointer(message.StringContent()),
+						})
+					}
+					claudeMessage.Content = contentBlocks
+				} else if len(message.StringContent()) > 0 {
 					claudeMessage.Content = message.StringContent()
 				}
 			} else {
@@ -567,9 +583,12 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 					},
 				})
 			case "signature_delta":
-				// 加密的不处理
-				signatureContent := "\n"
-				choice.Delta.ReasoningContent = &signatureContent
+				// 透传 thinking 块的签名，供 OpenAI 格式的客户端在多轮对话时回传，
+				// 否则 Claude 侧会因缺少 signature 无法复用/校验思考块
+				if claudeResponse.Delta.Signature != "" {
+					sig := claudeResponse.Delta.Signature
+					choice.Delta.Signature = &sig
+				}
 			case "thinking_delta":
 				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
 			}
