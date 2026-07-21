@@ -538,11 +538,27 @@ const ProjectPage = () => {
   };
 
   const openAllocationModalForPlan = (plan) => {
-    setCurrentPlan(plan);
+    const normalizedPlan = {
+      ...plan,
+      id: plan.id || plan.plan_id,
+    };
+    setCurrentPlan(normalizedPlan);
     setAllocationPage(1);
     setAllocationModalVisible(true);
-    fetchAllocations(plan.id, 1, allocationPageSize);
-    fetchPlanTotals(plan.id);
+    fetchAllocations(normalizedPlan.id, 1, allocationPageSize);
+    fetchPlanTotals(normalizedPlan.id);
+  };
+
+  const openActivePlanAllocations = (project) => {
+    const activePlan = (project.plans || []).find(
+      (plan) => plan.plan_id === project.active_plan_id,
+    );
+    if (!activePlan) {
+      showError(t('当前方案不存在，请刷新后重试'));
+      return;
+    }
+    setCurrentProject(project);
+    openAllocationModalForPlan(activePlan);
   };
 
   const closeAllocationModal = () => {
@@ -880,8 +896,17 @@ const ProjectPage = () => {
         return (
           <div style={{ lineHeight: 1.8 }}>
             <div>
-              <Text type='tertiary'>{t('已分配')}：</Text>
-              <Text>{formatBudget(record.active_allocated_total)}</Text>
+              <Tooltip content={t('查看当前方案的客户分配详情')}>
+                <Button
+                  theme='borderless'
+                  type='primary'
+                  size='small'
+                  style={{ paddingLeft: 0 }}
+                  onClick={() => openActivePlanAllocations(record)}
+                >
+                  {t('已分配')}：${formatBudget(record.active_allocated_total)}
+                </Button>
+              </Tooltip>
             </div>
             <div>
               <Text type='tertiary'>{t('已使用')}：</Text>
