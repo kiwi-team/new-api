@@ -43,19 +43,46 @@ const formatBudget = (value, digits = 6) => {
   return amount.toFixed(digits).replace(/\.?0+$/, '');
 };
 
-const BudgetBreakdown = ({ budget, used, available }) => (
+const BudgetBreakdown = ({ budget, used, available, clickable = false }) => (
   <div style={{ lineHeight: 1.55 }}>
     <div>
-      <Text type='tertiary'>额度：</Text>
-      <Text>${formatBudget(budget)}</Text>
+      <Text
+        type={clickable ? 'primary' : 'tertiary'}
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+      >
+        额度：
+      </Text>
+      <Text
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+      >
+        ${formatBudget(budget)}
+      </Text>
     </div>
     <div>
-      <Text type='tertiary'>已用：</Text>
-      <Text>${formatBudget(used)}</Text>
+      <Text
+        type={clickable ? 'primary' : 'tertiary'}
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+      >
+        已用：
+      </Text>
+      <Text
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+      >
+        ${formatBudget(used)}
+      </Text>
     </div>
     <div>
-      <Text type='tertiary'>可用：</Text>
-      <Text type={available > 0 ? 'success' : 'danger'} strong>
+      <Text
+        type={clickable ? 'primary' : 'tertiary'}
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+      >
+        可用：
+      </Text>
+      <Text
+        type={clickable ? 'primary' : available > 0 ? 'success' : 'danger'}
+        style={clickable ? { color: 'var(--semi-color-primary)' } : undefined}
+        strong
+      >
         ${formatBudget(available)}
       </Text>
     </div>
@@ -366,7 +393,7 @@ const CliendUserQuotaPage = () => {
           return (
             <Button
               theme='borderless'
-              type='tertiary'
+              type='primary'
               size='small'
               onClick={() => fetchProjectAllocations(record.client_user_id)}
             >
@@ -402,6 +429,7 @@ const CliendUserQuotaPage = () => {
                 budget={summary.total_allocated}
                 used={summary.total_used_usd}
                 available={summary.total_remaining_usd}
+                clickable
               />
             </Button>
           </Tooltip>
