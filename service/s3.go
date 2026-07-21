@@ -81,7 +81,11 @@ func UploadIOReaderToS3(ctx context.Context, req *http.Response) (string, error)
 	// }
 	//ext := mimeType.Extension()
 	//ext := ".mp4"
-	ext := mime.TypeByExtension(mimeType)
+	// mime.ExtensionsByType 根据 MIME 类型返回扩展名列表（如 video/mp4 -> [".mp4"]），取第一个
+	var ext string
+	if exts, extErr := mime.ExtensionsByType(mimeType); extErr == nil && len(exts) > 0 {
+		ext = exts[0]
+	}
 	fileType := strings.Split(mimeType, "/")[0]
 	key := fmt.Sprintf("%ss/%d-%s%s", fileType, time.Now().UnixNano(), common.GetRandomString(10), ext)
 	s3Client, bucket, endpoint, err := getS3Client()
