@@ -31,7 +31,7 @@ import {
   Tooltip,
 } from '@douyinfe/semi-ui';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const formatPlanDate = (value) => {
   if (!value || value.length !== 8) return value || '-';
@@ -41,6 +41,79 @@ const formatPlanDate = (value) => {
 const formatBudget = (value, digits = 6) => {
   const amount = Number(value) || 0;
   return amount.toFixed(digits).replace(/\.?0+$/, '');
+};
+
+const BudgetBreakdown = ({ budget, used, available }) => (
+  <div style={{ lineHeight: 1.55 }}>
+    <div>
+      <Text type='tertiary'>额度：</Text>
+      <Text>${formatBudget(budget)}</Text>
+    </div>
+    <div>
+      <Text type='tertiary'>已用：</Text>
+      <Text>${formatBudget(used)}</Text>
+    </div>
+    <div>
+      <Text type='tertiary'>可用：</Text>
+      <Text type={available > 0 ? 'success' : 'danger'} strong>
+        ${formatBudget(available)}
+      </Text>
+    </div>
+  </div>
+);
+
+const NonProjectBudgetBreakdown = ({ record, projectSummary }) => {
+  const totalUsed = (Number(record.used_quota) || 0) / 500000;
+  const monthlyProjectUsed =
+    Number(projectSummary?.monthly_project_used_usd) || 0;
+  const nonProjectUsed = Math.max(totalUsed - monthlyProjectUsed, 0);
+  const fixedBudget = Number(record.fixed_quota) || 0;
+  const tempBudget = Number(record.temp_quota) || 0;
+  const isTempExpired =
+    record.expired_at > 0 && record.expired_at <= Date.now() / 1000;
+  const effectiveTempBudget = isTempExpired ? 0 : tempBudget;
+  const available = Math.max(
+    fixedBudget + effectiveTempBudget - nonProjectUsed,
+    0,
+  );
+  const tempExpiry =
+    tempBudget <= 0
+      ? '-'
+      : record.expired_at
+        ? `${new Date(record.expired_at * 1000).toLocaleString()} 到期`
+        : '长期有效';
+
+  return (
+    <div style={{ lineHeight: 1.65 }}>
+      <div>
+        <Text type='tertiary'>月度固定预算：</Text>
+        <Text>${formatBudget(fixedBudget)}</Text>
+      </div>
+      <div>
+        <Text type='tertiary'>临时预算：</Text>
+        <Text>${formatBudget(tempBudget)}</Text>
+        <Text type={isTempExpired ? 'danger' : 'secondary'}>
+          {' '}
+          （{tempExpiry}）
+        </Text>
+        {isTempExpired && (
+          <Tag color='red' size='small' style={{ marginLeft: 6 }}>
+            已过期
+          </Tag>
+        )}
+      </div>
+      <div>
+        <Text type='tertiary'>本月已使用非项目预算：</Text>
+        <Text>${formatBudget(nonProjectUsed)}</Text>
+      </div>
+      <div>
+        <Text type='tertiary'>可用：</Text>
+        <Text type={available > 0 ? 'success' : 'danger'} strong>
+          ${formatBudget(available)}
+        </Text>
+      </div>
+    </div>
+  );
 };
 
 const renderAllocationStatus = (record) => {
@@ -268,37 +341,25 @@ const CliendUserQuotaPage = () => {
       ? [{ title: 'Client Name', dataIndex: 'client_name', width: 150 }]
       : []),
     {
-      title: '月度固定预算',
-      dataIndex: 'fixed_quota',
-      width: 130,
+      title: '月度非项目预算($)',
+      dataIndex: 'non_project_budget',
+      width: 300,
+      render: (_, record) => (
+        <NonProjectBudgetBreakdown
+          record={record}
+          projectSummary={projectBudgetMap[record.client_user_id]}
+        />
+      ),
       sorter: (a, b) =>
-        (parseInt(a.fixed_quota, 10) || 0) - (parseInt(b.fixed_quota, 10) || 0),
+        (parseInt(a.fixed_quota, 10) || 0) +
+        (parseInt(a.temp_quota, 10) || 0) -
+        ((parseInt(b.fixed_quota, 10) || 0) +
+          (parseInt(b.temp_quota, 10) || 0)),
     },
     {
-      title: '临时预算',
-      dataIndex: 'temp_quota',
-      width: 100,
-      sorter: (a, b) =>
-        (parseInt(a.temp_quota, 10) || 0) - (parseInt(b.temp_quota, 10) || 0),
-    },
-    {
-      title: '本月已使用($)',
-      dataIndex: 'used_quota',
-      width: 160,
-      render: (v) => ((parseInt(v, 10) || 0) / 500000).toFixed(6),
-      sorter: (a, b) =>
-        (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
-    },
-    {
-      title: '临时预算过期时间',
-      dataIndex: 'expired_at',
-      width: 200,
-      render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-'),
-    },
-    {
-      title: '当前项目可用预算',
+      title: '当前项目预算($)',
       dataIndex: 'project_budget',
-      width: 240,
+      width: 220,
       render: (_, record) => {
         const summary = projectBudgetMap[record.client_user_id];
         if (!summary || !summary.projects || summary.projects.length === 0) {
@@ -337,31 +398,29 @@ const CliendUserQuotaPage = () => {
               size='small'
               onClick={() => fetchProjectAllocations(record.client_user_id)}
             >
-              <div style={{ textAlign: 'left', lineHeight: 1.5 }}>
-                <div>
-                  ${formatBudget(summary.total_remaining_usd)}{' '}
-                  <span style={{ fontWeight: 600 }}>可用</span>
-                </div>
-                <div
-                  style={{
-                    color: 'var(--semi-color-text-2)',
-                    fontSize: 12,
-                    fontWeight: 400,
-                  }}
-                >
-                  ${formatBudget(summary.total_allocated)} 已分配 ·{' '}
-                  {summary.project_count || summary.projects.length}个生效项目
-                </div>
-              </div>
+              <BudgetBreakdown
+                budget={summary.total_allocated}
+                used={summary.total_used_usd}
+                available={summary.total_remaining_usd}
+              />
             </Button>
           </Tooltip>
         );
       },
     },
     {
+      title: '本月总使用($)',
+      dataIndex: 'used_quota',
+      width: 140,
+      render: (v) => formatBudget((parseInt(v, 10) || 0) / 500000),
+      sorter: (a, b) =>
+        (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
+    },
+    {
       title: '操作',
       dataIndex: 'op',
       width: 220,
+      fixed: 'right',
       render: (_, record) => (
         <Space>
           <Button onClick={() => openEdit(record)}>编辑</Button>
@@ -376,7 +435,12 @@ const CliendUserQuotaPage = () => {
   return (
     <div className='mt-[60px] px-2'>
       <div className='flex items-center justify-between mb-3'>
-        <Title heading={4}>UID 预算管理</Title>
+        <div>
+          <Title heading={4}>UID 预算管理</Title>
+          <Text type='tertiary'>
+            项目与非项目消费分别统计；非项目可用预算为月度固定预算与有效临时预算之和，扣除本月非项目使用金额。
+          </Text>
+        </div>
         <Space>
           <Input
             placeholder='搜索 Client UID'
@@ -417,6 +481,7 @@ const CliendUserQuotaPage = () => {
         loading={loading}
         columns={columns}
         dataSource={data}
+        scroll={{ x: 1300 }}
         pagination={{
           currentPage: page,
           pageSize,

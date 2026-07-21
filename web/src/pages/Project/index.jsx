@@ -170,7 +170,12 @@ const ProjectPage = () => {
       const res = await API.get('/api/projects', { params });
       const { success, message, data } = res.data;
       if (success) {
-        setData(data.items || []);
+        const items = data.items || [];
+        setData(items);
+        setCurrentProject((previous) => {
+          if (!previous) return previous;
+          return items.find((item) => item.id === previous.id) || previous;
+        });
         setTotal(data.total || 0);
         setPage(data.p || pageNum);
         setPageSize(data.page_size || size);
@@ -347,7 +352,10 @@ const ProjectPage = () => {
       if (success) {
         showSuccess(editingPlan ? t('更新成功') : t('创建成功'));
         closePlanForm();
-        fetchPlans(currentProject.id);
+        await Promise.all([
+          fetchPlans(currentProject.id),
+          fetchData(page, pageSize, searchKeyword),
+        ]);
       } else {
         showError(message || t('操作失败'));
       }
@@ -364,7 +372,10 @@ const ProjectPage = () => {
       const { success, message } = res.data;
       if (success) {
         showSuccess(t('删除成功'));
-        fetchPlans(currentProject.id);
+        await Promise.all([
+          fetchPlans(currentProject.id),
+          fetchData(page, pageSize, searchKeyword),
+        ]);
       } else {
         showError(message || t('操作失败'));
       }
@@ -424,8 +435,17 @@ const ProjectPage = () => {
         return (
           <div style={{ lineHeight: 1.7 }}>
             <div>
-              <Text type='tertiary'>{t('客户数')}：</Text>
-              <Text>{allocs.length}</Text>
+              <Button
+                theme='borderless'
+                type='primary'
+                size='small'
+                style={{ paddingLeft: 0 }}
+                onClick={() => openAllocationModalForPlan(record)}
+              >
+                {allocs.length > 0
+                  ? t('查看 {{count}} 位客户', { count: allocs.length })
+                  : t('添加客户分配')}
+              </Button>
             </div>
             <div>
               <Text type='tertiary'>{t('已分配')}：</Text>
@@ -447,7 +467,7 @@ const ProjectPage = () => {
             size='small'
             onClick={() => openAllocationModalForPlan(record)}
           >
-            {t('分配')}
+            {t('管理分配')}
           </Button>
           <Button size='small' onClick={() => openPlanForm(record)}>
             {t('编辑')}
@@ -572,8 +592,12 @@ const ProjectPage = () => {
       if (success) {
         showSuccess(editingAllocation ? t('更新成功') : t('创建成功'));
         closeAllocationForm();
-        fetchAllocations(currentPlan.id, allocationPage, allocationPageSize);
-        fetchPlanTotals(currentPlan.id);
+        await Promise.all([
+          fetchAllocations(currentPlan.id, allocationPage, allocationPageSize),
+          fetchPlanTotals(currentPlan.id),
+          fetchPlans(currentProject.id),
+          fetchData(page, pageSize, searchKeyword),
+        ]);
       } else {
         showError(message || t('操作失败'));
       }
@@ -592,9 +616,17 @@ const ProjectPage = () => {
       const { success, message } = res.data;
       if (success) {
         showSuccess(t('已清空'));
-        if (currentPlan) {
-          fetchAllocations(currentPlan.id, allocationPage, allocationPageSize);
-          fetchPlanTotals(currentPlan.id);
+        if (currentPlan && currentProject) {
+          await Promise.all([
+            fetchAllocations(
+              currentPlan.id,
+              allocationPage,
+              allocationPageSize,
+            ),
+            fetchPlanTotals(currentPlan.id),
+            fetchPlans(currentProject.id),
+            fetchData(page, pageSize, searchKeyword),
+          ]);
         }
       } else {
         showError(message || t('操作失败'));
