@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -679,105 +680,226 @@ func GetQuotaByPlanIdUid(planId int, uid string) (int, error) {
 	return int(quota), err
 }
 
-// ProjectAllocationDetail 项目预算分配详情（含项目名称和已消耗金额）
-type ProjectAllocationDetail struct {
-	ProjectId      int     `json:"project_id"`
-	ProjectName    string  `json:"project_name"`
-	AllocatedQuota int     `json:"allocated_quota"`
-	UsedQuotaUSD   float64 `json:"used_quota_usd"`
+// GetQuotaByPlanId returns plan-scoped consumption for all users.
+func GetQuotaByPlanId(planId int) (int64, error) {
+	if planId == 0 {
+		return 0, nil
+	}
+	var quota int64
+	err := DB.Model(&QuotaData{}).Where("plan_id = ?", planId).
+		Select("COALESCE(SUM(quota), 0)").
+		Scan(&quota).Error
+	return quota, err
 }
 
-// GetProjectAllocationDetails 获取某个UID的所有项目预算分配详情
+// ProjectAllocationDetail 项目预算分配详情（含项目名称和已消耗金额）
+type ProjectAllocationDetail struct {
+	AllocationId       int     `json:"allocation_id"`
+	ProjectId          int     `json:"project_id"`
+	ProjectName        string  `json:"project_name"`
+	ProjectStatus      int     `json:"project_status"`
+	PlanId             int     `json:"plan_id"`
+	PlanName           string  `json:"plan_name"`
+	StartDate          string  `json:"start_date"`
+	EndDate            string  `json:"end_date"`
+	AllocatedQuota     int     `json:"allocated_quota"`
+	UsedQuotaUSD       float64 `json:"used_quota_usd"`
+	RemainingQuotaUSD  float64 `json:"remaining_quota_usd"`
+	IsActivePlan       bool    `json:"is_active_plan"`
+	IsInDateRange      bool    `json:"is_in_date_range"`
+	IsCurrentEffective bool    `json:"is_current_effective"`
+}
+
+type projectAllocationUsage struct {
+	ClientUserId string `gorm:"column:client_user_id"`
+	PlanId       int    `gorm:"column:plan_id"`
+	ProjectName  string `gorm:"column:project_name"`
+	UsedQuota    int64  `gorm:"column:used_quota"`
+}
+
+func projectAllocationUsageKey(clientUserId string, planId int, projectName string) string {
+	return fmt.Sprintf("%s\x00%d\x00%s", clientUserId, planId, projectName)
+}
+
+// getProjectAllocationDetailsForUsers builds plan-scoped allocation details.
+// Consumption must be grouped by plan_id; grouping only by project would repeat
+// the same historical project consumption on every plan row.
+func getProjectAllocationDetailsForUsers(clientUserIds []string, currentOnly bool) (map[string][]*ProjectAllocationDetail, error) {
+	result := make(map[string][]*ProjectAllocationDetail, len(clientUserIds))
+	if len(clientUserIds) == 0 {
+		return result, nil
+	}
+
+	var allocations []*ProjectAllocation
+	if err := DB.Where("client_user_id IN ?", clientUserIds).Find(&allocations).Error; err != nil {
+		return nil, err
+	}
+	if len(allocations) == 0 {
+		return result, nil
+	}
+
+	projectIdSet := make(map[int]struct{})
+	planIdSet := make(map[int]struct{})
+	for _, allocation := range allocations {
+		projectIdSet[allocation.ProjectId] = struct{}{}
+		if allocation.PlanId > 0 {
+			planIdSet[allocation.PlanId] = struct{}{}
+		}
+	}
+	projectIds := make([]int, 0, len(projectIdSet))
+	for id := range projectIdSet {
+		projectIds = append(projectIds, id)
+	}
+	planIds := make([]int, 0, len(planIdSet))
+	for id := range planIdSet {
+		planIds = append(planIds, id)
+	}
+
+	var projects []*Project
+	if err := DB.Where("id IN ?", projectIds).Find(&projects).Error; err != nil {
+		return nil, err
+	}
+	projectMap := make(map[int]*Project, len(projects))
+	for _, project := range projects {
+		projectMap[project.Id] = project
+	}
+
+	planMap := make(map[int]*ProjectAllocationPlan, len(planIds))
+	if len(planIds) > 0 {
+		var plans []*ProjectAllocationPlan
+		if err := DB.Where("id IN ?", planIds).Find(&plans).Error; err != nil {
+			return nil, err
+		}
+		for _, plan := range plans {
+			planMap[plan.Id] = plan
+		}
+	}
+
+	var usageRows []projectAllocationUsage
+	if err := DB.Model(&QuotaData{}).
+		Where("client_user_id IN ?", clientUserIds).
+		Select("client_user_id, plan_id, project_name, COALESCE(SUM(quota), 0) AS used_quota").
+		Group("client_user_id, plan_id, project_name").
+		Scan(&usageRows).Error; err != nil {
+		return nil, err
+	}
+	usageMap := make(map[string]int64, len(usageRows))
+	for _, usage := range usageRows {
+		usageMap[projectAllocationUsageKey(usage.ClientUserId, usage.PlanId, usage.ProjectName)] = usage.UsedQuota
+	}
+
+	today := time.Now().Format("20060102")
+	for _, allocation := range allocations {
+		project, ok := projectMap[allocation.ProjectId]
+		if !ok {
+			continue
+		}
+		plan := planMap[allocation.PlanId]
+		isActivePlan := plan != nil && project.ActivePlanId == plan.Id
+		isInDateRange := plan != nil && plan.StartDate <= today && today <= plan.EndDate
+		isCurrentEffective := project.Status == ProjectStatusEnabled && isActivePlan && isInDateRange
+		if currentOnly && !isCurrentEffective {
+			continue
+		}
+
+		usedQuota := usageMap[projectAllocationUsageKey(allocation.ClientUserId, allocation.PlanId, project.ProjectName)]
+		// Usage written before allocation plans were introduced has plan_id=0.
+		// The migration plan owns that historical usage, scoped by project name to
+		// avoid mixing it with non-project consumption for the same UID.
+		if plan != nil && plan.PlanName == "历史数据迁移" {
+			usedQuota += usageMap[projectAllocationUsageKey(allocation.ClientUserId, 0, project.ProjectName)]
+		}
+		usedQuotaUSD := float64(usedQuota) / common.QuotaPerUnit
+		remainingQuotaUSD := float64(allocation.AllocatedQuota) - usedQuotaUSD
+		if remainingQuotaUSD < 0 {
+			remainingQuotaUSD = 0
+		}
+		detail := &ProjectAllocationDetail{
+			AllocationId:       allocation.Id,
+			ProjectId:          allocation.ProjectId,
+			ProjectName:        project.ProjectName,
+			ProjectStatus:      project.Status,
+			PlanId:             allocation.PlanId,
+			AllocatedQuota:     allocation.AllocatedQuota,
+			UsedQuotaUSD:       usedQuotaUSD,
+			RemainingQuotaUSD:  remainingQuotaUSD,
+			IsActivePlan:       isActivePlan,
+			IsInDateRange:      isInDateRange,
+			IsCurrentEffective: isCurrentEffective,
+		}
+		if plan != nil {
+			detail.PlanName = plan.PlanName
+			detail.StartDate = plan.StartDate
+			detail.EndDate = plan.EndDate
+		}
+		result[allocation.ClientUserId] = append(result[allocation.ClientUserId], detail)
+	}
+
+	for clientUserId := range result {
+		sort.SliceStable(result[clientUserId], func(i, j int) bool {
+			left, right := result[clientUserId][i], result[clientUserId][j]
+			if left.IsCurrentEffective != right.IsCurrentEffective {
+				return left.IsCurrentEffective
+			}
+			if left.StartDate != right.StartDate {
+				return left.StartDate > right.StartDate
+			}
+			return left.AllocationId > right.AllocationId
+		})
+	}
+
+	return result, nil
+}
+
+// GetProjectAllocationDetails 获取某个UID的所有项目预算分配详情。
+// 历史方案会返回，但消耗和剩余额度均按 plan_id 独立计算。
 func GetProjectAllocationDetails(clientUserId string) ([]*ProjectAllocationDetail, error) {
 	if clientUserId == "" {
 		return nil, errors.New("client user id is empty")
 	}
-
-	var allocations []*ProjectAllocation
-	err := DB.Where("client_user_id = ?", clientUserId).Find(&allocations).Error
+	detailsByUser, err := getProjectAllocationDetailsForUsers([]string{clientUserId}, false)
 	if err != nil {
 		return nil, err
 	}
-
-	details := make([]*ProjectAllocationDetail, 0, len(allocations))
-	for _, a := range allocations {
-		var project Project
-		if err := DB.First(&project, a.ProjectId).Error; err != nil {
-			continue
-		}
-		usedQuota, _ := GetQuotaByProjectIdUid(a.ProjectId, clientUserId)
-		details = append(details, &ProjectAllocationDetail{
-			ProjectId:      a.ProjectId,
-			ProjectName:    project.ProjectName,
-			AllocatedQuota: a.AllocatedQuota,
-			UsedQuotaUSD:   float64(usedQuota) / 500000.0,
-		})
+	details := detailsByUser[clientUserId]
+	if details == nil {
+		details = make([]*ProjectAllocationDetail, 0)
 	}
 	return details, nil
 }
 
 // ProjectBudgetSummary 某个UID的项目预算汇总
 type ProjectBudgetSummary struct {
-	ClientUserId   string                     `json:"client_user_id"`
-	TotalAllocated int                        `json:"total_allocated"`
-	Projects       []*ProjectAllocationDetail `json:"projects"`
+	ClientUserId      string                     `json:"client_user_id"`
+	TotalAllocated    int                        `json:"total_allocated"`
+	TotalUsedUSD      float64                    `json:"total_used_usd"`
+	TotalRemainingUSD float64                    `json:"total_remaining_usd"`
+	ProjectCount      int                        `json:"project_count"`
+	Projects          []*ProjectAllocationDetail `json:"projects"`
 }
 
-// GetBatchProjectBudgetSummary 批量获取多个UID的项目预算汇总
+// GetBatchProjectBudgetSummary 批量获取多个UID当前生效的项目预算汇总。
+// 历史、未启用、暂停、未开始和已过期方案不计入列表汇总。
 func GetBatchProjectBudgetSummary(clientUserIds []string) (map[string]*ProjectBudgetSummary, error) {
 	if len(clientUserIds) == 0 {
 		return map[string]*ProjectBudgetSummary{}, nil
 	}
-
-	var allocations []*ProjectAllocation
-	err := DB.Where("client_user_id IN ?", clientUserIds).Find(&allocations).Error
+	detailsByUser, err := getProjectAllocationDetailsForUsers(clientUserIds, true)
 	if err != nil {
 		return nil, err
 	}
-
-	// Collect unique project IDs
-	projectIdSet := make(map[int]bool)
-	for _, a := range allocations {
-		projectIdSet[a.ProjectId] = true
-	}
-	projectIds := make([]int, 0, len(projectIdSet))
-	for id := range projectIdSet {
-		projectIds = append(projectIds, id)
-	}
-
-	// Batch load projects
-	projectMap := make(map[int]*Project)
-	if len(projectIds) > 0 {
-		var projects []*Project
-		if err := DB.Where("id IN ?", projectIds).Find(&projects).Error; err == nil {
-			for _, p := range projects {
-				projectMap[p.Id] = p
-			}
-		}
-	}
-
-	// Build summaries
 	result := make(map[string]*ProjectBudgetSummary)
-	for _, a := range allocations {
-		project, ok := projectMap[a.ProjectId]
-		if !ok {
-			continue
+	for clientUserId, details := range detailsByUser {
+		summary := &ProjectBudgetSummary{ClientUserId: clientUserId, Projects: details}
+		projectIds := make(map[int]struct{})
+		for _, detail := range details {
+			summary.TotalAllocated += detail.AllocatedQuota
+			summary.TotalUsedUSD += detail.UsedQuotaUSD
+			summary.TotalRemainingUSD += detail.RemainingQuotaUSD
+			projectIds[detail.ProjectId] = struct{}{}
 		}
-		summary, exists := result[a.ClientUserId]
-		if !exists {
-			summary = &ProjectBudgetSummary{
-				ClientUserId: a.ClientUserId,
-				Projects:     make([]*ProjectAllocationDetail, 0),
-			}
-			result[a.ClientUserId] = summary
-		}
-		summary.TotalAllocated += a.AllocatedQuota
-		summary.Projects = append(summary.Projects, &ProjectAllocationDetail{
-			ProjectId:      a.ProjectId,
-			ProjectName:    project.ProjectName,
-			AllocatedQuota: a.AllocatedQuota,
-		})
+		summary.ProjectCount = len(projectIds)
+		result[clientUserId] = summary
 	}
-
 	return result, nil
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -169,10 +170,16 @@ func GetProjects(c *gin.Context) {
 	}
 	type ProjectWithBudget struct {
 		*model.Project
-		AllocatedTotal int                  `json:"allocated_total"`
-		UsedTotal      int                  `json:"used_total"`
-		Plans          []PlanAllocationInfo `json:"plans"`
-		Quota          int64                `json:"quota"`
+		AllocatedTotal       int                  `json:"allocated_total"` // Historical total, retained for compatibility
+		UsedTotal            int                  `json:"used_total"`
+		ActiveAllocatedTotal int                  `json:"active_allocated_total"`
+		ActiveUsedQuota      int64                `json:"active_used_quota"`
+		ActivePlanName       string               `json:"active_plan_name"`
+		ActivePlanStartDate  string               `json:"active_plan_start_date"`
+		ActivePlanEndDate    string               `json:"active_plan_end_date"`
+		ActivePlanEffective  bool                 `json:"active_plan_effective"`
+		Plans                []PlanAllocationInfo `json:"plans"`
+		Quota                int64                `json:"quota"` // Historical project consumption
 	}
 	enriched := make([]ProjectWithBudget, 0, len(projects))
 	for _, p := range projects {
@@ -183,10 +190,19 @@ func GetProjects(c *gin.Context) {
 		// Fetch plans for this project
 		plans, _ := model.GetAllocationPlansByProjectId(p.Id)
 		planInfos := make([]PlanAllocationInfo, 0, len(plans))
+		activeAllocatedTotal := 0
+		activeUsedQuota := int64(0)
+		activePlanName := ""
+		activePlanStartDate := ""
+		activePlanEndDate := ""
+		activePlanEffective := false
+		today := time.Now().Format("20060102")
 		for _, plan := range plans {
 			allocs, _ := model.GetAllocationsByPlanId(plan.Id, 0, 1000)
 			allocInfos := make([]AllocationInfo, 0, len(allocs))
+			planAllocatedTotal := 0
 			for _, a := range allocs {
+				planAllocatedTotal += a.AllocatedQuota
 				allocInfos = append(allocInfos, AllocationInfo{
 					ClientUserId:   a.ClientUserId,
 					AllocatedQuota: a.AllocatedQuota,
@@ -201,14 +217,28 @@ func GetProjects(c *gin.Context) {
 				IsActive:    p.ActivePlanId == plan.Id,
 				Allocations: allocInfos,
 			})
+			if p.ActivePlanId == plan.Id {
+				activeAllocatedTotal = planAllocatedTotal
+				activeUsedQuota, _ = model.GetQuotaByPlanId(plan.Id)
+				activePlanName = plan.PlanName
+				activePlanStartDate = plan.StartDate
+				activePlanEndDate = plan.EndDate
+				activePlanEffective = p.Status == model.ProjectStatusEnabled && plan.StartDate <= today && today <= plan.EndDate
+			}
 		}
 
 		enriched = append(enriched, ProjectWithBudget{
-			Project:        p,
-			Quota:          quota,
-			AllocatedTotal: allocated,
-			UsedTotal:      used,
-			Plans:          planInfos,
+			Project:              p,
+			Quota:                quota,
+			AllocatedTotal:       allocated,
+			UsedTotal:            used,
+			ActiveAllocatedTotal: activeAllocatedTotal,
+			ActiveUsedQuota:      activeUsedQuota,
+			ActivePlanName:       activePlanName,
+			ActivePlanStartDate:  activePlanStartDate,
+			ActivePlanEndDate:    activePlanEndDate,
+			ActivePlanEffective:  activePlanEffective,
+			Plans:                planInfos,
 		})
 	}
 
@@ -654,8 +684,39 @@ func GetPlanAllocations(c *gin.Context) {
 		return
 	}
 
+	// Include the human-readable client name so the allocation UI does not
+	// force administrators to identify people from long encoded UIDs alone.
+	type AllocationWithClientName struct {
+		*model.ProjectAllocation
+		ClientName string `json:"client_name"`
+	}
+	clientUserIds := make([]string, 0, len(allocations))
+	for _, allocation := range allocations {
+		clientUserIds = append(clientUserIds, allocation.ClientUserId)
+	}
+	clientNameMap := make(map[string]string, len(clientUserIds))
+	if len(clientUserIds) > 0 {
+		var clientUsers []model.CliendUserQuota
+		if err := model.DB.Select("client_user_id", "client_name").
+			Where("client_user_id IN ?", clientUserIds).
+			Find(&clientUsers).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		for _, clientUser := range clientUsers {
+			clientNameMap[clientUser.ClientUserId] = clientUser.ClientName
+		}
+	}
+	enrichedAllocations := make([]AllocationWithClientName, 0, len(allocations))
+	for _, allocation := range allocations {
+		enrichedAllocations = append(enrichedAllocations, AllocationWithClientName{
+			ProjectAllocation: allocation,
+			ClientName:        clientNameMap[allocation.ClientUserId],
+		})
+	}
+
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(allocations)
+	pageInfo.SetItems(enrichedAllocations)
 	common.ApiSuccess(c, pageInfo)
 }
 

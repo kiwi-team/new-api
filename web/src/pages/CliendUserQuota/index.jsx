@@ -19,9 +19,43 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { API, showError, showSuccess, isAdmin, isRoot } from '../../helpers';
-import { Button, Table, Modal, Form, Input, Space, Typography, Tag, Tooltip } from '@douyinfe/semi-ui';
+import {
+  Button,
+  Table,
+  Modal,
+  Form,
+  Input,
+  Space,
+  Typography,
+  Tag,
+  Tooltip,
+} from '@douyinfe/semi-ui';
 
 const { Title } = Typography;
+
+const formatPlanDate = (value) => {
+  if (!value || value.length !== 8) return value || '-';
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+};
+
+const formatBudget = (value, digits = 6) => {
+  const amount = Number(value) || 0;
+  return amount.toFixed(digits).replace(/\.?0+$/, '');
+};
+
+const renderAllocationStatus = (record) => {
+  if (record.is_current_effective) return <Tag color='green'>当前生效</Tag>;
+  if (record.project_status === 2) return <Tag color='orange'>项目暂停</Tag>;
+  if (record.is_active_plan && !record.is_in_date_range) {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return record.start_date > today ? (
+      <Tag color='blue'>未开始</Tag>
+    ) : (
+      <Tag color='red'>已过期</Tag>
+    );
+  }
+  return <Tag color='grey'>历史方案</Tag>;
+};
 
 const CliendUserQuotaPage = () => {
   const [loading, setLoading] = useState(false);
@@ -33,10 +67,10 @@ const CliendUserQuotaPage = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState(null);
   const [formApi, setFormApi] = useState(null);
-  
+
   // 判断是否为管理员或root用户
   const isAdminOrRoot = useMemo(() => isAdmin() || isRoot(), []);
-  
+
   const initFormValues = {
     client_user_id: '',
     client_name: '',
@@ -44,9 +78,9 @@ const CliendUserQuotaPage = () => {
     temp_quota: 0,
     remark: '',
     expired_at: null,
-  }
+  };
   const [formValues, setFormValues] = useState({
-    ...initFormValues, 
+    ...initFormValues,
   });
   const [submitLoading, setSubmitLoading] = useState(false);
 
@@ -95,7 +129,11 @@ const CliendUserQuotaPage = () => {
     }
   };
 
-  const fetchData = async (pageNum = page, size = pageSize, keyword = searchKeyword) => {
+  const fetchData = async (
+    pageNum = page,
+    size = pageSize,
+    keyword = searchKeyword,
+  ) => {
     setLoading(true);
     try {
       const params = { p: pageNum, page_size: size };
@@ -130,7 +168,14 @@ const CliendUserQuotaPage = () => {
   const openCreate = () => {
     setEditing(null);
     const now = new Date();
-    const firstNext = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0);
+    const firstNext = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      1,
+      0,
+      0,
+      0,
+    );
     const endMonth = new Date(firstNext.getTime() - 1000);
     setFormValues({
       ...initFormValues,
@@ -205,9 +250,9 @@ const CliendUserQuotaPage = () => {
     formApi && formApi.reset();
     setFormValues({
       ...initFormValues,
-    })
+    });
     setEditing(null);
-  }
+  };
 
   useEffect(() => {
     if (modalVisible && formApi) {
@@ -219,41 +264,67 @@ const CliendUserQuotaPage = () => {
     //{ title: 'ID', dataIndex: 'id', width: 80 },
     { title: 'Client UID', dataIndex: 'client_user_id', width: 220 },
     // 只有管理员或root用户才能看到ClientName列
-    ...(isAdminOrRoot ? [{ title: 'Client Name', dataIndex: 'client_name', width: 150 }] : []),
-    { 
-      title: '月度固定预算', 
-      dataIndex: 'fixed_quota', 
-      width: 130,
-      sorter: (a, b) => (parseInt(a.fixed_quota, 10) || 0) - (parseInt(b.fixed_quota, 10) || 0),
-    },
-    { 
-      title: '临时预算', 
-      dataIndex: 'temp_quota', 
-      width: 100,
-      sorter: (a, b) => (parseInt(a.temp_quota, 10) || 0) - (parseInt(b.temp_quota, 10) || 0),
-    },
-    { 
-      title: '本月已使用($)', 
-      dataIndex: 'used_quota', 
-      width: 160, 
-      render: (v) => ((parseInt(v, 10) || 0) / 500000).toFixed(6),
-      sorter: (a, b) => (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
-    },
-    { title: '临时预算过期时间', dataIndex: 'expired_at', width: 200, render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-') },
+    ...(isAdminOrRoot
+      ? [{ title: 'Client Name', dataIndex: 'client_name', width: 150 }]
+      : []),
     {
-      title: '项目预算',
-      dataIndex: 'project_budget',
+      title: '月度固定预算',
+      dataIndex: 'fixed_quota',
+      width: 130,
+      sorter: (a, b) =>
+        (parseInt(a.fixed_quota, 10) || 0) - (parseInt(b.fixed_quota, 10) || 0),
+    },
+    {
+      title: '临时预算',
+      dataIndex: 'temp_quota',
+      width: 100,
+      sorter: (a, b) =>
+        (parseInt(a.temp_quota, 10) || 0) - (parseInt(b.temp_quota, 10) || 0),
+    },
+    {
+      title: '本月已使用($)',
+      dataIndex: 'used_quota',
+      width: 160,
+      render: (v) => ((parseInt(v, 10) || 0) / 500000).toFixed(6),
+      sorter: (a, b) =>
+        (parseInt(a.used_quota, 10) || 0) - (parseInt(b.used_quota, 10) || 0),
+    },
+    {
+      title: '临时预算过期时间',
+      dataIndex: 'expired_at',
       width: 200,
+      render: (v) => (v ? new Date(v * 1000).toLocaleString() : '-'),
+    },
+    {
+      title: '当前项目可用预算',
+      dataIndex: 'project_budget',
+      width: 240,
       render: (_, record) => {
         const summary = projectBudgetMap[record.client_user_id];
         if (!summary || !summary.projects || summary.projects.length === 0) {
-          return <span style={{ color: '#999' }}>-</span>;
+          return (
+            <Button
+              theme='borderless'
+              type='tertiary'
+              size='small'
+              onClick={() => fetchProjectAllocations(record.client_user_id)}
+            >
+              无当前生效预算
+            </Button>
+          );
         }
         const tooltipContent = (
           <div>
             {summary.projects.map((p) => (
-              <div key={p.project_id}>
-                {p.project_name}: ${p.allocated_quota}
+              <div key={p.allocation_id} style={{ marginBottom: 4 }}>
+                <div>
+                  {p.project_name} / {p.plan_name}
+                </div>
+                <div>
+                  分配 ${formatBudget(p.allocated_quota)}，已使用 $
+                  {formatBudget(p.used_quota_usd)}，可用 $
+                  {formatBudget(p.remaining_quota_usd)}
+                </div>
               </div>
             ))}
           </div>
@@ -266,7 +337,22 @@ const CliendUserQuotaPage = () => {
               size='small'
               onClick={() => fetchProjectAllocations(record.client_user_id)}
             >
-              ${summary.total_allocated}（{summary.projects.length}个项目）
+              <div style={{ textAlign: 'left', lineHeight: 1.5 }}>
+                <div>
+                  ${formatBudget(summary.total_remaining_usd)}{' '}
+                  <span style={{ fontWeight: 600 }}>可用</span>
+                </div>
+                <div
+                  style={{
+                    color: 'var(--semi-color-text-2)',
+                    fontSize: 12,
+                    fontWeight: 400,
+                  }}
+                >
+                  ${formatBudget(summary.total_allocated)} 已分配 ·{' '}
+                  {summary.project_count || summary.projects.length}个生效项目
+                </div>
+              </div>
             </Button>
           </Tooltip>
         );
@@ -297,13 +383,17 @@ const CliendUserQuotaPage = () => {
             value={searchKeyword}
             onChange={(v) => setSearchKeyword(v)}
           />
-          <Button onClick={() => fetchData(1, pageSize, searchKeyword)}>搜索</Button>
+          <Button onClick={() => fetchData(1, pageSize, searchKeyword)}>
+            搜索
+          </Button>
           {isAdminOrRoot && (
             <Button
               type='tertiary'
               onClick={async () => {
                 try {
-                  const res = await API.get('/api/cliend_user_quota/export', { responseType: 'blob' });
+                  const res = await API.get('/api/cliend_user_quota/export', {
+                    responseType: 'blob',
+                  });
                   const url = window.URL.createObjectURL(new Blob([res.data]));
                   const a = document.createElement('a');
                   a.href = url;
@@ -341,78 +431,109 @@ const CliendUserQuotaPage = () => {
           },
         }}
       />
-      
-          <Modal
-            title={editing ? '编辑预算' : '新建预算'}
-            visible={modalVisible}
-            onCancel={handleCloseModal}
-            onOk={handleSubmit}
-            okButtonProps={{ loading: submitLoading }}
-            centered
-          >
-            <Form getFormApi={setFormApi} initValues={formValues}>
-              <Form.Input
-                field='client_user_id'
-                label='Client UID'
-                disabled={!!editing}
-              />
-              {isAdminOrRoot && (
-                <Form.Input
-                  field='client_name'
-                  label='Client Name'
-                  placeholder='客户名称（仅管理员可见）'
-                />
-              )}
-              <Form.InputNumber
-                field='fixed_quota'
-                label='月度固定预算'
-              />
-              <Form.InputNumber
-                field='temp_quota'
-                label='临时预算'
-              />
-              <Form.DatePicker
-                field='expired_at'
-                type='dateTime'
-                label='临时预算过期时间'
-              />
-              <Form.Input
-                field='remark'
-                label='备注'
-              />
-            </Form>
-          </Modal>
 
-          <Modal
-            title={`项目预算详情 - ${projectModalUid}`}
-            visible={projectModalVisible}
-            onCancel={() => setProjectModalVisible(false)}
-            footer={null}
-            centered
-            width={600}
-          >
-            <Table
-              loading={projectModalLoading}
-              dataSource={projectAllocations}
-              pagination={false}
-              size='small'
-              columns={[
-                { title: '项目名称', dataIndex: 'project_name', key: 'project_name' },
-                { title: '分配预算($)', dataIndex: 'allocated_quota', key: 'allocated_quota' },
-                {
-                  title: '已消耗($)',
-                  dataIndex: 'used_quota_usd',
-                  key: 'used_quota_usd',
-                  render: (v) => {
-                    const val = parseFloat(v) || 0;
-                    return val.toFixed(6);
-                  },
-                },
-              ]}
-              empty={<span style={{ color: '#999' }}>暂无项目预算分配</span>}
+      <Modal
+        title={editing ? '编辑预算' : '新建预算'}
+        visible={modalVisible}
+        onCancel={handleCloseModal}
+        onOk={handleSubmit}
+        okButtonProps={{ loading: submitLoading }}
+        centered
+      >
+        <Form getFormApi={setFormApi} initValues={formValues}>
+          <Form.Input
+            field='client_user_id'
+            label='Client UID'
+            disabled={!!editing}
+          />
+          {isAdminOrRoot && (
+            <Form.Input
+              field='client_name'
+              label='Client Name'
+              placeholder='客户名称（仅管理员可见）'
             />
-          </Modal>
-        
+          )}
+          <Form.InputNumber field='fixed_quota' label='月度固定预算' />
+          <Form.InputNumber field='temp_quota' label='临时预算' />
+          <Form.DatePicker
+            field='expired_at'
+            type='dateTime'
+            label='临时预算过期时间'
+          />
+          <Form.Input field='remark' label='备注' />
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`项目预算详情（含历史）- ${projectModalUid}`}
+        visible={projectModalVisible}
+        onCancel={() => setProjectModalVisible(false)}
+        footer={null}
+        centered
+        width={1100}
+      >
+        <div style={{ marginBottom: 12, color: 'var(--semi-color-text-2)' }}>
+          “当前生效”需同时满足：项目已启用、方案被选为启用方案，且当天在预算有效期内。
+        </div>
+        <Table
+          loading={projectModalLoading}
+          dataSource={projectAllocations}
+          rowKey='allocation_id'
+          pagination={false}
+          size='small'
+          columns={[
+            {
+              title: '项目名称',
+              dataIndex: 'project_name',
+              key: 'project_name',
+              width: 220,
+            },
+            {
+              title: '预算方案',
+              dataIndex: 'plan_name',
+              key: 'plan_name',
+              width: 140,
+            },
+            {
+              title: '状态',
+              key: 'status',
+              width: 100,
+              render: (_, record) => renderAllocationStatus(record),
+            },
+            {
+              title: '有效期',
+              key: 'validity',
+              width: 200,
+              render: (_, record) =>
+                `${formatPlanDate(record.start_date)} ~ ${formatPlanDate(record.end_date)}`,
+            },
+            {
+              title: '分配预算($)',
+              dataIndex: 'allocated_quota',
+              key: 'allocated_quota',
+              width: 120,
+            },
+            {
+              title: '方案已消耗($)',
+              dataIndex: 'used_quota_usd',
+              key: 'used_quota_usd',
+              width: 140,
+              render: (v) => {
+                const val = parseFloat(v) || 0;
+                return val.toFixed(6);
+              },
+            },
+            {
+              title: '方案剩余($)',
+              dataIndex: 'remaining_quota_usd',
+              key: 'remaining_quota_usd',
+              width: 130,
+              render: (v) => formatBudget(v),
+            },
+          ]}
+          empty={<span style={{ color: '#999' }}>暂无项目预算分配</span>}
+        />
+      </Modal>
     </div>
   );
 };
