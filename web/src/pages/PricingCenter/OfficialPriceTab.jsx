@@ -37,6 +37,52 @@ import { API, showError, showSuccess } from '../../helpers';
 const DEFAULT_RATE = 7.3;
 const round6 = (n) => Math.round((Number(n) + Number.EPSILON) * 1e6) / 1e6;
 
+/**
+ * 判断两个价格是否「实质相同」。
+ *
+ * 存库的美金价是 6 位量化值、倍率写入时还会做一次消噪吸附，因此从人民币侧反推出来的值
+ * 与库里的值往往在末位有极小差异。用严格 !== 判断会导致仅仅点一下输入框再失焦
+ * 就触发一次无意义的写库（甚至反复来回写），这里用容差兜住。
+ *
+ * 相对容差 5e-5 相当于 0.005%，远小于任何有意义的调价；
+ * 绝对下限取 1.5e-6，略大于存储侧 6 位量化的步长——差异小于一个存储步长时根本无法落库，
+ * 判为「无变化」才是正确语义（否则录入 ¥0.123456 这类多位小数后会多出一次无谓的保存）。
+ */
+const NO_OP_ABS_EPS = 1.5e-6;
+const nearlyEqual = (a, b) => {
+  const x = Number(a) || 0;
+  const y = Number(b) || 0;
+  if (x === y) return true;
+  const scale = Math.max(Math.abs(x), Math.abs(y));
+  if (scale === 0) return true;
+  return Math.abs(x - y) <= Math.max(scale * 5e-5, NO_OP_ABS_EPS);
+};
+
+/**
+ * 价格展示格式：默认两位小数，但只在「与真值几乎相等」时才收缩位数。
+ *
+ * - 浮点噪声被抹平：1.99999 / 2.00002 / 19.9999968 都显示成 2.00 / 20.00
+ * - 真实价格不被歪曲：0.075 仍显示 0.075，不会变成 0.08（那会让人误以为涨价了）
+ * - 极小价格不被抹成 0：0.002 显示 0.002 而不是 0.00
+ *
+ * 容差取「相对 1e-5，至少 5e-6，但不超过自身的 1%」——绝对下限是为了兼顾
+ * ¥0.01 这类小额价格（美金侧 6 位量化后的噪声相对值会偏大），
+ * 1% 上限则防止极小价格被吸附到量级完全不同的数字上。
+ */
+const formatPrice = (n) => {
+  const num = Number(n);
+  if (n === null || n === undefined || n === '' || !isFinite(num)) return '';
+  if (num === 0) return '0.00';
+  const abs = Math.abs(num);
+  const tol = Math.min(Math.max(abs * 1e-5, 5e-6), abs * 1e-2);
+  for (let d = 2; d <= 6; d++) {
+    const s = num.toFixed(d);
+    const v = Number(s);
+    if (v !== 0 && Math.abs(v - num) <= tol) return s;
+  }
+  return String(num);
+};
+
 const formatTokens = (n) => {
   if (n >= 1_000_000)
     return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -46,19 +92,29 @@ const formatTokens = (n) => {
 
 /**
  * 双币种（美金/人民币）行内编辑单元：修改任一按汇率换算另一个，失焦/回车即提交。
+ *
+ * 精度约定：
+ * - 存储侧沿用 6 位小数量化，计费不受影响
+ * - 展示侧走 formatPrice（两位小数为主），把换算往返产生的浮点噪声挡在页面之外
+ * - 聚焦时展开完整精度，保证要编辑时看到的是真值而不是展示近似值
+ * - 未实际编辑过的输入框失焦不提交，避免「点一下就改价」
  */
 const DualPriceCell = ({ value, rate, disabled, onCommit }) => {
   const [usdStr, setUsdStr] = useState('');
   const [cnyStr, setCnyStr] = useState('');
+  // 是否被用户真正编辑过（而不仅仅是聚焦/失焦）
+  const usdDirty = useRef(false);
+  const cnyDirty = useRef(false);
+
+  const hasValue = !(value === null || value === undefined || value === '');
+  const usdExact = hasValue ? round6(value) : null;
+  const cnyExact = hasValue ? round6(value * rate) : null;
 
   useEffect(() => {
-    if (value === null || value === undefined || value === '') {
-      setUsdStr('');
-      setCnyStr('');
-    } else {
-      setUsdStr(String(value));
-      setCnyStr(String(round6(value * rate)));
-    }
+    setUsdStr(hasValue ? formatPrice(usdExact) : '');
+    setCnyStr(hasValue ? formatPrice(cnyExact) : '');
+    usdDirty.current = false;
+    cnyDirty.current = false;
   }, [value, rate]);
 
   if (disabled) {
@@ -66,16 +122,39 @@ const DualPriceCell = ({ value, rate, disabled, onCommit }) => {
   }
 
   const commitFromUsd = () => {
-    const usd = usdStr === '' ? 0 : parseFloat(usdStr);
-    const clean = isNaN(usd) ? 0 : usd;
-    setCnyStr(String(round6(clean * rate)));
-    if (round6(clean) !== round6(value || 0)) onCommit(round6(clean));
+    const parsed = usdStr === '' ? 0 : parseFloat(usdStr);
+    const usd = round6(isNaN(parsed) ? 0 : parsed);
+    usdDirty.current = false;
+    setUsdStr(formatPrice(usd));
+    setCnyStr(formatPrice(round6(usd * rate)));
+    if (!nearlyEqual(usd, value || 0)) onCommit(usd);
   };
   const commitFromCny = () => {
-    const cny = cnyStr === '' ? 0 : parseFloat(cnyStr);
-    const usd = (isNaN(cny) ? 0 : cny) / rate;
-    setUsdStr(String(round6(usd)));
-    if (round6(usd) !== round6(value || 0)) onCommit(round6(usd));
+    const parsed = cnyStr === '' ? 0 : parseFloat(cnyStr);
+    const cny = isNaN(parsed) ? 0 : parsed;
+    const usd = round6(cny / rate);
+    cnyDirty.current = false;
+    setUsdStr(formatPrice(usd));
+    setCnyStr(formatPrice(round6(usd * rate)));
+    if (!nearlyEqual(usd, value || 0)) onCommit(usd);
+  };
+
+  // 聚焦展开真值，失焦若未编辑则只恢复展示格式、不写库
+  const handleUsdFocus = () => setUsdStr(hasValue ? String(usdExact) : '');
+  const handleUsdBlur = () => {
+    if (!usdDirty.current) {
+      setUsdStr(hasValue ? formatPrice(usdExact) : '');
+      return;
+    }
+    commitFromUsd();
+  };
+  const handleCnyFocus = () => setCnyStr(hasValue ? String(cnyExact) : '');
+  const handleCnyBlur = () => {
+    if (!cnyDirty.current) {
+      setCnyStr(hasValue ? formatPrice(cnyExact) : '');
+      return;
+    }
+    commitFromCny();
   };
 
   return (
@@ -84,8 +163,12 @@ const DualPriceCell = ({ value, rate, disabled, onCommit }) => {
         size='small'
         prefix='$'
         value={usdStr}
-        onChange={setUsdStr}
-        onBlur={commitFromUsd}
+        onChange={(v) => {
+          usdDirty.current = true;
+          setUsdStr(v);
+        }}
+        onFocus={handleUsdFocus}
+        onBlur={handleUsdBlur}
         onEnterPress={commitFromUsd}
         style={{ width: 150 }}
       />
@@ -93,8 +176,12 @@ const DualPriceCell = ({ value, rate, disabled, onCommit }) => {
         size='small'
         prefix='¥'
         value={cnyStr}
-        onChange={setCnyStr}
-        onBlur={commitFromCny}
+        onChange={(v) => {
+          cnyDirty.current = true;
+          setCnyStr(v);
+        }}
+        onFocus={handleCnyFocus}
+        onBlur={handleCnyBlur}
         onEnterPress={commitFromCny}
         style={{ width: 150 }}
       />
@@ -387,7 +474,13 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
   };
 
   const handleSaveTier = async (values) => {
-    const { max_tokens, input_price, output_price, cached_input_price, cache_write_price } = values;
+    const {
+      max_tokens,
+      input_price,
+      output_price,
+      cached_input_price,
+      cache_write_price,
+    } = values;
     const row = rows.find((r) => r.model === tierModalModel);
     const tiers = row ? [...row.tiers] : [];
     const tier = { max_tokens, input_price, output_price };
@@ -479,13 +572,14 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
                   onClick={() => openTierEditor(r.model, idx)}
                   style={{ cursor: 'pointer' }}
                 >
-                  ≤{formatTokens(tier.max_tokens)}: ${tier.input_price}/$
-                  {tier.output_price}
+                  ≤{formatTokens(tier.max_tokens)}: $
+                  {formatPrice(tier.input_price)}/$
+                  {formatPrice(tier.output_price)}
                   {tier.cached_input_price
-                    ? ` ${t('缓存读')} $${tier.cached_input_price}`
+                    ? ` ${t('缓存读')} $${formatPrice(tier.cached_input_price)}`
                     : ''}
                   {tier.cache_write_price
-                    ? ` ${t('缓存写')} $${tier.cache_write_price}`
+                    ? ` ${t('缓存写')} $${formatPrice(tier.cache_write_price)}`
                     : ''}
                 </Tag>
               ))}
@@ -588,7 +682,10 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
       </div>
 
       {/* 行内新增（非弹窗） */}
-      <div className='flex items-center gap-2 mb-3 flex-wrap p-3 rounded-lg' style={{ background: 'var(--semi-color-fill-0)' }}>
+      <div
+        className='flex items-center gap-2 mb-3 flex-wrap p-3 rounded-lg'
+        style={{ background: 'var(--semi-color-fill-0)' }}
+      >
         <Typography.Text type='secondary'>{t('新增模型')}：</Typography.Text>
         <Input
           placeholder={t('模型名称')}
@@ -626,9 +723,7 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
 
       {/* 阶梯档位 新增/编辑 弹窗 */}
       <Modal
-        title={
-          tierEditIndex >= 0 ? t('编辑价格档位') : t('添加价格档位')
-        }
+        title={tierEditIndex >= 0 ? t('编辑价格档位') : t('添加价格档位')}
         visible={!!tierModalModel}
         onCancel={() => setTierModalModel(null)}
         onOk={() => {
@@ -639,7 +734,10 @@ const OfficialPriceTab = ({ inputs, refresh }) => {
         }}
         width={450}
       >
-        <Typography.Text type='tertiary' style={{ display: 'block', marginBottom: 8 }}>
+        <Typography.Text
+          type='tertiary'
+          style={{ display: 'block', marginBottom: 8 }}
+        >
           {t('模型')}：{tierModalModel}
         </Typography.Text>
         <Form getFormApi={(api) => (tierFormRef.current = api)}>
