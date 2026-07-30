@@ -546,6 +546,7 @@ func AdminDisable2FA(c *gin.Context) {
 	adminId := c.GetInt("id")
 	model.RecordLog(userId, model.LogTypeManage,
 		fmt.Sprintf("管理员(ID:%d)强制禁用了用户的两步验证", adminId), 0)
+	recordManageAuditFor(c, userId, "user.2fa_disable", nil)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

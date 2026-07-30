@@ -61,6 +61,9 @@ func InitEnv() {
 	} else {
 		CryptoSecret = SessionSecret
 	}
+	if err := InitSessionCookieSettings(); err != nil {
+		log.Fatal(err)
+	}
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
 	}
@@ -82,6 +85,7 @@ func InitEnv() {
 	DebugEnabled = os.Getenv("DEBUG") == "true"
 	MemoryCacheEnabled = os.Getenv("MEMORY_CACHE_ENABLED") == "true"
 	IsMasterNode = os.Getenv("NODE_TYPE") != "slave"
+	initNodeNameIdentity()
 	TLSInsecureSkipVerify = GetEnvOrDefaultBool("TLS_INSECURE_SKIP_VERIFY", false)
 	if TLSInsecureSkipVerify {
 		if tr, ok := http.DefaultTransport.(*http.Transport); ok && tr != nil {
@@ -92,6 +96,8 @@ func InitEnv() {
 			}
 		}
 	}
+	SMTPStartTLSEnabled = GetEnvOrDefaultBool("SMTP_STARTTLS_ENABLE", GetEnvOrDefaultBool("SMTP_STARTTLS_ENABLED", false))
+	SMTPInsecureSkipVerify = GetEnvOrDefaultBool("SMTP_INSECURE_SKIP_VERIFY", GetEnvOrDefaultBool("SMTP_TLS_INSECURE_SKIP_VERIFY", false))
 
 	// Parse requestInterval and set RequestInterval
 	requestInterval, _ = strconv.Atoi(os.Getenv("POLLING_INTERVAL"))
@@ -101,6 +107,7 @@ func InitEnv() {
 	SyncFrequency = GetEnvOrDefault("SYNC_FREQUENCY", 60)
 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
+	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
 
@@ -134,6 +141,20 @@ func InitEnv() {
 	CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", true)
 	CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
 	CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
+	// GlobalApiRateLimitNum = GetEnvOrDefault("GLOBAL_API_RATE_LIMIT", 360)
+	// GlobalApiRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_API_RATE_LIMIT_DURATION", 180))
+
+	// GlobalWebRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_WEB_RATE_LIMIT_ENABLE", true)
+	// GlobalWebRateLimitNum = GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT", 120)
+	// GlobalWebRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT_DURATION", 180))
+
+	// CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", true)
+	// CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
+	// CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
+
+	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", true)
+	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
+	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
 }
 
@@ -144,6 +165,7 @@ func initConstantEnv() {
 	constant.StreamScannerMaxBufferMB = GetEnvOrDefault("STREAM_SCANNER_MAX_BUFFER_MB", 64)
 	// MaxRequestBodyMB 请求体最大大小（解压后），用于防止超大请求/zip bomb导致内存暴涨
 	constant.MaxRequestBodyMB = GetEnvOrDefault("MAX_REQUEST_BODY_MB", 128)
+	constant.AnonymousRequestBodyLimitKB = GetEnvOrDefault("ANONYMOUS_REQUEST_BODY_LIMIT_KB", 512)
 	// ForceStreamOption 覆盖请求参数，强制返回usage信息
 	constant.ForceStreamOption = GetEnvOrDefaultBool("FORCE_STREAM_OPTION", true)
 	constant.CountToken = GetEnvOrDefaultBool("CountToken", false)
@@ -161,6 +183,8 @@ func initConstantEnv() {
 	constant.ErrorLogEnabled = GetEnvOrDefaultBool("ERROR_LOG_ENABLED", false)
 	// 任务轮询时查询的最大数量
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
+	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
+	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

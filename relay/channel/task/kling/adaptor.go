@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -88,15 +91,28 @@ type responsePayload struct {
 		TaskId        string `json:"task_id"`
 		TaskStatus    string `json:"task_status"`
 		TaskStatusMsg string `json:"task_status_msg"`
-		TaskResult    struct {
+		TaskInfo      struct {
+			ExternalTaskId string `json:"external_task_id"`
+		} `json:"task_info"`
+		WatermarkInfo struct {
+			Enabled bool `json:"enabled"`
+		} `json:"watermark_info"`
+		TaskResult struct {
 			Videos []struct {
-				Id       string `json:"id"`
-				Url      string `json:"url"`
-				Duration string `json:"duration"`
+				Id           string `json:"id"`
+				Url          string `json:"url"`
+				WatermarkUrl string `json:"watermark_url"`
+				Duration     string `json:"duration"`
 			} `json:"videos"`
+			Images []struct {
+				Index        int    `json:"index"`
+				Url          string `json:"url"`
+				WatermarkUrl string `json:"watermark_url"`
+			} `json:"images"`
 		} `json:"task_result"`
-		CreatedAt int64 `json:"created_at"`
-		UpdatedAt int64 `json:"updated_at"`
+		CreatedAt          int64  `json:"created_at"`
+		UpdatedAt          int64  `json:"updated_at"`
+		FinalUnitDeduction string `json:"final_unit_deduction"`
 	} `json:"data"`
 }
 
@@ -105,6 +121,7 @@ type responsePayload struct {
 // ============================
 
 type TaskAdaptor struct {
+	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string
@@ -144,6 +161,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	if err != nil {
 		return fmt.Errorf("failed to create JWT token: %w", err)
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -171,19 +189,20 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		return bytes.NewReader(data), nil
 	} else {
-		body, err := a.convertToRequestPayload(&req)
+		body, err := a.convertToRequestPayload(&req, info)
 		if err != nil {
 			return nil, err
 		}
 		if body.Image == "" && body.ImageTail == "" {
 			c.Set("action", constant.TaskActionTextGenerate)
 		}
-		data, err := json.Marshal(body)
+		data, err := common.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
 		return bytes.NewReader(data), nil
 	}
+
 }
 
 // DoRequest delegates to common helper.
@@ -203,7 +222,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	var kResp responsePayload
-	err = json.Unmarshal(responseBody, &kResp)
+	err = common.Unmarshal(responseBody, &kResp)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		return
@@ -213,8 +232,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 	ov := dto.NewOpenAIVideo()
-	ov.ID = kResp.Data.TaskId
-	ov.TaskID = kResp.Data.TaskId
+	ov.ID = info.PublicTaskID
+	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
@@ -243,7 +262,6 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	}
 
 	token, err := a.createJWTTokenWithKey(key)
-	//fmt.Printf("token:%s\n", token)
 	if err != nil {
 		token = key
 	}
@@ -274,7 +292,7 @@ func (a *TaskAdaptor) convertToAvatarRequestPayload(req *relaycommon.TaskSubmitR
 	r := avatarRequestPayload{
 		Prompt: req.Prompt,
 		Image:  req.Image,
-		Mode:   defaultString(req.Mode, "std"),
+		Mode:   taskcommon.DefaultString(req.Mode, "std"),
 	}
 	metadata := req.Metadata
 	medaBytes, err := json.Marshal(metadata)
@@ -288,7 +306,7 @@ func (a *TaskAdaptor) convertToAvatarRequestPayload(req *relaycommon.TaskSubmitR
 	return &r, nil
 }
 
-func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {
 	seconds := common.String2Int(req.Seconds)
 	if seconds <= 0 {
 		seconds = 5
@@ -299,11 +317,11 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	r := requestPayload{
 		Prompt:         req.Prompt,
 		Image:          req.Image,
-		Mode:           defaultString(req.Mode, "std"),
-		Duration:       fmt.Sprintf("%d", defaultInt(seconds, 5)),
+		Mode:           taskcommon.DefaultString(req.Mode, "std"),
+		Duration:       fmt.Sprintf("%d", taskcommon.DefaultInt(seconds, 5)),
 		AspectRatio:    a.getAspectRatio(req.Size),
-		ModelName:      req.Model,
-		Model:          req.Model, // Keep consistent with model_name, double writing improves compatibility
+		ModelName:      info.UpstreamModelName,
+		Model:          info.UpstreamModelName, // Keep consistent with model_name, double writing improves compatibility
 		CfgScale:       0.5,
 		StaticMask:     "",
 		DynamicMasks:   []DynamicMask{},
@@ -313,14 +331,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	}
 	if r.ModelName == "" {
 		r.ModelName = "kling-v1"
+		r.Model = "kling-v1"
 	}
-	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, errors.Wrap(err, "metadata marshal metadata failed")
-	}
-	err = json.Unmarshal(medaBytes, &r)
-	if err != nil {
+	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 	return &r, nil
@@ -337,20 +350,6 @@ func (a *TaskAdaptor) getAspectRatio(size string) string {
 	default:
 		return "1:1"
 	}
-}
-
-func defaultString(s, def string) string {
-	if strings.TrimSpace(s) == "" {
-		return def
-	}
-	return s
-}
-
-func defaultInt(v int, def int) int {
-	if v == 0 {
-		return def
-	}
-	return v
 }
 
 // ============================
@@ -388,7 +387,7 @@ func (a *TaskAdaptor) createJWTTokenWithKey(apiKey string) (string, error) {
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	taskInfo := &relaycommon.TaskInfo{}
 	resPayload := responsePayload{}
-	err := json.Unmarshal(respBody, &resPayload)
+	err := common.Unmarshal(respBody, &resPayload)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal response body")
 	}
@@ -404,14 +403,22 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskInfo.Status = model.TaskStatusInProgress
 	case "succeed":
 		taskInfo.Status = model.TaskStatusSuccess
+		if videos := resPayload.Data.TaskResult.Videos; len(videos) > 0 {
+			video := videos[0]
+			taskInfo.Url = video.Url
+		}
+		if tokens, err := strconv.ParseFloat(resPayload.Data.FinalUnitDeduction, 64); err == nil {
+			// 上游返回的扣费数值，饱和转换防止超大数值回绕成负数
+			rounded := common.QuotaFromFloat(math.Ceil(tokens))
+			if rounded > 0 {
+				taskInfo.CompletionTokens = rounded
+				taskInfo.TotalTokens = rounded
+			}
+		}
 	case "failed":
 		taskInfo.Status = model.TaskStatusFailure
 	default:
 		return nil, fmt.Errorf("unknown task status: %s", status)
-	}
-	if videos := resPayload.Data.TaskResult.Videos; len(videos) > 0 {
-		video := videos[0]
-		taskInfo.Url = video.Url
 	}
 	return taskInfo, nil
 }
@@ -422,7 +429,7 @@ func isNewAPIRelay(apiKey string) bool {
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
 	var klingResp responsePayload
-	if err := json.Unmarshal(originTask.Data, &klingResp); err != nil {
+	if err := common.Unmarshal(originTask.Data, &klingResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal kling task data failed")
 	}
 
@@ -448,19 +455,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			Message: klingResp.Message,
 			Code:    fmt.Sprintf("%d", klingResp.Code),
 		}
-	} else if originTask.Status == model.TaskStatusFailure || klingResp.Data.TaskStatus == "failed" {
-		msg := klingResp.Data.TaskStatusMsg
-		if msg == "" {
-			msg = originTask.FailReason
-		}
-		if msg == "" {
-			msg = "task failed"
-		}
+	}
+
+	// https://app.klingai.com/cn/dev/document-api/apiReference/model/textToVideo
+	if data := klingResp.Data; data.TaskStatus == "failed" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: msg,
-			Code:    "task_failed",
+			Message: data.TaskStatusMsg,
 		}
 	}
-	jsonData, _ := common.Marshal(openAIVideo)
-	return jsonData, nil
+	return common.Marshal(openAIVideo)
 }

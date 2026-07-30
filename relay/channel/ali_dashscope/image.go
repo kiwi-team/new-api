@@ -2,6 +2,7 @@ package ali_dashscope
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,7 +30,7 @@ func convertWan27ImageRequest(c *gin.Context, info *relaycommon.RelayInfo, reque
 	wan27Req := &Wan27ImageRequest{
 		Model: request.Model,
 		Parameters: Wan27ImageParameters{
-			N:         int(request.N),
+			N:         int(lo.FromPtr(request.N)),
 			Size:      strings.ReplaceAll(request.Size, "x", "*"),
 			Watermark: request.Watermark,
 		},
@@ -168,7 +170,7 @@ func wan27ImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 
 	if wan27Resp.Code != "" {
 		logger.LogError(c, "wan27 image failed: "+wan27Resp.Message)
-		return types.NewError(fmt.Errorf(wan27Resp.Message), types.ErrorCodeBadResponse), nil
+		return types.NewError(errors.New(wan27Resp.Message), types.ErrorCodeBadResponse), nil
 	}
 
 	logger.LogDebug(c, "wan27 image result: "+string(responseBody))

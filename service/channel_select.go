@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, modelName string, retry int, tags []string) (*model.Channel, string, error) {
 type RetryParam struct {
 	Ctx          *gin.Context
 	TokenGroup   string
@@ -84,8 +83,6 @@ func (p *RetryParam) ResetRetryNextTry() {
 //
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
-//
-// func CacheGetRandomSatisfiedChannel(c *gin.Context, group string, modelName string, retry int, tags []string) (*model.Channel, string, error) {
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error
@@ -140,6 +137,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
 			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.Tags, param.RequestPath)
+			//channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -177,8 +175,8 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		//channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, tags)
 		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.Tags, param.RequestPath)
+		//channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

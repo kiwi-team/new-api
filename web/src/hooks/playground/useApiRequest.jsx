@@ -21,9 +21,9 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SSE } from 'sse.js';
 import {
-  API_ENDPOINTS,
   MESSAGE_STATUS,
   DEBUG_TABS,
+  PG_API_ENDPOINTS,
 } from '../../constants/playground.constants';
 import {
   getUserIdFromLocalStorage,
@@ -185,7 +185,7 @@ export const useApiRequest = (
       setActiveDebugTab(DEBUG_TABS.REQUEST);
 
       try {
-        const response = await fetch(API_ENDPOINTS.CHAT_COMPLETIONS, {
+        const response = await fetch(PG_API_ENDPOINTS.CHAT_COMPLETIONS, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -301,7 +301,7 @@ export const useApiRequest = (
       }));
       setActiveDebugTab(DEBUG_TABS.REQUEST);
 
-      const source = new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
+      const source = new SSE(PG_API_ENDPOINTS.CHAT_COMPLETIONS, {
         headers: {
           'Content-Type': 'application/json',
           'New-Api-User': getUserIdFromLocalStorage(),

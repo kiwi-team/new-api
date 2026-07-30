@@ -22,6 +22,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	taskbilling "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
@@ -39,6 +40,7 @@ import (
 // ============================
 
 type TaskAdaptor struct {
+	taskbilling.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string

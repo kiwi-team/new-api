@@ -77,11 +77,11 @@ type modelUsage struct {
 
 // billDateField 返回按东八区(+8)聚合日期的跨库 SQL 表达式，口径与 GetQuotaDataStatistics 保持一致。
 func billDateField() string {
-	if common.UsingSQLite {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		return "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
-	} else if common.UsingMySQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 		return "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
-	} else if common.UsingPostgreSQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		return "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
 	}
 	return "DATE(created_at)"
@@ -108,7 +108,7 @@ func CalculateSettlementBill(userId int, startTime int64, endTime int64, tokenId
 
 	var usages []modelUsage
 	query := model.DB.Table("quota_data").
-		Select(datePart + ", model_name, SUM(prompt_tokens) as prompt_tokens, SUM(cached_tokens) as cached_tokens, SUM(completion_tokens) as completion_tokens, SUM(count) as count, SUM(claude_cache_creation5m_tokens) as claude_cache_creation5m_tokens, SUM(claude_cache_creation1h_tokens) as claude_cache_creation1h_tokens").
+		Select(datePart+", model_name, SUM(prompt_tokens) as prompt_tokens, SUM(cached_tokens) as cached_tokens, SUM(completion_tokens) as completion_tokens, SUM(count) as count, SUM(claude_cache_creation5m_tokens) as claude_cache_creation5m_tokens, SUM(claude_cache_creation1h_tokens) as claude_cache_creation1h_tokens").
 		Where("user_id = ? AND created_at >= ? AND created_at <= ?", userId, startTime, endTime)
 	if tokenId > 0 {
 		query = query.Where("token_id = ?", tokenId)

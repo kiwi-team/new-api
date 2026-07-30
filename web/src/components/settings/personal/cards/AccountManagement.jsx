@@ -38,9 +38,8 @@ import {
   IconLock,
   IconDelete,
 } from '@douyinfe/semi-icons';
-import { SiTelegram, SiWechat, SiLinux, SiDiscord } from 'react-icons/si';
+import { SiWechat, SiLinux, SiDiscord } from 'react-icons/si';
 import { UserPlus, ShieldCheck } from 'lucide-react';
-import TelegramLoginButton from 'react-telegram-login';
 import {
   API,
   showError,
@@ -96,8 +95,6 @@ const AccountManagement = ({
     );
   };
   const isBound = (accountId) => Boolean(accountId);
-  const [showTelegramBindModal, setShowTelegramBindModal] =
-    React.useState(false);
   const [customOAuthBindings, setCustomOAuthBindings] = React.useState([]);
   const [customOAuthLoading, setCustomOAuthLoading] = React.useState({});
 
@@ -397,81 +394,6 @@ const AccountManagement = ({
                   </div>
                 </div>
               </Card>
-
-              {/* Telegram绑定 */}
-              <Card className='!rounded-xl'>
-                <div className='flex items-center justify-between gap-3'>
-                  <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
-                      <SiTelegram
-                        size={20}
-                        className='text-slate-600 dark:text-slate-300'
-                      />
-                    </div>
-                    <div className='flex-1 min-w-0'>
-                      <div className='font-medium text-gray-900'>
-                        {t('Telegram')}
-                      </div>
-                      <div className='text-sm text-gray-500 truncate'>
-                        {renderAccountInfo(
-                          userState.user?.telegram_id,
-                          t('Telegram ID'),
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className='flex-shrink-0'>
-                    {status.telegram_oauth ? (
-                      isBound(userState.user?.telegram_id) ? (
-                        <Button
-                          disabled
-                          size='small'
-                          type='primary'
-                          theme='outline'
-                        >
-                          {t('已绑定')}
-                        </Button>
-                      ) : (
-                        <Button
-                          type='primary'
-                          theme='outline'
-                          size='small'
-                          onClick={() => setShowTelegramBindModal(true)}
-                        >
-                          {t('绑定')}
-                        </Button>
-                      )
-                    ) : (
-                      <Button
-                        disabled
-                        size='small'
-                        type='primary'
-                        theme='outline'
-                      >
-                        {t('未启用')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </Card>
-              <Modal
-                title={t('绑定 Telegram')}
-                visible={showTelegramBindModal}
-                onCancel={() => setShowTelegramBindModal(false)}
-                footer={null}
-              >
-                <div className='my-3 text-sm text-gray-600'>
-                  {t('点击下方按钮通过 Telegram 完成绑定')}
-                </div>
-                <div className='flex justify-center'>
-                  <div className='scale-90'>
-                    <TelegramLoginButton
-                      dataAuthUrl='/api/oauth/telegram/bind'
-                      botName={status.telegram_bot_name}
-                    />
-                  </div>
-                </div>
-              </Modal>
 
               {/* LinuxDO绑定 */}
               <Card className='!rounded-xl'>

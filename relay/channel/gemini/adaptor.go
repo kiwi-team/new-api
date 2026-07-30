@@ -9,14 +9,15 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 type Adaptor struct {
@@ -43,12 +44,15 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.ClaudeRequest) (any, error) {
-	adaptor := openai.Adaptor{}
-	oaiReq, err := adaptor.ConvertClaudeRequest(c, info, req)
+	result, err := relayconvert.ConvertRequest(c, info, types.RelayFormatGemini, req)
 	if err != nil {
 		return nil, err
 	}
-	return a.ConvertOpenAIRequest(c, info, oaiReq.(*dto.GeneralOpenAIRequest))
+	geminiRequest, ok := result.Value.(*dto.GeminiChatRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected Gemini generateContent request, got %T", result.Value)
+	}
+	return geminiRequest, nil
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
@@ -58,7 +62,7 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return nil, errors.New("not supported model for image generation")
+		return nil, errors.New("not supported model for image generation, only imagen models are supported")
 	}
 
 	// convert size to aspect ratio but allow user to specify aspect ratio
@@ -91,7 +95,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 			},
 		},
 		Parameters: dto.GeminiImageParameters{
-			SampleCount:      int(request.N),
+			SampleCount:      int(lo.FromPtrOr(request.N, uint(1))),
 			AspectRatio:      aspectRatio,
 			PersonGeneration: "allow_adult", // default allow adult
 		},
@@ -189,6 +193,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		req.Set("x-goog-api-key", info.ApiKey) // 是否需要，根据实际情况判断
 		req.Set("Authorization", fmt.Sprintf("Bearer %s", info.ApiKey))
 	}
+	req.Set("x-goog-api-key", info.ApiKey)
 	return nil
 }
 
@@ -201,13 +206,11 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if IsDeepResearchModel(info.UpstreamModelName) {
 		return ConvertOpenAI2DeepResearch(request, info)
 	}
-
-	geminiRequest, err := CovertOpenAI2Gemini(c, *request, info)
+	result, err := relayconvert.ConvertRequest(c, info, types.RelayFormatGemini, request)
 	if err != nil {
 		return nil, err
 	}
-
-	return geminiRequest, nil
+	return result.Value, nil
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -245,8 +248,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 		switch info.UpstreamModelName {
 		case "text-embedding-004", "gemini-embedding-exp-03-07", "gemini-embedding-001":
 			// Only newer models introduced after 2024 support OutputDimensionality
-			if request.Dimensions > 0 {
-				geminiRequest["outputDimensionality"] = request.Dimensions
+			dimensions := lo.FromPtrOr(request.Dimensions, 0)
+			if dimensions > 0 {
+				geminiRequest["outputDimensionality"] = dimensions
 			}
 		}
 		geminiRequests = append(geminiRequests, geminiRequest)
@@ -258,8 +262,15 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	result, err := relayconvert.ConvertRequest(c, info, types.RelayFormatGemini, &request)
+	if err != nil {
+		return nil, err
+	}
+	geminiRequest, ok := result.Value.(*dto.GeminiChatRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected Gemini generateContent request, got %T", result.Value)
+	}
+	return geminiRequest, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -282,6 +293,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	// Deep research models have their own SSE format
 	if IsDeepResearchModel(info.UpstreamModelName) {
 		return DeepResearchStreamHandler(c, info, resp)
+	}
+	if info.RelayMode == constant.RelayModeResponses {
+		if info.IsStream {
+			return GeminiResponsesStreamHandler(c, info, resp)
+		}
+		return GeminiResponsesHandler(c, info, resp)
 	}
 
 	if info.RelayMode == constant.RelayModeGemini {

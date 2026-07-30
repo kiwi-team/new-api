@@ -401,7 +401,7 @@ func convertConverseResponseToOpenAI(c *gin.Context, resp *bedrockruntime.Conver
 
 	// Add reasoning content if present
 	if reasoningContent != "" {
-		response.Choices[0].Message.ReasoningContent = reasoningContent
+		response.Choices[0].Message.ReasoningContent = common.GetPointer(reasoningContent)
 	}
 
 	// Set usage

@@ -1,12 +1,16 @@
 .idea
 .vscode
 .zed
+.history
 upload
 *.exe
 *.db
 build
 *.db-journal
 logs
+web/default/dist
+web/classic/dist
+web/node_modules
 web/dist
 .env
 one-api
@@ -26,6 +30,9 @@ py/
 .cache
 web/bun.lock
 plans
+plans
+.claude
+.cursor
 
 electron/node_modules
 electron/dist
@@ -38,3 +45,12 @@ data/
 docs/
 customer-portal/dist
 customer-portal/node_modules
+.test
+token_estimator_test.go
+skills-lock.json
+.playwright-mcp
+
+# Local-only live probes and scratch test workspaces.
+.local-tests/
+service/relayconvert/chat_responses_live_local_test.go
+service/openaicompat/chat_responses_live_local_test.go

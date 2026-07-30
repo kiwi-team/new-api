@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import {
-  STORAGE_KEYS,
+  PG_STORAGE_KEYS,
   DEFAULT_CONFIG,
 } from '../../constants/playground.constants';
 
@@ -34,7 +34,7 @@ export const saveConfig = (config) => {
       ...config,
       timestamp: new Date().toISOString(),
     };
-    localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(configToSave));
+    localStorage.setItem(PG_STORAGE_KEYS.CONFIG, JSON.stringify(configToSave));
   } catch (error) {
     console.error('保存配置失败:', error);
   }
@@ -50,7 +50,7 @@ export const saveMessages = (messages) => {
       messages,
       timestamp: new Date().toISOString(),
     };
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messagesToSave));
+    localStorage.setItem(PG_STORAGE_KEYS.MESSAGES, JSON.stringify(messagesToSave));
   } catch (error) {
     console.error('保存消息失败:', error);
   }
@@ -62,7 +62,7 @@ export const saveMessages = (messages) => {
  */
 export const loadConfig = () => {
   try {
-    const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
+    const savedConfig = localStorage.getItem(PG_STORAGE_KEYS.CONFIG);
     if (savedConfig) {
       const parsedConfig = JSON.parse(savedConfig);
 
@@ -98,7 +98,7 @@ export const loadConfig = () => {
  */
 export const loadMessages = () => {
   try {
-    const savedMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
+    const savedMessages = localStorage.getItem(PG_STORAGE_KEYS.MESSAGES);
     if (savedMessages) {
       const parsedMessages = JSON.parse(savedMessages);
       return parsedMessages.messages || null;
@@ -115,8 +115,8 @@ export const loadMessages = () => {
  */
 export const clearConfig = () => {
   try {
-    localStorage.removeItem(STORAGE_KEYS.CONFIG);
-    localStorage.removeItem(STORAGE_KEYS.MESSAGES); // 同时清除消息
+    localStorage.removeItem(PG_STORAGE_KEYS.CONFIG);
+    localStorage.removeItem(PG_STORAGE_KEYS.MESSAGES); // 同时清除消息
   } catch (error) {
     console.error('清除配置失败:', error);
   }
@@ -127,7 +127,7 @@ export const clearConfig = () => {
  */
 export const clearMessages = () => {
   try {
-    localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+    localStorage.removeItem(PG_STORAGE_KEYS.MESSAGES);
   } catch (error) {
     console.error('清除消息失败:', error);
   }
@@ -139,7 +139,7 @@ export const clearMessages = () => {
  */
 export const hasStoredConfig = () => {
   try {
-    return localStorage.getItem(STORAGE_KEYS.CONFIG) !== null;
+    return localStorage.getItem(PG_STORAGE_KEYS.CONFIG) !== null;
   } catch (error) {
     console.error('检查配置失败:', error);
     return false;
@@ -152,7 +152,7 @@ export const hasStoredConfig = () => {
  */
 export const getConfigTimestamp = () => {
   try {
-    const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
+    const savedConfig = localStorage.getItem(PG_STORAGE_KEYS.CONFIG);
     if (savedConfig) {
       const parsedConfig = JSON.parse(savedConfig);
       return parsedConfig.timestamp || null;

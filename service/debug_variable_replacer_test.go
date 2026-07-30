@@ -2,28 +2,29 @@ package service
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+// {{var}} 在请求体模板里代表一个完整的 JSON 值，替换结果自带引号/null，
+// 因此模板不能再给占位符补引号，否则会产生 ""gpt-4"" 这样的非法 JSON。
+// 路径模板里的 {var} 走 ReplaceInPath，那里才是不带引号的原始值。
 func TestVariableReplacer_ReplaceSimple(t *testing.T) {
 	variables := map[string]interface{}{
 		"model":       "gpt-4",
 		"temperature": 0.7,
 		"stream":      true,
+		"stop":        nil,
 	}
 
 	replacer := NewVariableReplacer(variables, nil)
 
-	template := `{"model":"{{model}}","temperature":{{temperature}},"stream":{{stream}}}`
+	template := `{"model":{{model}},"temperature":{{temperature}},"stream":{{stream}},"stop":{{stop}},"kept":{{missing}}}`
 	result, err := replacer.Replace(template)
 
-	if err != nil {
-		t.Errorf("Replace failed: %v", err)
-	}
-
-	expected := `{"model":"gpt-4","temperature":0.7,"stream":true}`
-	if result != expected {
-		t.Errorf("Expected %s, got %s", expected, result)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, `{"model":"gpt-4","temperature":0.7,"stream":true,"stop":null,"kept":{{missing}}}`, result)
 }
 
 func TestVariableReplacer_ReplacePrevResponse(t *testing.T) {
@@ -39,14 +40,11 @@ func TestVariableReplacer_ReplacePrevResponse(t *testing.T) {
 
 	replacer := NewVariableReplacer(variables, prevResponse)
 
-	template := `{"conversation_id":"{{prev_response.id}}","previous_text":"{{prev_response.content.0.text}}"}`
+	template := `{"conversation_id":{{prev_response.id}},"previous_text":{{prev_response.content.0.text}},"missing":{{prev_response.usage.total_tokens}}}`
 	result, err := replacer.Replace(template)
 
-	if err != nil {
-		t.Errorf("Replace failed: %v", err)
-	}
-
-	t.Logf("Result: %s", result)
+	require.NoError(t, err)
+	assert.Equal(t, `{"conversation_id":"msg_123","previous_text":"Hello, world!","missing":{{prev_response.usage.total_tokens}}}`, result)
 }
 
 func TestVariableReplacer_ReplaceInPath(t *testing.T) {

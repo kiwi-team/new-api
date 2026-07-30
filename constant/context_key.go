@@ -99,4 +99,11 @@ const (
 	// ContextKeyFalNanoBananaWebSearch records whether fal's web-search add-on was
 	// requested for a nano-banana-2 call (adds a one-time fee).
 	ContextKeyFalNanoBananaWebSearch ContextKey = "fal_nano_banana_web_search"
+	ContextKeyIsStream               ContextKey = "is_stream"
+
+	// ContextKeyAuditLogged marks that the current request has already recorded
+	// a manage/operation audit log inside the handler. When set, the admin-audit
+	// fallback in authHelper (finishAdminAudit) skips its record to avoid
+	// duplicate entries.
+	ContextKeyAuditLogged ContextKey = "audit_logged"
 )

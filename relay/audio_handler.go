@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -55,7 +56,7 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	resp, err := adaptor.DoRequest(c, info, ioReader)
 	if err != nil {
-		return types.NewError(err, types.ErrorCodeDoRequestFailed)
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 
@@ -94,7 +95,7 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	} else {
 		common.SetContextKey(c, constant.ContextKeyTTSCount, utf8.RuneCountInString(audioReq.Input))
-		postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
 	}
 
 	return nil

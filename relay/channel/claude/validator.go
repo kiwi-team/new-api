@@ -166,27 +166,28 @@ func validateClaudeSystem(request *dto.ClaudeRequest) error {
 
 // validateClaudeSampling 校验采样参数的取值范围（与 thinking 无关的通用约束）。
 //
-// DTO 中 TopP / TopK 为非指针类型且带 omitempty，因此 0 等价于「未设置」，
-// 范围校验只拦截明显越界的值，避免把「未设置」误判为非法。
+// DTO 中 TopP / TopK 为指针类型：nil 表示客户端未传，显式 0 会原样透传给上游，
+// 因此只对已设置的值做范围校验。
 func validateClaudeSampling(request *dto.ClaudeRequest) error {
 	// temperature 取值范围为 0.0 ~ 1.0。
 	if request.Temperature != nil && (*request.Temperature < 0 || *request.Temperature > 1) {
 		return fmt.Errorf("temperature: must be between 0 and 1, got %v", *request.Temperature)
 	}
-	// top_p 取值范围为 0 ~ 1（0 视为未设置，仅拦截越界）。
-	if request.TopP < 0 || request.TopP > 1 {
-		return fmt.Errorf("top_p: must be between 0 and 1, got %v", request.TopP)
+	// top_p 取值范围为 0 ~ 1。
+	if request.TopP != nil && (*request.TopP < 0 || *request.TopP > 1) {
+		return fmt.Errorf("top_p: must be between 0 and 1, got %v", *request.TopP)
 	}
-	// top_k 不能为负数（0 视为未设置）。
-	if request.TopK < 0 {
-		return fmt.Errorf("top_k: must be a non-negative integer, got %d", request.TopK)
+	// top_k 不能为负数。
+	if request.TopK != nil && *request.TopK < 0 {
+		return fmt.Errorf("top_k: must be a non-negative integer, got %d", *request.TopK)
 	}
 	return nil
 }
 
 // validateClaudeThinking 校验开启 thinking（enabled / adaptive）时的相关约束。
 //
-// DTO 中 TopP / TopK 为非指针类型且带 omitempty，因此 0 等价于「未设置」。
+// DTO 中 TopP / TopK 为指针类型，nil 才表示「未设置」；显式传 0 也算已设置，
+// 上游在 thinking 模式下会拒绝，因此一并拦截。
 func validateClaudeThinking(request *dto.ClaudeRequest) error {
 	if request.Thinking == nil {
 		return nil
@@ -198,11 +199,11 @@ func validateClaudeThinking(request *dto.ClaudeRequest) error {
 	}
 
 	// top_k 必须在 thinking 开启或 adaptive 模式下不设置。
-	if request.TopK != 0 {
+	if request.TopK != nil {
 		return fmt.Errorf("`top_k` must be unset when thinking is enabled or in adaptive mode")
 	}
 	// top_p 同样不允许设置。
-	if request.TopP != 0 {
+	if request.TopP != nil {
 		return fmt.Errorf("`top_p` must be unset when thinking is enabled or in adaptive mode")
 	}
 	// temperature 在 thinking 开启时只能为 1。

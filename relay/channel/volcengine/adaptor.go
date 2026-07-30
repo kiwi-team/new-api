@@ -23,6 +23,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/samber/lo"
 )
 
 const (
@@ -58,7 +60,7 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	voiceType := mapVoiceType(request.Voice)
-	speedRatio := request.Speed
+	speedRatio := lo.FromPtrOr(request.Speed, 0.0)
 	encoding := mapEncoding(request.ResponseFormat)
 
 	c.Set(contextKeyResponseFormat, encoding)

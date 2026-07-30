@@ -1,6 +1,7 @@
 package setting
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
@@ -19,7 +20,7 @@ func ModelRequestRateLimitGroup2JSONString() string {
 	ModelRequestRateLimitMutex.RLock()
 	defer ModelRequestRateLimitMutex.RUnlock()
 
-	jsonBytes, err := common.Marshal(ModelRequestRateLimitGroup)
+	jsonBytes, err := json.Marshal(ModelRequestRateLimitGroup)
 	if err != nil {
 		common.SysLog("error marshalling model ratio: " + err.Error())
 	}
@@ -27,14 +28,11 @@ func ModelRequestRateLimitGroup2JSONString() string {
 }
 
 func UpdateModelRequestRateLimitGroupByJSONString(jsonStr string) error {
-	newMap := make(map[string][2]int)
-	if err := common.UnmarshalJsonStr(jsonStr, &newMap); err != nil {
-		return err
-	}
-	ModelRequestRateLimitMutex.Lock()
-	defer ModelRequestRateLimitMutex.Unlock()
-	ModelRequestRateLimitGroup = newMap
-	return nil
+	ModelRequestRateLimitMutex.RLock()
+	defer ModelRequestRateLimitMutex.RUnlock()
+
+	ModelRequestRateLimitGroup = make(map[string][2]int)
+	return json.Unmarshal([]byte(jsonStr), &ModelRequestRateLimitGroup)
 }
 
 func GetGroupRateLimit(group string) (totalCount, successCount int, found bool) {
@@ -54,7 +52,7 @@ func GetGroupRateLimit(group string) (totalCount, successCount int, found bool) 
 
 func CheckModelRequestRateLimitGroup(jsonStr string) error {
 	checkModelRequestRateLimitGroup := make(map[string][2]int)
-	err := common.UnmarshalJsonStr(jsonStr, &checkModelRequestRateLimitGroup)
+	err := json.Unmarshal([]byte(jsonStr), &checkModelRequestRateLimitGroup)
 	if err != nil {
 		return err
 	}

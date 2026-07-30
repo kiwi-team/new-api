@@ -8,18 +8,19 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/common"
+	taskbilling "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
 type TaskAdaptor struct {
+	taskbilling.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string
@@ -33,23 +34,12 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	// Use the standard validation method for TaskSubmitReq
-	var taskReq relaycommon.TaskSubmitReq
-	if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
-		return service.TaskErrorWrapper(err, "unmarshal_task_request_failed", http.StatusBadRequest)
-	}
-	seconds := common.String2Int(taskReq.Seconds)
-	if seconds <= 0 {
-		seconds = 5
-	}
-	if taskReq.Duration > 0 {
-		seconds = taskReq.Duration
-	}
-
-	info.PriceData.OtherRatios = map[string]float64{
-		"seconds": float64(seconds),
-	}
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
+}
+
+// EstimateBilling prices the request per second of generated video.
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	return taskbilling.SecondsRatio(c, 5)
 }
 
 // BuildRequestURL constructs the upstream URL.

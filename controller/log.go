@@ -3,19 +3,17 @@ package controller
 import (
 	"encoding/csv"
 	"fmt"
-	"net/http"
-	"os"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-contrib/sessions"
-
 	"github.com/gin-gonic/gin"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // 解析 \uXXXX 转义序列
@@ -59,10 +57,15 @@ func GetAllLogs(c *gin.Context) {
 	trajId := strings.TrimSpace(c.Query("traj_id"))
 	sessionId := strings.TrimSpace(c.Query("session_id"))
 	isAdmin := isAdmin(c)
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, mtSessionId, traceId, trajId, sessionId, export, isAdmin)
+	upstreamRequestId := c.Query("upstream_request_id")
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, upstreamRequestId, mtSessionId, traceId, trajId, sessionId, export, isAdmin)
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group)
 	//requestId := c.Query("request_id")
 	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
+	//channel, _ := strconv.Atoi(c.Query("channel"))
+	//group := c.Query("group")
+	//requestId := c.Query("request_id")
+	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -231,6 +234,7 @@ func GetUserLogs(c *gin.Context) {
 	group := c.Query("group")
 	isAdmin := isAdmin(c)
 	requestId := c.Query("request_id")
+	upstreamRequestId := c.Query("upstream_request_id")
 	// mt 业务筛选(详见 org.md 4.3):mt org 用户在使用日志页用 UID/MT Session/Trace/Traj 收窄数据
 	clientUserId := c.Query("client_user_id")
 	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
@@ -251,7 +255,7 @@ func GetUserLogs(c *gin.Context) {
 			scopeUids = u.GetScopeUids()
 		}
 	}
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, scopeUids, clientUserId, mtSessionId, traceId, trajId, sessionId)
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, upstreamRequestId, scopeUids, clientUserId, mtSessionId, traceId, trajId, sessionId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -337,6 +341,7 @@ func GetLogsStat(c *gin.Context) {
 	group := c.Query("group")
 	// admin 端按 username 老路径,传 nil 让 model 走原 username 过滤
 	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, nil)
+	//stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -391,6 +396,7 @@ func GetLogsSelfStat(c *gin.Context) {
 	}
 
 	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, scopeUids)
+	//quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -507,6 +513,10 @@ func ExportLogsCSV(c *gin.Context) {
 	w.Flush()
 }
 
+// DeleteHistoryLogs is the legacy synchronous log cleanup endpoint (DELETE /api/log/).
+// It deletes directly instead of going through the async system task. It is kept only
+// for the classic frontend; the default frontend uses POST /api/system-task/log-cleanup.
+// TODO: remove this handler (and its route) once the classic frontend is removed.
 func DeleteHistoryLogs(c *gin.Context) {
 	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
 	if targetTimestamp == 0 {

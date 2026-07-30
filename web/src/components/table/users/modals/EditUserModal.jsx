@@ -96,7 +96,6 @@ const EditUserModal = (props) => {
     oidc_id: '',
     discord_id: '',
     wechat_id: '',
-    telegram_id: '',
     email: '',
     quota: 0,
     group: 'default',
@@ -559,7 +558,6 @@ const EditUserModal = (props) => {
                       'oidc_id',
                       'wechat_id',
                       'email',
-                      'telegram_id',
                     ].map((field) => (
                       <Col span={24} key={field}>
                         <Form.Input

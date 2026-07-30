@@ -176,6 +176,11 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 		// Determine content type - default to mp3
 		//contentType := "audio/mpeg"
 		//c.Data(http.StatusOK, contentType, audioData)
+
+		// Determine content type - default to mp3
+		//contentType := "audio/mpeg"
+
+		//c.Data(http.StatusOK, contentType, audioData)
 	}
 
 	usage = &dto.Usage{
@@ -200,6 +205,9 @@ func handleChatCompletionResponse(c *gin.Context, resp *http.Response, info *rel
 
 	// Set response headers
 	for key, values := range resp.Header {
+		if !service.ShouldCopyUpstreamHeader(c, key, values) {
+			continue
+		}
 		for _, value := range values {
 			c.Header(key, value)
 		}

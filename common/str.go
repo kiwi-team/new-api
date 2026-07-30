@@ -3,6 +3,7 @@ package common
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -19,6 +20,16 @@ var (
 	// maskApiKeyPattern matches patterns like 'api_key:xxx' or "api_key:xxx" to mask the API key value
 	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
 )
+
+const LocalLogContentLimit = 2048
+
+// LocalLogPreview limits log-only content unless debug logging is enabled.
+func LocalLogPreview(content string) string {
+	if DebugEnabled || len(content) <= LocalLogContentLimit {
+		return content
+	}
+	return fmt.Sprintf("%s... [truncated, original_length=%d, limit=%d]", content[:LocalLogContentLimit], len(content), LocalLogContentLimit)
+}
 
 func GetStringIfEmpty(str string, defaultValue string) string {
 	if str == "" {
@@ -194,9 +205,9 @@ func maskHostForPlainDomain(domain string) string {
 // www.openai.com -> ***.***.com
 // api.openai.com -> ***.***.com
 func MaskSensitiveInfo(str string) string {
-	if len(str) > 0 {
-		return str
-	}
+	// if len(str) > 0 {
+	// 	return str
+	// }
 	// Mask URLs
 	str = maskURLPattern.ReplaceAllStringFunc(str, func(urlStr string) string {
 		u, err := url.Parse(urlStr)

@@ -54,7 +54,7 @@ func FlushWriter(c *gin.Context) (err error) {
 		return nil
 	}
 
-	if c.Request != nil && c.Request.Context().Err() != nil {
+	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
@@ -65,6 +65,10 @@ func FlushWriter(c *gin.Context) (err error) {
 
 	flusher.Flush()
 	return nil
+}
+
+func requestContextDone(c *gin.Context) bool {
+	return c != nil && c.Request != nil && c.Request.Context().Err() != nil
 }
 
 func SetEventStreamHeaders(c *gin.Context) {
@@ -86,81 +90,39 @@ func SetEventStreamHeaders(c *gin.Context) {
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
+	if requestContextDone(c) {
+		return nil
+	}
+
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
 		common.SysError("error marshalling stream response: " + err.Error())
-		_ = FlushWriter(c)
-		return nil
-	}
-	if c == nil || c.Writer == nil {
-		return errors.New("context or writer is nil")
-	}
-	w := c.Writer
-	if _, err := w.WriteString("event: "); err != nil {
-		return err
-	}
-	if _, err := w.WriteString(resp.Type); err != nil {
-		return err
-	}
-	if _, err := w.WriteString("\ndata: "); err != nil {
-		return err
-	}
-	if err := writeSSEDataField(w, string(jsonData)); err != nil {
-		return err
-	}
-	if _, err := w.WriteString("\n\n"); err != nil {
-		return err
+	} else {
+		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 	}
 	_ = FlushWriter(c)
 	return nil
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
-	if c == nil || c.Writer == nil {
+	if requestContextDone(c) {
 		return
 	}
-	w := c.Writer
-	// Preserve legacy formatting: "event: %s\ndata: %s\n\n\n" (3 trailing newlines).
-	if _, err := w.WriteString("event: "); err != nil {
-		return
-	}
-	if _, err := w.WriteString(resp.Type); err != nil {
-		return
-	}
-	if _, err := w.WriteString("\ndata: "); err != nil {
-		return
-	}
-	if err := writeSSEDataField(w, data); err != nil {
-		return
-	}
-	if _, err := w.WriteString("\n\n\n"); err != nil {
-		return
-	}
+
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
 	_ = FlushWriter(c)
 }
 
-func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) {
-	if c == nil || c.Writer == nil {
-		return
+func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
+	if requestContextDone(c) {
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
-	w := c.Writer
-	// Preserve legacy formatting: "event: %s\ndata: %s\n\n".
-	if _, err := w.WriteString("event: "); err != nil {
-		return
-	}
-	if _, err := w.WriteString(resp.Type); err != nil {
-		return
-	}
-	if _, err := w.WriteString("\ndata: "); err != nil {
-		return
-	}
-	if err := writeSSEDataField(w, data); err != nil {
-		return
-	}
-	if _, err := w.WriteString("\n\n"); err != nil {
-		return
-	}
-	_ = FlushWriter(c)
+
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
+	return FlushWriter(c)
 }
 
 func StringData(c *gin.Context, str string) error {
@@ -168,20 +130,11 @@ func StringData(c *gin.Context, str string) error {
 		return errors.New("context or writer is nil")
 	}
 
-	if c.Request != nil && c.Request.Context().Err() != nil {
+	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	w := c.Writer
-	if _, err := w.WriteString("data: "); err != nil {
-		return err
-	}
-	if err := writeSSEDataField(w, str); err != nil {
-		return err
-	}
-	if _, err := w.WriteString("\n\n"); err != nil {
-		return err
-	}
+	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	return FlushWriter(c)
 }
 
@@ -190,7 +143,7 @@ func PingData(c *gin.Context) error {
 		return errors.New("context or writer is nil")
 	}
 
-	if c.Request != nil && c.Request.Context().Err() != nil {
+	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 

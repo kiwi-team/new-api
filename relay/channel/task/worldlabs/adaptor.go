@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -196,6 +197,7 @@ type GenerateWorldResponse struct {
 // ============================
 
 type TaskAdaptor struct {
+	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string

@@ -3,6 +3,7 @@ package ali_dashscope
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/samber/lo"
 
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/gin-gonic/gin"
@@ -36,12 +38,17 @@ func ConvertRequest(request dto.GeneralOpenAIRequest) *ChatRequest {
 		enableSearch = true
 		aliModel = strings.TrimSuffix(aliModel, EnableSearchModelSuffix)
 	}
-	//request.TopP = common.Float64PtrMax(request.TopP, 0.9999)
-	topP := request.TopP
-	if topP < 0.000001 {
-		topP = 0.000001
-	} else if topP > 0.9999 {
-		topP = 0.9999
+	// DashScope 的 top_p 是开区间 (0, 1)，边界值会被上游拒绝，这里钳到合法范围。
+	// request.TopP 为 nil 表示客户端未传，保持不下发。
+	var topP *float64
+	if request.TopP != nil {
+		v := *request.TopP
+		if v < 0.000001 {
+			v = 0.000001
+		} else if v > 0.9999 {
+			v = 0.9999
+		}
+		topP = &v
 	}
 	extraBody := make(map[string]any)
 	var codeInterpreter bool
@@ -52,8 +59,8 @@ func ConvertRequest(request dto.GeneralOpenAIRequest) *ChatRequest {
 	}
 	if tmp, ok := extraBody["enable_thinking"]; ok {
 		enableThinking = tmp.(bool)
-	} else if request.EnableThinking != nil {
-		enableThinking = request.EnableThinking.(bool)
+	} else if len(request.EnableThinking) > 0 {
+		_ = common.Unmarshal(request.EnableThinking, &enableThinking)
 	}
 
 	return &ChatRequest{
@@ -63,12 +70,12 @@ func ConvertRequest(request dto.GeneralOpenAIRequest) *ChatRequest {
 		},
 		Parameters: Parameters{
 			EnableSearch:          enableSearch,
-			IncrementalOutput:     request.Stream,
-			Seed:                  uint64(request.Seed),
-			MaxTokens:             int(request.MaxTokens),
+			IncrementalOutput:     lo.FromPtr(request.Stream),
+			Seed:                  uint64(lo.FromPtr(request.Seed)),
+			MaxTokens:             int(lo.FromPtr(request.MaxTokens)),
 			Temperature:           request.Temperature,
-			TopP:                  &topP,
-			TopK:                  request.TopK,
+			TopP:                  topP,
+			TopK:                  lo.FromPtr(request.TopK),
 			ResultFormat:          "message",
 			Tools:                 request.Tools,
 			EnableCodeInterpreter: codeInterpreter,
@@ -94,7 +101,7 @@ func ConvertDeepResearchRequest(request dto.GeneralOpenAIRequest) *DeepResearchC
 		Stream:            true,
 		IncrementalOutput: true,
 		EnableFeedback:    false,
-		MaxTokens:         int(request.MaxTokens),
+		MaxTokens:         int(lo.FromPtr(request.MaxTokens)),
 		Temperature:       request.Temperature,
 	}
 	if params.MaxTokens == 0 {
@@ -221,7 +228,7 @@ func ConvertImageRequest(request dto.ImageRequest) *ImageRequest {
 	imageRequest.Input.Prompt = request.Prompt
 	imageRequest.Model = request.Model
 	imageRequest.Parameters.Size = strings.Replace(request.Size, "x", "*", -1)
-	imageRequest.Parameters.N = int(request.N)
+	imageRequest.Parameters.N = int(lo.FromPtr(request.N))
 	imageRequest.ResponseFormat = request.ResponseFormat
 
 	return &imageRequest
@@ -259,7 +266,7 @@ func streamResponseAli2OpenAI(aliResponse *ChatResponse, info *relaycommon.Relay
 	if contentStr, ok := aliChoice.Message.Content.(string); ok {
 		choice.Delta.Content = &contentStr
 	}
-	choice.Delta.ReasoningContent = &aliChoice.Message.ReasoningContent
+	choice.Delta.ReasoningContent = aliChoice.Message.ReasoningContent
 	if aliChoice.FinishReason != "null" {
 		finishReason := aliChoice.FinishReason
 		choice.FinishReason = &finishReason
@@ -359,10 +366,10 @@ func Handler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (
 	err = json.Unmarshal(responseBody, &aliResponse)
 	if err != nil {
 		//return openai.ErrorWrapper(err, "unmarshal_response_body_failed", http.StatusInternalServerError), nil
-		return types.NewOpenAIError(fmt.Errorf("unmarshal_response_body_failed"), types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError), nil
+		return types.NewOpenAIError(errors.New("unmarshal_response_body_failed"), types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError), nil
 	}
 	if aliResponse.Code != "" {
-		return types.NewOpenAIError(fmt.Errorf(aliResponse.Message), types.ErrorCodeBadResponse, http.StatusInternalServerError), nil
+		return types.NewOpenAIError(errors.New(aliResponse.Message), types.ErrorCodeBadResponse, http.StatusInternalServerError), nil
 		/*
 			return &model.ErrorWithStatusCode{
 				Error: model.Error{

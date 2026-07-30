@@ -4,22 +4,37 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/service"
-
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/model"
-
-	"github.com/gin-gonic/gin"
 )
+
+func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
+	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	if err != nil || startTimestamp <= 0 {
+		common.ApiErrorMsg(c, "invalid start_timestamp")
+		return 0, 0, false
+	}
+	endTimestamp, err := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if err != nil || endTimestamp <= 0 {
+		common.ApiErrorMsg(c, "invalid end_timestamp")
+		return 0, 0, false
+	}
+	if endTimestamp < startTimestamp {
+		common.ApiErrorMsg(c, "invalid time range")
+		return 0, 0, false
+	}
+	return startTimestamp, endTimestamp, true
+}
 
 func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -40,6 +55,21 @@ func GetAllQuotaDates(c *gin.Context) {
 		"data":    dates,
 	})
 	return
+}
+
+func GetQuotaDatesByUser(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    dates,
+	})
 }
 
 func GetUserQuotaDates(c *gin.Context) {
@@ -421,6 +451,24 @@ func GetDistinctProjectNames(c *gin.Context) {
 	})
 }
 
+func GetAllFlowQuotaDates(c *gin.Context) {
+	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
+	if !ok {
+		return
+	}
+	username := c.Query("username")
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, 0, c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    dates,
+	})
+}
+
 // GetTokenListForStatistics 获取token列表用于消耗统计页面的下拉筛选
 // root用户可以获取所有token，非root用户只能获取自己的token
 func GetTokenListForStatistics(c *gin.Context) {
@@ -447,4 +495,31 @@ func GetTokenListForStatistics(c *gin.Context) {
 		"message": "",
 		"data":    tokens,
 	})
+}
+
+func GetUserFlowQuotaDates(c *gin.Context) {
+	userId := c.GetInt("id")
+	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
+	if !ok {
+		return
+	}
+	if endTimestamp-startTimestamp > 2592000 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "时间跨度不能超过 1 个月",
+		})
+		return
+	}
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, "", userId, common.RoleCommonUser)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    dates,
+	})
+	return
 }

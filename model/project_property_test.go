@@ -22,9 +22,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err, "failed to connect to test database")
 
 	// Set the global flags for SQLite
-	common.UsingSQLite = true
-	common.UsingMySQL = false
-	common.UsingPostgreSQL = false
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 
 	// Run migrations for Project and ProjectAllocation tables
 	err = db.AutoMigrate(&Project{}, &ProjectAllocation{})

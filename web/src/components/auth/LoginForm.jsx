@@ -51,7 +51,6 @@ import {
 } from '@douyinfe/semi-ui';
 import Title from '@douyinfe/semi-ui/lib/es/typography/title';
 import Text from '@douyinfe/semi-ui/lib/es/typography/text';
-import TelegramLoginButton from 'react-telegram-login';
 
 import {
   IconGithubLogo,
@@ -259,48 +258,6 @@ const LoginForm = () => {
       setLoginLoading(false);
     }
   }
-
-  // 添加Telegram登录处理函数
-  const onTelegramLoginClicked = async (response) => {
-    if ((hasUserAgreement || hasPrivacyPolicy) && !agreedToTerms) {
-      showInfo(t('请先阅读并同意用户协议和隐私政策'));
-      return;
-    }
-    const fields = [
-      'id',
-      'first_name',
-      'last_name',
-      'username',
-      'photo_url',
-      'auth_date',
-      'hash',
-      'lang',
-    ];
-    const params = {};
-    fields.forEach((field) => {
-      if (response[field]) {
-        params[field] = response[field];
-      }
-    });
-    try {
-      const res = await API.get(`/api/oauth/telegram/login`, { params });
-      const { success, message, data } = res.data;
-      if (success) {
-        userDispatch({ type: 'login', payload: data });
-        localStorage.setItem('user', JSON.stringify(data));
-        showSuccess('登录成功！');
-        setUserData(data);
-        updateAPI();
-        // 组织标签系统:统一跳 /console,App.jsx 会根据 userMenu.topbar_mode === 'logout_only'(mt 砍光)
-        // 自动重定向到允许的首页。不再读 toio_registered 决定路径。详见 org.md。
-        navigate('/console');
-      } else {
-        showError(message);
-      }
-    } catch (error) {
-      showError('登录失败，请重试');
-    }
-  };
 
   // 包装的GitHub登录点击处理
   const handleGitHubClick = () => {
@@ -615,15 +572,6 @@ const LoginForm = () => {
                     </Button>
                   ))}
 
-                {status.telegram_oauth && (
-                  <div className='flex justify-center my-2'>
-                    <TelegramLoginButton
-                      dataOnauth={onTelegramLoginClicked}
-                      botName={status.telegram_bot_name}
-                    />
-                  </div>
-                )}
-
                 {status.passkey_login && passkeySupported && (
                   <Button
                     theme='outline'
@@ -828,8 +776,7 @@ const LoginForm = () => {
                 status.discord_oauth ||
                 status.oidc_enabled ||
                 status.wechat_login ||
-                status.linuxdo_oauth ||
-                status.telegram_oauth) && (
+                status.linuxdo_oauth) && (
                 <>
                   <Divider margin='12px' align='center'>
                     {t('或')}
@@ -964,8 +911,7 @@ const LoginForm = () => {
           status.discord_oauth ||
           status.oidc_enabled ||
           status.wechat_login ||
-          status.linuxdo_oauth ||
-          status.telegram_oauth
+          status.linuxdo_oauth
         )
           ? renderEmailLoginForm()
           : renderOAuthOptions()}

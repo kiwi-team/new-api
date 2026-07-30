@@ -1,8 +1,6 @@
 package relay
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,7 +39,6 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	var responsesReq *dto.OpenAIResponsesRequest
 	switch req := info.Request.(type) {
 	case *dto.OpenAIResponsesRequest:
-		responsesReq = req
 		// https://platform.openai.com/docs/guides/latest-model#gpt-5-2-parameter-compatibility
 		// responses gpt-5模型 开启reasoning后，不能设置top_p
 		if strings.Contains(responsesReq.Model, "gpt-5") && responsesReq.Reasoning != nil {
@@ -50,12 +47,23 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 				responsesReq.TopP = &zero // 开启reasoning后，top_p必须为0
 			}
 		}
+		responsesReq = req
 	case *dto.OpenAIResponsesCompactionRequest:
+		// Only fields documented for POST /v1/responses/compact are forwarded:
+		// model, input, instructions, previous_response_id, prompt_cache_key,
+		// prompt_cache_options, prompt_cache_retention, service_tier.
+		// Undocumented Codex-parity fields (tools, reasoning, text) are parsed
+		// for client compatibility but intentionally not sent upstream.
 		responsesReq = &dto.OpenAIResponsesRequest{
-			Model:              req.Model,
-			Input:              req.Input,
-			Instructions:       req.Instructions,
-			PreviousResponseID: req.PreviousResponseID,
+			Model:                req.Model,
+			Input:                req.Input,
+			Instructions:         req.Instructions,
+			PreviousResponseID:   req.PreviousResponseID,
+			ParallelToolCalls:    req.ParallelToolCalls,
+			ServiceTier:          req.ServiceTier,
+			PromptCacheKey:       req.PromptCacheKey,
+			PromptCacheOptions:   req.PromptCacheOptions,
+			PromptCacheRetention: req.PromptCacheRetention,
 		}
 	default:
 		return types.NewErrorWithStatusCode(
@@ -80,7 +88,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	requestStr := ""
 	if saveRequestResponse {
 		// 序列化 textRequest 为 JSON 字符串
-		requestBytes, marshalErr := json.Marshal(request)
+		requestBytes, marshalErr := common.Marshal(request)
 		if marshalErr != nil {
 			logger.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
 		} else {
@@ -112,23 +120,28 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		// remove disabled fields for OpenAI Responses API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		// apply param override
 		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride, relaycommon.BuildParamOverrideContext(info))
+			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
-				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+				return newAPIErrorFromParamOverride(err)
 			}
 		}
 
-		if common.DebugEnabled {
-			println("requestBody: ", string(jsonData))
+		logger.LogDebug(c, "requestBody: %s", jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = bytes.NewBuffer(jsonData)
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
 	}
 
 	var httpResp *http.Response
@@ -184,9 +197,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if err != nil {
 			info.OriginModelName = originModelName
 			info.PriceData = originPriceData
-			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		}
-		postConsumeQuota(c, info, usageDto, []string{}, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usageDto, nil, requestStr, responseStr)
 
 		info.OriginModelName = originModelName
 		info.PriceData = originPriceData
@@ -196,9 +209,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usageDto, "", requestStr, responseStr)
 	} else {
-		//postConsumeQuota(c, info, usageDto)
-		extraContent := []string{}
-		postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usageDto, nil, requestStr, responseStr)
 	}
 	return nil
 }

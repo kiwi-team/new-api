@@ -22,11 +22,15 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 type Adaptor struct {
 	IsSyncImageModel bool
 }
+
+const aliAnthropicMessagesModelsEnv = "ALI_ANTHROPIC_MESSAGES_MODELS"
+const defaultAliAnthropicMessagesModels = "qwen,deepseek-v4,kimi,glm,minimax-m"
 
 /*
 	var syncModels = []string{
@@ -36,8 +40,22 @@ type Adaptor struct {
 	}
 */
 func supportsAliAnthropicMessages(modelName string) bool {
-	// Only models with the "qwen" designation can use the Claude-compatible interface; others require conversion.
-	return strings.Contains(strings.ToLower(modelName), "qwen")
+	normalizedModelName := strings.ToLower(strings.TrimSpace(modelName))
+	if normalizedModelName == "" {
+		return false
+	}
+
+	return lo.SomeBy(aliAnthropicMessagesModelPatterns(), func(pattern string) bool {
+		return strings.Contains(normalizedModelName, pattern)
+	})
+}
+
+func aliAnthropicMessagesModelPatterns() []string {
+	configuredModels := common.GetEnvOrDefaultString(aliAnthropicMessagesModelsEnv, defaultAliAnthropicMessagesModels)
+	return lo.FilterMap(strings.Split(configuredModels, ","), func(item string, _ int) (string, bool) {
+		pattern := strings.ToLower(strings.TrimSpace(item))
+		return pattern, pattern != ""
+	})
 }
 
 var syncModels = []string{
@@ -60,9 +78,13 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 		return req, nil
 	}
 
-	oaiReq, err := service.ClaudeToOpenAIRequest(*req, info)
+	result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, req)
 	if err != nil {
 		return nil, err
+	}
+	oaiReq, ok := result.Value.(*dto.GeneralOpenAIRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
 	}
 	if info.SupportStreamOptions && info.IsStream {
 		oaiReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
@@ -148,13 +170,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 	// docs: https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712216
 	// fix: InternalError.Algo.InvalidParameter: The value of the enable_thinking parameter is restricted to True.
-	enableThinking := false
-	if request.EnableThinking != nil {
-		enableThinking = request.EnableThinking.(bool)
-	}
+	enableThinking, _ := request.GetEnableThinking()
 	if strings.Contains(request.Model, "thinking") {
-		request.EnableThinking = true
-		request.Stream = true
+		request.SetEnableThinking(true)
+		request.Stream = common.GetPointer(true)
 		info.IsStream = true
 	}
 	if request.THINKING != nil {
@@ -163,16 +182,16 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			// 对于阿里云的kimi-模型来说，关闭thinking
 			if thinking.Type == "disabled" {
-				request.EnableThinking = false
+				request.SetEnableThinking(false)
 			} else if thinking.Type == "enabled" {
-				request.EnableThinking = true
+				request.SetEnableThinking(true)
 			}
 		}
 	}
 	// fix: ali parameter.enable_thinking must be set to false for non-streaming calls
 	// aliyun现在还有其他的类型的模型，比如kimi-k2.5,minimax等,这些模型，就不受这个逻辑限制
 	if !info.IsStream && strings.Contains(request.Model, "qwen") {
-		request.EnableThinking = false
+		request.SetEnableThinking(false)
 	}
 
 	qwen3SupportThinkingModels := common.OptionMap["qwen3_support_thinking_models"]
@@ -181,11 +200,11 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		modelList = []string{"qwen3-max-preview"}
 	}
 	if slices.Contains(modelList, request.Model) {
-		request.EnableThinking = enableThinking
+		request.SetEnableThinking(enableThinking)
 	}
 	// 这个模型，必须要开启思考模式
 	if request.Model == "qwen3-235b-a22b-thinking-2507" {
-		request.EnableThinking = true
+		request.SetEnableThinking(true)
 	}
 	//common.PrintJson("req", request)
 	switch info.RelayMode {

@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -24,15 +22,13 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/bytedance/gopkg/util/gopool"
 
-	"github.com/shopspring/decimal"
+	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 )
@@ -66,7 +62,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	responseStr := ""
 	// 序列化 textRequest 为 JSON 字符串
 	if saveRequestResponse {
-		requestBytes, marshalErr := json.Marshal(request)
+		requestBytes, marshalErr := common.Marshal(request)
 		if marshalErr != nil {
 			logger.LogError(c, fmt.Sprintf("marshal textRequest failed: %s", marshalErr.Error()))
 		} else {
@@ -81,7 +77,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	// 如果不支持StreamOptions，将StreamOptions设置为nil
-	if !info.SupportStreamOptions || !request.Stream {
+	if !info.SupportStreamOptions || !lo.FromPtrOr(request.Stream, false) {
 		request.StreamOptions = nil
 	} else {
 		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件设置StreamOptions
@@ -117,8 +113,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		if containAudioTokens && containsAudioRatios {
 			service.PostAudioConsumeQuota(c, info, usage, "", "", "")
 		} else {
-			extraContent := []string{}
-			postConsumeQuota(c, info, usage, extraContent, "", "")
+			//extraContent := []string{}
+			//postConsumeQuota(c, info, usage, extraContent, "", "")
+			service.PostTextConsumeQuota(c, info, usage, nil, "", "")
 		}
 		return nil
 	}
@@ -132,7 +129,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		if common.DebugEnabled {
 			if debugBytes, bErr := storage.Bytes(); bErr == nil {
-				println("requestBody: ", string(debugBytes))
+				logger.LogDebug(c, "requestBody: %s", debugBytes)
 			}
 		}
 		requestBody = common.ReaderOnly(storage)
@@ -186,28 +183,35 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
-		jsonData, err2 := common.Marshal(convertedRequest)
-		if err2 != nil {
-			return types.NewError(err2, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+		jsonData, err := common.Marshal(convertedRequest)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		// remove disabled fields for OpenAI API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		// apply param override
 		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride, relaycommon.BuildParamOverrideContext(info))
+			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
-				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+				return newAPIErrorFromParamOverride(err)
 			}
 		}
 
-		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
+		logger.LogDebug(c, "text request body: %s", jsonData)
 
-		requestBody = bytes.NewBuffer(jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
 	}
 
 	var httpResp *http.Response
@@ -259,16 +263,19 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	//	service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	//} else {
 	//	postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+	//var containAudioTokens = usage.(*dto.Usage).CompletionTokenDetails.AudioTokens > 0 || usage.(*dto.Usage).PromptTokensDetails.AudioTokens > 0
+	//var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
+
 	var containAudioTokens = usage.(*dto.Usage).CompletionTokenDetails.AudioTokens > 0 || usage.(*dto.Usage).PromptTokensDetails.AudioTokens > 0
 	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
-	extraContent := []string{}
 	if containAudioTokens && containsAudioRatios {
 		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	} else {
-		postConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil, requestStr, responseStr)
 	}
 	return nil
+
 }
 
 func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) error {
@@ -432,7 +439,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		}
 	} else if isSiliconflow && textRequest.THINKING != nil {
 		if thinking.Type == "enabled" && slices.Contains(supportedModels, textRequest.Model) {
-			textRequest.EnableThinking = true
+			textRequest.SetEnableThinking(true)
 			if thinking.BudgetTokens > 0 {
 				textRequest.ThinkingBudget = thinking.BudgetTokens
 			}
@@ -446,35 +453,35 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		if textRequest.THINKING == nil && defaultEnbaledThinking {
 			// https://docs.bigmodel.cn/cn/guide/capabilities/thinking#%E6%A0%B8%E5%BF%83%E5%8F%82%E6%95%B0%E8%AF%B4%E6%98%8E
 			//enabled（默认）：启用动态思考，glm-4.7 glm-4.5v为强制思考，其它模型自动判断是否需要深度思考
-			//textRequest.EnableThinking = true
+			//textRequest.SetEnableThinking(true)
 			// 默认是要开启思考的，和官方保持一致的行为
 			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
 		} else if strings.Contains(textRequest.Model, "glm-4.7-flash") {
 			if textRequest.THINKING != nil {
 				if thinking.Type == "enabled" {
-					textRequest.EnableThinking = true
+					textRequest.SetEnableThinking(true)
 				} else if thinking.Type == "disabled" {
-					textRequest.EnableThinking = false
+					textRequest.SetEnableThinking(false)
 				}
 			}
 		}
 	} else if info.ChannelType == common.ChannelTypeAli {
 		if strings.Contains(textRequest.Model, "glm") {
 			if textRequest.THINKING != nil && thinking.Type == "disabled" {
-				textRequest.EnableThinking = false
+				textRequest.SetEnableThinking(false)
 			}
 		} else if strings.Contains(textRequest.Model, "kimi") {
 			if textRequest.THINKING != nil && thinking.Type == "disabled" {
-				textRequest.EnableThinking = false
+				textRequest.SetEnableThinking(false)
 			} else if textRequest.THINKING != nil && thinking.Type == "enabled" {
-				textRequest.EnableThinking = true
+				textRequest.SetEnableThinking(true)
 			} else {
 				// 和官方的kimi-2.5的行为保持一一致，默认是开启thinking的
-				textRequest.EnableThinking = true
+				textRequest.SetEnableThinking(true)
 			}
 		} else if strings.Contains(strings.ToLower(textRequest.Model), "minimax") {
 			// 阿里云的minimax 只能开启thinking
-			textRequest.EnableThinking = true
+			textRequest.SetEnableThinking(true)
 		}
 	}
 
@@ -486,7 +493,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 
 	if textRequest.Model == "deepseek-reasoner" {
 		if isSiliconflow {
-			textRequest.EnableThinking = true
+			textRequest.SetEnableThinking(true)
 		} else if isVolcengine {
 			textRequest.THINKING = json.RawMessage(`{"type": "enabled"}`)
 		}
@@ -525,11 +532,11 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 	if filterConfigMap.SetTopKZero != nil {
 		hasSet := slices.Contains(*filterConfigMap.SetTopKZero, textRequest.Model)
 		if hasSet {
-			textRequest.TopK = 0
+			textRequest.TopK = nil
 		} else {
 			for _, model := range *filterConfigMap.SetTopKZero {
 				if common.RegMatch(model, textRequest.Model) {
-					textRequest.TopK = 0
+					textRequest.TopK = nil
 					hasSet = true
 					break
 				}
@@ -539,12 +546,12 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 	if filterConfigMap.SetTopPZero != nil {
 		hasSet := slices.Contains(*filterConfigMap.SetTopPZero, textRequest.Model)
 		if hasSet {
-			textRequest.TopP = 0
+			textRequest.TopP = nil
 			hasSet = true
 		} else {
 			for _, model := range *filterConfigMap.SetTopPZero {
 				if common.RegMatch(model, textRequest.Model) {
-					textRequest.TopP = 0
+					textRequest.TopP = nil
 					hasSet = true
 					break
 				}
@@ -554,11 +561,11 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 	if filterConfigMap.SetMaxTokensZero != nil {
 		hasSet := slices.Contains(*filterConfigMap.SetMaxTokensZero, textRequest.Model)
 		if hasSet {
-			textRequest.MaxTokens = 0
+			textRequest.MaxTokens = nil
 		} else {
 			for _, model := range *filterConfigMap.SetMaxTokensZero {
 				if common.RegMatch(model, textRequest.Model) {
-					textRequest.MaxTokens = 0
+					textRequest.MaxTokens = nil
 					break
 				}
 			}
@@ -597,16 +604,16 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 			// get key from item
 			for key, val := range item {
 				if key == textRequest.Model {
-					if int(textRequest.MaxTokens) > val && val > 0 {
-						textRequest.MaxTokens = uint(val)
+					if textRequest.MaxTokens != nil && int(*textRequest.MaxTokens) > val && val > 0 {
+						textRequest.MaxTokens = lo.ToPtr(uint(val))
 						break
 					}
 				}
 			}
 			for key, val := range item {
 				if common.RegMatch(key, textRequest.Model) {
-					if int(textRequest.MaxTokens) > val && val > 0 {
-						textRequest.MaxTokens = uint(val)
+					if textRequest.MaxTokens != nil && int(*textRequest.MaxTokens) > val && val > 0 {
+						textRequest.MaxTokens = lo.ToPtr(uint(val))
 						break
 					}
 				}
@@ -729,474 +736,4 @@ func checkRequestSensitive(textRequest *dto.GeneralOpenAIRequest, info *relaycom
 		//words, err = service.CheckSensitiveInput(textRequest.Input)
 	}
 	return words, err
-}
-
-// 预扣费并返回用户剩余配额
-func preConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) (int, int, *types.NewAPIError) {
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
-	if err != nil {
-		return 0, 0, types.NewError(err, types.ErrorCodeQueryDataError)
-	}
-	if userQuota <= 0 {
-		return 0, 0, types.NewErrorWithStatusCode(errors.New("user quota is not enough"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
-	}
-	if userQuota-preConsumedQuota < 0 {
-		return 0, 0, types.NewErrorWithStatusCode(fmt.Errorf("pre-consume quota failed, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
-	}
-	relayInfo.UserQuota = userQuota
-	if userQuota > 100*preConsumedQuota {
-		// 用户额度充足，判断令牌额度是否充足
-		if !relayInfo.TokenUnlimited {
-			// 非无限令牌，判断令牌额度是否充足
-			tokenQuota := c.GetInt("token_quota")
-			if tokenQuota > 100*preConsumedQuota {
-				// 令牌额度充足，信任令牌
-				preConsumedQuota = 0
-				logger.LogInfo(c, fmt.Sprintf("user %d quota %s and token %d quota %d are enough, trusted and no need to pre-consume", relayInfo.UserId, logger.FormatQuota(userQuota), relayInfo.TokenId, tokenQuota))
-			}
-		} else {
-			// in this case, we do not pre-consume quota
-			// because the user has enough quota
-			preConsumedQuota = 0
-			logger.LogInfo(c, fmt.Sprintf("user %d with unlimited token has enough quota %s, trusted and no need to pre-consume", relayInfo.UserId, logger.FormatQuota(userQuota)))
-		}
-	}
-
-	if preConsumedQuota > 0 {
-		err := service.PreConsumeTokenQuota(relayInfo, preConsumedQuota)
-		if err != nil {
-			return 0, 0, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden)
-		}
-		err = model.DecreaseUserQuota(relayInfo.UserId, preConsumedQuota)
-		if err != nil {
-			return 0, 0, types.NewError(err, types.ErrorCodeUpdateDataError)
-		}
-	}
-	return preConsumedQuota, userQuota, nil
-}
-
-func returnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo, userQuota int, preConsumedQuota int) {
-	if preConsumedQuota != 0 {
-		gopool.Go(func() {
-			relayInfoCopy := *relayInfo
-
-			err := service.PostConsumeQuota(&relayInfoCopy, -preConsumedQuota, 0, false)
-			if err != nil {
-				common.SysError("error return pre-consumed quota: " + err.Error())
-			}
-		})
-	}
-}
-
-// old
-// func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, preConsumedQuota int, userQuota int, priceData helper.PriceData, extraContent string, requestStr string, responseStr string) {
-func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string, requestStr string, responseStr string) {
-	//func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent ...string) {
-	originUsage := usage
-	if usage == nil {
-		usage = &dto.Usage{
-			PromptTokens:     relayInfo.GetEstimatePromptTokens(),
-			CompletionTokens: 0,
-			TotalTokens:      relayInfo.GetEstimatePromptTokens(),
-		}
-		extraContent = append(extraContent, "上游无计费信息")
-	}
-
-	if originUsage != nil {
-		service.ObserveChannelAffinityUsageCacheFromContext(ctx, usage)
-	}
-
-	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
-
-	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	promptTokens := usage.PromptTokens
-	cacheTokens := usage.PromptTokensDetails.CachedTokens
-	imageTokens := usage.PromptTokensDetails.ImageTokens
-	audioTokens := usage.PromptTokensDetails.AudioTokens
-	completionTokens := usage.CompletionTokens
-	cachedCreationTokens := usage.PromptTokensDetails.CachedCreationTokens
-
-	modelName := relayInfo.OriginModelName
-
-	tokenName := ctx.GetString("token_name")
-	completionRatio := relayInfo.PriceData.CompletionRatio
-	cacheRatio := relayInfo.PriceData.CacheRatio
-	imageRatio := relayInfo.PriceData.ImageRatio
-	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	modelPrice := relayInfo.PriceData.ModelPrice
-	cachedCreationRatio := relayInfo.PriceData.CacheCreationRatio
-
-	// Convert values to decimal for precise calculation
-	dPromptTokens := decimal.NewFromInt(int64(promptTokens))
-	dCacheTokens := decimal.NewFromInt(int64(cacheTokens))
-	dImageTokens := decimal.NewFromInt(int64(imageTokens))
-	dAudioTokens := decimal.NewFromInt(int64(audioTokens))
-	dCompletionTokens := decimal.NewFromInt(int64(completionTokens))
-	dCachedCreationTokens := decimal.NewFromInt(int64(cachedCreationTokens))
-	dCompletionRatio := decimal.NewFromFloat(completionRatio)
-	dCacheRatio := decimal.NewFromFloat(cacheRatio)
-	dImageRatio := decimal.NewFromFloat(imageRatio)
-	dModelRatio := decimal.NewFromFloat(modelRatio)
-	dGroupRatio := decimal.NewFromFloat(groupRatio)
-	dModelPrice := decimal.NewFromFloat(modelPrice)
-	dCachedCreationRatio := decimal.NewFromFloat(cachedCreationRatio)
-	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-
-	ratio := dModelRatio.Mul(dGroupRatio)
-
-	// openai web search 工具计费
-	var dWebSearchQuota decimal.Decimal
-	var webSearchPrice float64
-	// response api 格式工具计费
-	if relayInfo.ResponsesUsageInfo != nil {
-		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
-			// 计算 web search 调用的配额 (配额 = 价格 * 调用次数 / 1000 * 分组倍率)
-			webSearchPrice = operation_setting.GetWebSearchPricePerThousand(modelName, webSearchTool.SearchContextSize)
-			dWebSearchQuota = decimal.NewFromFloat(webSearchPrice).
-				Mul(decimal.NewFromInt(int64(webSearchTool.CallCount))).
-				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-			extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，上下文大小 %s，调用花费 %s",
-				webSearchTool.CallCount, webSearchTool.SearchContextSize, dWebSearchQuota.String()))
-		}
-	} else if strings.HasSuffix(modelName, "search-preview") {
-		// search-preview 模型不支持 response api
-		searchContextSize := ctx.GetString("chat_completion_web_search_context_size")
-		if searchContextSize == "" {
-			searchContextSize = "medium"
-		}
-		webSearchPrice = operation_setting.GetWebSearchPricePerThousand(modelName, searchContextSize)
-		dWebSearchQuota = decimal.NewFromFloat(webSearchPrice).
-			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 1 次，上下文大小 %s，调用花费 %s",
-			searchContextSize, dWebSearchQuota.String()))
-	}
-	// claude web search tool 计费
-	var dClaudeWebSearchQuota decimal.Decimal
-	var claudeWebSearchPrice float64
-	claudeWebSearchCallCount := ctx.GetInt("claude_web_search_requests")
-	if claudeWebSearchCallCount > 0 {
-		claudeWebSearchPrice = operation_setting.GetClaudeWebSearchPricePerThousand()
-		dClaudeWebSearchQuota = decimal.NewFromFloat(claudeWebSearchPrice).
-			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit).Mul(decimal.NewFromInt(int64(claudeWebSearchCallCount)))
-		extraContent = append(extraContent, fmt.Sprintf("Claude Web Search 调用 %d 次，调用花费 %s",
-			claudeWebSearchCallCount, dClaudeWebSearchQuota.String()))
-	}
-	// file search tool 计费
-	var dFileSearchQuota decimal.Decimal
-	var fileSearchPrice float64
-	if relayInfo.ResponsesUsageInfo != nil {
-		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists && fileSearchTool.CallCount > 0 {
-			fileSearchPrice = operation_setting.GetFileSearchPricePerThousand()
-			dFileSearchQuota = decimal.NewFromFloat(fileSearchPrice).
-				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
-				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-			extraContent = append(extraContent, fmt.Sprintf("File Search 调用 %d 次，调用花费 %s",
-				fileSearchTool.CallCount, dFileSearchQuota.String()))
-		}
-	}
-	var dImageGenerationCallQuota decimal.Decimal
-	var imageGenerationCallPrice float64
-	if ctx.GetBool("image_generation_call") {
-		imageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
-		dImageGenerationCallQuota = decimal.NewFromFloat(imageGenerationCallPrice).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", dImageGenerationCallQuota.String()))
-	}
-
-	var quotaCalculateDecimal decimal.Decimal
-
-	var audioInputQuota decimal.Decimal
-	var audioInputPrice float64
-	isClaudeUsageSemantic := relayInfo.FinalRequestRelayFormat == types.RelayFormatClaude
-	if relayInfo.PriceData.UseTieredPrice {
-		// 阶梯价格计费：根据实际 promptTokens 重新匹配档位
-		// 阶梯价格只覆盖文本 input/output，缓存、图片、音频等仍使用原始倍率
-		tieredPriceTiers, useTiered := ratio_setting.GetTieredPrice(modelName)
-		if useTiered && len(tieredPriceTiers) > 0 {
-			tier := ratio_setting.MatchPriceTier(tieredPriceTiers, promptTokens)
-			dTieredInputPrice := decimal.NewFromFloat(tier.InputPrice)
-			dTieredOutputPrice := decimal.NewFromFloat(tier.OutputPrice)
-			dMillion := decimal.NewFromInt(1_000_000)
-
-			// 计算文本 base tokens（减去缓存、图片、音频等非文本 tokens）
-			baseTokens := dPromptTokens
-			if !dCacheTokens.IsZero() {
-				if !isClaudeUsageSemantic {
-					baseTokens = baseTokens.Sub(dCacheTokens)
-				}
-			}
-			if !dCachedCreationTokens.IsZero() {
-				if !isClaudeUsageSemantic {
-					baseTokens = baseTokens.Sub(dCachedCreationTokens)
-				}
-			}
-			if !dImageTokens.IsZero() {
-				baseTokens = baseTokens.Sub(dImageTokens)
-			}
-			if !dAudioTokens.IsZero() {
-				audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
-				if audioInputPrice > 0 {
-					baseTokens = baseTokens.Sub(dAudioTokens)
-					audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(dMillion).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-					extraContent = append(extraContent, fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String()))
-				}
-			}
-
-			// 文本 input/output 使用阶梯价格
-			inputQuota := baseTokens.Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-			outputQuota := dCompletionTokens.Mul(dTieredOutputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-			quotaCalculateDecimal = inputQuota.Add(outputQuota)
-
-			// 缓存 tokens：档位绝对价优先，否则回退 模型级缓存倍率 * 阶梯输入价格
-			if !dCacheTokens.IsZero() {
-				var cachedQuota decimal.Decimal
-				if tier.CachedInputPrice > 0 {
-					cachedQuota = dCacheTokens.Mul(decimal.NewFromFloat(tier.CachedInputPrice)).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-				} else {
-					cachedQuota = dCacheTokens.Mul(dCacheRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-				}
-				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedQuota)
-			}
-			if !dCachedCreationTokens.IsZero() {
-				var cachedCreationQuota decimal.Decimal
-				if tier.CacheWritePrice > 0 {
-					cachedCreationQuota = dCachedCreationTokens.Mul(decimal.NewFromFloat(tier.CacheWritePrice)).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-				} else {
-					cachedCreationQuota = dCachedCreationTokens.Mul(dCachedCreationRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-				}
-				quotaCalculateDecimal = quotaCalculateDecimal.Add(cachedCreationQuota)
-			}
-			// 图片 tokens 使用阶梯输入价格 * 图片倍率
-			if !dImageTokens.IsZero() {
-				imageQuota := dImageTokens.Mul(dImageRatio).Mul(dTieredInputPrice).Div(dMillion).Mul(dQuotaPerUnit).Mul(dGroupRatio)
-				quotaCalculateDecimal = quotaCalculateDecimal.Add(imageQuota)
-			}
-
-			// 更新 PriceData 中的档位信息，确保日志展示正确的匹配档位
-			relayInfo.PriceData.TieredInputPrice = tier.InputPrice
-			relayInfo.PriceData.TieredOutputPrice = tier.OutputPrice
-			relayInfo.PriceData.TieredCachedInputPrice = tier.CachedInputPrice
-			relayInfo.PriceData.TieredCacheWritePrice = tier.CacheWritePrice
-			relayInfo.PriceData.TieredMaxTokens = tier.MaxTokens
-		}
-	} else if !relayInfo.PriceData.UsePrice {
-		baseTokens := dPromptTokens
-		// 减去 cached tokens
-		// Anthropic API 的 input_tokens 已经不包含缓存 tokens，不需要减去
-		// OpenAI/OpenRouter 等 API 的 prompt_tokens 包含缓存 tokens，需要减去
-		var cachedTokensWithRatio decimal.Decimal
-		if !dCacheTokens.IsZero() {
-			if !isClaudeUsageSemantic {
-				baseTokens = baseTokens.Sub(dCacheTokens)
-			}
-			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
-		}
-		var dCachedCreationTokensWithRatio decimal.Decimal
-		if !dCachedCreationTokens.IsZero() {
-			if !isClaudeUsageSemantic {
-				baseTokens = baseTokens.Sub(dCachedCreationTokens)
-			}
-			dCachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCachedCreationRatio)
-		}
-
-		// 减去 image tokens
-		var imageTokensWithRatio decimal.Decimal
-		if !dImageTokens.IsZero() {
-			baseTokens = baseTokens.Sub(dImageTokens)
-			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
-		}
-
-		// 减去 Gemini audio tokens
-		if !dAudioTokens.IsZero() {
-			audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
-			if audioInputPrice > 0 {
-				// 重新计算 base tokens
-				baseTokens = baseTokens.Sub(dAudioTokens)
-				audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-				extraContent = append(extraContent, fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String()))
-			}
-		}
-		promptQuota := baseTokens.Add(cachedTokensWithRatio).
-			Add(imageTokensWithRatio).
-			Add(dCachedCreationTokensWithRatio)
-
-		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
-
-		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
-
-		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
-			quotaCalculateDecimal = decimal.NewFromInt(1)
-		}
-	} else {
-		quotaCalculateDecimal = dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
-	}
-	// 添加 responses tools call 调用的配额
-	quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
-	quotaCalculateDecimal = quotaCalculateDecimal.Add(dFileSearchQuota)
-	// 添加 audio input 独立计费
-	quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
-	// 添加 image generation call 计费
-	quotaCalculateDecimal = quotaCalculateDecimal.Add(dImageGenerationCallQuota)
-
-	if len(relayInfo.PriceData.OtherRatios) > 0 {
-		for key, otherRatio := range relayInfo.PriceData.OtherRatios {
-			dOtherRatio := decimal.NewFromFloat(otherRatio)
-			quotaCalculateDecimal = quotaCalculateDecimal.Mul(dOtherRatio)
-			extraContent = append(extraContent, fmt.Sprintf("其他倍率 %s: %f", key, otherRatio))
-		}
-	}
-
-	quota := int(quotaCalculateDecimal.Round(0).IntPart())
-	totalTokens := promptTokens + completionTokens
-
-	//var logContent string
-
-	// record all the consume log even if quota is 0
-	if totalTokens == 0 {
-		// in this case, must be some error happened
-		// we cannot just return, because we may have to return the pre-consumed quota
-		quota = 0
-		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
-		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
-			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
-	} else {
-		if !ratio.IsZero() && quota == 0 {
-			quota = 1
-		}
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
-	}
-
-	if err := service.SettleBilling(ctx, relayInfo, quota); err != nil {
-		logger.LogError(ctx, "error settling billing: "+err.Error())
-	}
-
-	logModel := modelName
-	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
-		logModel = "gpt-4-gizmo-*"
-		extraContent = append(extraContent, fmt.Sprintf("模型 %s", modelName))
-	}
-	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
-		logModel = "gpt-4o-gizmo-*"
-		extraContent = append(extraContent, fmt.Sprintf("模型 %s", modelName))
-	}
-	logContent := strings.Join(extraContent, ", ")
-	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
-	if adminRejectReason != "" {
-		other["reject_reason"] = adminRejectReason
-	}
-	// For chat-based calls to the Claude model, tagging is required. Using Claude's rendering logs, the two approaches handle input rendering differently.
-	if isClaudeUsageSemantic {
-		other["claude"] = true
-		other["usage_semantic"] = "anthropic"
-	}
-	if imageTokens != 0 {
-		other["image"] = true
-		other["image_ratio"] = imageRatio
-		other["image_output"] = imageTokens
-	}
-	if cachedCreationTokens != 0 {
-		other["cache_creation_tokens"] = cachedCreationTokens
-		other["cache_creation_ratio"] = cachedCreationRatio
-	}
-	if !dWebSearchQuota.IsZero() {
-		if relayInfo.ResponsesUsageInfo != nil {
-			if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists {
-				other["web_search"] = true
-				other["web_search_call_count"] = webSearchTool.CallCount
-				other["web_search_price"] = webSearchPrice
-			}
-		} else if strings.HasSuffix(modelName, "search-preview") {
-			other["web_search"] = true
-			other["web_search_call_count"] = 1
-			other["web_search_price"] = webSearchPrice
-		}
-	} else if !dClaudeWebSearchQuota.IsZero() {
-		other["web_search"] = true
-		other["web_search_call_count"] = claudeWebSearchCallCount
-		other["web_search_price"] = claudeWebSearchPrice
-	}
-	if !dFileSearchQuota.IsZero() && relayInfo.ResponsesUsageInfo != nil {
-		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists {
-			other["file_search"] = true
-			other["file_search_call_count"] = fileSearchTool.CallCount
-			other["file_search_price"] = fileSearchPrice
-		}
-	}
-	if !audioInputQuota.IsZero() {
-		other["audio_input_seperate_price"] = true
-		other["audio_input_token_count"] = audioTokens
-		other["audio_input_price"] = audioInputPrice
-	}
-	if !dImageGenerationCallQuota.IsZero() {
-		other["image_generation_call"] = true
-		other["image_generation_call_price"] = imageGenerationCallPrice
-	}
-	if relayInfo.PriceData.UseTieredPrice {
-		other["use_tiered_price"] = true
-		other["tiered_input_price"] = relayInfo.PriceData.TieredInputPrice
-		other["tiered_output_price"] = relayInfo.PriceData.TieredOutputPrice
-		other["tiered_max_tokens"] = relayInfo.PriceData.TieredMaxTokens
-		// 阶梯档位的缓存读/写绝对单价（每百万 Token）；0 表示未配置，前端回退模型级缓存倍率展示
-		if relayInfo.PriceData.TieredCachedInputPrice > 0 {
-			other["tiered_cached_input_price"] = relayInfo.PriceData.TieredCachedInputPrice
-		}
-		if relayInfo.PriceData.TieredCacheWritePrice > 0 {
-			other["tiered_cache_write_price"] = relayInfo.PriceData.TieredCacheWritePrice
-		}
-	}
-
-	// 记录请求体读取耗时（毫秒）
-	if bodyReadMs := common.GetContextKeyInt(ctx, constant.ContextKeyRequestBodyReadTime); bodyReadMs > 0 {
-		other["body_read_time_ms"] = bodyReadMs
-	}
-
-	ttsCount := common.GetContextKeyInt(ctx, constant.ContextKeyTTSCount)
-	if ttsCount > 0 {
-		ttsRatio := ratio_setting.GetTTSRatio(relayInfo.UpstreamModelName)
-		quota = int(float64(ttsCount) / 1000 * ttsRatio)
-		logContent = fmt.Sprintf("ttsRatio:%.2f，TTS 输入字符数:%d，TTS语音计费: %s", ttsRatio, ttsCount, logger.FormatQuota(quota))
-	}
-
-	// Track project consumption and get project name for logging
-	projectName, planId, _ := service.TrackProjectConsumption(ctx, quota)
-
-	clientUserId := common.GetContextKeyString(ctx, constant.ContextKeyClientUserId)
-	clientScenairo := common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo)
-	sessionId := common.GetContextKeyString(ctx, constant.ContextKeyClaudeSessionId)
-	requestId := ctx.GetString(common.RequestIdKey)
-
-	var usageStr string
-	if usage != nil {
-		if usageBytes, err := common.Marshal(usage); err == nil {
-			usageStr = string(usageBytes)
-		}
-	}
-
-	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
-		ChannelId:                   relayInfo.ChannelId,
-		PromptTokens:                promptTokens,
-		CompletionTokens:            completionTokens,
-		CachedTokens:                usage.PromptTokensDetails.CachedTokens,
-		ClaudeCacheCreation5mTokens: usage.ClaudeCacheCreation5mTokens,
-		ClaudeCacheCreation1hTokens: usage.ClaudeCacheCreation1hTokens,
-		ModelName:                   logModel,
-		TokenName:                   tokenName,
-		Quota:                       quota,
-		Content:                     logContent,
-		TokenId:                     relayInfo.TokenId,
-		UseTimeSeconds:              int(useTimeSeconds),
-		IsStream:                    relayInfo.IsStream,
-		Group:                       relayInfo.UsingGroup,
-		Other:                       other,
-		Request:                     requestStr,
-		Response:                    responseStr,
-		ClientUserId:                clientUserId,
-		ClientScenairo:              clientScenairo,
-		SessionId:                   sessionId,
-		RequestId:                   requestId,
-		ProjectName:                 projectName,
-		PlanId:                      planId,
-		Usage:                       usageStr,
-	})
 }

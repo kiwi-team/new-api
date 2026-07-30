@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,8 +24,11 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -38,11 +41,17 @@ import (
 	_ "net/http/pprof"
 )
 
-//go:embed web/dist
+//go:embed web/default/dist
 var buildFS embed.FS
 
-//go:embed web/dist/index.html
+//go:embed web/default/dist/index.html
 var indexPage []byte
+
+//go:embed web/classic/dist
+var classicBuildFS embed.FS
+
+//go:embed web/classic/dist/index.html
+var classicIndexPage []byte
 
 //go:embed customer-portal/dist
 var portalFS embed.FS
@@ -123,6 +132,12 @@ func main() {
 
 	// Key维度阈值预警：基于令牌上的 alert_threshold 与用户 UserSetting.WebhookUrl
 	go controller.TokenKeyAlertLoop()
+	// Warm pricing after channel cache initialization so Advanced Custom
+	// endpoint inference can read cached route settings on first request.
+	model.GetPricing()
+
+	// 周期性重载授权策略，保证多节点/多 master 部署下权限变更能传播到每个实例
+	go authz.StartPolicySync(common.SyncFrequency)
 
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
@@ -142,29 +157,52 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	if common.IsMasterNode && constant.UpdateTask {
-		gopool.Go(func() {
-			controller.UpdateMidjourneyTaskBulk()
-		})
-		gopool.Go(func() {
-			controller.UpdateTaskBulk()
-		})
+	// if common.IsMasterNode && constant.UpdateTask {
+	// 	gopool.Go(func() {
+	// 		controller.UpdateMidjourneyTaskBulk()
+	// 	})
+	// 	gopool.Go(func() {
+	// 		controller.UpdateTaskBulk()
+	// 	})
+	// }
+	// if common.QuotaWarningEnabled {
+	// 	gopool.Go(func() {
+	// 		controller.WarningUserQuota()
+	// 	})
+	// }
+	// if common.ErrorWarningEnabled {
+	// 	gopool.Go(func() {
+	// 		controller.WarningErrorLog()
+	// 	})
+	// }
+	// if common.DeleteErrorLogsEnabled {
+	// 	gopool.Go(func() {
+	// 		controller.DeleteErrorLogs()
+	// 	})
+	// }
+	// Report this process as a system instance so the System Info page can show
+	// all currently alive nodes in multi-instance deployments.
+	service.StartSystemInstanceReporter()
+
+	// Wire task polling adaptor factory (breaks service -> relay import cycle).
+	// Must run before the system task runner starts: the async_task_poll handler
+	// calls service.RunTaskPollingOnce, which needs this factory set.
+	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
+		a := relay.GetTaskAdaptor(platform)
+		if a == nil {
+			return nil
+		}
+		return a
 	}
-	if common.QuotaWarningEnabled {
-		gopool.Go(func() {
-			controller.WarningUserQuota()
-		})
-	}
-	if common.ErrorWarningEnabled {
-		gopool.Go(func() {
-			controller.WarningErrorLog()
-		})
-	}
-	if common.DeleteErrorLogsEnabled {
-		gopool.Go(func() {
-			controller.DeleteErrorLogs()
-		})
-	}
+
+	// Register the periodic channel test, upstream model update, and async task
+	// polling (Midjourney / Suno / video) jobs as scheduled system tasks
+	// (DB-lease dedup across masters + run history), then start the runner that
+	// schedules and executes them. Master-only execution and the UpdateTask
+	// switch are enforced inside the runner and each handler's Enabled().
+	controller.RegisterScheduledSystemTasks()
+	service.StartSystemTaskRunner()
+
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")
@@ -191,7 +229,7 @@ func main() {
 		common.SysLog(fmt.Sprintf("stacktrace from panic: %s", string(debug.Stack())))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
-				"message": fmt.Sprintf("the Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
+				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
 				"type":    "new_api_panic",
 			},
 		})
@@ -199,7 +237,7 @@ func main() {
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
-	server.Use(middleware.PoweredBy())
+	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
 	middleware.SetUpLogger(server)
 	// Initialize session store
@@ -208,7 +246,7 @@ func main() {
 		Path:     "/",
 		MaxAge:   2592000, // 30 days
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   common.SessionCookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
 	server.Use(sessions.Sessions("session", store))
@@ -216,11 +254,15 @@ func main() {
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
 
-	// 检查 Customer Portal 构建产物是否存在
-	portalIndexPageLoaded := len(portalIndexPage) > 0
-
 	// 设置路由
-	router.SetRouter(server, buildFS, indexPage, portalFS, portalIndexPage, portalIndexPageLoaded)
+	router.SetRouter(server, router.ThemeAssets{
+		DefaultBuildFS:   buildFS,
+		DefaultIndexPage: indexPage,
+		ClassicBuildFS:   classicBuildFS,
+		ClassicIndexPage: classicIndexPage,
+		PortalFS:         portalFS,
+		PortalIndexPage:  portalIndexPage,
+	})
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
@@ -238,14 +280,7 @@ func main() {
 	}
 
 	go func() {
-		// 用包装过的 net.Listener，让每条 conn 的 Read 自动把字节 tee 到 per-conn 缓冲；
-		// 这样 handler 才能在 net/http 已经 canonical 化 r.Header 之后，回去拿到原始 wire 字节。
-		ln, err := net.Listen("tcp", srv.Addr)
-		if err != nil {
-			common.FatalLog("failed to listen: " + err.Error())
-			return
-		}
-		if err := srv.Serve(&middleware.CaptureListener{Listener: ln}); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			common.FatalLog("failed to start HTTP server: " + err.Error())
 		}
 	}()
@@ -260,13 +295,29 @@ func main() {
 	common.SysLog("flushing quota data cache before shutdown...")
 	model.SaveQuotaDataCache()
 	common.SysLog("quota data cache flushed successfully")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysLog("server forced to shutdown: " + err.Error())
 	}
 
+	// quit := make(chan os.Signal, 1)
+	// signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// sig := <-quit
+	// common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+
+	// // SSE streams may run for minutes; give them time to finish before forced exit
+	// shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
+	// ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	// defer cancel()
+	// if err := srv.Shutdown(ctx); err != nil {
+	// 	common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
+	// }
+	// // 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
+	// if common.DataExportEnabled {
+	// 	model.SaveQuotaDataCache()
+	// }
 	common.SysLog("server exited")
 }
 
@@ -285,8 +336,10 @@ func InjectUmamiAnalytics() {
 		analyticsInjectBuilder.WriteString("\"></script>")
 	}
 	analyticsInjectBuilder.WriteString("<!--Umami QuantumNous-->\n")
-	analyticsInject := analyticsInjectBuilder.String()
-	indexPage = bytes.ReplaceAll(indexPage, []byte("<!--umami-->\n"), []byte(analyticsInject))
+	analyticsInject := []byte(analyticsInjectBuilder.String())
+	placeholder := []byte("<!--umami-->\n")
+	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
+	classicIndexPage = bytes.ReplaceAll(classicIndexPage, placeholder, analyticsInject)
 }
 
 func InjectGoogleAnalytics() {
@@ -307,8 +360,10 @@ func InjectGoogleAnalytics() {
 		analyticsInjectBuilder.WriteString("</script>")
 	}
 	analyticsInjectBuilder.WriteString("<!--Google Analytics QuantumNous-->\n")
-	analyticsInject := analyticsInjectBuilder.String()
-	indexPage = bytes.ReplaceAll(indexPage, []byte("<!--Google Analytics-->\n"), []byte(analyticsInject))
+	analyticsInject := []byte(analyticsInjectBuilder.String())
+	placeholder := []byte("<!--Google Analytics-->\n")
+	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
+	classicIndexPage = bytes.ReplaceAll(classicIndexPage, placeholder, analyticsInject)
 }
 
 func InitResources() error {
@@ -339,6 +394,10 @@ func InitResources() error {
 		common.FatalLog("failed to initialize database: " + err.Error())
 		return err
 	}
+	if err = authz.Init(model.DB); err != nil {
+		common.FatalLog("failed to initialize authorization: " + err.Error())
+		return err
+	}
 
 	model.CheckSetup()
 
@@ -362,6 +421,8 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+
+	perfmetrics.Init()
 
 	// 启动系统监控
 	common.StartSystemMonitor()

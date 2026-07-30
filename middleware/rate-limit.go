@@ -24,6 +24,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 	key := "rateLimit:" + mark + c.ClientIP()
 	listLength, err := rdb.LLen(ctx, key).Result()
 	if err != nil {
+		fmt.Println(err.Error())
 		c.Status(http.StatusInternalServerError)
 		c.Abort()
 		return
@@ -35,6 +36,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		oldTimeStr, _ := rdb.LIndex(ctx, key, -1).Result()
 		oldTime, err := time.Parse(timeFormat, oldTimeStr)
 		if err != nil {
+			fmt.Println(err)
 			c.Status(http.StatusInternalServerError)
 			c.Abort()
 			return
@@ -42,6 +44,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		nowTimeStr := time.Now().Format(timeFormat)
 		nowTime, err := time.Parse(timeFormat, nowTimeStr)
 		if err != nil {
+			fmt.Println(err)
 			c.Status(http.StatusInternalServerError)
 			c.Abort()
 			return
@@ -193,7 +196,10 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 }
 
 // SearchRateLimit returns a per-user rate limiter for search endpoints.
-// 10 requests per 60 seconds per user (by user ID, not IP).
+// Configurable via SEARCH_RATE_LIMIT_ENABLE / SEARCH_RATE_LIMIT / SEARCH_RATE_LIMIT_DURATION.
 func SearchRateLimit() func(c *gin.Context) {
+	if !common.SearchRateLimitEnable {
+		return defNext
+	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }

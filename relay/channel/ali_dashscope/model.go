@@ -73,14 +73,14 @@ type Wan27Content struct {
 }
 
 type Wan27ImageParameters struct {
-	N                int              `json:"n,omitempty"`
-	Size             string           `json:"size,omitempty"`
-	Watermark        *bool            `json:"watermark,omitempty"`
-	Seed             int              `json:"seed,omitempty"`
-	ThinkingMode     *bool            `json:"thinking_mode,omitempty"`
-	EnableSequential *bool            `json:"enable_sequential,omitempty"`
-	BboxList         json.RawMessage  `json:"bbox_list,omitempty"`
-	ColorPalette     json.RawMessage  `json:"color_palette,omitempty"`
+	N                int             `json:"n,omitempty"`
+	Size             string          `json:"size,omitempty"`
+	Watermark        *bool           `json:"watermark,omitempty"`
+	Seed             int             `json:"seed,omitempty"`
+	ThinkingMode     *bool           `json:"thinking_mode,omitempty"`
+	EnableSequential *bool           `json:"enable_sequential,omitempty"`
+	BboxList         json.RawMessage `json:"bbox_list,omitempty"`
+	ColorPalette     json.RawMessage `json:"color_palette,omitempty"`
 }
 
 // Wan2.7 synchronous image response

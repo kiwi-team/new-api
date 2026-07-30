@@ -25,7 +25,7 @@ import { useTranslation } from 'react-i18next';
 import SettingGeminiModel from '../../pages/Setting/Model/SettingGeminiModel';
 import SettingClaudeModel from '../../pages/Setting/Model/SettingClaudeModel';
 import SettingGlobalModel from '../../pages/Setting/Model/SettingGlobalModel';
-import SettingChannelConfig from '@/pages/Setting/Model/SettingChannelConfig';
+import SettingChannelConfig from '../../pages/Setting/Model/SettingChannelConfig';
 import SettingGrokModel from '../../pages/Setting/Model/SettingGrokModel';
 import SettingsChannelAffinity from '../../pages/Setting/Operation/SettingsChannelAffinity';
 

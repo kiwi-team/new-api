@@ -2,46 +2,48 @@ package gemini
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TestUploadFileToGemini_Integration 是一个集成测试，它会真实地上传文件到 Gemini API。
+// 这两个用例是打真实网络的集成测试：需要一个可用的 Gemini API Key，
+// 且被测 URL 必须可访问，因此默认跳过，仅在显式配置后手动运行。
+//
+//	GEMINI_TEST_API_KEY=xxx go test ./relay/channel/gemini/ -run Integration
+const (
+	geminiTestAPIKeyEnv  = "GEMINI_TEST_API_KEY"
+	geminiTestBaseURLEnv = "GEMINI_TEST_BASE_URL"
+	geminiTestFileURLEnv = "GEMINI_TEST_FILE_URL"
+)
+
+const defaultGeminiTestFileURL = "https://ark-project.tos-cn-beijing.volces.com/images/view.jpeg"
+
 func TestUploadFileToGemini_Integration(t *testing.T) {
-	// 1. 从环境变量中获取 API 密钥
-	//apiKey := "AIzaSyAp4eSJmA6BSuS0SLIadwJnmBjzsabjtI0"
-	apiKey := "AIzaSyA2NxmXGDE4GbjoT1giCcvK-DnKCRCUpCE"
-	baseUrl := ""
-	//fileUri := "1.mp4"
-	//fileUri := "17519768096356221.mp3"
-	fileUri := "https://ark-project.tos-cn-beijing.volces.com/images/view.jpeg"
-	//fileUri := "https://toiotech.s3.cn-northwest-1.amazonaws.com.cn/images/163-1.png"
-
-	// 3. 创建一个真实的 Gemini 客户端
-	ctx := context.Background()
-	uploadedFile, err := UploadFileToGemini(ctx, fileUri, apiKey, baseUrl)
-	if err != nil {
-		t.Fatalf("UploadFileToGemini failed: %v", err)
+	apiKey := os.Getenv(geminiTestAPIKeyEnv)
+	if apiKey == "" {
+		t.Skipf("%s not set, skipping Gemini upload integration test", geminiTestAPIKeyEnv)
 	}
-	fmt.Printf("uploadedFile: %#v\n", uploadedFile)
-
-	// 6. 断言结果
-	if uploadedFile == nil {
-		t.Fatal("Expected a file from Gemini, but got nil")
-	}
-	if uploadedFile.URI == "" {
-		t.Error("Expected uploaded file to have a name, but it was empty")
+	fileUri := os.Getenv(geminiTestFileURLEnv)
+	if fileUri == "" {
+		fileUri = defaultGeminiTestFileURL
 	}
 
-	t.Logf("Successfully uploaded file to Gemini. uri: %s", uploadedFile.URI)
+	uploadedFile, err := UploadFileToGemini(context.Background(), fileUri, apiKey, os.Getenv(geminiTestBaseURLEnv))
+	require.NoError(t, err, "UploadFileToGemini failed")
+	require.NotNil(t, uploadedFile, "expected a file from Gemini")
+	assert.NotEmpty(t, uploadedFile.URI, "expected uploaded file to have a URI")
 }
 
-func TestGetFileMimeType(t *testing.T) {
-	//fileUri := "https://ark-project.tos-cn-beijing.volces.com/images/view.jpeg"
-	fileUri := "https://storage.googleapis.com/toiotech2/20250930031649_pAmVLBJ5D0.jpg"
-	mimeType, err := GetFileMimeType(fileUri)
-	if err != nil {
-		t.Fatalf("GetFileMimeType failed: %v", err)
+func TestGetFileMimeType_Integration(t *testing.T) {
+	fileUri := os.Getenv(geminiTestFileURLEnv)
+	if fileUri == "" {
+		t.Skipf("%s not set, skipping Gemini mime type integration test", geminiTestFileURLEnv)
 	}
-	fmt.Printf("mimeType: %s\n", mimeType)
+
+	mimeType, err := GetFileMimeType(fileUri)
+	require.NoError(t, err, "GetFileMimeType failed")
+	assert.NotEmpty(t, mimeType)
 }

@@ -74,7 +74,7 @@ export const DEBUG_TABS = {
 };
 
 // ========== API 相关常量 ==========
-export const API_ENDPOINTS = {
+export const PG_API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
   USER_MODELS: '/api/user/models',
   USER_GROUPS: '/api/user/self/groups',
@@ -125,7 +125,7 @@ export const ERROR_MESSAGES = {
 };
 
 // ========== 存储键名 ==========
-export const STORAGE_KEYS = {
+export const PG_STORAGE_KEYS = {
   CONFIG: 'playground_config',
   MESSAGES: 'playground_messages',
 };

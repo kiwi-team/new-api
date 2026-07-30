@@ -23,15 +23,70 @@ func setupServiceTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err, "failed to connect to test database")
 
 	// Set the global flags for SQLite
-	common.UsingSQLite = true
-	common.UsingMySQL = false
-	common.UsingPostgreSQL = false
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 
-	// Run migrations for Project and ProjectAllocation tables
-	err = db.AutoMigrate(&model.Project{}, &model.ProjectAllocation{})
+	// 分配计划与 quota_data 是项目预算的一等公民：额度按计划分配，已用额度来自
+	// quota_data 的消费流水，因此这两张表必须和 Project/ProjectAllocation 一起建。
+	err = db.AutoMigrate(&model.Project{}, &model.ProjectAllocationPlan{}, &model.ProjectAllocation{}, &model.QuotaData{})
 	require.NoError(t, err, "failed to migrate test database")
 
 	return db
+}
+
+// createProjectWithActivePlan 创建项目并为其建立一个未过期的、已激活的分配计划。
+// 项目预算只在激活计划的作用域内有效：没有 active_plan_id、或计划已过期，
+// 任何分配都不生效，因此测试夹具必须显式提供计划。
+func createProjectWithActivePlan(db *gorm.DB, projectName string, totalBudget int, status int) (*model.Project, *model.ProjectAllocationPlan, error) {
+	db.Where("project_name = ?", projectName).Delete(&model.Project{})
+
+	project := &model.Project{
+		ProjectName: projectName,
+		TotalBudget: totalBudget,
+		Status:      status,
+	}
+	if err := db.Create(project).Error; err != nil {
+		return nil, nil, err
+	}
+
+	plan := &model.ProjectAllocationPlan{
+		ProjectId: project.Id,
+		PlanName:  projectName + "-plan",
+		StartDate: "20000101",
+		EndDate:   "29991231",
+	}
+	if err := db.Create(plan).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := db.Model(&model.Project{}).Where("id = ?", project.Id).Update("active_plan_id", plan.Id).Error; err != nil {
+		return nil, nil, err
+	}
+	project.ActivePlanId = plan.Id
+
+	return project, plan, nil
+}
+
+// createPlanAllocation 在指定计划下给用户分配额度，并按 usedUnits 写入等价的消费流水。
+// allocated_quota 以「额度单位」计价，而 quota_data.quota 是原始 quota，
+// 两者相差 common.QuotaPerUnit —— 生产代码正是按这个倍率折算已用额度的。
+func createPlanAllocation(db *gorm.DB, project *model.Project, plan *model.ProjectAllocationPlan, clientUserId string, allocatedQuota int, usedUnits int) error {
+	allocation := &model.ProjectAllocation{
+		ProjectId:      project.Id,
+		PlanId:         plan.Id,
+		ClientUserId:   clientUserId,
+		AllocatedQuota: allocatedQuota,
+	}
+	if err := db.Create(allocation).Error; err != nil {
+		return err
+	}
+	if usedUnits == 0 {
+		return nil
+	}
+	return db.Create(&model.QuotaData{
+		PlanId:       plan.Id,
+		ProjectName:  project.ProjectName,
+		ClientUserId: clientUserId,
+		Quota:        usedUnits * int(common.QuotaPerUnit),
+	}).Error
 }
 
 // cleanupServiceTestDB cleans up the test database
@@ -116,24 +171,12 @@ func TestProperty4_ProjectRequestValidation(t *testing.T) {
 	// Property 4.2: Paused project returns "project is paused"
 	properties.Property("paused project returns project is paused error", prop.ForAll(
 		func(projectName string, clientUserId string, totalBudget int, allocatedQuota int) bool {
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: totalBudget,
-				Status:      model.ProjectStatusPaused,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, projectName, totalBudget, model.ProjectStatusPaused)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
-			db.Where("project_id = ?", project.Id).Delete(&model.ProjectAllocation{})
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   clientUserId,
-				AllocatedQuota: allocatedQuota,
-				UsedQuota:      0,
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, 0); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}
@@ -164,24 +207,12 @@ func TestProperty4_ProjectRequestValidation(t *testing.T) {
 			if allocatedUserId == unallocatedUserId {
 				return true
 			}
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: totalBudget,
-				Status:      model.ProjectStatusEnabled,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, projectName, totalBudget, model.ProjectStatusEnabled)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
-			db.Where("project_id = ?", project.Id).Delete(&model.ProjectAllocation{})
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   allocatedUserId,
-				AllocatedQuota: allocatedQuota,
-				UsedQuota:      0,
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, allocatedUserId, allocatedQuota, 0); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}
@@ -210,24 +241,12 @@ func TestProperty4_ProjectRequestValidation(t *testing.T) {
 	// Property 4.4: User with exhausted quota returns "project quota exceeded"
 	properties.Property("user with exhausted quota returns quota exceeded error", prop.ForAll(
 		func(projectName string, clientUserId string, totalBudget int, allocatedQuota int) bool {
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: totalBudget,
-				Status:      model.ProjectStatusEnabled,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, projectName, totalBudget, model.ProjectStatusEnabled)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
-			db.Where("project_id = ?", project.Id).Delete(&model.ProjectAllocation{})
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   clientUserId,
-				AllocatedQuota: allocatedQuota,
-				UsedQuota:      allocatedQuota,
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, allocatedQuota); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}
@@ -262,24 +281,12 @@ func TestProperty4_ProjectRequestValidation(t *testing.T) {
 			if usedQuota < 0 {
 				usedQuota = 0
 			}
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: totalBudget,
-				Status:      model.ProjectStatusEnabled,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, projectName, totalBudget, model.ProjectStatusEnabled)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
-			db.Where("project_id = ?", project.Id).Delete(&model.ProjectAllocation{})
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   clientUserId,
-				AllocatedQuota: allocatedQuota,
-				UsedQuota:      usedQuota,
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, usedQuota); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}
@@ -416,14 +423,9 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 			for i := 0; i < numAllocations; i++ {
 				// Create a unique project for each allocation
 				projectName := clientUserId + "_proj_" + string(rune('a'+i))
-				db.Where("project_name = ?", projectName).Delete(&model.Project{})
 
-				project := model.Project{
-					ProjectName: projectName,
-					TotalBudget: 10000000, // Large enough to accommodate allocations
-					Status:      model.ProjectStatusEnabled,
-				}
-				if err := db.Create(&project).Error; err != nil {
+				project, plan, err := createProjectWithActivePlan(db, projectName, 10000000, model.ProjectStatusEnabled)
+				if err != nil {
 					t.Logf("Failed to create project: %v", err)
 					return false
 				}
@@ -432,13 +434,7 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 				allocatedQuota := (i + 1) * 10000
 				usedQuota := (i + 1) * 1000
 
-				allocation := model.ProjectAllocation{
-					ProjectId:      project.Id,
-					ClientUserId:   clientUserId,
-					AllocatedQuota: allocatedQuota,
-					UsedQuota:      usedQuota,
-				}
-				if err := db.Create(&allocation).Error; err != nil {
+				if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, usedQuota); err != nil {
 					t.Logf("Failed to create allocation: %v", err)
 					return false
 				}
@@ -484,14 +480,9 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 			var expectedProjectRemaining int
 			for i := 0; i < numAllocations; i++ {
 				projectName := clientUserId + "_proj_" + string(rune('a'+i))
-				db.Where("project_name = ?", projectName).Delete(&model.Project{})
 
-				project := model.Project{
-					ProjectName: projectName,
-					TotalBudget: 10000000,
-					Status:      model.ProjectStatusEnabled,
-				}
-				if err := db.Create(&project).Error; err != nil {
+				project, plan, err := createProjectWithActivePlan(db, projectName, 10000000, model.ProjectStatusEnabled)
+				if err != nil {
 					t.Logf("Failed to create project: %v", err)
 					return false
 				}
@@ -499,13 +490,7 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 				allocatedQuota := (i + 1) * 10000
 				usedQuota := (i + 1) * 1000
 
-				allocation := model.ProjectAllocation{
-					ProjectId:      project.Id,
-					ClientUserId:   clientUserId,
-					AllocatedQuota: allocatedQuota,
-					UsedQuota:      usedQuota,
-				}
-				if err := db.Create(&allocation).Error; err != nil {
+				if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, usedQuota); err != nil {
 					t.Logf("Failed to create allocation: %v", err)
 					return false
 				}
@@ -660,8 +645,8 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 		quotaGen,
 	))
 
-	// Property 6.6: Project allocations with used_quota > allocated_quota contribute negative to total
-	properties.Property("over-used allocations contribute negative to total", prop.ForAll(
+	// Property 6.6: 超支的项目分配只归零，不会倒扣固定/临时额度
+	properties.Property("over-used allocations contribute zero instead of negative", prop.ForAll(
 		func(clientUserId string, fixedQuota int, tempQuota int, allocatedQuota int, extraUsed int) bool {
 			// Clean up any existing data for this user
 			db.Where("client_user_id = ?", clientUserId).Delete(&model.CliendUserQuota{})
@@ -681,35 +666,20 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 			}
 
 			// Create a project with over-used allocation
-			projectName := clientUserId + "_overused_proj"
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: 10000000,
-				Status:      model.ProjectStatusEnabled,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, clientUserId+"_overused_proj", 10000000, model.ProjectStatusEnabled)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
 
 			// Create allocation with used > allocated
-			usedQuota := allocatedQuota + extraUsed
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   clientUserId,
-				AllocatedQuota: allocatedQuota,
-				UsedQuota:      usedQuota,
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, clientUserId, allocatedQuota, allocatedQuota+extraUsed); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}
 
-			// Expected project remaining = allocated - used (negative)
-			projectRemaining := allocatedQuota - usedQuota
-			expectedTotal := fixedQuota + tempQuota + projectRemaining
+			// 项目已超支，剩余额度按 0 计，固定/临时额度不受影响
+			expectedTotal := fixedQuota + tempQuota
 
 			actualTotal, err := GetUserTotalBudget(clientUserId)
 			if err != nil {
@@ -718,8 +688,8 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 			}
 
 			if actualTotal != expectedTotal {
-				t.Logf("Budget mismatch with over-used: expected %d (fixed=%d + temp=%d + project=%d), got %d",
-					expectedTotal, fixedQuota, tempQuota, projectRemaining, actualTotal)
+				t.Logf("Budget mismatch with over-used: expected %d (fixed=%d + temp=%d + project=0), got %d",
+					expectedTotal, fixedQuota, tempQuota, actualTotal)
 				return false
 			}
 
@@ -766,26 +736,13 @@ func TestProperty6_UserTotalBudgetCalculation(t *testing.T) {
 			}
 
 			// Create a project allocation with zero remaining
-			projectName := clientUserId + "_zero_proj"
-			db.Where("project_name = ?", projectName).Delete(&model.Project{})
-
-			project := model.Project{
-				ProjectName: projectName,
-				TotalBudget: 10000,
-				Status:      model.ProjectStatusEnabled,
-			}
-			if err := db.Create(&project).Error; err != nil {
+			project, plan, err := createProjectWithActivePlan(db, clientUserId+"_zero_proj", 10000, model.ProjectStatusEnabled)
+			if err != nil {
 				t.Logf("Failed to create project: %v", err)
 				return false
 			}
 
-			allocation := model.ProjectAllocation{
-				ProjectId:      project.Id,
-				ClientUserId:   clientUserId,
-				AllocatedQuota: 1000,
-				UsedQuota:      1000, // Fully used
-			}
-			if err := db.Create(&allocation).Error; err != nil {
+			if err := createPlanAllocation(db, project, plan, clientUserId, 1000, 1000); err != nil {
 				t.Logf("Failed to create allocation: %v", err)
 				return false
 			}

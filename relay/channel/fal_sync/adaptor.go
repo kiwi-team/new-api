@@ -1451,11 +1451,11 @@ func extractGeminiPromptAndImages(req *dto.GeminiChatRequest) (string, []string)
 // corresponding FAL nano-banana-2 request fields.
 func applyGeminiGenerationConfig(req *NanoBanana2Request, gemReq *dto.GeminiChatRequest) {
 	cfg := gemReq.GenerationConfig
-	if cfg.CandidateCount > 0 {
-		req.NumImages = cfg.CandidateCount
+	if cfg.CandidateCount != nil && *cfg.CandidateCount > 0 {
+		req.NumImages = *cfg.CandidateCount
 	}
-	if cfg.Seed != 0 {
-		req.Seed = cfg.Seed
+	if cfg.Seed != nil && *cfg.Seed != 0 {
+		req.Seed = *cfg.Seed
 	}
 	if cfg.ThinkingConfig != nil {
 		switch strings.ToLower(strings.TrimSpace(cfg.ThinkingConfig.ThinkingLevel)) {

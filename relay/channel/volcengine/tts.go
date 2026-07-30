@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -202,9 +203,6 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 		)
 	}
 
-	//contentType := getContentTypeByEncoding(encoding)
-	//c.Header("Content-Type", contentType)
-	//c.Data(http.StatusOK, contentType, audioData)
 	audioStr := base64.StdEncoding.EncodeToString(audioData)
 	audioUrl, err1 := service.SimpleUploadToS3(c, audioStr)
 	if err1 != nil {
@@ -276,6 +274,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 	c.Header("Content-Type", contentType)
 	c.Header("Transfer-Encoding", "chunked")
 	var audio []byte
+
 	for {
 		msg, recvErr := ReceiveMessage(conn)
 		if recvErr != nil {
@@ -301,14 +300,6 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 		case MsgTypeAudioOnlyServer:
 			if len(msg.Payload) > 0 {
 				audio = append(audio, msg.Payload...)
-				// if _, writeErr := c.Writer.Write(msg.Payload); writeErr != nil {
-				// 	return nil, types.NewErrorWithStatusCode(
-				// 		fmt.Errorf("failed to write audio data: %w", writeErr),
-				// 		types.ErrorCodeBadResponse,
-				// 		http.StatusInternalServerError,
-				// 	)
-				// }
-				// c.Writer.Flush()
 			}
 
 			if msg.Sequence < 0 {
@@ -353,9 +344,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 	common.ApiSuccess(c, gin.H{"audio_url": audioUrl})
 	//c.Status(http.StatusOK)
 	usage = &dto.Usage{
-		PromptTokens:     info.Usage.PromptTokens, //info.PromptTokens,
+		PromptTokens:     info.GetEstimatePromptTokens(), //info.PromptTokens,
 		CompletionTokens: 0,
-		TotalTokens:      info.Usage.PromptTokens, //info.PromptTokens,
+		TotalTokens:      info.GetEstimatePromptTokens(), //info.PromptTokens,
 	}
 	return usage, nil
 }

@@ -57,7 +57,6 @@ import {
 import OIDCIcon from '../common/logo/OIDCIcon';
 import LinuxDoIcon from '../common/logo/LinuxDoIcon';
 import WeChatIcon from '../common/logo/WeChatIcon';
-import TelegramLoginButton from 'react-telegram-login/src';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 import { useTranslation } from 'react-i18next';
@@ -334,41 +333,6 @@ const RegisterForm = () => {
     setOtherRegisterOptionsLoading(false);
   };
 
-  const onTelegramLoginClicked = async (response) => {
-    const fields = [
-      'id',
-      'first_name',
-      'last_name',
-      'username',
-      'photo_url',
-      'auth_date',
-      'hash',
-      'lang',
-    ];
-    const params = {};
-    fields.forEach((field) => {
-      if (response[field]) {
-        params[field] = response[field];
-      }
-    });
-    try {
-      const res = await API.get(`/api/oauth/telegram/login`, { params });
-      const { success, message, data } = res.data;
-      if (success) {
-        userDispatch({ type: 'login', payload: data });
-        localStorage.setItem('user', JSON.stringify(data));
-        showSuccess('登录成功！');
-        setUserData(data);
-        updateAPI();
-        navigate('/');
-      } else {
-        showError(message);
-      }
-    } catch (error) {
-      showError('登录失败，请重试');
-    }
-  };
-
   const renderOAuthOptions = () => {
     return (
       <div className='flex flex-col items-center'>
@@ -470,15 +434,6 @@ const RegisterForm = () => {
                   >
                     <span className='ml-3'>{t('使用 LinuxDO 继续')}</span>
                   </Button>
-                )}
-
-                {status.telegram_oauth && (
-                  <div className='flex justify-center my-2'>
-                    <TelegramLoginButton
-                      dataOnauth={onTelegramLoginClicked}
-                      botName={status.telegram_bot_name}
-                    />
-                  </div>
                 )}
 
                 <Divider margin='12px' align='center'>
@@ -668,8 +623,7 @@ const RegisterForm = () => {
                 status.discord_oauth ||
                 status.oidc_enabled ||
                 status.wechat_login ||
-                status.linuxdo_oauth ||
-                status.telegram_oauth) && (
+                status.linuxdo_oauth) && (
                 <>
                   <Divider margin='12px' align='center'>
                     {t('或')}
@@ -764,8 +718,7 @@ const RegisterForm = () => {
           status.discord_oauth ||
           status.oidc_enabled ||
           status.wechat_login ||
-          status.linuxdo_oauth ||
-          status.telegram_oauth
+          status.linuxdo_oauth
         )
           ? renderEmailRegisterForm()
           : renderOAuthOptions()}

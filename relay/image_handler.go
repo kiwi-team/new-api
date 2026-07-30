@@ -83,16 +83,21 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 			// apply param override
 			if len(info.ParamOverride) > 0 {
-				jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride, relaycommon.BuildParamOverrideContext(info))
+				jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 				if err != nil {
-					return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+					return newAPIErrorFromParamOverride(err)
 				}
 			}
 
-			if common.DebugEnabled {
-				logger.LogDebug(c, fmt.Sprintf("image request body: %s", string(jsonData)))
+			logger.LogDebug(c, "image request body: %s", jsonData)
+			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 			}
-			requestBody = bytes.NewBuffer(jsonData)
+			defer closer.Close()
+			jsonData = nil
+			info.UpstreamRequestBodySize = size
+			requestBody = body
 		}
 	}
 
@@ -145,16 +150,21 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 	}
 
-	if usage.(*dto.Usage).TotalTokens == 0 {
-		usage.(*dto.Usage).TotalTokens = int(request.N)
-	}
-	if usage.(*dto.Usage).PromptTokens == 0 {
-		usage.(*dto.Usage).PromptTokens = int(request.N)
+	imageN := uint(1)
+	if request.N != nil {
+		imageN = *request.N
 	}
 
-	quality := "standard"
-	if request.Quality == "hd" {
-		quality = "hd"
+	if usage.(*dto.Usage).TotalTokens == 0 {
+		usage.(*dto.Usage).TotalTokens = 1
+	}
+	if usage.(*dto.Usage).PromptTokens == 0 {
+		usage.(*dto.Usage).PromptTokens = 1
+	}
+
+	quality := request.Quality
+	if quality == "" {
+		quality = "standard"
 	}
 
 	var logContent []string
@@ -165,10 +175,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if len(quality) > 0 {
 		logContent = append(logContent, fmt.Sprintf("品质 %s", quality))
 	}
-	if request.N > 0 {
-		logContent = append(logContent, fmt.Sprintf("生成数量 %d", request.N))
+	if imageN > 0 {
+		logContent = append(logContent, fmt.Sprintf("生成数量 %d", imageN))
 	}
 
-	postConsumeQuota(c, info, usage.(*dto.Usage), logContent, requestStr, responseStr)
+	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent, requestStr, responseStr)
 	return nil
 }

@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -38,65 +38,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	if err != nil {
 		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
-	//old	if len(textRequest.Messages) == 0 {
-	//		return nil, errors.New("field messages is required")
-	//	}
-	//	if textRequest.Model == "" {
-	//		return nil, errors.New("field model is required")
-	//	}
-	//	return textRequest, nil
-	//}
-
-	// old
-	//	err = helper.ModelMappedHelper(c, info, request)
-	//	if err != nil {
-	//		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
-	//	}
-	//
-	//	if textRequest.Stream {
-	//		relayInfo.IsStream = true
-	//	}
-	//
-	//	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
-	//	requestStr := ""
-	//	responseStr := ""
-	//
-	//	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
-	//	if err != nil {
-	//		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
-	//	}
-	//
-	//	promptTokens, err := getClaudePromptTokens(textRequest, relayInfo)
-	//	// count messages token error 计算promptTokens错误
-	//	if err != nil {
-	//		return types.NewError(err, types.ErrorCodeCountTokenFailed)
-	//	}
-	//
-	//	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(textRequest.MaxTokens))
-	//	if err != nil {
-	//		return types.NewError(err, types.ErrorCodeModelPriceError)
-	//	}
-	//
-	//	// pre-consume quota 预消耗配额
-	//	preConsumedQuota, userQuota, newAPIError := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
-	//
-	//	if newAPIError != nil {
-	//		return newAPIError
-	//	}
-	//	defer func() {
-	//		if newAPIError != nil {
-	//			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
-	//		}
-	//	}()
-	//
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
-	}
-
-	if request.Stream {
-		info.IsStream = true
 	}
 
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
@@ -133,8 +78,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		claude.InsertClaudeCodeBillingHeader(request, info.ChannelSetting.ClaudeCodeBillingHeader)
 	}
 
-	if request.MaxTokens == 0 {
-		request.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
+	if request.MaxTokens == nil || *request.MaxTokens == 0 {
+		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
+		request.MaxTokens = &defaultMaxTokens
 	}
 
 	isOpus47 := strings.HasPrefix(request.Model, "claude-opus-4-7")
@@ -148,26 +94,45 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			Type: "adaptive",
 		}
 		request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		request.TopP = 0
-		request.Temperature = common.GetPointer[float64](1.0)
+		if strings.HasPrefix(request.Model, "claude-opus-4-7") ||
+			strings.HasPrefix(request.Model, "claude-opus-4-8") {
+			// Opus 4.7/4.8 reject non-default temperature/top_p/top_k with 400
+			// and defaults display to "omitted"; restore the 4.6 visible summary.
+			request.Thinking.Display = "summarized"
+			request.Temperature = nil
+			request.TopP = nil
+			request.TopK = nil
+		} else {
+			request.Temperature = common.GetPointer[float64](1.0)
+		}
 		info.UpstreamModelName = request.Model
 	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
 		strings.HasSuffix(request.Model, "-thinking") {
 		if request.Thinking == nil {
-			// 因为BudgetTokens 必须大于1024
-			if request.MaxTokens < 1280 {
-				request.MaxTokens = 1280
-			}
+			baseModel := strings.TrimSuffix(request.Model, "-thinking")
+			if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
+				strings.HasPrefix(baseModel, "claude-opus-4-8") {
+				// Opus 4.7/4.8 reject thinking.type="enabled"; use adaptive at high effort.
+				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
+				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+				request.Temperature = nil
+				request.TopP = nil
+				request.TopK = nil
+			} else {
+				// 因为BudgetTokens 必须大于1024
+				if request.MaxTokens == nil || *request.MaxTokens < 1280 {
+					request.MaxTokens = common.GetPointer[uint](1280)
+				}
 
-			// BudgetTokens 为 max_tokens 的 80%
-			request.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](int(float64(request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+				// BudgetTokens 为 max_tokens 的 80%
+				request.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: common.GetPointer[int](int(float64(*request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+				}
+				// TODO: 临时处理
+				// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
+				request.Temperature = common.GetPointer[float64](1.0)
 			}
-			// TODO: 临时处理
-			// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
-			request.TopP = 0
-			request.Temperature = common.GetPointer[float64](1.0)
 		}
 		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
 			request.Model = strings.TrimSuffix(request.Model, "-thinking")
@@ -188,8 +153,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 		request.Temperature = nil
-		request.TopP = 0
-		request.TopK = 0
+		request.TopP = nil
+		request.TopK = nil
 		request.Model = strings.TrimSuffix(request.Model, "-thinking")
 		info.UpstreamModelName = request.Model
 	}
@@ -222,9 +187,13 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
-		openAIRequest, convErr := service.ClaudeToOpenAIRequest(*request, info)
+		result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		openAIRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+		if !ok {
+			return types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, openAIRequest)
@@ -232,7 +201,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return newApiErr
 		}
 
-		service.PostClaudeConsumeQuota(c, info, usage, requestStr, responseStr)
+		//service.PostClaudeConsumeQuota(c, info, usage, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usage, nil, requestStr, responseStr)
 		return nil
 	}
 
@@ -242,7 +212,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		//requestBody = bytes.NewBuffer(body)
+		info.UpstreamRequestBodySize = storage.Size()
 		requestBody = common.ReaderOnly(storage)
 		// 序列化 textRequest 为 JSON 字符串
 		if saveRequestResponse {
@@ -261,16 +231,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		// remove disabled fields for Claude API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		// apply param override
 		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverride(jsonData, info.ParamOverride, relaycommon.BuildParamOverrideContext(info))
+			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
-				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
+				return newAPIErrorFromParamOverride(err)
 			}
 		}
 
@@ -281,15 +251,21 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewErrorWithStatusCode(validateErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 
-		if common.DebugEnabled {
-			println("requestBody: ", string(jsonData))
-		}
-		requestBody = bytes.NewBuffer(jsonData)
-
 		// 序列化 textRequest 为 JSON 字符串
 		if saveRequestResponse {
 			requestStr = string(jsonData)
 		}
+
+		logger.LogDebug(c, "requestBody: %s", jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
+
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -332,7 +308,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		responseStr = streamRecorder.GetRecordedString()
 	}
 
-	service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage), requestStr, responseStr)
-	//service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage))
+	//service.PostClaudeConsumeQuota(c, info, usage.(*dto.Usage), requestStr, responseStr)
+	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil, requestStr, responseStr)
 	return nil
 }

@@ -21,10 +21,12 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 // https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference?hl=zh-cn#blob
@@ -201,8 +203,8 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
 					IncludeThoughts: true,
 				}
-				if geminiRequest.GenerationConfig.MaxOutputTokens > 0 {
-					budgetTokens := model_setting.GetGeminiSettings().ThinkingAdapterBudgetTokensPercentage * float64(geminiRequest.GenerationConfig.MaxOutputTokens)
+				if maxOutputTokens := lo.FromPtr(geminiRequest.GenerationConfig.MaxOutputTokens); maxOutputTokens > 0 {
+					budgetTokens := model_setting.GetGeminiSettings().ThinkingAdapterBudgetTokensPercentage * float64(maxOutputTokens)
 					clampedBudget := clampThinkingBudget(modelName, int(budgetTokens))
 					geminiRequest.GenerationConfig.ThinkingConfig.ThinkingBudget = common.GetPointer(clampedBudget)
 				} else {
@@ -234,11 +236,16 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 	geminiRequest := dto.GeminiChatRequest{
 		Contents: make([]dto.GeminiChatContent, 0, len(textRequest.Messages)),
 		GenerationConfig: dto.GeminiChatGenerationConfig{
-			Temperature:     textRequest.Temperature,
-			TopP:            textRequest.TopP,
-			MaxOutputTokens: textRequest.GetMaxTokens(),
-			Seed:            int64(textRequest.Seed),
+			Temperature: textRequest.Temperature,
+			TopP:        textRequest.TopP,
 		},
+	}
+	// max_tokens / seed 为 0 表示客户端未设置，不能下发（Gemini 会当成真实上限）
+	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
+		geminiRequest.GenerationConfig.MaxOutputTokens = common.GetPointer(maxTokens)
+	}
+	if textRequest.Seed != nil {
+		geminiRequest.GenerationConfig.Seed = common.GetPointer(int64(*textRequest.Seed))
 	}
 
 	attachThoughtSignature := (info.ChannelType == constant.ChannelTypeGemini ||
@@ -648,7 +655,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			} else if part.Type == dto.ContentTypeImageURL {
 				imageNum += 1
 				// 使用统一的文件服务获取图片数据
-				var source *types.FileSource
+				var source types.FileSource
 				imageUrl := part.GetImageMedia().Url
 
 				if constant.GeminiVisionMaxImageNum != -1 && imageNum > constant.GeminiVisionMaxImageNum {
@@ -1381,7 +1388,7 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 						toolCalls = append(toolCalls, *call)
 					}
 				} else if part.Thought {
-					choice.Message.ReasoningContent = part.Text
+					choice.Message.ReasoningContent = common.GetPointer(part.Text)
 				} else {
 					if part.ExecutableCode != nil {
 						texts = append(texts, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```")
@@ -1562,6 +1569,86 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*d
 	response.Choices = choices
 	return &response, isStop
 }
+func buildUsageFromGeminiMetadata(metadata *dto.GeminiUsageMetadata, fallbackPromptTokens int) dto.Usage {
+	usage := relayconvert.UsageFromGeminiMetadata(metadata, fallbackPromptTokens)
+	if usage == nil {
+		return dto.Usage{}
+	}
+	return *usage
+}
+
+func attachEstimatedGeminiBillingUsage(usage *dto.Usage) *dto.Usage {
+	if usage != nil && usage.BillingUsage == nil {
+		usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+	}
+	return usage
+}
+
+// patchGeminiZeroCompletionUsage estimates completion tokens locally when upstream
+// usageMetadata was billable but reported zero completion tokens even though output
+// content was actually received. Typical case: the client aborts a stream before the
+// final chunk that carries candidatesTokenCount, leaving prompt-only metadata; without
+// this patch the output side would settle at zero quota.
+func patchGeminiZeroCompletionUsage(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, responseText string, imageCount int) {
+	if usage == nil || usage.CompletionTokens > 0 {
+		return
+	}
+	if responseText == "" && imageCount == 0 {
+		return
+	}
+	estimated := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, usage.PromptTokens)
+	usage.CompletionTokens = estimated.CompletionTokens
+	if imageCount != 0 && usage.CompletionTokens == 0 {
+		usage.CompletionTokens = imageCount * 1400
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	// Overwrite the metadata-derived billing usage: effectiveBillingUsage prefers
+	// BillingUsage during settlement, so keeping the prompt-only metadata there
+	// would still bill zero completion tokens.
+	usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+}
+
+func geminiResponseUsageText(response *dto.GeminiChatResponse) string {
+	if response == nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				text.WriteString(part.Text)
+			}
+		}
+	}
+	return text.String()
+}
+
+func buildUsageFromGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, response *dto.GeminiChatResponse) dto.Usage {
+	metadata := response.GetUsageMetadata()
+	if dto.HasGeminiUsageMetadataTokens(metadata) {
+		usage := buildUsageFromGeminiMetadata(metadata, info.GetEstimatePromptTokens())
+		patchGeminiZeroCompletionUsage(c, info, &usage, geminiResponseUsageText(response), geminiResponseInlineImageCount(response))
+		return usage
+	}
+	usage := service.ResponseText2Usage(c, geminiResponseUsageText(response), info.UpstreamModelName, info.GetEstimatePromptTokens())
+	attachEstimatedGeminiBillingUsage(usage)
+	return *usage
+}
+
+func geminiResponseInlineImageCount(response *dto.GeminiChatResponse) int {
+	if response == nil {
+		return 0
+	}
+	count := 0
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData != nil && part.InlineData.MimeType != "" {
+				count++
+			}
+		}
+	}
+	return count
+}
 
 func handleStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.ChatCompletionsStreamResponse) error {
 	streamData, err := common.Marshal(resp)
@@ -1587,14 +1674,14 @@ func handleFinalStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.Ch
 func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, callback func(data string, geminiResponse *dto.GeminiChatResponse) bool) (*dto.Usage, *types.NewAPIError) {
 	var usage = &dto.Usage{}
 	var imageCount int
+	var hasBillableUsageMetadata bool
 	responseText := strings.Builder{}
 
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var geminiResponse dto.GeminiChatResponse
-		err := common.UnmarshalJsonStr(data, &geminiResponse)
-		if err != nil {
-			logger.LogError(c, "error unmarshalling stream response: "+err.Error())
-			return false
+		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
+			sr.Stop(fmt.Errorf("unmarshal: %w", err))
+			return
 		}
 
 		if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
@@ -1614,41 +1701,45 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 
 		// 更新使用量统计
-		if geminiResponse.UsageMetadata.TotalTokenCount != 0 {
-			usage.PromptTokens = geminiResponse.UsageMetadata.PromptTokenCount
-			usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount + geminiResponse.UsageMetadata.ThoughtsTokenCount
-			usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
-			usage.TotalTokens = geminiResponse.UsageMetadata.TotalTokenCount
-			usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
-			for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
-				if detail.Modality == "AUDIO" {
-					usage.PromptTokensDetails.AudioTokens = detail.TokenCount
-				} else if detail.Modality == "TEXT" {
-					usage.PromptTokensDetails.TextTokens = detail.TokenCount
-				}
-			}
+		// if geminiResponse.UsageMetadata.TotalTokenCount != 0 {
+		// 	usage.PromptTokens = geminiResponse.UsageMetadata.PromptTokenCount
+		// 	usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount + geminiResponse.UsageMetadata.ThoughtsTokenCount
+		// 	usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
+		// 	usage.TotalTokens = geminiResponse.UsageMetadata.TotalTokenCount
+		// 	usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+		// 	for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
+		// 		if detail.Modality == "AUDIO" {
+		// 			usage.PromptTokensDetails.AudioTokens = detail.TokenCount
+		// 		} else if detail.Modality == "TEXT" {
+		// 			usage.PromptTokensDetails.TextTokens = detail.TokenCount
+		// 		}
+		// 	}
+		// }
+		if metadata := geminiResponse.GetUsageMetadata(); dto.HasGeminiUsageMetadataTokens(metadata) {
+			mappedUsage := buildUsageFromGeminiMetadata(metadata, info.GetEstimatePromptTokens())
+			*usage = mappedUsage
+			hasBillableUsageMetadata = true
 		}
 
-		return callback(data, &geminiResponse)
+		if !callback(data, &geminiResponse) {
+			sr.Stop(fmt.Errorf("gemini callback stopped"))
+		}
 	})
 
-	if imageCount != 0 {
-		if usage.CompletionTokens == 0 {
-			usage.CompletionTokens = imageCount * 1400
-		}
-	}
-
-	usage.PromptTokensDetails.TextTokens = usage.PromptTokens
-	if usage.TotalTokens > 0 {
-		usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
-	}
-
-	if usage.CompletionTokens <= 0 {
+	if !hasBillableUsageMetadata {
 		if info.ReceivedResponseCount > 0 {
 			usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		} else {
 			usage = &dto.Usage{}
 		}
+		if imageCount != 0 && usage.CompletionTokens == 0 {
+			usage.CompletionTokens = imageCount * 1400
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
+		}
+		attachEstimatedGeminiBillingUsage(usage)
+	} else {
+		patchGeminiZeroCompletionUsage(c, info, usage, responseText.String(), imageCount)
 	}
 
 	return usage, nil
@@ -1667,6 +1758,14 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		response.Id = id
 		response.Created = createAt
 		response.Model = info.UpstreamModelName
+		if response.IsToolCall() {
+			finishReason = constant.FinishReasonToolCalls
+			if info.RelayFormat == types.RelayFormatClaude {
+				for choiceIdx := range response.Choices {
+					response.Choices[choiceIdx].FinishReason = nil
+				}
+			}
+		}
 		for choiceIdx := range response.Choices {
 			choiceKey := response.Choices[choiceIdx].Index
 			for toolIdx := range response.Choices[choiceIdx].Delta.ToolCalls {
@@ -1690,7 +1789,7 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			}
 		}
 
-		logger.LogDebug(c, fmt.Sprintf("info.SendResponseCount = %d", info.SendResponseCount))
+		logger.LogDebug(c, "info.SendResponseCount = %d", info.SendResponseCount)
 		if info.SendResponseCount == 0 {
 			// send first response
 			emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
@@ -1727,7 +1826,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			logger.LogError(c, err.Error())
 		}
 		if isStop {
-			_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+			if info.RelayFormat != types.RelayFormatClaude {
+				_ = handleStream(c, info, helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason))
+			}
 		}
 		return true
 	})
@@ -1737,6 +1838,10 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	}
 
 	response := helper.GenerateFinalUsageResponse(id, createAt, info.UpstreamModelName, *usage)
+	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo != nil && !info.ClaudeConvertInfo.Done {
+		response = helper.GenerateStopResponse(id, createAt, info.UpstreamModelName, finishReason)
+		response.Usage = usage
+	}
 	handleErr := handleFinalStream(c, info, response)
 	if handleErr != nil {
 		common.SysLog("send final response failed: " + handleErr.Error())
@@ -1750,30 +1855,29 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	service.CloseResponseBodyGracefully(resp)
-	if common.DebugEnabled {
-		println(string(responseBody))
-	}
+	logger.LogDebug(c, "Gemini response body: %s", responseBody)
 	var geminiResponse dto.GeminiChatResponse
 	err = common.Unmarshal(responseBody, &geminiResponse)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if len(geminiResponse.Candidates) == 0 {
-		usage := dto.Usage{
-			PromptTokens: geminiResponse.UsageMetadata.PromptTokenCount,
-		}
-		usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
-		usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
-		for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
-			if detail.Modality == "AUDIO" {
-				usage.PromptTokensDetails.AudioTokens = detail.TokenCount
-			} else if detail.Modality == "TEXT" {
-				usage.PromptTokensDetails.TextTokens = detail.TokenCount
-			}
-		}
-		if usage.PromptTokens <= 0 {
-			usage.PromptTokens = info.GetEstimatePromptTokens()
-		}
+		// usage := dto.Usage{
+		// 	PromptTokens: geminiResponse.UsageMetadata.PromptTokenCount,
+		// }
+		// usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
+		// usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+		// for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
+		// 	if detail.Modality == "AUDIO" {
+		// 		usage.PromptTokensDetails.AudioTokens = detail.TokenCount
+		// 	} else if detail.Modality == "TEXT" {
+		// 		usage.PromptTokensDetails.TextTokens = detail.TokenCount
+		// 	}
+		// }
+		// if usage.PromptTokens <= 0 {
+		// 	usage.PromptTokens = info.GetEstimatePromptTokens()
+		// }
+		usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 
 		var newAPIError *types.NewAPIError
 		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
@@ -1809,23 +1913,24 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	}
 	fullTextResponse := responseGeminiChat2OpenAI(c, &geminiResponse)
 	fullTextResponse.Model = info.UpstreamModelName
-	usage := dto.Usage{
-		PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
-		CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
-		TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
-	}
+	// usage := dto.Usage{
+	// 	PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
+	// 	CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
+	// 	TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
+	// }
 
-	usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
-	usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
-	usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
+	// usage.CompletionTokenDetails.ReasoningTokens = geminiResponse.UsageMetadata.ThoughtsTokenCount
+	// usage.PromptTokensDetails.CachedTokens = geminiResponse.UsageMetadata.CachedContentTokenCount
+	// usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
 
-	for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
-		if detail.Modality == "AUDIO" {
-			usage.PromptTokensDetails.AudioTokens = detail.TokenCount
-		} else if detail.Modality == "TEXT" {
-			usage.PromptTokensDetails.TextTokens = detail.TokenCount
-		}
-	}
+	// for _, detail := range geminiResponse.UsageMetadata.PromptTokensDetails {
+	// 	if detail.Modality == "AUDIO" {
+	// 		usage.PromptTokensDetails.AudioTokens = detail.TokenCount
+	// 	} else if detail.Modality == "TEXT" {
+	// 		usage.PromptTokensDetails.TextTokens = detail.TokenCount
+	// 	}
+	// }
+	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 
 	fullTextResponse.Usage = usage
 
@@ -1836,8 +1941,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		claudeResp := service.ResponseOpenAI2Claude(fullTextResponse, info)
-		claudeRespStr, err := common.Marshal(claudeResp)
+		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatClaude, fullTextResponse)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		claudeRespStr, err := common.Marshal(convertResult.Value)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -1927,7 +2035,7 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		})
 	}
 
-	jsonResponse, jsonErr := json.Marshal(openAIResponse)
+	jsonResponse, jsonErr := common.Marshal(openAIResponse)
 	if jsonErr != nil {
 		return nil, types.NewError(jsonErr, types.ErrorCodeBadResponseBody)
 	}

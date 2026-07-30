@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
-	"time"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -23,6 +19,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"io"
+	"strings"
+	"time"
 )
 
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
@@ -225,7 +224,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								logger.LogQuota(preConsumedQuota),
 								taskResult.TotalTokens,
 							))
-							if err := model.DecreaseUserQuota(task.UserId, quotaDelta); err != nil {
+							if err := model.DecreaseUserQuota(task.UserId, quotaDelta, false); err != nil {
 								logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
 							} else {
 								model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)

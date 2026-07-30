@@ -93,9 +93,6 @@ const SystemSetting = () => {
     EmailAliasRestrictionEnabled: '',
     SMTPSSLEnabled: '',
     EmailDomainWhitelist: [],
-    TelegramOAuthEnabled: '',
-    TelegramBotToken: '',
-    TelegramBotName: '',
     LinuxDOOAuthEnabled: '',
     LinuxDOClientId: '',
     LinuxDOClientSecret: '',
@@ -177,7 +174,6 @@ const SystemSetting = () => {
           case 'EmailVerificationEnabled':
           case 'GitHubOAuthEnabled':
           case 'WeChatAuthEnabled':
-          case 'TelegramOAuthEnabled':
           case 'RegisterEnabled':
           case 'RegisterUidCheckEnabled':
           case 'TurnstileCheckEnabled':
@@ -578,14 +574,6 @@ const SystemSetting = () => {
     if (options.length > 0) {
       await updateOptions(options);
     }
-  };
-
-  const submitTelegramSettings = async () => {
-    const options = [
-      { key: 'TelegramBotToken', value: inputs.TelegramBotToken },
-      { key: 'TelegramBotName', value: inputs.TelegramBotName },
-    ];
-    await updateOptions(options);
   };
 
   const submitTurnstile = async () => {
@@ -1083,15 +1071,6 @@ const SystemSetting = () => {
                         {t('允许通过微信登录 & 注册')}
                       </Form.Checkbox>
                       <Form.Checkbox
-                        field='TelegramOAuthEnabled'
-                        noLabel
-                        onChange={(e) =>
-                          handleCheckboxChange('TelegramOAuthEnabled', e)
-                        }
-                      >
-                        {t('允许通过 Telegram 进行登录')}
-                      </Form.Checkbox>
-                      <Form.Checkbox
                         field="['oidc.enabled']"
                         noLabel
                         onChange={(e) =>
@@ -1577,33 +1556,6 @@ const SystemSetting = () => {
                   </Row>
                   <Button onClick={submitWeChat}>
                     {t('保存 WeChat Server 设置')}
-                  </Button>
-                </Form.Section>
-              </Card>
-
-              <Card>
-                <Form.Section text={t('配置 Telegram 登录')}>
-                  <Text>{t('用以支持通过 Telegram 进行登录注册')}</Text>
-                  <Row
-                    gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
-                  >
-                    <Col xs={24} sm={24} md={12} lg={12} xl={12}>
-                      <Form.Input
-                        field='TelegramBotToken'
-                        label={t('Telegram Bot Token')}
-                        placeholder={t('敏感信息不会发送到前端显示')}
-                        type='password'
-                      />
-                    </Col>
-                    <Col xs={24} sm={24} md={12} lg={12} xl={12}>
-                      <Form.Input
-                        field='TelegramBotName'
-                        label={t('Telegram Bot 名称')}
-                      />
-                    </Col>
-                  </Row>
-                  <Button onClick={submitTelegramSettings}>
-                    {t('保存 Telegram 登录设置')}
                   </Button>
                 </Form.Section>
               </Card>

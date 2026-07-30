@@ -2,17 +2,32 @@ package controller
 
 import (
 	"fmt"
-	"net/http"
-	"strconv"
-	"strings"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-
 	"github.com/gin-gonic/gin"
+	"net/http"
+	"strconv"
+	"strings"
 )
+
+func buildMaskedTokenResponse(token *model.Token) *model.Token {
+	if token == nil {
+		return nil
+	}
+	maskedToken := *token
+	maskedToken.Key = token.GetMaskedKey()
+	return &maskedToken
+}
+
+func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
+	maskedTokens := make([]*model.Token, 0, len(tokens))
+	for _, token := range tokens {
+		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
+	}
+	return maskedTokens
+}
 
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
@@ -44,7 +59,7 @@ func GetAllTokens(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data":    tokens,
+			"data":    buildMaskedTokenResponses(tokens),
 			"total":   total,
 		})
 		return
@@ -61,7 +76,7 @@ func GetAllTokens(c *gin.Context) {
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(tokens)
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -106,7 +121,7 @@ func SearchTokens(c *gin.Context) {
 	// 	"data":    tokens,
 	// })
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(tokens)
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -133,9 +148,26 @@ func GetToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    token,
+		"data":    buildMaskedTokenResponse(token),
 	})
 	return
+}
+
+func GetTokenKey(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"key": token.GetFullKey(),
+	})
 }
 
 func GetTokenStatus(c *gin.Context) {
@@ -284,7 +316,6 @@ func AddToken(c *gin.Context) {
 		"success": true,
 		"message": "",
 	})
-	return
 }
 
 func DeleteToken(c *gin.Context) {
@@ -304,7 +335,6 @@ func DeleteToken(c *gin.Context) {
 		"success": true,
 		"message": "",
 	})
-	return
 }
 
 func UpdateToken(c *gin.Context) {
@@ -399,7 +429,7 @@ func UpdateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    cleanToken,
+		"data":    buildMaskedTokenResponse(cleanToken),
 	})
 }
 
@@ -454,6 +484,29 @@ func BatchSetTokenGroup(c *gin.Context) {
 		"data":    count,
 	})
 }
+func GetTokenKeysBatch(c *gin.Context) {
+	tokenBatch := TokenBatch{}
+	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	if len(tokenBatch.Ids) > 100 {
+		common.ApiErrorI18n(c, i18n.MsgBatchTooMany, map[string]any{"Max": 100})
+		return
+	}
+	userId := c.GetInt("id")
+	tokens, err := model.GetTokenKeysByIds(tokenBatch.Ids, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	keysMap := make(map[int]string)
+	for _, t := range tokens {
+		keysMap[t.Id] = t.GetFullKey()
+	}
+	common.ApiSuccess(c, gin.H{"keys": keysMap})
+}
 
 type BatchAppendModelsRequest struct {
 	Group  string   `json:"group"`
@@ -476,4 +529,5 @@ func BatchAppendTokenModels(c *gin.Context) {
 		"message": "",
 		"data":    count,
 	})
+
 }

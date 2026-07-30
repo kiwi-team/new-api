@@ -1,8 +1,6 @@
 package claude
 
 import (
-	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,18 +9,15 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/reasonmap"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const (
@@ -44,690 +39,721 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
-func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
-	claudeTools := make([]any, 0, len(textRequest.Tools))
-
-	for _, tool := range textRequest.Tools {
-		if params, ok := tool.Function.Parameters.(map[string]any); ok {
-			claudeTool := dto.Tool{
-				Name:        tool.Function.Name,
-				Description: tool.Function.Description,
-			}
-			claudeTool.InputSchema = make(map[string]interface{})
-			if params["type"] != nil {
-				claudeTool.InputSchema["type"] = params["type"].(string)
-			}
-			claudeTool.InputSchema["properties"] = params["properties"]
-			claudeTool.InputSchema["required"] = params["required"]
-			for s, a := range params {
-				if s == "type" || s == "properties" || s == "required" {
-					continue
-				}
-				claudeTool.InputSchema[s] = a
-			}
-			claudeTools = append(claudeTools, &claudeTool)
-		}
-	}
-
-	// Web search tool
-	// https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool
-	if textRequest.WebSearchOptions != nil {
-		webSearchTool := dto.ClaudeWebSearchTool{
-			Type: "web_search_20250305",
-			Name: "web_search",
-		}
-
-		// 处理 user_location
-		if textRequest.WebSearchOptions.UserLocation != nil {
-			anthropicUserLocation := &dto.ClaudeWebSearchUserLocation{
-				Type: "approximate", // 固定为 "approximate"
-			}
-
-			// 解析 UserLocation JSON
-			var userLocationMap map[string]interface{}
-			if err := json.Unmarshal(textRequest.WebSearchOptions.UserLocation, &userLocationMap); err == nil {
-				// 检查是否有 approximate 字段
-				if approximateData, ok := userLocationMap["approximate"].(map[string]interface{}); ok {
-					if timezone, ok := approximateData["timezone"].(string); ok && timezone != "" {
-						anthropicUserLocation.Timezone = timezone
-					}
-					if country, ok := approximateData["country"].(string); ok && country != "" {
-						anthropicUserLocation.Country = country
-					}
-					if region, ok := approximateData["region"].(string); ok && region != "" {
-						anthropicUserLocation.Region = region
-					}
-					if city, ok := approximateData["city"].(string); ok && city != "" {
-						anthropicUserLocation.City = city
-					}
-				}
-			}
-
-			webSearchTool.UserLocation = anthropicUserLocation
-		}
-
-		// 处理 search_context_size 转换为 max_uses
-		if textRequest.WebSearchOptions.SearchContextSize != "" {
-			switch textRequest.WebSearchOptions.SearchContextSize {
-			case "low":
-				webSearchTool.MaxUses = WebSearchMaxUsesLow
-			case "medium":
-				webSearchTool.MaxUses = WebSearchMaxUsesMedium
-			case "high":
-				webSearchTool.MaxUses = WebSearchMaxUsesHigh
-			}
-		}
-
-		claudeTools = append(claudeTools, &webSearchTool)
-	}
-
-	claudeRequest := dto.ClaudeRequest{
-		Model:         textRequest.Model,
-		MaxTokens:     textRequest.GetMaxTokens(),
-		StopSequences: nil,
-		Temperature:   textRequest.Temperature,
-		TopP:          textRequest.TopP,
-		TopK:          textRequest.TopK,
-		Stream:        textRequest.Stream,
-		Tools:         claudeTools,
-	}
-	if textRequest.Temperature != nil {
-		if *textRequest.Temperature == 0 {
-			claudeRequest.Temperature = nil
-		}
-	}
-
-	// 处理 tool_choice 和 parallel_tool_calls
-	if textRequest.ToolChoice != nil || textRequest.ParallelTooCalls != nil {
-		claudeToolChoice := mapToolChoice(textRequest.ToolChoice, textRequest.ParallelTooCalls)
-		if claudeToolChoice != nil {
-			claudeRequest.ToolChoice = claudeToolChoice
-		}
-	}
-
-	if claudeRequest.MaxTokens == 0 {
-		claudeRequest.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(textRequest.Model))
-	}
-
-	isOpus47 := strings.HasPrefix(textRequest.Model, "claude-opus-4-7")
-	isOpus48 := strings.HasPrefix(textRequest.Model, "claude-opus-4-8")
-	isOpus46 := strings.HasPrefix(textRequest.Model, "claude-opus-4-6")
-	isFable5 := strings.HasPrefix(textRequest.Model, "claude-fable-5")
-	isMythos5 := strings.HasPrefix(textRequest.Model, "claude-mythos-5")
-	isAdaptive := isOpus47 || isOpus48 || isOpus46 || isFable5 || isMythos5
-
-	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		(isAdaptive) {
-		claudeRequest.Model = baseModel
-		claudeRequest.Thinking = &dto.Thinking{
-			Type:    "adaptive",
-			Display: "summarized",
-		}
-		claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		claudeRequest.TopP = 0
-		claudeRequest.Temperature = common.GetPointer[float64](1.0)
-	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
-		strings.HasSuffix(textRequest.Model, "-thinking") {
-
-		// 因为BudgetTokens 必须大于1024
-		if claudeRequest.MaxTokens < 1280 {
-			claudeRequest.MaxTokens = 1280
-		}
-
-		// BudgetTokens 为 max_tokens 的 80%
-		claudeRequest.Thinking = &dto.Thinking{
-			Type:         "enabled",
-			BudgetTokens: common.GetPointer[int](int(float64(claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
-		}
-		// TODO: 临时处理
-		// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
-		claudeRequest.TopP = 0
-		claudeRequest.Temperature = common.GetPointer[float64](1.0)
-		if !model_setting.ShouldPreserveThinkingSuffix(textRequest.Model) {
-			claudeRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking")
-		}
-	}
-
-	if textRequest.ReasoningEffort != "" {
-		switch textRequest.ReasoningEffort {
-		case "low":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](1280),
-			}
-		case "medium":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](2048),
-			}
-		case "high":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](4096),
-			}
-		}
-	}
-
-	// 指定了 reasoning 参数,覆盖 budgetTokens
-	if textRequest.Reasoning != nil {
-		var reasoning openrouter.RequestReasoning
-		if err := common.Unmarshal(textRequest.Reasoning, &reasoning); err != nil {
-			return nil, err
-		}
-
-		budgetTokens := reasoning.MaxTokens
-		if budgetTokens > 0 {
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: &budgetTokens,
-			}
-		}
-	}
-	// https://platform.claude.com/docs/en/build-with-claude/extended-thinking#interleaved-thinking
-	// 开启 interleaved thinking后，the budget_tokens can exceed the max_tokens paramete
-	enabledInterleavedThinking := strings.Contains(c.GetHeader("anthropic-beta"), "interleaved-thinking-2025-05-14")
-
-	// thinking
-	if textRequest.THINKING != nil {
-		var thinking dto.AnthropicThinking
-		if err := json.Unmarshal(textRequest.THINKING, &thinking); err != nil {
-			return nil, err
-		}
-		switch thinking.Type {
-		case "enabled":
-			budget := thinking.BudgetTokens
-			// 没有开启InterleavedThinking的时候，budget必须小于max_tokens
-			if !enabledInterleavedThinking {
-				// max_tokens 必须大于 budget_tokens，调整 budget 而不是 max_tokens，避免超出模型最大限制
-				if budget >= int(claudeRequest.MaxTokens) {
-					budget = int(claudeRequest.MaxTokens) - 1
-				}
-			}
-			// 兜底逻辑：budget >= 1024, max_tokens >= 1025, max_tokens > budget
-			if budget < 1024 {
-				budget = 1024
-			}
-			if claudeRequest.MaxTokens <= uint(budget) && !enabledInterleavedThinking {
-				claudeRequest.MaxTokens = uint(budget) + 1
-			}
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: &budget,
-			}
-
-		case "disabled":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type: "disabled",
-			}
-		case "adaptive":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:    "adaptive",
-				Display: "summarized",
-			}
-		}
-	}
-
-	if textRequest.Stop != nil {
-		// stop maybe string/array string, convert to array string
-		switch textRequest.Stop.(type) {
-		case string:
-			claudeRequest.StopSequences = []string{textRequest.Stop.(string)}
-		case []interface{}:
-			stopSequences := make([]string, 0)
-			for _, stop := range textRequest.Stop.([]interface{}) {
-				stopSequences = append(stopSequences, stop.(string))
-			}
-			claudeRequest.StopSequences = stopSequences
-		}
-	}
-	formatMessages := make([]dto.Message, 0)
-	lastMessage := dto.Message{
-		Role: "tool",
-	}
-	for i, message := range textRequest.Messages {
-		if message.Role == "" {
-			textRequest.Messages[i].Role = "user"
-		}
-		fmtMessage := dto.Message{
-			Role:    message.Role,
-			Content: message.Content,
-		}
-		if message.Role == "tool" {
-			fmtMessage.ToolCallId = message.ToolCallId
-		}
-		if message.Role == "assistant" && message.ToolCalls != nil {
-			fmtMessage.ToolCalls = message.ToolCalls
-		}
-		if message.Role == "assistant" && message.ReasoningContent != "" {
-			fmtMessage.ReasoningContent = message.ReasoningContent
-			fmtMessage.Signature = message.Signature
-		}
-		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
-			if lastMessage.IsStringContent() && message.IsStringContent() {
-				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
-				// delete last message
-				formatMessages = formatMessages[:len(formatMessages)-1]
-			}
-		}
-		if fmtMessage.Content == nil {
-			fmtMessage.SetStringContent("...")
-		}
-		formatMessages = append(formatMessages, fmtMessage)
-		lastMessage = fmtMessage
-	}
-
-	claudeMessages := make([]dto.ClaudeMessage, 0)
-	isFirstMessage := true
-	// 初始化system消息数组，用于累积多个system消息
-	var systemMessages []dto.ClaudeMediaMessage
-
-	for _, message := range formatMessages {
-		if message.Role == "system" {
-			// 根据Claude API规范，system字段使用数组格式更有通用性
-			if message.IsStringContent() {
-				systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-					Type: "text",
-					Text: common.GetPointer(message.StringContent()),
-				})
-			} else {
-				// 支持复合内容的system消息（虽然不常见，但需要考虑完整性）
-				for _, ctx := range message.ParseContent() {
-					if ctx.Type == "text" {
-						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-							Type:         "text",
-							Text:         common.GetPointer(ctx.Text),
-							CacheControl: ctx.CacheControl,
-						})
-					}
-					// 未来可以在这里扩展对图片等其他类型的支持
-				}
-			}
-		} else {
-			if isFirstMessage {
-				isFirstMessage = false
-				if message.Role != "user" {
-					// fix: first message is assistant, add user message
-					claudeMessage := dto.ClaudeMessage{
-						Role: "user",
-						Content: []dto.ClaudeMediaMessage{
-							{
-								Type: "text",
-								Text: common.GetPointer("..."),
-							},
-						},
-					}
-					claudeMessages = append(claudeMessages, claudeMessage)
-				}
-			}
-			claudeMessage := dto.ClaudeMessage{
-				Role: message.Role,
-			}
-			if message.Role == "tool" {
-				if len(claudeMessages) > 0 && claudeMessages[len(claudeMessages)-1].Role == "user" {
-					lastMessage := claudeMessages[len(claudeMessages)-1]
-					if content, ok := lastMessage.Content.(string); ok {
-						lastMessage.Content = []dto.ClaudeMediaMessage{
-							{
-								Type: "text",
-								Text: common.GetPointer(content),
-							},
-						}
-					}
-					lastMessage.Content = append(lastMessage.Content.([]dto.ClaudeMediaMessage), dto.ClaudeMediaMessage{
-						Type:      "tool_result",
-						ToolUseId: message.ToolCallId,
-						Content:   message.Content,
-					})
-					claudeMessages[len(claudeMessages)-1] = lastMessage
-					continue
-				} else {
-					claudeMessage.Role = "user"
-					claudeMessage.Content = []dto.ClaudeMediaMessage{
-						{
-							Type:      "tool_result",
-							ToolUseId: message.ToolCallId,
-							Content:   message.Content,
-						},
-					}
-				}
-			} else if message.IsStringContent() && message.ToolCalls == nil {
-				if len(message.StringContent()) > 0 {
-					claudeMessage.Content = message.StringContent()
-				}
-			} else {
-				claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
-				for _, mediaMessage := range message.ParseContent() {
-					claudeMediaMessage := dto.ClaudeMediaMessage{
-						Type: mediaMessage.Type,
-					}
-					if message.ReasoningContent != "" {
-						mediaMessage.Type = "thinking"
-					}
-					if mediaMessage.Type == "text" {
-						claudeMediaMessage.CacheControl = mediaMessage.CacheControl
-						if len(mediaMessage.Text) > 0 {
-							claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
-						} else {
-							// 防止出现 messages: text content blocks must be non-empty (request id: 20251126095629748807213PavGYnmJ)
-							continue
-						}
-					} else if mediaMessage.Type == "thinking" {
-						claudeMediaMessage.Type = "thinking"
-						claudeMediaMessage.Thinking = &message.ReasoningContent
-						claudeMediaMessage.Signature = message.Signature
-					} else if mediaMessage.Type == dto.ContentTypeImageURL {
-						imageUrl := mediaMessage.GetImageMedia()
-						if imageUrl == nil {
-							// 无法解析图片内容（如缺失 image_url 字段），跳过该 block 防止 nil 解引用
-							continue
-						}
-						claudeMediaMessage.Type = "image"
-						claudeMediaMessage.Source = &dto.ClaudeMessageSource{
-							Type: "base64",
-						}
-						// 使用统一的文件服务获取图片数据
-						var source *types.FileSource
-						if strings.HasPrefix(imageUrl.Url, "http") {
-							source = types.NewURLFileSource(imageUrl.Url)
-						} else {
-							source = types.NewBase64FileSource(imageUrl.Url, "")
-						}
-						base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Claude")
-						if err != nil {
-							return nil, fmt.Errorf("get file data failed: %s", err.Error())
-						}
-						claudeMediaMessage.Source.MediaType = mimeType
-						claudeMediaMessage.Source.Data = base64Data
-					} else {
-						// Claude 原生不支持的 content 类型（如 video_url/audio_url/input_audio），跳过以避免发送无效 block
-						continue
-					}
-					claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
-				}
-				if message.ToolCalls != nil {
-					for _, toolCall := range message.ParseToolCalls() {
-						inputObj := make(map[string]any)
-						if toolCall.Function.Arguments == "" {
-							toolCall.Function.Arguments = "{}"
-						}
-						if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
-							common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
-							continue
-						}
-						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
-							Type:  "tool_use",
-							Id:    toolCall.ID,
-							Name:  toolCall.Function.Name,
-							Input: inputObj,
-						})
-					}
-				}
-				claudeMessage.Content = claudeMediaMessages
-			}
-			claudeMessages = append(claudeMessages, claudeMessage)
-		}
-	}
-
-	// 设置累积的system消息
-	if len(systemMessages) > 0 {
-		claudeRequest.System = systemMessages
-	}
-
-	claudeRequest.Prompt = ""
-	claudeRequest.Messages = claudeMessages
-
-	// claude-opus-4-7 breaking changes:
-	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
-	// 2. temperature/top_p/top_k non-default values return 400
-	if isAdaptive {
-		// claude-opus-4-7 仅支持 adaptive thinking，统一设置为 {type: adaptive, display: summarized}
-		if claudeRequest.Thinking == nil || claudeRequest.Thinking.Type != "adaptive" {
-			wasEnabled := claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled"
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:    "adaptive",
-				Display: "summarized",
-			}
-			if wasEnabled && claudeRequest.OutputConfig == nil {
-				claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
-			}
-		}
-		claudeRequest.Temperature = nil
-		claudeRequest.TopP = 0
-		claudeRequest.TopK = 0
-		claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
-	} else if claudeRequest.Thinking != nil {
-		if claudeRequest.Thinking.Type == "enabled" {
-			//https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility
-			claudeRequest.TopK = 0
-			claudeRequest.Temperature = nil
-			claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
-		}
-	}
-	//common.PrintJson("\nclaudeRequest", claudeRequest)
-	//common.WriteJsonFile("claudeRequest.json", claudeRequest)
-	return &claudeRequest, nil
-}
-
+//	func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
+//		claudeTools := make([]any, 0, len(textRequest.Tools))
+//
+//		for _, tool := range textRequest.Tools {
+//			if params, ok := tool.Function.Parameters.(map[string]any); ok {
+//				claudeTool := dto.Tool{
+//					Name:        tool.Function.Name,
+//					Description: tool.Function.Description,
+//				}
+//				claudeTool.InputSchema = make(map[string]interface{})
+//				if params["type"] != nil {
+//					claudeTool.InputSchema["type"] = params["type"].(string)
+//				}
+//				claudeTool.InputSchema["properties"] = params["properties"]
+//				claudeTool.InputSchema["required"] = params["required"]
+//				for s, a := range params {
+//					if s == "type" || s == "properties" || s == "required" {
+//						continue
+//					}
+//					claudeTool.InputSchema[s] = a
+//				}
+//				claudeTools = append(claudeTools, &claudeTool)
+//			}
+//		}
+//
+//		// Web search tool
+//		// https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool
+//		if textRequest.WebSearchOptions != nil {
+//			webSearchTool := dto.ClaudeWebSearchTool{
+//				Type: "web_search_20250305",
+//				Name: "web_search",
+//			}
+//
+//			// 处理 user_location
+//			if textRequest.WebSearchOptions.UserLocation != nil {
+//				anthropicUserLocation := &dto.ClaudeWebSearchUserLocation{
+//					Type: "approximate", // 固定为 "approximate"
+//				}
+//
+//				// 解析 UserLocation JSON
+//				var userLocationMap map[string]interface{}
+//				if err := json.Unmarshal(textRequest.WebSearchOptions.UserLocation, &userLocationMap); err == nil {
+//					// 检查是否有 approximate 字段
+//					if approximateData, ok := userLocationMap["approximate"].(map[string]interface{}); ok {
+//						if timezone, ok := approximateData["timezone"].(string); ok && timezone != "" {
+//							anthropicUserLocation.Timezone = timezone
+//						}
+//						if country, ok := approximateData["country"].(string); ok && country != "" {
+//							anthropicUserLocation.Country = country
+//						}
+//						if region, ok := approximateData["region"].(string); ok && region != "" {
+//							anthropicUserLocation.Region = region
+//						}
+//						if city, ok := approximateData["city"].(string); ok && city != "" {
+//							anthropicUserLocation.City = city
+//						}
+//					}
+//				}
+//
+//				webSearchTool.UserLocation = anthropicUserLocation
+//			}
+//
+//			// 处理 search_context_size 转换为 max_uses
+//			if textRequest.WebSearchOptions.SearchContextSize != "" {
+//				switch textRequest.WebSearchOptions.SearchContextSize {
+//				case "low":
+//					webSearchTool.MaxUses = WebSearchMaxUsesLow
+//				case "medium":
+//					webSearchTool.MaxUses = WebSearchMaxUsesMedium
+//				case "high":
+//					webSearchTool.MaxUses = WebSearchMaxUsesHigh
+//				}
+//			}
+//
+//			claudeTools = append(claudeTools, &webSearchTool)
+//		}
+//
+//		claudeRequest := dto.ClaudeRequest{
+//			Model:         textRequest.Model,
+//			MaxTokens:     textRequest.GetMaxTokens(),
+//			StopSequences: nil,
+//			Temperature:   textRequest.Temperature,
+//			TopP:          textRequest.TopP,
+//			TopK:          textRequest.TopK,
+//			Stream:        textRequest.Stream,
+//			Tools:         claudeTools,
+//		}
+//		if textRequest.Temperature != nil {
+//			if *textRequest.Temperature == 0 {
+//				claudeRequest.Temperature = nil
+//			}
+//		}
+//
+//		// 处理 tool_choice 和 parallel_tool_calls
+//		if textRequest.ToolChoice != nil || textRequest.ParallelTooCalls != nil {
+//			claudeToolChoice := mapToolChoice(textRequest.ToolChoice, textRequest.ParallelTooCalls)
+//			if claudeToolChoice != nil {
+//				claudeRequest.ToolChoice = claudeToolChoice
+//			}
+//		}
+//
+//		if claudeRequest.MaxTokens == 0 {
+//			claudeRequest.MaxTokens = uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(textRequest.Model))
+//		}
+//
+//		isOpus47 := strings.HasPrefix(textRequest.Model, "claude-opus-4-7")
+//		isOpus48 := strings.HasPrefix(textRequest.Model, "claude-opus-4-8")
+//		isOpus46 := strings.HasPrefix(textRequest.Model, "claude-opus-4-6")
+//		isFable5 := strings.HasPrefix(textRequest.Model, "claude-fable-5")
+//		isMythos5 := strings.HasPrefix(textRequest.Model, "claude-mythos-5")
+//		isAdaptive := isOpus47 || isOpus48 || isOpus46 || isFable5 || isMythos5
+//
+//		if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
+//			(isAdaptive) {
+//			claudeRequest.Model = baseModel
+//			claudeRequest.Thinking = &dto.Thinking{
+//				Type:    "adaptive",
+//				Display: "summarized",
+//			}
+//			claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
+//			claudeRequest.TopP = 0
+//			claudeRequest.Temperature = common.GetPointer[float64](1.0)
+//		} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
+//			strings.HasSuffix(textRequest.Model, "-thinking") {
+//
+//			// 因为BudgetTokens 必须大于1024
+//			if claudeRequest.MaxTokens < 1280 {
+//				claudeRequest.MaxTokens = 1280
+//			}
+//
+//			// BudgetTokens 为 max_tokens 的 80%
+//			claudeRequest.Thinking = &dto.Thinking{
+//				Type:         "enabled",
+//				BudgetTokens: common.GetPointer[int](int(float64(claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+//			}
+//			// TODO: 临时处理
+//			// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
+//			claudeRequest.TopP = 0
+//			claudeRequest.Temperature = common.GetPointer[float64](1.0)
+//			if !model_setting.ShouldPreserveThinkingSuffix(textRequest.Model) {
+//				claudeRequest.Model = strings.TrimSuffix(textRequest.Model, "-thinking")
+//			}
+//		}
+//
+//		if textRequest.ReasoningEffort != "" {
+//			switch textRequest.ReasoningEffort {
+//			case "low":
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:         "enabled",
+//					BudgetTokens: common.GetPointer[int](1280),
+//				}
+//			case "medium":
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:         "enabled",
+//					BudgetTokens: common.GetPointer[int](2048),
+//				}
+//			case "high":
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:         "enabled",
+//					BudgetTokens: common.GetPointer[int](4096),
+//				}
+//			}
+//		}
+//
+//		// 指定了 reasoning 参数,覆盖 budgetTokens
+//		if textRequest.Reasoning != nil {
+//			var reasoning openrouter.RequestReasoning
+//			if err := common.Unmarshal(textRequest.Reasoning, &reasoning); err != nil {
+//				return nil, err
+//			}
+//
+//			budgetTokens := reasoning.MaxTokens
+//			if budgetTokens > 0 {
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:         "enabled",
+//					BudgetTokens: &budgetTokens,
+//				}
+//			}
+//		}
+//		// https://platform.claude.com/docs/en/build-with-claude/extended-thinking#interleaved-thinking
+//		// 开启 interleaved thinking后，the budget_tokens can exceed the max_tokens paramete
+//		enabledInterleavedThinking := strings.Contains(c.GetHeader("anthropic-beta"), "interleaved-thinking-2025-05-14")
+//
+//		// thinking
+//		if textRequest.THINKING != nil {
+//			var thinking dto.AnthropicThinking
+//			if err := json.Unmarshal(textRequest.THINKING, &thinking); err != nil {
+//				return nil, err
+//			}
+//			switch thinking.Type {
+//			case "enabled":
+//				budget := thinking.BudgetTokens
+//				// 没有开启InterleavedThinking的时候，budget必须小于max_tokens
+//				if !enabledInterleavedThinking {
+//					// max_tokens 必须大于 budget_tokens，调整 budget 而不是 max_tokens，避免超出模型最大限制
+//					if budget >= int(claudeRequest.MaxTokens) {
+//						budget = int(claudeRequest.MaxTokens) - 1
+//					}
+//				}
+//				// 兜底逻辑：budget >= 1024, max_tokens >= 1025, max_tokens > budget
+//				if budget < 1024 {
+//					budget = 1024
+//				}
+//				if claudeRequest.MaxTokens <= uint(budget) && !enabledInterleavedThinking {
+//					claudeRequest.MaxTokens = uint(budget) + 1
+//				}
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:         "enabled",
+//					BudgetTokens: &budget,
+//				}
+//
+//			case "disabled":
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type: "disabled",
+//				}
+//			case "adaptive":
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:    "adaptive",
+//					Display: "summarized",
+//				}
+//			}
+//		}
+//
+//		if textRequest.Stop != nil {
+//			// stop maybe string/array string, convert to array string
+//			switch textRequest.Stop.(type) {
+//			case string:
+//				claudeRequest.StopSequences = []string{textRequest.Stop.(string)}
+//			case []interface{}:
+//				stopSequences := make([]string, 0)
+//				for _, stop := range textRequest.Stop.([]interface{}) {
+//					stopSequences = append(stopSequences, stop.(string))
+//				}
+//				claudeRequest.StopSequences = stopSequences
+//			}
+//		}
+//		formatMessages := make([]dto.Message, 0)
+//		lastMessage := dto.Message{
+//			Role: "tool",
+//		}
+//		for i, message := range textRequest.Messages {
+//			if message.Role == "" {
+//				textRequest.Messages[i].Role = "user"
+//			}
+//			fmtMessage := dto.Message{
+//				Role:    message.Role,
+//				Content: message.Content,
+//			}
+//			if message.Role == "tool" {
+//				fmtMessage.ToolCallId = message.ToolCallId
+//			}
+//			if message.Role == "assistant" && message.ToolCalls != nil {
+//				fmtMessage.ToolCalls = message.ToolCalls
+//			}
+//			if message.Role == "assistant" && message.ReasoningContent != "" {
+//				fmtMessage.ReasoningContent = message.ReasoningContent
+//				fmtMessage.Signature = message.Signature
+//			}
+//			if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
+//				if lastMessage.IsStringContent() && message.IsStringContent() {
+//					fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
+//					// delete last message
+//					formatMessages = formatMessages[:len(formatMessages)-1]
+//				}
+//			}
+//			if fmtMessage.Content == nil {
+//				fmtMessage.SetStringContent("...")
+//			}
+//			formatMessages = append(formatMessages, fmtMessage)
+//			lastMessage = fmtMessage
+//		}
+//
+//		claudeMessages := make([]dto.ClaudeMessage, 0)
+//		isFirstMessage := true
+//		// 初始化system消息数组，用于累积多个system消息
+//		var systemMessages []dto.ClaudeMediaMessage
+//
+//		for _, message := range formatMessages {
+//			if message.Role == "system" {
+//				// 根据Claude API规范，system字段使用数组格式更有通用性
+//				if message.IsStringContent() {
+//					systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
+//						Type: "text",
+//						Text: common.GetPointer(message.StringContent()),
+//					})
+//				} else {
+//					// 支持复合内容的system消息（虽然不常见，但需要考虑完整性）
+//					for _, ctx := range message.ParseContent() {
+//						if ctx.Type == "text" {
+//							systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
+//								Type:         "text",
+//								Text:         common.GetPointer(ctx.Text),
+//								CacheControl: ctx.CacheControl,
+//							})
+//						}
+//						// 未来可以在这里扩展对图片等其他类型的支持
+//					}
+//				}
+//			} else {
+//				if isFirstMessage {
+//					isFirstMessage = false
+//					if message.Role != "user" {
+//						// fix: first message is assistant, add user message
+//						claudeMessage := dto.ClaudeMessage{
+//							Role: "user",
+//							Content: []dto.ClaudeMediaMessage{
+//								{
+//									Type: "text",
+//									Text: common.GetPointer("..."),
+//								},
+//							},
+//						}
+//						claudeMessages = append(claudeMessages, claudeMessage)
+//					}
+//				}
+//				claudeMessage := dto.ClaudeMessage{
+//					Role: message.Role,
+//				}
+//				if message.Role == "tool" {
+//					if len(claudeMessages) > 0 && claudeMessages[len(claudeMessages)-1].Role == "user" {
+//						lastMessage := claudeMessages[len(claudeMessages)-1]
+//						if content, ok := lastMessage.Content.(string); ok {
+//							lastMessage.Content = []dto.ClaudeMediaMessage{
+//								{
+//									Type: "text",
+//									Text: common.GetPointer(content),
+//								},
+//							}
+//						}
+//						lastMessage.Content = append(lastMessage.Content.([]dto.ClaudeMediaMessage), dto.ClaudeMediaMessage{
+//							Type:      "tool_result",
+//							ToolUseId: message.ToolCallId,
+//							Content:   message.Content,
+//						})
+//						claudeMessages[len(claudeMessages)-1] = lastMessage
+//						continue
+//					} else {
+//						claudeMessage.Role = "user"
+//						claudeMessage.Content = []dto.ClaudeMediaMessage{
+//							{
+//								Type:      "tool_result",
+//								ToolUseId: message.ToolCallId,
+//								Content:   message.Content,
+//							},
+//						}
+//					}
+//				} else if message.IsStringContent() && message.ToolCalls == nil {
+//					if len(message.StringContent()) > 0 {
+//						claudeMessage.Content = message.StringContent()
+//					}
+//				} else {
+//					claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
+//					for _, mediaMessage := range message.ParseContent() {
+//						claudeMediaMessage := dto.ClaudeMediaMessage{
+//							Type: mediaMessage.Type,
+//						}
+//						if message.ReasoningContent != "" {
+//							mediaMessage.Type = "thinking"
+//						}
+//						if mediaMessage.Type == "text" {
+//							claudeMediaMessage.CacheControl = mediaMessage.CacheControl
+//							if len(mediaMessage.Text) > 0 {
+//								claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
+//							} else {
+//								// 防止出现 messages: text content blocks must be non-empty (request id: 20251126095629748807213PavGYnmJ)
+//								continue
+//							}
+//						} else if mediaMessage.Type == "thinking" {
+//							claudeMediaMessage.Type = "thinking"
+//							claudeMediaMessage.Thinking = &message.ReasoningContent
+//							claudeMediaMessage.Signature = message.Signature
+//						} else if mediaMessage.Type == dto.ContentTypeImageURL {
+//							imageUrl := mediaMessage.GetImageMedia()
+//							if imageUrl == nil {
+//								// 无法解析图片内容（如缺失 image_url 字段），跳过该 block 防止 nil 解引用
+//								continue
+//							}
+//							claudeMediaMessage.Type = "image"
+//							claudeMediaMessage.Source = &dto.ClaudeMessageSource{
+//								Type: "base64",
+//							}
+//							// 使用统一的文件服务获取图片数据
+//							var source *types.FileSource
+//							if strings.HasPrefix(imageUrl.Url, "http") {
+//								source = types.NewURLFileSource(imageUrl.Url)
+//							} else {
+//								source = types.NewBase64FileSource(imageUrl.Url, "")
+//							}
+//							base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Claude")
+//							if err != nil {
+//								return nil, fmt.Errorf("get file data failed: %s", err.Error())
+//							}
+//							claudeMediaMessage.Source.MediaType = mimeType
+//							claudeMediaMessage.Source.Data = base64Data
+//						} else {
+//							// Claude 原生不支持的 content 类型（如 video_url/audio_url/input_audio），跳过以避免发送无效 block
+//							continue
+//						}
+//						claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
+//					}
+//					if message.ToolCalls != nil {
+//						for _, toolCall := range message.ParseToolCalls() {
+//							inputObj := make(map[string]any)
+//							if toolCall.Function.Arguments == "" {
+//								toolCall.Function.Arguments = "{}"
+//							}
+//							if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
+//								common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+//								continue
+//							}
+//							claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+//								Type:  "tool_use",
+//								Id:    toolCall.ID,
+//								Name:  toolCall.Function.Name,
+//								Input: inputObj,
+//							})
+//						}
+//					}
+//					claudeMessage.Content = claudeMediaMessages
+//				}
+//				claudeMessages = append(claudeMessages, claudeMessage)
+//			}
+//		}
+//
+//		// 设置累积的system消息
+//		if len(systemMessages) > 0 {
+//			claudeRequest.System = systemMessages
+//		}
+//
+//		claudeRequest.Prompt = ""
+//		claudeRequest.Messages = claudeMessages
+//
+//		// claude-opus-4-7 breaking changes:
+//		// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
+//		// 2. temperature/top_p/top_k non-default values return 400
+//		if isAdaptive {
+//			// claude-opus-4-7 仅支持 adaptive thinking，统一设置为 {type: adaptive, display: summarized}
+//			if claudeRequest.Thinking == nil || claudeRequest.Thinking.Type != "adaptive" {
+//				wasEnabled := claudeRequest.Thinking != nil && claudeRequest.Thinking.Type == "enabled"
+//				claudeRequest.Thinking = &dto.Thinking{
+//					Type:    "adaptive",
+//					Display: "summarized",
+//				}
+//				if wasEnabled && claudeRequest.OutputConfig == nil {
+//					claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+//				}
+//			}
+//			claudeRequest.Temperature = nil
+//			claudeRequest.TopP = 0
+//			claudeRequest.TopK = 0
+//			claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
+//		} else if claudeRequest.Thinking != nil {
+//			if claudeRequest.Thinking.Type == "enabled" {
+//				//https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility
+//				claudeRequest.TopK = 0
+//				claudeRequest.Temperature = nil
+//				claudeRequest.Model = strings.TrimSuffix(claudeRequest.Model, "-thinking")
+//			}
+//		}
+//		//common.PrintJson("\nclaudeRequest", claudeRequest)
+//		//common.WriteJsonFile("claudeRequest.json", claudeRequest)
+//		return &claudeRequest, nil
+//	}
+//
+//	func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
+//		var response dto.ChatCompletionsStreamResponse
+//		response.Object = "chat.completion.chunk"
+//		response.Model = claudeResponse.Model
+//		response.Choices = make([]dto.ChatCompletionsStreamResponseChoice, 0)
+//		tools := make([]dto.ToolCallResponse, 0)
+//		fcIdx := 0
+//		if claudeResponse.Index != nil {
+//			fcIdx = *claudeResponse.Index - 1
+//			if fcIdx < 0 {
+//				fcIdx = 0
+//			}
+//		}
+//		var choice dto.ChatCompletionsStreamResponseChoice
+//		if claudeResponse.Type == "message_start" {
+//			if claudeResponse.Message != nil {
+//				response.Id = claudeResponse.Message.Id
+//				response.Model = claudeResponse.Message.Model
+//			}
+//			//claudeUsage = &claudeResponse.Message.Usage
+//			choice.Delta.SetContentString("")
+//			choice.Delta.Role = "assistant"
+//		} else if claudeResponse.Type == "content_block_start" {
+//			if claudeResponse.ContentBlock != nil {
+//				// 如果是文本块，尽可能发送首段文本（若存在）
+//				if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
+//					choice.Delta.SetContentString(*claudeResponse.ContentBlock.Text)
+//				}
+//				if claudeResponse.ContentBlock.Type == "tool_use" {
+//					tools = append(tools, dto.ToolCallResponse{
+//						Index: common.GetPointer(fcIdx),
+//						ID:    claudeResponse.ContentBlock.Id,
+//						Type:  "function",
+//						Function: dto.FunctionResponse{
+//							Name:      claudeResponse.ContentBlock.Name,
+//							Arguments: "",
+//						},
+//					})
+//				}
+//			} else {
+//				return nil
+//			}
+//		} else if claudeResponse.Type == "content_block_delta" {
+//			if claudeResponse.Delta != nil {
+//				choice.Delta.Content = claudeResponse.Delta.Text
+//				switch claudeResponse.Delta.Type {
+//				case "input_json_delta":
+//					partialJson := ""
+//					if claudeResponse.Delta.PartialJson != nil {
+//						partialJson = *claudeResponse.Delta.PartialJson
+//					}
+//					tools = append(tools, dto.ToolCallResponse{
+//						Type:  "function",
+//						Index: common.GetPointer(fcIdx),
+//						Function: dto.FunctionResponse{
+//							Arguments: partialJson,
+//						},
+//					})
+//				case "signature_delta":
+//					// 加密的不处理
+//					signatureContent := "\n"
+//					choice.Delta.ReasoningContent = &signatureContent
+//				case "thinking_delta":
+//					choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
+//				}
+//			}
+//		} else if claudeResponse.Type == "message_delta" {
+//			if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
+//				finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
+//				if finishReason != "null" {
+//					choice.FinishReason = &finishReason
+//				}
+//			}
+//			//claudeUsage = &claudeResponse.Usage
+//		} else if claudeResponse.Type == "message_stop" {
+//			return nil
+//		} else {
+//			return nil
+//		}
+//		if len(tools) > 0 {
+//			choice.Delta.Content = nil // compatible with other OpenAI derivative applications, like LobeOpenAICompatibleFactory ...
+//			choice.Delta.ToolCalls = tools
+//		}
+//		response.Choices = append(response.Choices, choice)
+//
+//		return &response
+//	}
+//
+//	func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextResponse {
+//		choices := make([]dto.OpenAITextResponseChoice, 0)
+//		fullTextResponse := dto.OpenAITextResponse{
+//			Id:      fmt.Sprintf("chatcmpl-%s", common.GetUUID()),
+//			Object:  "chat.completion",
+//			Created: common.GetTimestamp(),
+//		}
+//		var responseText string
+//		var responseThinking string
+//		if len(claudeResponse.Content) > 0 {
+//			responseText = claudeResponse.Content[0].GetText()
+//			if claudeResponse.Content[0].Thinking != nil {
+//				responseThinking = *claudeResponse.Content[0].Thinking
+//			}
+//		}
+//		tools := make([]dto.ToolCallResponse, 0)
+//		thinkingContent := ""
+//		signature := ""
+//
+//		//if reqMode == RequestModeCompletion {
+//		//	choice := dto.OpenAITextResponseChoice{
+//		//		Index: 0,
+//		//		Message: dto.Message{
+//		//			Role:    "assistant",
+//		//			Content: strings.TrimPrefix(claudeResponse.Completion, " "),
+//		//			Name:    nil,
+//		//		},
+//		//		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
+//		//	}
+//		//	choices = append(choices, choice)
+//		//} else {
+//		//	fullTextResponse.Id = claudeResponse.Id
+//		//	for _, message := range claudeResponse.Content {
+//		//		switch message.Type {
+//		//		case "tool_use":
+//		//			args, _ := json.Marshal(message.Input)
+//		//			tools = append(tools, dto.ToolCallResponse{
+//		//				ID:   message.Id,
+//		//				Type: "function", // compatible with other OpenAI derivative applications
+//		//				Function: dto.FunctionResponse{
+//		//					Name:      message.Name,
+//		//					Arguments: string(args),
+//		//				},
+//		//			})
+//		//		case "thinking":
+//		//			// 加密的不管， 只输出明文的推理过程
+//		//			signature = message.Signature
+//		//			if message.Thinking != nil {
+//		//				thinkingContent = *message.Thinking
+//		//			}
+//		//		case "text":
+//		//			responseText = message.GetText()
+//		fullTextResponse.Id = claudeResponse.Id
+//		for _, message := range claudeResponse.Content {
+//			switch message.Type {
+//			case "tool_use":
+//				args, _ := json.Marshal(message.Input)
+//				tools = append(tools, dto.ToolCallResponse{
+//					ID:   message.Id,
+//					Type: "function", // compatible with other OpenAI derivative applications
+//					Function: dto.FunctionResponse{
+//						Name:      message.Name,
+//						Arguments: string(args),
+//					},
+//				})
+//			case "thinking":
+//				// 加密的不管， 只输出明文的推理过程
+//				signature = message.Signature
+//				if message.Thinking != nil {
+//					thinkingContent = *message.Thinking
+//				}
+//			case "text":
+//				responseText = message.GetText()
+//			}
+//		}
+//		choice := dto.OpenAITextResponseChoice{
+//			Index: 0,
+//			Message: dto.Message{
+//				Role: "assistant",
+//			},
+//			FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
+//		}
+//		choice.SetStringContent(responseText)
+//		if len(responseThinking) > 0 {
+//			choice.ReasoningContent = responseThinking
+//		}
+//		if len(tools) > 0 {
+//			choice.Message.SetToolCalls(tools)
+//		}
+//		choice.Message.ReasoningContent = thinkingContent
+//		choice.Message.Signature = signature
+//		fullTextResponse.Model = claudeResponse.Model
+//		choices = append(choices, choice)
+//		fullTextResponse.Choices = choices
+//		return &fullTextResponse
+//	}
+//
+//	type ClaudeResponseInfo struct {
+//		ResponseId   string
+//		Created      int64
+//		Model        string
+//		ResponseText strings.Builder
+//		Usage        *dto.Usage
+//		Done         bool
+//	}
+//
+//	func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ClaudeUsage {
+//		usage := &dto.ClaudeUsage{}
+//		if claudeResponse != nil && claudeResponse.Usage != nil {
+//			*usage = *claudeResponse.Usage
+//		}
+//
+//		if claudeInfo == nil || claudeInfo.Usage == nil {
+//			return usage
+//		}
+//
+//		if usage.InputTokens == 0 && claudeInfo.Usage.PromptTokens > 0 {
+//			usage.InputTokens = claudeInfo.Usage.PromptTokens
+//		}
+//		if usage.CacheReadInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 {
+//			usage.CacheReadInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedTokens
+//		}
+//		if usage.CacheCreationInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 {
+//			usage.CacheCreationInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens
+//		}
+//		if usage.CacheCreation == nil && (claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 || claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0) {
+//			usage.CacheCreation = &dto.ClaudeCacheCreationUsage{
+//				Ephemeral5mInputTokens: claudeInfo.Usage.ClaudeCacheCreation5mTokens,
+//				Ephemeral1hInputTokens: claudeInfo.Usage.ClaudeCacheCreation1hTokens,
+//			}
+//		}
+//		return usage
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
-	var response dto.ChatCompletionsStreamResponse
-	response.Object = "chat.completion.chunk"
-	response.Model = claudeResponse.Model
-	response.Choices = make([]dto.ChatCompletionsStreamResponseChoice, 0)
-	tools := make([]dto.ToolCallResponse, 0)
-	fcIdx := 0
-	if claudeResponse.Index != nil {
-		fcIdx = *claudeResponse.Index - 1
-		if fcIdx < 0 {
-			fcIdx = 0
-		}
-	}
-	var choice dto.ChatCompletionsStreamResponseChoice
-	if claudeResponse.Type == "message_start" {
-		if claudeResponse.Message != nil {
-			response.Id = claudeResponse.Message.Id
-			response.Model = claudeResponse.Message.Model
-		}
-		//claudeUsage = &claudeResponse.Message.Usage
-		choice.Delta.SetContentString("")
-		choice.Delta.Role = "assistant"
-	} else if claudeResponse.Type == "content_block_start" {
-		if claudeResponse.ContentBlock != nil {
-			// 如果是文本块，尽可能发送首段文本（若存在）
-			if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
-				choice.Delta.SetContentString(*claudeResponse.ContentBlock.Text)
-			}
-			if claudeResponse.ContentBlock.Type == "tool_use" {
-				tools = append(tools, dto.ToolCallResponse{
-					Index: common.GetPointer(fcIdx),
-					ID:    claudeResponse.ContentBlock.Id,
-					Type:  "function",
-					Function: dto.FunctionResponse{
-						Name:      claudeResponse.ContentBlock.Name,
-						Arguments: "",
-					},
-				})
-			}
-		} else {
-			return nil
-		}
-	} else if claudeResponse.Type == "content_block_delta" {
-		if claudeResponse.Delta != nil {
-			choice.Delta.Content = claudeResponse.Delta.Text
-			switch claudeResponse.Delta.Type {
-			case "input_json_delta":
-				partialJson := ""
-				if claudeResponse.Delta.PartialJson != nil {
-					partialJson = *claudeResponse.Delta.PartialJson
-				}
-				tools = append(tools, dto.ToolCallResponse{
-					Type:  "function",
-					Index: common.GetPointer(fcIdx),
-					Function: dto.FunctionResponse{
-						Arguments: partialJson,
-					},
-				})
-			case "signature_delta":
-				// 加密的不处理
-				signatureContent := "\n"
-				choice.Delta.ReasoningContent = &signatureContent
-			case "thinking_delta":
-				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
-			}
-		}
-	} else if claudeResponse.Type == "message_delta" {
-		if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
-			finishReason := stopReasonClaude2OpenAI(*claudeResponse.Delta.StopReason)
-			if finishReason != "null" {
-				choice.FinishReason = &finishReason
-			}
-		}
-		//claudeUsage = &claudeResponse.Usage
-	} else if claudeResponse.Type == "message_stop" {
-		return nil
-	} else {
-		return nil
-	}
-	if len(tools) > 0 {
-		choice.Delta.Content = nil // compatible with other OpenAI derivative applications, like LobeOpenAICompatibleFactory ...
-		choice.Delta.ToolCalls = tools
-	}
-	response.Choices = append(response.Choices, choice)
-
-	return &response
+	return relayconvert.StreamResponseClaude2OpenAI(claudeResponse)
 }
 
 func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextResponse {
-	choices := make([]dto.OpenAITextResponseChoice, 0)
-	fullTextResponse := dto.OpenAITextResponse{
-		Id:      fmt.Sprintf("chatcmpl-%s", common.GetUUID()),
-		Object:  "chat.completion",
-		Created: common.GetTimestamp(),
-	}
-	var responseText string
-	var responseThinking string
-	if len(claudeResponse.Content) > 0 {
-		responseText = claudeResponse.Content[0].GetText()
-		if claudeResponse.Content[0].Thinking != nil {
-			responseThinking = *claudeResponse.Content[0].Thinking
-		}
-	}
-	tools := make([]dto.ToolCallResponse, 0)
-	thinkingContent := ""
-	signature := ""
-
-	//if reqMode == RequestModeCompletion {
-	//	choice := dto.OpenAITextResponseChoice{
-	//		Index: 0,
-	//		Message: dto.Message{
-	//			Role:    "assistant",
-	//			Content: strings.TrimPrefix(claudeResponse.Completion, " "),
-	//			Name:    nil,
-	//		},
-	//		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
-	//	}
-	//	choices = append(choices, choice)
-	//} else {
-	//	fullTextResponse.Id = claudeResponse.Id
-	//	for _, message := range claudeResponse.Content {
-	//		switch message.Type {
-	//		case "tool_use":
-	//			args, _ := json.Marshal(message.Input)
-	//			tools = append(tools, dto.ToolCallResponse{
-	//				ID:   message.Id,
-	//				Type: "function", // compatible with other OpenAI derivative applications
-	//				Function: dto.FunctionResponse{
-	//					Name:      message.Name,
-	//					Arguments: string(args),
-	//				},
-	//			})
-	//		case "thinking":
-	//			// 加密的不管， 只输出明文的推理过程
-	//			signature = message.Signature
-	//			if message.Thinking != nil {
-	//				thinkingContent = *message.Thinking
-	//			}
-	//		case "text":
-	//			responseText = message.GetText()
-	fullTextResponse.Id = claudeResponse.Id
-	for _, message := range claudeResponse.Content {
-		switch message.Type {
-		case "tool_use":
-			args, _ := json.Marshal(message.Input)
-			tools = append(tools, dto.ToolCallResponse{
-				ID:   message.Id,
-				Type: "function", // compatible with other OpenAI derivative applications
-				Function: dto.FunctionResponse{
-					Name:      message.Name,
-					Arguments: string(args),
-				},
-			})
-		case "thinking":
-			// 加密的不管， 只输出明文的推理过程
-			signature = message.Signature
-			if message.Thinking != nil {
-				thinkingContent = *message.Thinking
-			}
-		case "text":
-			responseText = message.GetText()
-		}
-	}
-	choice := dto.OpenAITextResponseChoice{
-		Index: 0,
-		Message: dto.Message{
-			Role: "assistant",
-		},
-		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
-	}
-	choice.SetStringContent(responseText)
-	if len(responseThinking) > 0 {
-		choice.ReasoningContent = responseThinking
-	}
-	if len(tools) > 0 {
-		choice.Message.SetToolCalls(tools)
-	}
-	choice.Message.ReasoningContent = thinkingContent
-	choice.Message.Signature = signature
-	fullTextResponse.Model = claudeResponse.Model
-	choices = append(choices, choice)
-	fullTextResponse.Choices = choices
-	return &fullTextResponse
+	return relayconvert.ResponseClaude2OpenAI(claudeResponse)
 }
 
-type ClaudeResponseInfo struct {
-	ResponseId   string
-	Created      int64
-	Model        string
-	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
+type ClaudeResponseInfo = relayconvert.ClaudeResponseInfo
+
+func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
+	if usage == nil {
+		return 0
+	}
+	openAIUsage := relayconvert.UsageFromClaudeUsage(usage)
+	if openAIUsage == nil {
+		return 0
+	}
+	return openAIUsage.PromptTokens - usage.PromptTokens - usage.PromptTokensDetails.CachedTokens
+}
+
+func buildOpenAIStyleUsageFromClaudeUsage(usage *dto.Usage) dto.Usage {
+	mapped := relayconvert.UsageFromClaudeUsage(usage)
+	if mapped == nil {
+		return dto.Usage{}
+	}
+	return *mapped
 }
 
 func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ClaudeUsage {
-	usage := &dto.ClaudeUsage{}
-	if claudeResponse != nil && claudeResponse.Usage != nil {
-		*usage = *claudeResponse.Usage
-	}
-
-	if claudeInfo == nil || claudeInfo.Usage == nil {
-		return usage
-	}
-
-	if usage.InputTokens == 0 && claudeInfo.Usage.PromptTokens > 0 {
-		usage.InputTokens = claudeInfo.Usage.PromptTokens
-	}
-	if usage.CacheReadInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 {
-		usage.CacheReadInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedTokens
-	}
-	if usage.CacheCreationInputTokens == 0 && claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 {
-		usage.CacheCreationInputTokens = claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens
-	}
-	if usage.CacheCreation == nil && (claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 || claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0) {
-		usage.CacheCreation = &dto.ClaudeCacheCreationUsage{
-			Ephemeral5mInputTokens: claudeInfo.Usage.ClaudeCacheCreation5mTokens,
-			Ephemeral1hInputTokens: claudeInfo.Usage.ClaudeCacheCreation1hTokens,
-		}
-	}
-	return usage
+	return relayconvert.BuildMessageDeltaPatchUsage(claudeResponse, claudeInfo)
 }
 
 func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
@@ -741,109 +767,114 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 }
 
 func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
-	if data == "" || usage == nil {
-		return data
-	}
-
-	data = setMessageDeltaUsageInt(data, "usage.input_tokens", usage.InputTokens)
-	data = setMessageDeltaUsageInt(data, "usage.cache_read_input_tokens", usage.CacheReadInputTokens)
-	data = setMessageDeltaUsageInt(data, "usage.cache_creation_input_tokens", usage.CacheCreationInputTokens)
-
-	if usage.CacheCreation != nil {
-		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_5m_input_tokens", usage.CacheCreation.Ephemeral5mInputTokens)
-		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_1h_input_tokens", usage.CacheCreation.Ephemeral1hInputTokens)
-	}
-
-	return data
-}
-
-func setMessageDeltaUsageInt(data string, path string, localValue int) string {
-	if localValue <= 0 {
-		return data
-	}
-
-	upstreamValue := gjson.Get(data, path)
-	if upstreamValue.Exists() && upstreamValue.Int() > 0 {
-		return data
-	}
-
-	patchedData, err := sjson.Set(data, path, localValue)
-	if err != nil {
-		return data
-	}
-	return patchedData
+	//	if data == "" || usage == nil {
+	//		return data
+	//	}
+	//
+	//	data = setMessageDeltaUsageInt(data, "usage.input_tokens", usage.InputTokens)
+	//	data = setMessageDeltaUsageInt(data, "usage.cache_read_input_tokens", usage.CacheReadInputTokens)
+	//	data = setMessageDeltaUsageInt(data, "usage.cache_creation_input_tokens", usage.CacheCreationInputTokens)
+	//
+	//	if usage.CacheCreation != nil {
+	//		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_5m_input_tokens", usage.CacheCreation.Ephemeral5mInputTokens)
+	//		data = setMessageDeltaUsageInt(data, "usage.cache_creation.ephemeral_1h_input_tokens", usage.CacheCreation.Ephemeral1hInputTokens)
+	//	}
+	//
+	//	return data
+	//}
+	//
+	//func setMessageDeltaUsageInt(data string, path string, localValue int) string {
+	//	if localValue <= 0 {
+	//		return data
+	//	}
+	//
+	//	upstreamValue := gjson.Get(data, path)
+	//	if upstreamValue.Exists() && upstreamValue.Int() > 0 {
+	//		return data
+	//	}
+	//
+	//	patchedData, err := sjson.Set(data, path, localValue)
+	//	if err != nil {
+	//		return data
+	//	}
+	//	return patchedData
+	//}
+	//
+	//func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
+	//	if claudeInfo == nil {
+	//		return false
+	//	}
+	//	if claudeInfo.Usage == nil {
+	//		claudeInfo.Usage = &dto.Usage{}
+	//	}
+	//	if claudeResponse.Type == "message_start" {
+	//		if claudeResponse.Message != nil {
+	//			claudeInfo.ResponseId = claudeResponse.Message.Id
+	//			claudeInfo.Model = claudeResponse.Message.Model
+	//		}
+	//
+	//		// message_start, 获取usage
+	//		if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
+	//			claudeInfo.Usage.PromptTokens = claudeResponse.Message.Usage.InputTokens
+	//			claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Message.Usage.CacheReadInputTokens
+	//			claudeInfo.Usage.CacheReadInputTokens = claudeResponse.Message.Usage.CacheReadInputTokens
+	//			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Message.Usage.CacheCreationInputTokens
+	//			claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Message.Usage.GetCacheCreation5mTokens()
+	//			claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Message.Usage.GetCacheCreation1hTokens()
+	//			claudeInfo.Usage.CompletionTokens = claudeResponse.Message.Usage.OutputTokens
+	//		}
+	//	} else if claudeResponse.Type == "content_block_delta" {
+	//		if claudeResponse.Delta != nil {
+	//			if claudeResponse.Delta.Text != nil {
+	//				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
+	//			}
+	//			if claudeResponse.Delta.Thinking != nil {
+	//				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
+	//			}
+	//		}
+	//	} else if claudeResponse.Type == "message_delta" {
+	//		// 最终的usage获取
+	//		if claudeResponse.Usage != nil {
+	//			if claudeResponse.Usage.InputTokens > 0 {
+	//				// 不叠加，只取最新的
+	//				claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
+	//			}
+	//			if claudeResponse.Usage.CacheReadInputTokens > 0 {
+	//				claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
+	//				claudeInfo.Usage.CacheReadInputTokens = claudeResponse.Usage.CacheReadInputTokens
+	//			}
+	//			if claudeResponse.Usage.CacheCreationInputTokens > 0 {
+	//				claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
+	//			}
+	//			if cacheCreation5m := claudeResponse.Usage.GetCacheCreation5mTokens(); cacheCreation5m > 0 {
+	//				claudeInfo.Usage.ClaudeCacheCreation5mTokens = cacheCreation5m
+	//			}
+	//			if cacheCreation1h := claudeResponse.Usage.GetCacheCreation1hTokens(); cacheCreation1h > 0 {
+	//				claudeInfo.Usage.ClaudeCacheCreation1hTokens = cacheCreation1h
+	//			}
+	//			if claudeResponse.Usage.OutputTokens > 0 {
+	//				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
+	//			}
+	//			claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+	//		}
+	//
+	//		// 判断是否完整
+	//		claudeInfo.Done = true
+	//	} else if claudeResponse.Type == "content_block_start" {
+	//	} else {
+	//		return false
+	//	}
+	//	if oaiResponse != nil {
+	//		oaiResponse.Id = claudeInfo.ResponseId
+	//		oaiResponse.Created = claudeInfo.Created
+	//		oaiResponse.Model = claudeInfo.Model
+	//	}
+	//	return true
+	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
 }
 
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
-	if claudeInfo == nil {
-		return false
-	}
-	if claudeInfo.Usage == nil {
-		claudeInfo.Usage = &dto.Usage{}
-	}
-	if claudeResponse.Type == "message_start" {
-		if claudeResponse.Message != nil {
-			claudeInfo.ResponseId = claudeResponse.Message.Id
-			claudeInfo.Model = claudeResponse.Message.Model
-		}
-
-		// message_start, 获取usage
-		if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
-			claudeInfo.Usage.PromptTokens = claudeResponse.Message.Usage.InputTokens
-			claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Message.Usage.CacheReadInputTokens
-			claudeInfo.Usage.CacheReadInputTokens = claudeResponse.Message.Usage.CacheReadInputTokens
-			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Message.Usage.CacheCreationInputTokens
-			claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Message.Usage.GetCacheCreation5mTokens()
-			claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Message.Usage.GetCacheCreation1hTokens()
-			claudeInfo.Usage.CompletionTokens = claudeResponse.Message.Usage.OutputTokens
-		}
-	} else if claudeResponse.Type == "content_block_delta" {
-		if claudeResponse.Delta != nil {
-			if claudeResponse.Delta.Text != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
-			}
-			if claudeResponse.Delta.Thinking != nil {
-				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
-			}
-		}
-	} else if claudeResponse.Type == "message_delta" {
-		// 最终的usage获取
-		if claudeResponse.Usage != nil {
-			if claudeResponse.Usage.InputTokens > 0 {
-				// 不叠加，只取最新的
-				claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
-			}
-			if claudeResponse.Usage.CacheReadInputTokens > 0 {
-				claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
-				claudeInfo.Usage.CacheReadInputTokens = claudeResponse.Usage.CacheReadInputTokens
-			}
-			if claudeResponse.Usage.CacheCreationInputTokens > 0 {
-				claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
-			}
-			if cacheCreation5m := claudeResponse.Usage.GetCacheCreation5mTokens(); cacheCreation5m > 0 {
-				claudeInfo.Usage.ClaudeCacheCreation5mTokens = cacheCreation5m
-			}
-			if cacheCreation1h := claudeResponse.Usage.GetCacheCreation1hTokens(); cacheCreation1h > 0 {
-				claudeInfo.Usage.ClaudeCacheCreation1hTokens = cacheCreation1h
-			}
-			if claudeResponse.Usage.OutputTokens > 0 {
-				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
-			}
-			claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
-		}
-
-		// 判断是否完整
-		claudeInfo.Done = true
-	} else if claudeResponse.Type == "content_block_start" {
-	} else {
-		return false
-	}
-	if oaiResponse != nil {
-		oaiResponse.Id = claudeInfo.ResponseId
-		oaiResponse.Created = claudeInfo.Created
-		oaiResponse.Model = claudeInfo.Model
-	}
-	return true
+	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
@@ -901,18 +932,36 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		if common.DebugEnabled {
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
-		// 仅补估 completion tokens，保留已从 message_start 解析到的 prompt / cache 相关字段，
-		// 避免上游只回了 message_start 就断流时，cache_creation_input_tokens 等计费字段被整体丢弃。
-		estimated := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
-		claudeInfo.Usage.CompletionTokens = estimated.CompletionTokens
+		// 	// 仅补估 completion tokens，保留已从 message_start 解析到的 prompt / cache 相关字段，
+		// 	// 避免上游只回了 message_start 就断流时，cache_creation_input_tokens 等计费字段被整体丢弃。
+		// 	estimated := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, claudeInfo.Usage.PromptTokens)
+		// 	claudeInfo.Usage.CompletionTokens = estimated.CompletionTokens
+		// 	claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+		// }
+		// 只补缺失字段，不整份覆盖——保留 message_start 已拿到的 cache 字段
+		fallback := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		if claudeInfo.Usage.CompletionTokens == 0 ||
+			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
+			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
+		}
+		if claudeInfo.Usage.PromptTokens == 0 {
+			claudeInfo.Usage.PromptTokens = fallback.PromptTokens
+		}
 		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+	}
+	if claudeInfo.Usage != nil {
+		claudeInfo.Usage.UsageSemantic = "anthropic"
+	}
+	if claudeInfo.Usage != nil && claudeInfo.Usage.BillingUsage == nil {
+		claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(buildMessageDeltaPatchUsage(nil, claudeInfo))
 	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
 		//
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
-			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, buildClientFacingUsage(*claudeInfo.Usage))
+			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
 				common.SysLog("send final response failed: " + err.Error())
@@ -931,12 +980,11 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		Usage:        &dto.Usage{},
 	}
 	var err *types.NewAPIError
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		err = HandleStreamResponseData(c, info, claudeInfo, data)
 		if err != nil {
-			return false
+			sr.Stop(err)
 		}
-		return true
 	})
 	if err != nil {
 		return nil, err
@@ -974,6 +1022,8 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
 		claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
 		claudeInfo.Usage.TotalTokens = claudeResponse.Usage.InputTokens + claudeResponse.Usage.OutputTokens
+		claudeInfo.Usage.UsageSemantic = "anthropic"
+		claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(claudeResponse.Usage)
 		claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Usage.CacheReadInputTokens
 		claudeInfo.Usage.CacheReadInputTokens = claudeResponse.Usage.CacheReadInputTokens
 		claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
@@ -984,8 +1034,10 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
-		openaiResponse.Usage = buildClientFacingUsage(*claudeInfo.Usage)
-		responseData, err = json.Marshal(openaiResponse)
+		//openaiResponse.Usage = buildClientFacingUsage(*claudeInfo.Usage)
+		//responseData, err = json.Marshal(openaiResponse)
+		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -1015,9 +1067,7 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
-	if common.DebugEnabled {
-		println("responseBody: ", string(responseBody))
-	}
+	logger.LogDebug(c, "responseBody: %s", responseBody)
 	handleErr := HandleClaudeResponseData(c, info, claudeInfo, resp, responseBody)
 	if handleErr != nil {
 		return nil, handleErr

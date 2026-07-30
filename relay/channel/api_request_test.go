@@ -53,7 +53,7 @@ func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testin
 
 	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	_, ok := headers["X-Upstream-Trace"]
+	_, ok := headers["x-upstream-trace"]
 	require.False(t, ok)
 }
 
@@ -77,59 +77,117 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 
 	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "trace-123", headers["X-Upstream-Trace"])
+	require.Equal(t, "trace-123", headers["x-upstream-trace"])
 }
 
-func TestBuildOverriddenClientHeader_BasePreservedAndOverrideWins(t *testing.T) {
+func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	// 客户端原始头：默认不透传到上游，但检测需要，应被 BuildOverriddenClientHeader 保留为基底。
-	ctx.Request.Header.Set("User-Agent", "claude-cli/2.1.181 (external, cli)")
-	ctx.Request.Header.Set("X-App", "cli")
-	ctx.Request.Header.Set("Anthropic-Beta", "wrong-value")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	info := &relaycommon.RelayInfo{
-		IsChannelTest: false,
+		IsChannelTest:             false,
+		UseRuntimeHeadersOverride: true,
+		RuntimeHeadersOverride: map[string]any{
+			"x-static":  "runtime-value",
+			"x-runtime": "runtime-only",
+		},
 		ChannelMeta: &relaycommon.ChannelMeta{
 			HeadersOverride: map[string]any{
-				// 渠道用 Override 改写该头，检测应看到覆盖后的值。
-				"Anthropic-Beta": "claude-code-20250219",
+				"X-Static": "legacy-value",
+				"X-Legacy": "legacy-only",
 			},
 		},
 	}
 
-	merged, err := BuildOverriddenClientHeader(ctx, info)
+	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	// 基底保留。
-	require.Equal(t, "claude-cli/2.1.181 (external, cli)", merged.Get("User-Agent"))
-	require.Equal(t, "cli", merged.Get("X-App"))
-	// Override 生效（覆盖客户端原始值）。
-	require.Equal(t, "claude-code-20250219", merged.Get("Anthropic-Beta"))
+	require.Equal(t, "runtime-value", headers["x-static"])
+	require.Equal(t, "runtime-only", headers["x-runtime"])
+	_, exists := headers["x-legacy"]
+	require.False(t, exists)
 }
 
-func TestBuildOverriddenClientHeader_ClientHeaderPlaceholder(t *testing.T) {
+func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	ctx.Request.Header.Set("X-Real-App", "cli")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Trace-Id", "trace-123")
+	ctx.Request.Header.Set("Accept-Encoding", "gzip")
 
 	info := &relaycommon.RelayInfo{
 		IsChannelTest: false,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			HeadersOverride: map[string]any{
-				"X-App": "{client_header:X-Real-App}",
+				"*": "",
 			},
 		},
 	}
 
-	merged, err := BuildOverriddenClientHeader(ctx, info)
+	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "cli", merged.Get("X-App"))
+	require.Equal(t, "trace-123", headers["x-trace-id"])
+
+	_, hasAcceptEncoding := headers["accept-encoding"]
+	require.False(t, hasAcceptEncoding)
+}
+
+func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("Originator", "Codex CLI")
+	ctx.Request.Header.Set("Session_id", "sess-123")
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		RequestHeaders: map[string]string{
+			"Originator": "Codex CLI",
+			"Session_id": "sess-123",
+		},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ParamOverride: map[string]any{
+				"operations": []any{
+					map[string]any{
+						"mode":  "pass_headers",
+						"value": []any{"Originator", "Session_id", "X-Codex-Beta-Features"},
+					},
+				},
+			},
+			HeadersOverride: map[string]any{
+				"X-Static": "legacy-value",
+			},
+		},
+	}
+
+	_, err := relaycommon.ApplyParamOverrideWithRelayInfo([]byte(`{"model":"gpt-4.1"}`), info)
+	require.NoError(t, err)
+	require.True(t, info.UseRuntimeHeadersOverride)
+	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])
+	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])
+	_, exists := info.RuntimeHeadersOverride["x-codex-beta-features"]
+	require.False(t, exists)
+	require.Equal(t, "legacy-value", info.RuntimeHeadersOverride["x-static"])
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "Codex CLI", headers["originator"])
+	require.Equal(t, "sess-123", headers["session_id"])
+	_, exists = headers["x-codex-beta-features"]
+	require.False(t, exists)
+
+	upstreamReq := httptest.NewRequest(http.MethodPost, "https://example.com/v1/responses", nil)
+	applyHeaderOverrideToRequest(upstreamReq, headers)
+	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
+	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
+	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
 }

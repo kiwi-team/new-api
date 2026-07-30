@@ -189,50 +189,26 @@ func (e *NewAPIError) SetMessage(message string) {
 }
 
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
-	if e.StatusCode == 0 {
-		e.StatusCode = http.StatusInternalServerError
-	}
+	var result OpenAIError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
-		if e.RelayError != nil {
-			if openAIError, ok := e.RelayError.(OpenAIError); ok {
-				openAIError.Message = e.Error()
-				openAIError.Type = "toio_api_error"
-				openAIError.StatusCode = e.StatusCode
-				openAIError.Metadata = nil
-				return openAIError
-			}
-		}
-		// 如果类型断言失败，返回默认的 OpenAI 错误
-		return OpenAIError{
-			Message:    e.Error(),
-			Type:       "toio_api_error",
-			Param:      "",
-			Code:       e.errorCode,
-			StatusCode: e.StatusCode,
+		if openAIError, ok := e.RelayError.(OpenAIError); ok {
+			result = openAIError
+			result.Type = "toio_api_error"
+			result.StatusCode = e.StatusCode
 		}
 	case ErrorTypeClaudeError:
-		if e.RelayError != nil {
-			if _, ok := e.RelayError.(ClaudeError); ok {
-				return OpenAIError{
-					Message:    e.Error(),
-					Type:       "toio_api_error",
-					Param:      "",
-					Code:       e.errorCode,
-					StatusCode: e.StatusCode,
-				}
+		if _, ok := e.RelayError.(ClaudeError); ok {
+			result = OpenAIError{
+				Message:    e.Error(),
+				Type:       "toio_api_error",
+				Param:      "",
+				StatusCode: e.StatusCode,
+				Code:       e.errorCode,
 			}
 		}
-		// 如果类型断言失败，返回默认的 OpenAI 错误
-		return OpenAIError{
-			Message:    e.Error(),
-			Type:       "toio_api_error",
-			Param:      "",
-			Code:       e.errorCode,
-			StatusCode: e.StatusCode,
-		}
 	default:
-		return OpenAIError{
+		result = OpenAIError{
 			Message:    e.Error(),
 			Type:       "toio_api_error",
 			Param:      "",
@@ -240,13 +216,13 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 			StatusCode: e.StatusCode,
 		}
 	}
-	// if e.errorCode != ErrorCodeCountTokenFailed {
-	// 	result.Message = common.MaskSensitiveInfo(result.Message)
-	// }
-	// if result.Message == "" {
-	// 	result.Message = string(e.errorType)
-	// }
-	// return result
+	if e.errorCode != ErrorCodeCountTokenFailed {
+		result.Message = common.MaskSensitiveInfo(result.Message)
+	}
+	if result.Message == "" {
+		result.Message = string(e.errorType)
+	}
+	return result
 }
 
 func (e *NewAPIError) ToClaudeError() ClaudeError {
@@ -426,6 +402,12 @@ func ErrOptionWithSkipRetry() NewAPIErrorOptions {
 func ErrOptionWithNoRecordErrorLog() NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		e.recordErrorLog = common.GetPointer(false)
+	}
+}
+
+func ErrOptionWithStatusCode(statusCode int) NewAPIErrorOptions {
+	return func(e *NewAPIError) {
+		e.StatusCode = statusCode
 	}
 }
 

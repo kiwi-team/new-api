@@ -1,11 +1,12 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 
 	"github.com/tidwall/gjson"
 )
@@ -78,14 +79,14 @@ func (r *VariableReplacer) replacePrevResponse(template string) (string, error) 
 	re := regexp.MustCompile(`\{\{prev_response\.([^}]+)\}\}`)
 
 	// 将 prevResponse 转换为 JSON 字符串，以便使用 gjson
-	jsonData, err := json.Marshal(r.prevResponse)
+	jsonData, err := common.Marshal(r.prevResponse)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal prev response: %w", err)
 	}
 
 	result := re.ReplaceAllStringFunc(template, func(match string) string {
-		// 提取 JSONPath
-		jsonPath := strings.TrimSpace(match[17 : len(match)-2]) // 去掉 {{prev_response. 和 }}
+		// 提取 JSONPath，去掉 {{prev_response. 和 }}
+		jsonPath := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "{{prev_response."), "}}"))
 
 		// 使用 gjson 获取值
 		value := gjson.GetBytes(jsonData, jsonPath)
@@ -121,7 +122,7 @@ func (r *VariableReplacer) valueToString(value interface{}) string {
 		return "null"
 	default:
 		// 对象和数组转换为 JSON
-		data, err := json.Marshal(v)
+		data, err := common.Marshal(v)
 		if err != nil {
 			return fmt.Sprintf(`"%v"`, v)
 		}
@@ -190,7 +191,7 @@ func (r *VariableReplacer) pathValueToString(value interface{}) string {
 // ValidateJSON 验证替换后的 JSON 是否有效
 func (r *VariableReplacer) ValidateJSON(jsonStr string) error {
 	var js interface{}
-	return json.Unmarshal([]byte(jsonStr), &js)
+	return common.Unmarshal([]byte(jsonStr), &js)
 }
 
 // ExtractVariables 从模板中提取所有变量名
@@ -276,7 +277,7 @@ func ConvertType(value interface{}, targetType string) (interface{}, error) {
 			return v, nil
 		case string:
 			var obj map[string]interface{}
-			err := json.Unmarshal([]byte(v), &obj)
+			err := common.Unmarshal([]byte(v), &obj)
 			return obj, err
 		default:
 			return nil, fmt.Errorf("cannot convert %T to object", v)
@@ -288,7 +289,7 @@ func ConvertType(value interface{}, targetType string) (interface{}, error) {
 			return v, nil
 		case string:
 			var arr []interface{}
-			err := json.Unmarshal([]byte(v), &arr)
+			err := common.Unmarshal([]byte(v), &arr)
 			return arr, err
 		default:
 			return nil, fmt.Errorf("cannot convert %T to array", v)

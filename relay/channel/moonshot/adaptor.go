@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -95,10 +96,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	//https://platform.moonshot.cn/docs/api/chat#%E5%AD%97%E6%AE%B5%E8%AF%B4%E6%98%8E
 	// https://platform.moonshot.cn/docs/guide/kimi-k2-5-quickstart#%E5%8F%82%E6%95%B0%E5%8F%98%E5%8A%A8%E8%AF%B4%E6%98%8E
 	if request.Model == "kimi-k2.5" {
-		request.TopP = 0.95
+		request.TopP = common.GetPointer(0.95)
 		if request.THINKING != nil {
 			var thinking dto.Thinking
-			err := json.Unmarshal(request.THINKING, &thinking)
+			err := common.Unmarshal(request.THINKING, &thinking)
 			if err == nil {
 				if thinking.Type == "enabled" {
 					tmp := 1.0
@@ -123,6 +124,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	// 因此在转发前把消息里的远程图片/视频 URL 下载并转换为 base64 data URL。
 	if err := convertMediaURLToBase64(c, request); err != nil {
 		return nil, err
+	}
+	if request.Temperature != nil && isTemperatureOneOnlyModel(getUpstreamModelName(info, request.Model)) && *request.Temperature != 1.0 {
+		request.Temperature = common.GetPointer[float64](1.0)
 	}
 	return request, nil
 }
@@ -188,6 +192,16 @@ func fetchAsDataURL(c *gin.Context, url string) (string, error) {
 		mimeType = "application/octet-stream"
 	}
 	return fmt.Sprintf("data:%s;base64,%s", mimeType, fileData.Base64Data), nil
+}
+func getUpstreamModelName(info *relaycommon.RelayInfo, fallback string) string {
+	if info != nil && info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return fallback
+}
+
+func isTemperatureOneOnlyModel(model string) bool {
+	return strings.EqualFold(model, "kimi-k2.6")
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {

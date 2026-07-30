@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/QuantumNous/new-api/types"
 
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -40,6 +40,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	}
 	data = setDeltaRole(c, info, data)
 	data = setResponseModel(c, info, data)
+
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -218,91 +219,12 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	// 检查是否为音频模型
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if lastStreamData != "" {
-			err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
-			if err != nil {
+			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
-				if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
-					return false
-				}
+				sr.Error(err)
 			}
-		}
-		if c.GetString(constant.ContextKeyCompletionsResponses) == "yes" {
-			var responsesItem dto.ResponsesStreamResponse
-			var chatItem dto.ChatCompletionsStreamResponse
-			err1 := common.UnmarshalJsonStr(data, &responsesItem)
-			if err1 != nil {
-				common.SysError("error handling stream format1 : " + err1.Error())
-			}
-
-			// 通过responsesItem的值构建chatItem
-			chatItem = dto.ChatCompletionsStreamResponse{
-				Id:      "chatcmpl-" + common.GetRandomString(32),
-				Object:  "chat.completion.chunk",
-				Created: common.GetTimestamp(),
-				Choices: []dto.ChatCompletionsStreamResponseChoice{},
-			}
-
-			// 根据responsesItem的类型设置chatItem的内容
-			switch responsesItem.Type {
-			//case "response.created", "response.output_item.added", "response.in_progress", "response.content_part.added":
-			//return false
-			case "response.output_text.delta", "response.reasoning_summary_text.delta":
-				// 处理文本增量输出
-				var choice dto.ChatCompletionsStreamResponseChoice
-				choice.Delta.SetContentString(responsesItem.Delta)
-				chatItem.Choices = append(chatItem.Choices, choice)
-
-			case "response.completed":
-				// 处理完成状态
-				var choice dto.ChatCompletionsStreamResponseChoice
-				finishReason := constant.FinishReasonStop
-				choice.FinishReason = &finishReason
-				chatItem.Choices = append(chatItem.Choices, choice)
-				if responsesItem.Response != nil {
-					chatItem.Id = responsesItem.Response.ID
-					chatItem.Model = responsesItem.Response.Model
-					chatItem.Usage = &dto.Usage{}
-					if responsesItem.Response.Usage != nil {
-						//chatItem.Usage = responsesItem.Response.Usage
-						chatItem.Usage.PromptTokens = responsesItem.Response.Usage.InputTokens
-						chatItem.Usage.CompletionTokens = responsesItem.Response.Usage.OutputTokens
-						chatItem.Usage.TotalTokens = responsesItem.Response.Usage.TotalTokens
-						if responsesItem.Response.Usage.InputTokensDetails != nil {
-							chatItem.Usage.PromptTokensDetails = *responsesItem.Response.Usage.InputTokensDetails
-							chatItem.Usage.PromptTokensDetails.CachedCreationTokens = responsesItem.Response.Usage.InputTokensDetails.CacheWriteTokens
-						}
-						chatItem.Usage.CompletionTokenDetails = responsesItem.Response.Usage.OutputTokenDetails
-					}
-				}
-
-			case "response.output_item.added":
-				// 处理输出项添加
-				if responsesItem.Item != nil && len(responsesItem.Item.Content) > 0 {
-					var choice dto.ChatCompletionsStreamResponseChoice
-					choice.Delta.SetContentString(responsesItem.Item.Content[0].Text)
-					chatItem.Choices = append(chatItem.Choices, choice)
-				}
-
-			case "response.output_item.done":
-				// 处理输出项完成
-				if responsesItem.Item != nil {
-					var choice dto.ChatCompletionsStreamResponseChoice
-					if responsesItem.Item.Status == "completed" {
-						finishReason := constant.FinishReasonStop
-						choice.FinishReason = &finishReason
-					}
-					chatItem.Choices = append(chatItem.Choices, choice)
-				}
-			}
-
-			// 如果成功构建了chatItem，则发送数据
-			chatItemJson, jsonErr := json.Marshal(chatItem)
-			if jsonErr != nil {
-				common.SysError("error marshalling chat item: " + jsonErr.Error())
-			}
-			data = string(chatItemJson)
 		}
 		if len(data) > 0 {
 			// 对音频模型，保存倒数第二个stream data
@@ -315,19 +237,27 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			// tool args 累计进 responseTextBuilder。替代旧的"累积所有 streamItems
 			// 到流结束再 processTokens 一次性 Unmarshal"，避免 O(单流体积 × 并发数)
 			// 的内存放大（旧路径在高并发下 inuse 占比 42% 且每 10s alloc 16+ GB）。
-			ingestStreamItem(info.RelayMode, data, &responseTextBuilder, &toolCount)
+			// 		ingestStreamItem(info.RelayMode, data, &responseTextBuilder, &toolCount)
+			// 	}
+			// 	return true
+			// })
+
+			if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
+				if strings.Contains(lastStreamData, "令牌token未开通百灵大模型服务") ||
+					strings.Contains(lastStreamData, `cn.com.antcloud.common.exception`) ||
+					strings.Contains(lastStreamData, "RATE_LIMIT") ||
+					strings.Contains(lastStreamData, `{"code":"500"`) {
+					sr.Error(types.NewError(errors.New(lastStreamData), types.ErrorCodeRateLimit))
+					return
+				}
+			}
+			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
+				logger.LogError(c, "error processing stream token data: "+err.Error())
+				sr.Error(err)
+			}
 		}
-		return true
 	})
 
-	if info.UpstreamModelName == "Ring-1T" || info.UpstreamModelName == "Ling-1T" {
-		if strings.Contains(lastStreamData, "令牌token未开通百灵大模型服务") ||
-			strings.Contains(lastStreamData, `cn.com.antcloud.common.exception`) ||
-			strings.Contains(lastStreamData, "RATE_LIMIT") ||
-			strings.Contains(lastStreamData, `{"code":"500"`) {
-			return nil, types.NewError(errors.New(lastStreamData), types.ErrorCodeRateLimit)
-		}
-	}
 	// 对音频模型，从倒数第二个stream data中提取usage信息
 	if isAudioModel && secondLastStreamData != "" {
 		var streamResp struct {
@@ -339,9 +269,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			containStreamUsage = true
 
 			if common.DebugEnabled {
-				logger.LogDebug(c, fmt.Sprintf("Audio model usage extracted from second last SSE: PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d, InputTokens=%d, OutputTokens=%d",
+				logger.LogDebug(c, "Audio model usage extracted from second last SSE: PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d, InputTokens=%d, OutputTokens=%d",
 					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens,
-					usage.InputTokens, usage.OutputTokens))
+					usage.InputTokens, usage.OutputTokens)
 			}
 		}
 	}
@@ -459,9 +389,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
-	if common.DebugEnabled {
-		println("upstream response body:", string(responseBody))
-	}
+	logger.LogDebug(c, "upstream response body: %s", responseBody)
 	// Unmarshal to simpleResponse
 	if info.ChannelType == constant.ChannelTypeOpenRouter && info.ChannelOtherSettings.IsOpenRouterEnterprise() {
 		// 尝试解析为 openrouter enterprise
@@ -572,7 +500,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		completionTokens := simpleResponse.Usage.CompletionTokens
 		if completionTokens == 0 {
 			for _, choice := range simpleResponse.Choices {
-				ctkm := service.CountTextToken(choice.Message.StringContent()+choice.Message.ReasoningContent+choice.Message.Reasoning, info.UpstreamModelName)
+				//ctkm := service.CountTextToken(choice.Message.StringContent()+choice.Message.ReasoningContent+choice.Message.Reasoning, info.UpstreamModelName)
+				ctkm := service.CountTextToken(choice.Message.StringContent()+choice.Message.GetReasoningContent(), info.UpstreamModelName)
 				completionTokens += ctkm
 			}
 		}
@@ -606,15 +535,21 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			break
 		}
 	case types.RelayFormatClaude:
-		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)
-		claudeRespStr, err := common.Marshal(claudeResp)
+		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatClaude, &simpleResponse)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		claudeRespStr, err := common.Marshal(convertResult.Value)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		responseBody = claudeRespStr
 	case types.RelayFormatGemini:
-		geminiResp := service.ResponseOpenAI2Gemini(&simpleResponse, info)
-		geminiRespStr, err := common.Marshal(geminiResp)
+		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatGemini, &simpleResponse)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+		geminiRespStr, err := common.Marshal(convertResult.Value)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -770,35 +705,35 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 
 				// Detect Gemini protocol: upstream may be another new-api instance with a Gemini
-			// channel that passes through Gemini Live protocol transparently (no "type" field).
-			if !isGeminiProtocol && realtimeEvent.Type == "" {
-				geminiEvent := &gemini_realtime.GeminiLiveEvent{}
-				if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil {
-					if geminiEvent.SetupComplete != nil || geminiEvent.ServerContent != nil || geminiEvent.UsageMetadata != nil || geminiEvent.GoAway != nil {
-						isGeminiProtocol = true
-						logger.LogInfo(c, "detected Gemini protocol from upstream, switching to Gemini usage extraction")
-					}
-				}
-			}
-
-			if isGeminiProtocol {
-				// Handle Gemini-format messages: extract usageMetadata for billing
-				geminiEvent := &gemini_realtime.GeminiLiveEvent{}
-				if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil && geminiEvent.UsageMetadata != nil {
-					currentUsage := geminiEvent.UsageMetadata.ToRealtimeUsage()
-					deltaUsage := gemini_realtime.ComputeDelta(geminiLastUsage, currentUsage)
-					if deltaUsage.TotalTokens > 0 {
-						consumeErr := preConsumeUsage(c, info, deltaUsage, sumUsage)
-						if consumeErr != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
-							return
+				// channel that passes through Gemini Live protocol transparently (no "type" field).
+				if !isGeminiProtocol && realtimeEvent.Type == "" {
+					geminiEvent := &gemini_realtime.GeminiLiveEvent{}
+					if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil {
+						if geminiEvent.SetupComplete != nil || geminiEvent.ServerContent != nil || geminiEvent.UsageMetadata != nil || geminiEvent.GoAway != nil {
+							isGeminiProtocol = true
+							logger.LogInfo(c, "detected Gemini protocol from upstream, switching to Gemini usage extraction")
 						}
 					}
-					geminiLastUsage = currentUsage
-					logger.LogInfo(c, fmt.Sprintf("gemini upstream usage: input=%d, output=%d, total=%d",
-						currentUsage.InputTokens, currentUsage.OutputTokens, currentUsage.TotalTokens))
 				}
-			} else if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
+
+				if isGeminiProtocol {
+					// Handle Gemini-format messages: extract usageMetadata for billing
+					geminiEvent := &gemini_realtime.GeminiLiveEvent{}
+					if parseErr := common.Unmarshal(message, geminiEvent); parseErr == nil && geminiEvent.UsageMetadata != nil {
+						currentUsage := geminiEvent.UsageMetadata.ToRealtimeUsage()
+						deltaUsage := gemini_realtime.ComputeDelta(geminiLastUsage, currentUsage)
+						if deltaUsage.TotalTokens > 0 {
+							consumeErr := preConsumeUsage(c, info, deltaUsage, sumUsage)
+							if consumeErr != nil {
+								errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
+								return
+							}
+						}
+						geminiLastUsage = currentUsage
+						logger.LogInfo(c, fmt.Sprintf("gemini upstream usage: input=%d, output=%d, total=%d",
+							currentUsage.InputTokens, currentUsage.OutputTokens, currentUsage.TotalTokens))
+					}
+				} else if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {
 						usage.TotalTokens += realtimeUsage.TotalTokens
@@ -950,101 +885,4 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 	return &usageResp.Usage, nil
-}
-
-func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
-	if info == nil || usage == nil {
-		return
-	}
-
-	switch info.ChannelType {
-	case constant.ChannelTypeDeepSeek:
-		if usage.PromptTokensDetails.CachedTokens == 0 && usage.PromptCacheHitTokens != 0 {
-			usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
-		}
-	case constant.ChannelTypeZhipu_v4:
-		// 智普的cached_tokens在标准位置: usage.prompt_tokens_details.cached_tokens
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
-			} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if usage.PromptCacheHitTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
-			}
-		}
-	case constant.ChannelTypeMoonshot:
-		// Moonshot的cached_tokens在非标准位置: choices[].usage.cached_tokens
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
-			} else if cachedTokens, ok := extractMoonshotCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if usage.PromptCacheHitTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
-			}
-		}
-	}
-}
-
-func extractCachedTokensFromBody(body []byte) (int, bool) {
-	if len(body) == 0 {
-		return 0, false
-	}
-
-	var payload struct {
-		Usage struct {
-			PromptTokensDetails struct {
-				CachedTokens *int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			CachedTokens         *int `json:"cached_tokens"`
-			PromptCacheHitTokens *int `json:"prompt_cache_hit_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := common.Unmarshal(body, &payload); err != nil {
-		return 0, false
-	}
-
-	if payload.Usage.PromptTokensDetails.CachedTokens != nil {
-		return *payload.Usage.PromptTokensDetails.CachedTokens, true
-	}
-	if payload.Usage.CachedTokens != nil {
-		return *payload.Usage.CachedTokens, true
-	}
-	if payload.Usage.PromptCacheHitTokens != nil {
-		return *payload.Usage.PromptCacheHitTokens, true
-	}
-	return 0, false
-}
-
-// extractMoonshotCachedTokensFromBody 从Moonshot的非标准位置提取cached_tokens
-// Moonshot的流式响应格式: {"choices":[{"usage":{"cached_tokens":111}}]}
-func extractMoonshotCachedTokensFromBody(body []byte) (int, bool) {
-	if len(body) == 0 {
-		return 0, false
-	}
-
-	var payload struct {
-		Choices []struct {
-			Usage struct {
-				CachedTokens *int `json:"cached_tokens"`
-			} `json:"usage"`
-		} `json:"choices"`
-	}
-
-	if err := common.Unmarshal(body, &payload); err != nil {
-		return 0, false
-	}
-
-	// 遍历choices查找cached_tokens
-	for _, choice := range payload.Choices {
-		if choice.Usage.CachedTokens != nil && *choice.Usage.CachedTokens > 0 {
-			return *choice.Usage.CachedTokens, true
-		}
-	}
-
-	return 0, false
 }

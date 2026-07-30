@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -20,7 +21,7 @@ func formatNotifyType(channelId int, status int) string {
 
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
-	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason))
+	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, common.LocalLogPreview(reason)))
 
 	// 检查是否启用自动禁用功能
 	if !channelError.AutoBan {
@@ -66,9 +67,6 @@ func ShouldDisableChannel(channelType int, err *types.NewAPIError) bool {
 	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
 		return true
 	}
-	//if err.StatusCode == http.StatusUnauthorized {
-	//	return true
-	//}
 	if err.StatusCode == http.StatusForbidden {
 		switch channelType {
 		case constant.ChannelTypeGemini:

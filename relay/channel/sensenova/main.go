@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
@@ -55,8 +56,8 @@ func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
 		Model:    request.Model,
 		Messages: sensenovaMessages,
 		MaxNewTokens: func() int {
-			if request.MaxTokens > 0 {
-				return int(request.MaxTokens)
+			if v := lo.FromPtr(request.MaxTokens); v > 0 {
+				return int(v)
 			}
 			return 1024
 		}(),
@@ -67,14 +68,14 @@ func requestOpenAI2Sensenova(request *dto.GeneralOpenAIRequest) *ChatRequest {
 			return 0.8
 		}(),
 		TopP: func() float64 {
-			if request.TopP > 0 {
-				return request.TopP
+			if v := lo.FromPtr(request.TopP); v > 0 {
+				return v
 			}
 			return 0.95
 		}(),
 		RepetitionPenalty: 1.0,
-		Stream:            request.Stream,
-		User:              request.User,
+		Stream:            lo.FromPtr(request.Stream),
+		User:              string(request.User),
 	}
 	return chatRequest
 }
@@ -173,7 +174,7 @@ func responseSensenova2OpenAI(response *ChatResponse) *dto.OpenAITextResponse {
 			Message: dto.Message{
 				Role:             choice.Role,
 				Content:          choice.Message,
-				ReasoningContent: choice.ReasoningContent,
+				ReasoningContent: common.GetPointer(choice.ReasoningContent),
 			},
 			FinishReason: choice.FinishReason,
 		}

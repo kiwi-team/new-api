@@ -3,15 +3,6 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"slices"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -26,11 +17,18 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
-
 	"github.com/bytedance/gopkg/util/gopool"
-
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/samber/lo"
+	"io"
+	"log"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
@@ -89,7 +87,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
-			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -142,6 +140,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 	}
+
 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
@@ -152,7 +151,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
-		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError)
+		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
 
@@ -364,15 +363,17 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 	}
 	switch r := request.(type) {
 	case *dto.GeneralOpenAIRequest:
-		if r.MaxCompletionTokens > r.MaxTokens {
-			meta.MaxTokens = int(r.MaxCompletionTokens)
+		maxCompletionTokens := lo.FromPtrOr(r.MaxCompletionTokens, uint(0))
+		maxTokens := lo.FromPtrOr(r.MaxTokens, uint(0))
+		if maxCompletionTokens > maxTokens {
+			meta.MaxTokens = int(maxCompletionTokens)
 		} else {
-			meta.MaxTokens = int(r.MaxTokens)
+			meta.MaxTokens = int(maxTokens)
 		}
 	case *dto.OpenAIResponsesRequest:
-		meta.MaxTokens = int(r.MaxOutputTokens)
+		meta.MaxTokens = int(lo.FromPtrOr(r.MaxOutputTokens, uint(0)))
 	case *dto.ClaudeRequest:
-		meta.MaxTokens = int(r.MaxTokens)
+		meta.MaxTokens = int(lo.FromPtr(r.MaxTokens))
 	case *dto.ImageRequest:
 		// Pricing for image requests depends on ImagePriceRatio; safe to compute even when CountToken is disabled.
 		return r.GetTokenCountMeta()
@@ -508,7 +509,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(channelError.ChannelId, err) {
+	if service.ShouldDisableChannel(channelError.ChannelType, err) {
 		if channelError.AutoBan {
 			gopool.Go(func() {
 				service.DisableChannel(channelError, err.ErrorWithStatusCode())
@@ -639,7 +640,6 @@ func notifyFeishuSlowError(channelError types.ChannelError, err *types.NewAPIErr
 	})
 }
 
-
 func RelayMidjourney(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatMjProxy, nil, nil)
 
@@ -707,6 +707,21 @@ func RelayNotFound(c *gin.Context) {
 	})
 }
 
+func RelayTaskFetch(c *gin.Context) {
+	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+			Code:       "gen_relay_info_failed",
+			Message:    err.Error(),
+			StatusCode: http.StatusInternalServerError,
+		})
+		return
+	}
+	if taskErr := relay.RelayTaskFetch(c, relayInfo.RelayMode); taskErr != nil {
+		respondTaskError(c, taskErr)
+	}
+}
+
 func RelayTask(c *gin.Context) {
 	retryTimes := common.RetryTimes
 	// channelId := c.GetInt("channel_id")
@@ -738,6 +753,7 @@ func RelayTask(c *gin.Context) {
 		RequestPath: c.Request.URL.Path,
 	}
 	var taskErr *dto.TaskError
+	var result *dto.TaskSubmitResult
 	channelFound := false
 	for ; shouldRetryTaskRelay(c, retryParam.GetRetry(), taskErr, retryTimes) && retryParam.GetRetry() <= retryTimes; retryParam.IncreaseRetry() {
 		if len(tokenChannelIds) > 0 {
@@ -780,7 +796,23 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
-		taskErr = taskRelayHandler(c, relayInfo)
+
+		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		if taskErr == nil {
+			break
+		}
+
+		if !taskErr.LocalError {
+			processChannelError(c,
+				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+				0, false, false)
+		}
+
+		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+			break
+		}
 	}
 
 	// Check if no valid channel was found when using tokenChannelIds
@@ -797,25 +829,52 @@ func RelayTask(c *gin.Context) {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
-	if taskErr != nil {
-		if taskErr.StatusCode == http.StatusTooManyRequests {
-			taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+
+	// ── 成功：结算 + 日志 + 插入任务 ──
+	if taskErr == nil {
+		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+			common.SysError("settle task billing error: " + settleErr.Error())
 		}
-		c.JSON(taskErr.StatusCode, taskErr)
+		service.LogTaskConsumption(c, relayInfo)
+
+		task := model.InitTask(result.Platform, relayInfo)
+		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+		task.PrivateData.BillingSource = relayInfo.BillingSource
+		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+		task.PrivateData.TokenId = relayInfo.TokenId
+		task.PrivateData.NodeName = common.NodeName
+		task.PrivateData.BillingContext = &model.TaskBillingContext{
+			ModelPrice:      relayInfo.PriceData.ModelPrice,
+			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+			ModelRatio:      relayInfo.PriceData.ModelRatio,
+			OtherRatios:     relayInfo.PriceData.OtherRatios(),
+			OriginModelName: relayInfo.OriginModelName,
+			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		}
+		task.Quota = result.Quota
+		task.Data = result.TaskData
+		task.Action = relayInfo.Action
+		if insertErr := task.Insert(); insertErr != nil {
+			common.SysError("insert task error: " + insertErr.Error())
+		}
+	}
+
+	if taskErr != nil {
+		respondTaskError(c, taskErr)
 	}
 }
 
-func taskRelayHandler(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.TaskError {
-	var err *dto.TaskError
-	switch relayInfo.RelayMode {
-	case relayconstant.RelayModeSunoFetch, relayconstant.RelayModeSunoFetchByID, relayconstant.RelayModeVideoFetchByID:
-		err = relay.RelayTaskFetch(c, relayInfo)
-	default:
-		err = relay.RelayTaskSubmit(c, relayInfo)
+// respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
+func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
+	if taskErr.StatusCode == http.StatusTooManyRequests {
+		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
-	return err
+	c.JSON(taskErr.StatusCode, taskErr)
 }
 
+//	func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
+//		if taskErr == nil {
+//			return false
 func shouldRetryTaskRelay(c *gin.Context, round int, taskErr *dto.TaskError, retryTimes int) bool {
 	if round == 0 {
 		return true
@@ -852,7 +911,7 @@ func shouldRetryTaskRelay(c *gin.Context, round int, taskErr *dto.TaskError, ret
 	}
 	if taskErr.StatusCode/100 == 5 {
 		// 超时不重试
-		if taskErr.StatusCode == 504 || taskErr.StatusCode == 524 {
+		if operation_setting.IsAlwaysSkipRetryStatusCode(taskErr.StatusCode) {
 			return false
 		}
 		return true

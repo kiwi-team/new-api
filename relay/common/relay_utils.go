@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,67 @@ func GetFullRequestURL(baseURL string, requestURL string, channelType int) strin
 		}
 	}
 	return fullRequestURL
+}
+
+func SanitizeURLForLog(rawURL string) string {
+	if rawURL == "" {
+		return rawURL
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+
+	query := parsedURL.Query()
+	if len(query) == 0 {
+		return rawURL
+	}
+
+	changed := false
+	for key := range query {
+		if isSensitiveURLQueryKey(key) {
+			query.Set(key, "***masked***")
+			changed = true
+		}
+	}
+	if !changed {
+		return rawURL
+	}
+
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String()
+}
+
+func isSensitiveURLQueryKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "key",
+		"api_key",
+		"api-key",
+		"apikey",
+		"x-api-key",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"token",
+		"authorization",
+		"auth",
+		"client_secret",
+		"secret",
+		"password",
+		"passwd",
+		"signature",
+		"sig",
+		"awsaccesskeyid",
+		"x-amz-credential",
+		"x-amz-security-token",
+		"x-amz-signature":
+		return true
+	}
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "signature")
 }
 
 func GetAPIVersion(c *gin.Context) string {
@@ -79,6 +141,22 @@ func validatePrompt(prompt string) *dto.TaskError {
 	return nil
 }
 
+// MaxTaskDurationSeconds caps user-supplied video duration. Duration is used
+// as a billing multiplier (OtherRatio "seconds"); an unbounded value could
+// overflow quota calculation into a negative charge.
+const MaxTaskDurationSeconds = 3600
+
+func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
+	seconds := req.Duration
+	if seconds == 0 && req.Seconds != "" {
+		seconds, _ = strconv.Atoi(req.Seconds)
+	}
+	if seconds < 0 || seconds > MaxTaskDurationSeconds {
+		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
+	}
+	return nil
+}
+
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
@@ -86,15 +164,12 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 	}
 
 	formData := c.Request.PostForm
-	seconds := common.String2Int(formData.Get("seconds"))
 	req = TaskSubmitReq{
 		Prompt:   formData.Get("prompt"),
 		Model:    formData.Get("model"),
 		Mode:     formData.Get("mode"),
 		Image:    formData.Get("image"),
 		Size:     formData.Get("size"),
-		Seconds:  fmt.Sprintf("%d", seconds),
-		Duration: seconds,
 		Metadata: make(map[string]interface{}),
 	}
 
@@ -143,6 +218,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 	if req.InputReference != "" {
 		req.Images = []string{req.InputReference}
+	} else if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
+		// 兼容单图上传
+		req.Images = []string{strings.TrimSpace(req.Image)}
 	}
 
 	if strings.TrimSpace(req.Model) == "" {
@@ -154,6 +232,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 
 	if taskErr := validatePrompt(prompt); taskErr != nil {
+		return taskErr
+	}
+
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 
@@ -177,25 +259,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		if model == "sora-2-pro" && !lo.Contains([]string{"720x1280", "1280x720", "1792x1024", "1024x1792"}, size) {
 			return createTaskError(fmt.Errorf("sora-2 size is invalid"), "invalid_size", http.StatusBadRequest, true)
 		}
-		info.PriceData.OtherRatios = map[string]float64{
-			"seconds": float64(seconds),
-			"size":    1,
-		}
-		if lo.Contains([]string{"1792x1024", "1024x1792"}, size) {
-			info.PriceData.OtherRatios["size"] = 1.666667
-		}
-	} else if isOmniVideoModel(model) {
-		// Gemini Omni 视频按秒计费（默认 10 秒）。级联到 OpenAI 类型渠道时走 Sora adaptor，
-		// 需在此补上 seconds 倍率，否则时长不参与计费。与 gemini/vertex adaptor 行为一致。
-		if seconds <= 0 {
-			seconds = omniDefaultSeconds
-		}
-		info.PriceData.OtherRatios = map[string]float64{
-			"seconds": float64(seconds),
-		}
+		// OtherRatios 已移到 Sora adaptor 的 EstimateBilling 中设置
 	}
 
-	info.Action = action
+	storeTaskRequest(c, info, action, req)
 
 	return nil
 }
@@ -219,7 +286,6 @@ func isKnownTaskField(field string) bool {
 		"images":          true,
 		"size":            true,
 		"duration":        true,
-		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]
@@ -234,11 +300,17 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		if err != nil {
 			return createTaskError(err, "invalid_multipart_form", http.StatusBadRequest, true)
 		}
-	} else if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+	}
+	// 为了metadata字段的兼容性，统一UnmarshalBodyReusable
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+		return taskErr
+	}
+
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 

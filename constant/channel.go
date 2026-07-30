@@ -71,6 +71,7 @@ const (
 	ChannelTypeHedra            = 71
 	ChannelTypeHeyGen           = 72
 	ChannelTypeReve             = 73
+	ChannelTypeAdvancedCustom   = 74
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -132,25 +133,26 @@ var ChannelBaseURLs = []string{
 	"",                                          //53
 	"https://google.serper.dev",                 //54
 	//"https://visual.volcengineapi.com",          //55
-	"https://api.vidu.cn",               //55
-	"https://llm.submodel.ai",           //56
-	"https://ark.cn-beijing.volces.com", //57 //豆包视频
-	"https://api.openai.com",            //58
-	"",                                  //59 // elevenLabs
-	"https://dashscope.aliyuncs.com",    //60
-	"https://queue.fal.run",             //61
-	"https://api.replicate.com",         //62
-	"https://app-api.pixverse.ai",       //63
-	"https://api.ltx.video",             //64
-	"",                                  //65 awsv2
-	"https://api.worldlabs.ai",          //66 worldlabs
-	"https://queue.fal.run",             //67 fal_sync
-	"https://chatgpt.com",               // 68 codex
-	"https://api.dev.runwayml.com",      // 69 runwayml
-	"https://api.ppio.com",              // 70 ppio
+	"https://api.vidu.cn",                  //55
+	"https://llm.submodel.ai",              //56
+	"https://ark.cn-beijing.volces.com",    //57 //豆包视频
+	"https://api.openai.com",               //58
+	"",                                     //59 // elevenLabs
+	"https://dashscope.aliyuncs.com",       //60
+	"https://queue.fal.run",                //61
+	"https://api.replicate.com",            //62
+	"https://app-api.pixverse.ai",          //63
+	"https://api.ltx.video",                //64
+	"",                                     //65 awsv2
+	"https://api.worldlabs.ai",             //66 worldlabs
+	"https://queue.fal.run",                //67 fal_sync
+	"https://chatgpt.com",                  // 68 codex
+	"https://api.dev.runwayml.com",         // 69 runwayml
+	"https://api.ppio.com",                 // 70 ppio
 	"https://api.hedra.com/web-app/public", // 71 hedra
 	"https://api.heygen.com",               // 72 heygen
 	"https://api.reve.com",                 // 73 reve
+	"",                                     // 74
 }
 
 var ChannelTypeNames = map[int]string{
@@ -221,6 +223,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeHedra:          "Hedra",
 	ChannelTypeHeyGen:         "HeyGen",
 	ChannelTypeReve:           "Reve",
+	ChannelTypeAdvancedCustom: "Advanced Custom",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -9,6 +9,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 )
 
 func oaiFormEdit2WanxImageEdit(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (*AliImageRequest, error) {
@@ -31,7 +32,7 @@ func oaiFormEdit2WanxImageEdit(c *gin.Context, info *relaycommon.RelayInfo, requ
 	//}
 	imageRequest.Input = wanInput
 	imageRequest.Parameters = AliImageParameters{
-		N: int(request.N),
+		N: int(lo.FromPtrOr(request.N, uint(1))),
 	}
 	info.PriceData.AddOtherRatio("n", float64(imageRequest.Parameters.N))
 
@@ -39,10 +40,10 @@ func oaiFormEdit2WanxImageEdit(c *gin.Context, info *relaycommon.RelayInfo, requ
 }
 
 func isOldWanModel(modelName string) bool {
-	return strings.Contains(modelName, "wan") && !strings.Contains(modelName, "wan2.6") && !strings.Contains(modelName, "wan2.7")
+	return strings.Contains(modelName, "wan") &&
+		!lo.SomeBy([]string{"wan2.6", "wan2.7"}, func(v string) bool { return strings.Contains(modelName, v) })
 }
 
 func isWanModel(modelName string) bool {
-	// wan2.7 使用同步 multimodal-generation 接口，不走异步 wan 路径
-	return strings.Contains(modelName, "wan") && !strings.Contains(modelName, "wan2.7")
+	return strings.Contains(modelName, "wan")
 }

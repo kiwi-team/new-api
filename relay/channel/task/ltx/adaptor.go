@@ -19,6 +19,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -28,6 +29,7 @@ import (
 // ============================
 
 type TaskAdaptor struct {
+	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string
@@ -46,13 +48,6 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
 		return service.TaskErrorWrapper(err, "unmarshal_task_request_failed", http.StatusBadRequest)
 	}
-	seconds := common.String2Int(taskReq.Seconds)
-	if seconds <= 0 {
-		seconds = 6
-	}
-	if taskReq.Duration > 0 {
-		seconds = taskReq.Duration
-	}
 	taskType := "t2v"
 	if taskReq.HasImage() {
 		taskType = "i2v"
@@ -61,15 +56,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if len(size) == 0 {
 		size = "1920x1080"
 	}
-	info.PriceData.ModelPrice = getModelPrice(taskType, taskReq.Model, size)
-	if info.PriceData.ModelPrice == 0 {
+	// LTX 按「任务类型 × 模型 × 分辨率」定价，配置里的模型价格不适用。
+	// 这里给出按次单价，RelayTaskSubmit 会用它覆盖配置价格。
+	info.DynamicModelPrice = getModelPrice(taskType, taskReq.Model, size)
+	if info.DynamicModelPrice == 0 {
 		return service.TaskErrorWrapper(errors.New("model price not found"), "model_price_not_found", http.StatusBadRequest)
-	}
-	info.PriceData.OtherRatios = map[string]float64{
-		"seconds": float64(seconds),
 	}
 
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+}
+
+// EstimateBilling prices the request per second of generated video.
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	return taskcommon.SecondsRatio(c, 6)
 }
 
 func getModelPrice(taskType string, modelName, Resolution string) float64 {

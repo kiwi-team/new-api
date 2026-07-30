@@ -147,6 +147,8 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int, 
 	return func(c *gin.Context) {
 		userId := strconv.Itoa(c.GetInt("id"))
 		totalKey, successKey, checkKey := memoryRateLimitKeys(userId, tokenId)
+		//totalKey := ModelRequestRateLimitCountMark + userId
+		//successKey := ModelRequestRateLimitSuccessCountMark + userId
 
 		// 1. 检查总请求数限制（当totalMaxCount为0时跳过）
 		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
@@ -157,6 +159,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int, 
 
 		// 2. 检查成功请求数限制
 		// 使用一个临时key来检查限制，这样可以避免实际记录
+		//checkKey := successKey + "_check"
 		if !inMemoryRateLimiter.Request(checkKey, successMaxCount, duration) {
 			c.Status(http.StatusTooManyRequests)
 			c.Abort()
@@ -207,6 +210,10 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			redisRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		} else {
 			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount, tokenId)(c)
+			// if common.RedisEnabled {
+			// 	redisRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
+			// } else {
+			// 	memoryRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
@@ -42,7 +44,14 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 	if streamResponse.Usage != nil {
 		info.ClaudeConvertInfo.Usage = streamResponse.Usage
 	}
-	claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
+	result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatClaude, &streamResponse)
+	if err != nil {
+		return err
+	}
+	claudeResponses, ok := result.Value.([]*dto.ClaudeResponse)
+	if !ok {
+		return fmt.Errorf("expected Claude stream responses, got %T", result.Value)
+	}
 	for _, resp := range claudeResponses {
 		helper.ClaudeData(c, *resp)
 	}
@@ -56,7 +65,14 @@ func handleGeminiFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 		return err
 	}
 
-	geminiResponse := service.StreamResponseOpenAI2Gemini(&streamResponse, info)
+	result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatGemini, &streamResponse)
+	if err != nil {
+		return err
+	}
+	geminiResponse, ok := result.Value.(*dto.GeminiChatResponse)
+	if !ok {
+		return fmt.Errorf("expected Gemini stream response, got %T", result.Value)
+	}
 
 	// 如果返回 nil，表示没有实际内容，跳过发送
 	if geminiResponse == nil {
@@ -133,6 +149,29 @@ func ingestStreamItem(relayMode int, item string, responseTextBuilder *strings.B
 		}
 	}
 }
+func processTokenData(relayMode int, data string, responseTextBuilder *strings.Builder, toolCount *int) error {
+	switch relayMode {
+	case relayconstant.RelayModeChatCompletions:
+		var streamResponse dto.ChatCompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			return err
+		}
+		return ProcessStreamResponse(streamResponse, responseTextBuilder, toolCount)
+	case relayconstant.RelayModeCompletions:
+		var streamResponse dto.CompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			return err
+		}
+		processCompletionsStreamResponse(streamResponse, responseTextBuilder)
+	}
+	return nil
+}
+
+func processCompletionsStreamResponse(streamResponse dto.CompletionsStreamResponse, responseTextBuilder *strings.Builder) {
+	for _, choice := range streamResponse.Choices {
+		responseTextBuilder.WriteString(choice.Text)
+	}
+}
 
 func handleLastResponse(lastStreamData string, responseId *string, createAt *int64,
 	systemFingerprint *string, model *string, usage **dto.Usage,
@@ -184,7 +223,16 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 
 		info.ClaudeConvertInfo.Usage = usage
 
-		claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
+		result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatClaude, &streamResponse)
+		if err != nil {
+			common.SysLog("error converting Claude stream response: " + err.Error())
+			return
+		}
+		claudeResponses, ok := result.Value.([]*dto.ClaudeResponse)
+		if !ok {
+			common.SysLog(fmt.Sprintf("expected Claude stream responses, got %T", result.Value))
+			return
+		}
 		for _, resp := range claudeResponses {
 			_ = helper.ClaudeData(c, *resp)
 		}
@@ -202,7 +250,16 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		// 而包含最后一段文本输出的响应（倒数第二个）的 finishReason 为 null
 		// 暂不知是否有程序会不兼容。
 
-		geminiResponse := service.StreamResponseOpenAI2Gemini(&streamResponse, info)
+		result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatGemini, &streamResponse)
+		if err != nil {
+			common.SysLog("error converting Gemini stream response: " + err.Error())
+			return
+		}
+		geminiResponse, ok := result.Value.(*dto.GeminiChatResponse)
+		if !ok {
+			common.SysLog(fmt.Sprintf("expected Gemini stream response, got %T", result.Value))
+			return
+		}
 
 		// openai 流响应开头的空数据
 		if geminiResponse == nil {
@@ -225,5 +282,5 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
 	if data == "" {
 		return
 	}
-	helper.ResponseChunkData(c, streamResponse, data)
+	_ = helper.ResponseChunkData(c, streamResponse, data)
 }

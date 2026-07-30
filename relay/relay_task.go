@@ -2,7 +2,6 @@ package relay
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,44 +14,26 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/task/fal"
-	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
-	hunyuanppio "github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
-	"github.com/QuantumNous/new-api/relay/channel/task/novita"
-	"github.com/QuantumNous/new-api/relay/channel/task/ppio"
-	yunwu_sora "github.com/QuantumNous/new-api/relay/channel/task/sora/yunwu"
-	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
 
-// 走了我
-type OverSeaTaskResp struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		Error    interface{} `json:"error"`
-		Format   string      `json:"format"`
-		Metadata interface{} `json:"metadata"`
-		Status   string      `json:"status"`
-		TaskID   string      `json:"task_id"`
-		URL      string      `json:"url"`
-	} `json:"data"`
-}
-
-/*
-Task 任务通过平台、Action 区分任务
-*/
-func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	info.InitChannelMeta(c)
-	// ensure TaskRelayInfo is initialized to avoid nil dereference when accessing embedded fields
+// ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
+// 查找原始任务、从中提取模型名称、将渠道锁定到原始任务的渠道
+// （通过 info.LockedChannel，重试时复用同一渠道并轮换 key），
+// 以及提取 OtherRatios（时长、分辨率）。
+// 该函数在控制器的重试循环之前调用一次，其结果通过 info 字段和上下文持久化。
+func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if info.TaskRelayInfo == nil {
 		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	}
+
+	// 检测 remix action
 	path := c.Request.URL.Path
 	if strings.Contains(path, "/v1/videos/") && strings.HasSuffix(path, "/remix") {
 		info.Action = constant.TaskActionRemix
@@ -67,320 +48,301 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 		info.OriginTaskID = videoID
 	}
 
-	platform := constant.TaskPlatform(c.GetString("platform"))
+	if info.OriginTaskID == "" {
+		return nil
+	}
 
-	// 获取原始任务信息
-	if info.OriginTaskID != "" {
-		originTask, exist, err := model.GetByTaskId(info.UserId, info.OriginTaskID)
-		if err != nil {
-			taskErr = service.TaskErrorWrapper(err, "get_origin_task_failed", http.StatusInternalServerError)
-			return
-		}
-		if !exist {
-			taskErr = service.TaskErrorWrapperLocal(errors.New("task_origin_not_exist"), "task_not_exist", http.StatusBadRequest)
-			return
-		}
-		if info.OriginModelName == "" {
-			if originTask.Properties.OriginModelName != "" {
-				info.OriginModelName = originTask.Properties.OriginModelName
-			} else if originTask.Properties.UpstreamModelName != "" {
-				info.OriginModelName = originTask.Properties.UpstreamModelName
-			} else {
-				var taskData map[string]interface{}
-				_ = json.Unmarshal(originTask.Data, &taskData)
-				if m, ok := taskData["model"].(string); ok && m != "" {
-					info.OriginModelName = m
-					platform = originTask.Platform
-				}
-			}
-		}
-		if originTask.ChannelId != info.ChannelId {
-			channel, err := model.GetChannelById(originTask.ChannelId, true)
-			if err != nil {
-				taskErr = service.TaskErrorWrapperLocal(err, "channel_not_found", http.StatusBadRequest)
-				return
-			}
-			if channel.Status != common.ChannelStatusEnabled {
-				taskErr = service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "task_channel_disable", http.StatusBadRequest)
-				return
-			}
-			key, _, newAPIError := channel.GetNextEnabledKey()
-			if newAPIError != nil {
-				taskErr = service.TaskErrorWrapper(newAPIError, "channel_no_available_key", newAPIError.StatusCode)
-				return
-			}
-			common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-			common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
-			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
-			common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
+	// 查找原始任务
+	originTask, exist, err := model.GetByTaskId(info.UserId, info.OriginTaskID)
+	if err != nil {
+		return service.TaskErrorWrapper(err, "get_origin_task_failed", http.StatusInternalServerError)
+	}
+	if !exist {
+		return service.TaskErrorWrapperLocal(errors.New("task_origin_not_exist"), "task_not_exist", http.StatusBadRequest)
+	}
 
-			info.ChannelBaseUrl = channel.GetBaseURL()
-			info.ChannelId = originTask.ChannelId
-			info.ChannelType = channel.Type
-			info.ApiKey = key
-			platform = originTask.Platform
-		}
-
-		// 使用原始任务的参数
-		if info.Action == constant.TaskActionRemix {
+	// 从原始任务推导模型名称
+	if info.OriginModelName == "" {
+		if originTask.Properties.OriginModelName != "" {
+			info.OriginModelName = originTask.Properties.OriginModelName
+		} else if originTask.Properties.UpstreamModelName != "" {
+			info.OriginModelName = originTask.Properties.UpstreamModelName
+		} else {
 			var taskData map[string]interface{}
-			_ = json.Unmarshal(originTask.Data, &taskData)
+			_ = common.Unmarshal(originTask.Data, &taskData)
+			if m, ok := taskData["model"].(string); ok && m != "" {
+				info.OriginModelName = m
+			}
+		}
+	}
+
+	// 复用原始任务的平台：聚合上游（云雾 / PPInfra 等）无法只靠渠道类型判定，
+	// 原始任务里已经存了判定结果。
+	if originTask.Platform != "" {
+		c.Set("platform", string(originTask.Platform))
+	}
+
+	// 锁定到原始任务的渠道（重试时复用同一渠道，轮换 key）
+	ch, err := model.GetChannelById(originTask.ChannelId, true)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "channel_not_found", http.StatusBadRequest)
+	}
+	if ch.Status != common.ChannelStatusEnabled {
+		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "task_channel_disable", http.StatusBadRequest)
+	}
+	info.LockedChannel = ch
+
+	if originTask.ChannelId != info.ChannelId {
+		key, _, newAPIError := ch.GetNextEnabledKey()
+		if newAPIError != nil {
+			return service.TaskErrorWrapper(newAPIError, "channel_no_available_key", newAPIError.StatusCode)
+		}
+		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+		common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
+		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
+		common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
+
+		info.ChannelBaseUrl = ch.GetBaseURL()
+		info.ChannelId = originTask.ChannelId
+		info.ChannelType = ch.Type
+		info.ApiKey = key
+	}
+
+	// 提取 remix 参数（时长、分辨率 → OtherRatios）
+	if info.Action == constant.TaskActionRemix {
+		if originTask.PrivateData.BillingContext != nil {
+			// 新的 remix 逻辑：直接从原始任务的 BillingContext 中提取 OtherRatios（如果存在）
+			for s, f := range originTask.PrivateData.BillingContext.OtherRatios {
+				info.PriceData.AddOtherRatio(s, f)
+			}
+		} else {
+			// 旧的 remix 逻辑：直接从 task data 解析 seconds 和 size（如果存在）
+			var taskData map[string]interface{}
+			_ = common.Unmarshal(originTask.Data, &taskData)
 			secondsStr, _ := taskData["seconds"].(string)
 			seconds, _ := strconv.Atoi(secondsStr)
 			if seconds <= 0 {
 				seconds = 4
 			}
-			sizeStr, _ := taskData["size"].(string)
-			if info.PriceData.OtherRatios == nil {
-				info.PriceData.OtherRatios = map[string]float64{}
+			// 历史任务数据可能包含未经校验的时长，作为计费乘数前必须钳制
+			if seconds > relaycommon.MaxTaskDurationSeconds {
+				seconds = relaycommon.MaxTaskDurationSeconds
 			}
-			info.PriceData.OtherRatios["seconds"] = float64(seconds)
-			info.PriceData.OtherRatios["size"] = 1
+			sizeStr, _ := taskData["size"].(string)
+			info.PriceData.AddOtherRatio("seconds", float64(seconds))
+			info.PriceData.AddOtherRatio("size", 1)
 			if sizeStr == "1792x1024" || sizeStr == "1024x1792" {
-				info.PriceData.OtherRatios["size"] = 1.666667
+				info.PriceData.AddOtherRatio("size", 1.666667)
 			}
 		}
 	}
+
+	return nil
+}
+
+// resolveTaskPlatform 判定本次请求应该走哪个 task 平台。
+//
+// 大多数渠道的平台就是渠道类型（GetTaskPlatform 的行为）。但云雾、PPInfra、
+// Novita、腾讯云、FAL 这些聚合上游复用通用渠道类型（OpenAI / Sora / Gemini…），
+// 只能靠 base URL 区分，因此额外用独立的 TaskPlatform 常量标识它们。
+//
+// 判定只在提交时做一次，结果随 task 落库；fetch 阶段直接按 task.Platform
+// 从 GetTaskAdaptor 取适配器，不再重复嗅探 base URL。
+func resolveTaskPlatform(info *relaycommon.RelayInfo, platform constant.TaskPlatform) constant.TaskPlatform {
+	baseURL := info.ChannelBaseUrl
+	switch {
+	case strings.Contains(baseURL, "yunwu"):
+		if strings.Contains(info.UpstreamModelName, "veo") {
+			return constant.TaskPlatformYunwuVeo
+		}
+		// 云雾逆向的 Sora 通道走 OpenAI 渠道类型；原生 Sora 渠道仍用默认平台。
+		if info.ChannelType == constant.ChannelTypeOpenAI {
+			return constant.TaskPlatformYunwuSora
+		}
+		return platform
+	case strings.Contains(baseURL, "ppinfra"):
+		if strings.Contains(info.UpstreamModelName, "hunyuan") {
+			return constant.TaskPlatformPPioHunyuanImage
+		}
+		return constant.TaskPlatformPPio
+	case strings.Contains(baseURL, "novita"):
+		return constant.TaskPlatformNovitaImage
+	case strings.Contains(baseURL, "tencentcloudapi"):
+		return constant.TaskPlatformHunyuanImage
+	case strings.Contains(baseURL, "fal"):
+		return constant.TaskPlatformFAL
+	default:
+		return platform
+	}
+}
+
+// RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
+// 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
+// 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
+// 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
+// 控制器负责 defer Refund 和成功后 Settle。
+func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*dto.TaskSubmitResult, *dto.TaskError) {
+	info.InitChannelMeta(c)
+	if info.TaskRelayInfo == nil {
+		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+
+	// 1. 确定 platform → 创建适配器 → 验证请求
+	platform := constant.TaskPlatform(c.GetString("platform"))
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
-
-	var adaptor channel.TaskAdaptor
-	if strings.Contains(info.ChannelBaseUrl, "yunwu") {
-		if strings.Contains(info.UpstreamModelName, "veo") {
-			platform = constant.TaskPlatformYunwuVeo
-			adaptor = &yunwu.TaskAdaptor{}
-		} else {
-			// 这个方式是云雾逆向的方法。现在不支持了。
-			if info.ChannelType == constant.ChannelTypeOpenAI {
-				platform = constant.TaskPlatformYunwuSora
-				adaptor = &yunwu_sora.TaskAdaptor{}
-			} else if info.ChannelType == constant.ChannelTypeSora {
-				adaptor = GetTaskAdaptor(platform)
-			}
-		}
-	} else if strings.Contains(info.ChannelBaseUrl, "ppinfra") {
-		if strings.Contains(info.UpstreamModelName, "hunyuan") {
-			adaptor = &hunyuanppio.TaskAdaptor{}
-			platform = constant.TaskPlatformPPioHunyuanImage
-		} else {
-			adaptor = &ppio.TaskAdaptor{}
-			platform = constant.TaskPlatformPPio
-		}
-		adaptor = &ppio.TaskAdaptor{}
-	} else if strings.Contains(info.ChannelBaseUrl, "novita") {
-		platform = constant.TaskPlatformNovitaImage
-		adaptor = &novita.TaskAdaptor{}
-	} else if strings.Contains(info.ChannelBaseUrl, "tencentcloudapi") {
-		platform = constant.TaskPlatformHunyuanImage
-		adaptor = &hunyuan.TaskAdaptor{}
-	} else if strings.Contains(info.ChannelBaseUrl, "fal") {
-		platform = constant.TaskPlatformFAL
-		adaptor = &fal.TaskAdaptor{}
-	} else {
-		adaptor = GetTaskAdaptor(platform)
-	}
+	platform = resolveTaskPlatform(info, platform)
+	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
-	// get & validate taskRequest 获取并验证文本请求
-	taskErr = adaptor.ValidateRequestAndSetAction(c, info)
-	if taskErr != nil {
-		return
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		return nil, taskErr
 	}
 
+	// 2. 确定模型名称
 	modelName := info.OriginModelName
 	if modelName == "" {
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
 	}
-	modelPrice, success := ratio_setting.GetModelPrice(modelName, true)
-	if !success {
-		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[modelName]
-		if !ok {
-			modelPrice = float64(common.PreConsumedQuota) / common.QuotaPerUnit
-		} else {
-			modelPrice = defaultPrice
-		}
+
+	// 2.5 应用渠道的模型映射（与同步任务对齐）
+	info.OriginModelName = modelName
+	info.UpstreamModelName = modelName
+	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
 
-	// 处理 auto 分组：从 context 获取实际选中的分组
-	// 当使用 auto 分组时，Distribute 中间件会将实际选中的分组存储在 ContextKeyAutoGroup 中
-	if autoGroup, exists := common.GetContextKey(c, constant.ContextKeyAutoGroup); exists {
-		if groupStr, ok := autoGroup.(string); ok && groupStr != "" {
-			info.UsingGroup = groupStr
-		}
+	// 3. 预生成公开 task ID（仅首次）
+	if info.PublicTaskID == "" {
+		info.PublicTaskID = model.GenerateTaskID()
 	}
 
-	// 预扣
-	groupRatio := ratio_setting.GetGroupRatio(info.UsingGroup)
-	var ratio float64
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(info.UserGroup, info.UsingGroup)
-	if hasUserGroupRatio {
-		ratio = modelPrice * userGroupRatio
-	} else {
-		ratio = modelPrice * groupRatio
-	}
-	// FIXME: 临时修补，支持任务仅按次计费
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		// toio 根据请求参数的来设置模型的单价
-		if info.PriceData.ModelPrice > 0 {
-			ratio = info.PriceData.ModelPrice * groupRatio
-			modelPrice = info.PriceData.ModelPrice
-			if hasUserGroupRatio {
-				ratio = info.PriceData.ModelPrice * userGroupRatio
-			}
-		}
-		if len(info.PriceData.OtherRatios) > 0 {
-			for _, ra := range info.PriceData.OtherRatios {
-				if 1.0 != ra {
-					ratio *= ra
-				}
-			}
-		}
-	}
-	println(fmt.Sprintf("model: %s, model_price: %.4f, group: %s, group_ratio: %.4f, final_ratio: %.4f", modelName, modelPrice, info.UsingGroup, groupRatio, ratio))
-	userQuota, err := model.GetUserQuota(info.UserId, false)
+	// 4. 价格计算：基础模型价格
+	info.OriginModelName = modelName
+	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "get_user_quota_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 	}
-	quota := int(ratio * common.QuotaPerUnit)
-	if userQuota-quota < 0 {
-		taskErr = service.TaskErrorWrapperLocal(errors.New("user quota is not enough"), "quota_not_enough", http.StatusForbidden)
-		return
+	// ModelPriceHelperPerCall 重建了 PriceData，remix 在 ResolveOriginTask 里
+	// 预设的 OtherRatios 要接回来。
+	inheritedRatios := info.PriceData.OtherRatios()
+	info.PriceData = priceData
+	for k, v := range inheritedRatios {
+		info.PriceData.AddOtherRatio(k, v)
 	}
 
-	// build body
+	// 4.5 适配器动态定价：部分渠道按请求参数计价（如 LTX 按分辨率），
+	//     配置里的模型价格不适用，此处覆盖并按同一公式重算基础额度。
+	if info.DynamicModelPrice > 0 {
+		info.PriceData.ModelPrice = info.DynamicModelPrice
+		info.PriceData.UsePrice = true
+		baseQuota, clamp := common.QuotaFromFloatChecked(info.DynamicModelPrice * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio)
+		info.PriceData.Quota = baseQuota
+		noteTaskQuotaClamp(info, clamp)
+	}
+
+	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
+	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
+	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+		for k, v := range estimatedRatios {
+			info.PriceData.AddOtherRatio(k, v)
+		}
+	}
+
+	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
+	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+		info.PriceData.Quota = quota
+		noteTaskQuotaClamp(info, clamp)
+	}
+
+	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
+	if info.Billing == nil && !info.PriceData.FreeModel {
+		info.ForcePreConsume = true
+		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
+
+	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
 
-	// do request
+	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
-		return
+		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	// handle response
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
-		return
+		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
-	requestStorage, _ := common.GetBodyStorage(c)
-	var requestBytes []byte
-	if requestStorage != nil {
-		requestBytes, _ = requestStorage.Bytes()
+	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
+	otherRatios := info.PriceData.OtherRatios()
+	if otherRatios == nil {
+		otherRatios = map[string]float64{}
 	}
-	var responseStr string
-	var task *model.Task // declared here so the defer closure can access it after Insert
-	defer func() {
-		// release quota
-		if info.ConsumeQuota && taskErr == nil {
+	ratiosJSON, _ := common.Marshal(otherRatios)
+	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
-			err := service.PostConsumeQuota(info, quota, 0, true)
-			if err != nil {
-				common.SysLog("error consuming token remain quota: " + err.Error())
-			}
-			if quota != 0 {
-				tokenName := c.GetString("token_name")
-				//gRatio := groupRatio
-				//if hasUserGroupRatio {
-				//	gRatio = userGroupRatio
-				//}
-				logContent := fmt.Sprintf("操作 %s", info.Action)
-				// FIXME: 临时修补，支持任务仅按次计费
-				if common.StringsContains(constant.TaskPricePatches, modelName) {
-					logContent = fmt.Sprintf("%s，按次计费", logContent)
-				} else {
-					if len(info.PriceData.OtherRatios) > 0 {
-						var contents []string
-						for key, ra := range info.PriceData.OtherRatios {
-							if 1.0 != ra {
-								contents = append(contents, fmt.Sprintf("%s: %.2f", key, ra))
-							}
-						}
-						if len(contents) > 0 {
-							logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
-						}
-					}
-				}
-				other := make(map[string]interface{})
-				if c != nil && c.Request != nil && c.Request.URL != nil {
-					other["request_path"] = c.Request.URL.Path
-				}
-				other["model_price"] = modelPrice
-				other["group_ratio"] = groupRatio
-				if hasUserGroupRatio {
-					other["user_group_ratio"] = userGroupRatio
-				}
-
-				// Track project consumption and get project name for logging
-				projectName, planId, _ := service.TrackProjectConsumption(c, quota)
-
-				clientUserId := common.GetContextKeyString(c, constant.ContextKeyClientUserId)
-				clientScenairo := common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
-				requestId := c.GetString(common.RequestIdKey)
-				model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-					ChannelId:      info.ChannelId,
-					ModelName:      modelName,
-					TokenName:      tokenName,
-					Quota:          quota,
-					Content:        logContent,
-					TokenId:        info.TokenId,
-					Group:          info.UsingGroup,
-					Other:          other,
-					ClientUserId:   clientUserId,
-					ClientScenairo: clientScenairo,
-					Request:        string(requestBytes),
-					Response:       responseStr,
-					RequestId:      requestId,
-					ProjectName:    projectName,
-					PlanId:         planId,
-				})
-				model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
-				model.UpdateChannelUsedQuota(info.ChannelId, quota)
-
-				// Store billing metadata in task.Properties so that if the async task later
-				// fails, the refund path can accurately reverse the quota_data entry.
-				if task != nil && common.DataExportEnabled {
-					task.Properties.TokenId = info.TokenId
-					task.Properties.TokenName = tokenName
-					task.Properties.ClientUserId = clientUserId
-					task.Properties.ClientScenairo = clientScenairo
-					task.Properties.ProjectName = projectName
-					task.Properties.PlanId = planId
-					if updateErr := task.Update(); updateErr != nil {
-						common.SysLog("failed to update task billing metadata: " + updateErr.Error())
-					}
-				}
-			}
-		}
-	}()
-
-	taskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
+	// 11. 解析响应
+	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
+		return nil, taskErr
+	}
+
+	// 12. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
+	finalQuota := info.PriceData.Quota
+	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
+			// 基于调整后的 ratios 重新计算 quota
+			finalQuota = adjustedQuota
+			info.PriceData.ReplaceOtherRatios(adjustedRatios)
+			info.PriceData.Quota = finalQuota
+		}
+	}
+
+	return &dto.TaskSubmitResult{
+		UpstreamTaskID: upstreamTaskID,
+		TaskData:       taskData,
+		Platform:       platform,
+		Quota:          finalQuota,
+	}, nil
+}
+
+// recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
+// 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
+func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) (int, bool) {
+	// 从 PriceData 获取不含 OtherRatios 的基础价格
+	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.Quota))
+	priceData := info.PriceData
+	if !priceData.ReplaceOtherRatios(ratios) {
+		return 0, false
+	}
+	// 应用新的 ratios
+	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
+	quota, clamp := common.QuotaFromFloatChecked(result)
+	noteTaskQuotaClamp(info, clamp)
+	return quota, true
+}
+
+// noteTaskQuotaClamp records the first quota saturation event onto the task's
+// RelayInfo so LogTaskConsumption can surface it on the submit log's
+// admin_info. First non-nil clamp wins.
+func noteTaskQuotaClamp(info *relaycommon.RelayInfo, clamp *common.QuotaClamp) {
+	if clamp == nil || info == nil {
 		return
 	}
-	responseStr = string(taskData)
-	info.ConsumeQuota = true
-	// insert task
-	task = model.InitTask(platform, info)
-	task.TaskID = taskID
-	task.Quota = quota
-	task.Data = taskData
-	task.Action = info.Action
-	task.Request = string(requestBytes)
-	err = task.Insert()
-	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)
-		return
+	if info.QuotaClamp == nil {
+		info.QuotaClamp = clamp
 	}
-	return nil
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
@@ -389,8 +351,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
 }
 
-func RelayTaskFetch(c *gin.Context, relayInfo *relaycommon.RelayInfo) (taskResp *dto.TaskError) {
-	relayMode := relayInfo.RelayMode
+func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
@@ -437,7 +398,7 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 	} else {
 		tasks = make([]any, 0)
 	}
-	respBody, err = json.Marshal(dto.TaskResponse[[]any]{
+	respBody, err = common.Marshal(dto.TaskResponse[[]any]{
 		Code: "success",
 		Data: tasks,
 	})
@@ -458,7 +419,7 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		return
 	}
 
-	respBody, err = json.Marshal(dto.TaskResponse[any]{
+	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: TaskModel2Dto(originTask),
 	})
@@ -473,7 +434,6 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	userId := c.GetInt("id")
 
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
-	//fmt.Printf("videoFetchByIDRespBodyBuilder originTask: %#v\n", originTask)
 	if err != nil {
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
@@ -483,219 +443,32 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
-	func() {
-		// 任务已成功且已上传 S3（FailReason 存的是 https 地址）时，直接复用，避免每次
-		// fetch 都重新拉取上游并重复上传 S3（omni 的 GET interactions 每次都返回完整视频）。
-		if originTask.Status == model.TaskStatusSuccess && strings.HasPrefix(originTask.FailReason, "https://") {
-			if !strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") {
-				format := "mp4"
-				tmpArr := strings.Split(originTask.FailReason, "?")
-				arr := strings.Split(tmpArr[0], ".")
-				if len(arr) > 0 {
-					format = arr[len(arr)-1]
-				}
-				out := map[string]any{
-					"error":    nil,
-					"format":   format,
-					"metadata": nil,
-					"status":   "succeeded",
-					"task_id":  originTask.TaskID,
-					"url":      originTask.FailReason,
-				}
-				respBody, _ = json.Marshal(dto.TaskResponse[any]{
-					Code: "success",
-					Data: out,
-				})
-			}
-			return
-		}
-		channelModel, err2 := model.GetChannelById(originTask.ChannelId, true)
-		if err2 != nil {
-			return
-		}
-		//bug fix 这个为啥要return？
-		if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
-			//return
-		}
-		baseURL := constant.ChannelBaseURLs[channelModel.Type]
-		//fmt.Printf("videoFetchByIDRespBodyBuilder baseURL: %s\n", baseURL)
-		if channelModel.GetBaseURL() != "" {
-			baseURL = channelModel.GetBaseURL()
-		}
-		proxy := channelModel.GetSetting().Proxy
-		adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
-		if strings.Contains(baseURL, "yunwu") {
-			switch originTask.Platform {
-			case constant.TaskPlatformYunwuVeo:
-				adaptor = &yunwu.TaskAdaptor{}
-			case constant.TaskPlatformYunwuSora:
-				adaptor = &yunwu_sora.TaskAdaptor{}
-			}
-		} else if strings.Contains(baseURL, "ppinfra") {
-			if originTask.Platform == constant.TaskPlatformPPioHunyuanImage {
-				adaptor = &hunyuanppio.TaskAdaptor{}
-			} else {
-				adaptor = &ppio.TaskAdaptor{}
-			}
-		} else if strings.Contains(baseURL, "novita") {
-			adaptor = &novita.TaskAdaptor{}
-		} else if strings.Contains(baseURL, "tencentcloudapi") {
-			adaptor = &hunyuan.TaskAdaptor{}
-		} else if strings.Contains(baseURL, "fal") {
-			adaptor = &fal.TaskAdaptor{}
-		}
-		if adaptor == nil {
-			return
-		}
-		resp, err2 := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
-			"task_id": originTask.TaskID,
-			"action":  originTask.Action,
-		}, proxy)
-		if err2 != nil || resp == nil {
-			return
-		}
-		defer resp.Body.Close()
-		body, err2 := io.ReadAll(resp.Body)
-		if err2 != nil {
-			return
-		}
+	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-		ti, err3 := adaptor.ParseTaskResult(body)
-		if err3 == nil && ti != nil {
-			if ti.Status != "" {
-				originTask.Status = model.TaskStatus(ti.Status)
-			}
-			if ti.Progress != "" {
-				originTask.Progress = ti.Progress
-			}
-			if ti.Url != "" {
-				if strings.HasPrefix(ti.Url, "data:") {
-				} else {
-					originTask.FailReason = ti.Url
-				}
-			}
-			if originTask.Status == model.TaskStatusFailure && ti.Reason != "" {
-				originTask.FailReason = ti.Reason
-			}
-			originTask.Data = body
-			_ = originTask.Update()
-			var raw map[string]any
-			_ = json.Unmarshal(body, &raw)
-			format := "mp4"
-			if respObj, ok := raw["response"].(map[string]any); ok {
-				if vids, ok := respObj["videos"].([]any); ok && len(vids) > 0 {
-					if v0, ok := vids[0].(map[string]any); ok {
-						if mt, ok := v0["mimeType"].(string); ok && mt != "" {
-							if strings.Contains(mt, "mp4") {
-								format = "mp4"
-							} else {
-								format = mt
-							}
-						}
-					}
-				}
-			}
-			status := "processing"
-			switch originTask.Status {
-			case model.TaskStatusSuccess:
-				status = "succeeded"
-			case model.TaskStatusFailure:
-				status = "failed"
-			case model.TaskStatusQueued, model.TaskStatusSubmitted:
-				status = "queued"
-			}
-			if strings.HasPrefix(originTask.FailReason, "https://") {
-				tmpArr := strings.Split(originTask.FailReason, "?")
-				arr := strings.Split(tmpArr[0], ".")
-				if len(arr) > 0 {
-					format = arr[len(arr)-1]
-				}
-				out := map[string]any{
-					"error":    nil,
-					"format":   format,
-					"metadata": nil,
-					"status":   status,
-					"task_id":  originTask.TaskID,
-					"url":      originTask.FailReason,
-				}
-				// Add World Labs specific fields if available
-				if ti.ColliderMeshUrl != "" {
-					out["collider_mesh_url"] = ti.ColliderMeshUrl
-				}
-				if ti.SplatUrl500k != "" {
-					out["splat_url_500k"] = ti.SplatUrl500k
-				}
-				if ti.SplatUrlFullRes != "" {
-					out["splat_url_full_res"] = ti.SplatUrlFullRes
-				}
-				if ti.WorldMarbleUrl != "" {
-					out["world_marble_url"] = ti.WorldMarbleUrl
-				}
-				respBody, _ = json.Marshal(dto.TaskResponse[any]{
-					Code: "success",
-					Data: out,
-				})
-			}
-			if !strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") {
-				out := map[string]any{
-					"error":    nil,
-					"format":   format,
-					"metadata": nil,
-					"status":   status,
-					"task_id":  originTask.TaskID,
-					"url":      originTask.FailReason,
-				}
-				// 失败时 FailReason 存的是错误原因而非视频地址：放进 error 字段，url 置空。
-				if originTask.Status == model.TaskStatusFailure {
-					out["url"] = nil
-					if strings.TrimSpace(originTask.FailReason) != "" {
-						out["error"] = map[string]any{"message": originTask.FailReason}
-					}
-				}
-				// Add World Labs specific fields if available
-				if ti.ColliderMeshUrl != "" {
-					out["collider_mesh_url"] = ti.ColliderMeshUrl
-				}
-				if ti.SplatUrl500k != "" {
-					out["splat_url_500k"] = ti.SplatUrl500k
-				}
-				if ti.SplatUrlFullRes != "" {
-					out["splat_url_full_res"] = ti.SplatUrlFullRes
-				}
-				if ti.WorldMarbleUrl != "" {
-					out["world_marble_url"] = ti.WorldMarbleUrl
-				}
-				respBody, _ = json.Marshal(dto.TaskResponse[any]{
-					Code: "success",
-					Data: out,
-				})
-			}
+	// 已成功并且结果已落到自有存储（S3）时直接复用，不再回源。
+	// omni 的 GET interactions 每次都会返回完整视频，重复拉取会反复上传 S3。
+	if originTask.Status == model.TaskStatusSuccess && strings.HasPrefix(originTask.GetResultURL(), "https://") {
+		if isOpenAIVideoAPI {
+			return openAIVideoRespBody(originTask)
 		}
-	}()
-
-	if len(respBody) != 0 {
-		return
+		return simpleVideoRespBody(originTask, nil, ""), nil
 	}
 
-	if strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") {
-		adaptor := GetTaskAdaptor(originTask.Platform)
-		if adaptor == nil {
-			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", originTask.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+	// 其余情况向上游实时拉取最新状态
+	if realtimeResp, done := tryRealtimeFetch(originTask, isOpenAIVideoAPI); done {
+		respBody = realtimeResp
+		if len(respBody) != 0 {
 			return
 		}
-		if converter, ok := adaptor.(channel.OpenAIVideoConverter); ok {
-			openAIVideoData, err := converter.ConvertToOpenAIVideo(originTask)
-			if err != nil {
-				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
-				return
-			}
-			respBody = openAIVideoData
-			return
-		}
-		taskResp = service.TaskErrorWrapperLocal(errors.New(fmt.Sprintf("not_implemented:%s", originTask.Platform)), "not_implemented", http.StatusNotImplemented)
-		return
 	}
-	respBody, err = json.Marshal(dto.TaskResponse[any]{
+
+	// OpenAI Video API 格式: 走各 adaptor 的 ConvertToOpenAIVideo
+	if isOpenAIVideoAPI {
+		return openAIVideoRespBody(originTask)
+	}
+
+	// 通用 TaskDto 格式
+	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: TaskModel2Dto(originTask),
 	})
@@ -705,16 +478,224 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
+// openAIVideoRespBody 用任务所属平台的 adaptor 把 task 转成 OpenAI Video API 响应。
+func openAIVideoRespBody(task *model.Task) (respBody []byte, taskResp *dto.TaskError) {
+	adaptor := GetTaskAdaptor(task.Platform)
+	if adaptor == nil {
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", task.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+	}
+	converter, ok := adaptor.(channel.OpenAIVideoConverter)
+	if !ok {
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", task.Platform), "not_implemented", http.StatusNotImplemented)
+	}
+	openAIVideoData, err := converter.ConvertToOpenAIVideo(task)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
+	}
+	return openAIVideoData, nil
+}
+
+// simpleVideoRespBody 构建非 OpenAI Video API 的精简响应体。
+// taskResult 可为 nil（走 S3 复用短路时没有上游响应）；非 nil 时会附带
+// World Labs 的额外产物地址。format 为空时从结果地址的扩展名推断。
+func simpleVideoRespBody(task *model.Task, taskResult *relaycommon.TaskInfo, format string) []byte {
+	resultURL := task.GetResultURL()
+	if format == "" {
+		format = videoFormatFromURL(resultURL)
+	}
+	out := map[string]any{
+		"error":    nil,
+		"format":   format,
+		"metadata": nil,
+		"status":   mapTaskStatusToSimple(task.Status),
+		"task_id":  task.TaskID,
+		"url":      resultURL,
+	}
+	// 失败时 FailReason 存的是错误原因而非视频地址：放进 error 字段，url 置空。
+	if task.Status == model.TaskStatusFailure {
+		out["url"] = nil
+		if reason := strings.TrimSpace(task.FailReason); reason != "" {
+			out["error"] = map[string]any{"message": reason}
+		}
+	}
+	if taskResult != nil {
+		// World Labs 除视频外还会返回网格 / splat / marble 产物
+		for key, url := range map[string]string{
+			"collider_mesh_url":  taskResult.ColliderMeshUrl,
+			"splat_url_500k":     taskResult.SplatUrl500k,
+			"splat_url_full_res": taskResult.SplatUrlFullRes,
+			"world_marble_url":   taskResult.WorldMarbleUrl,
+		} {
+			if url != "" {
+				out[key] = url
+			}
+		}
+	}
+	respBody, _ := common.Marshal(dto.TaskResponse[any]{
+		Code: "success",
+		Data: out,
+	})
+	return respBody
+}
+
+// tryRealtimeFetch 向上游实时拉取任务最新状态并回写 task。
+// 适配器按 task.Platform 从注册表取得（提交时已判定并落库）；取不到时回退到渠道类型。
+// done 表示确实完成了一次上游查询；respBody 仅在非 OpenAI Video API 时构建。
+func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) (respBody []byte, done bool) {
+	channelModel, err := model.GetChannelById(task.ChannelId, true)
+	if err != nil {
+		return nil, false
+	}
+
+	baseURL := constant.ChannelBaseURLs[channelModel.Type]
+	if channelModel.GetBaseURL() != "" {
+		baseURL = channelModel.GetBaseURL()
+	}
+	proxy := channelModel.GetSetting().Proxy
+
+	adaptor := GetTaskAdaptor(task.Platform)
+	if adaptor == nil {
+		// 历史任务可能没有存平台，回退到渠道类型
+		adaptor = GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
+	}
+	if adaptor == nil {
+		return nil, false
+	}
+
+	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+		"task_id": task.GetUpstreamTaskID(),
+		"action":  task.Action,
+	}, proxy)
+	if err != nil || resp == nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false
+	}
+
+	ti, err := adaptor.ParseTaskResult(body)
+	if err != nil || ti == nil {
+		return nil, false
+	}
+
+	snap := task.Snapshot()
+
+	// 将上游最新状态更新到 task
+	if ti.Status != "" {
+		task.Status = model.TaskStatus(ti.Status)
+	}
+	if ti.Progress != "" {
+		task.Progress = ti.Progress
+	}
+	if strings.HasPrefix(ti.Url, "data:") {
+		// data: URI — kept in Data, not ResultURL
+	} else if ti.Url != "" {
+		task.PrivateData.ResultURL = ti.Url
+	} else if task.Status == model.TaskStatusSuccess {
+		// No URL from adaptor — construct proxy URL using public task ID
+		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	}
+	if task.Status == model.TaskStatusFailure && ti.Reason != "" {
+		task.FailReason = ti.Reason
+	}
+	task.Data = body
+
+	if !snap.Equal(task.Snapshot()) {
+		_, _ = task.UpdateWithStatus(snap.Status)
+	}
+
+	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
+	if isOpenAIVideoAPI {
+		return nil, true
+	}
+
+	// 上游响应里的 mimeType 比从结果地址后缀推断更可靠，优先采用
+	format := detectVideoFormat(body)
+	if format == "mp4" {
+		format = ""
+	}
+	return simpleVideoRespBody(task, ti, format), true
+}
+
+// videoFormatFromURL 从结果地址的扩展名推断视频格式，默认 mp4。
+func videoFormatFromURL(url string) string {
+	if url == "" {
+		return "mp4"
+	}
+	withoutQuery := strings.SplitN(url, "?", 2)[0]
+	idx := strings.LastIndex(withoutQuery, ".")
+	if idx < 0 || idx == len(withoutQuery)-1 {
+		return "mp4"
+	}
+	ext := withoutQuery[idx+1:]
+	if strings.Contains(ext, "/") {
+		return "mp4"
+	}
+	return ext
+}
+
+// detectVideoFormat 从 Gemini/Vertex 原始响应中探测视频格式
+func detectVideoFormat(rawBody []byte) string {
+	var raw map[string]any
+	if err := common.Unmarshal(rawBody, &raw); err != nil {
+		return "mp4"
+	}
+	respObj, ok := raw["response"].(map[string]any)
+	if !ok {
+		return "mp4"
+	}
+	vids, ok := respObj["videos"].([]any)
+	if !ok || len(vids) == 0 {
+		return "mp4"
+	}
+	v0, ok := vids[0].(map[string]any)
+	if !ok {
+		return "mp4"
+	}
+	mt, ok := v0["mimeType"].(string)
+	if !ok || mt == "" || strings.Contains(mt, "mp4") {
+		return "mp4"
+	}
+	return mt
+}
+
+// mapTaskStatusToSimple 将内部 TaskStatus 映射为简化状态字符串
+func mapTaskStatusToSimple(status model.TaskStatus) string {
+	switch status {
+	case model.TaskStatusSuccess:
+		return "succeeded"
+	case model.TaskStatusFailure:
+		return "failed"
+	case model.TaskStatusQueued, model.TaskStatusSubmitted:
+		return "queued"
+	default:
+		return "processing"
+	}
+}
+
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	return &dto.TaskDto{
+		ID:         task.ID,
+		CreatedAt:  task.CreatedAt,
+		UpdatedAt:  task.UpdatedAt,
 		TaskID:     task.TaskID,
+		Platform:   string(task.Platform),
+		UserId:     task.UserId,
+		Group:      task.Group,
+		ChannelId:  task.ChannelId,
+		Quota:      task.Quota,
 		Action:     task.Action,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
+		ResultURL:  task.GetResultURL(),
 		SubmitTime: task.SubmitTime,
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,
 		Progress:   task.Progress,
+		Properties: task.Properties,
+		Username:   task.Username,
 		Data:       task.Data,
 	}
 }

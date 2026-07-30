@@ -31,33 +31,6 @@ func MidjourneyErrorWithStatusCodeWrapper(code int, desc string, statusCode int)
 	}
 }
 
-// OpenAIErrorWrapper wraps an error into an OpenAIErrorWithStatusCode
-func OpenAIErrorWrapper(err error, code string, statusCode int) *dto.OpenAIErrorWithStatusCode {
-	text := err.Error()
-	lowerText := strings.ToLower(text)
-	if !strings.HasPrefix(lowerText, "get file base64 from url") && !strings.HasPrefix(lowerText, "mime type is not supported") {
-		if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
-			common.SysLog(fmt.Sprintf("error: %s", text))
-			text = "请求上游地址失败"
-		}
-	}
-	openAIError := types.OpenAIError{
-		Message: text,
-		Type:    "toio_api_error",
-		Code:    code,
-	}
-	return &dto.OpenAIErrorWithStatusCode{
-		Error:      openAIError,
-		StatusCode: statusCode,
-	}
-}
-
-func OpenAIErrorWrapperLocal(err error, code string, statusCode int) *dto.OpenAIErrorWithStatusCode {
-	openaiErr := OpenAIErrorWrapper(err, code, statusCode)
-	openaiErr.LocalError = true
-	return openaiErr
-}
-
 //// OpenAIErrorWrapper wraps an error into an OpenAIErrorWithStatusCode
 //func OpenAIErrorWrapper(err error, code string, statusCode int) *dto.OpenAIErrorWithStatusCode {
 //	text := err.Error()
@@ -119,11 +92,13 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	}
 	CloseResponseBodyGracefully(resp)
 	var errResponse dto.GeneralErrorResponse
+	responseBodyText := string(responseBody)
+	responseBodyPreview := common.LocalLogPreview(responseBodyText)
 	buildErrWithBody := func(message string) error {
 		if message == "" {
-			return fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody))
+			return fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, responseBodyText)
 		}
-		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, string(responseBody))
+		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, responseBodyText)
 	}
 
 	err = common.Unmarshal(responseBody, &errResponse)
@@ -131,7 +106,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		if showBodyWhenFail {
 			newApiErr.Err = buildErrWithBody("")
 		} else {
-			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
+			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, responseBodyPreview))
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
 		return
@@ -244,4 +219,17 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 	}
 
 	return taskError
+}
+
+// TaskErrorFromAPIError 将 PreConsumeBilling 返回的 NewAPIError 转换为 TaskError。
+func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
+	if apiErr == nil {
+		return nil
+	}
+	return &dto.TaskError{
+		Code:       string(apiErr.GetErrorCode()),
+		Message:    apiErr.Err.Error(),
+		StatusCode: apiErr.StatusCode,
+		Error:      apiErr.Err,
+	}
 }

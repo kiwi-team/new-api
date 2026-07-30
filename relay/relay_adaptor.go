@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
 	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/aws"
@@ -21,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/elevenlabs"
 	"github.com/QuantumNous/new-api/relay/channel/fal_sync"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/jina"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
@@ -32,7 +34,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
 	ppioImage "github.com/QuantumNous/new-api/relay/channel/ppio"
-	"github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/reve"
@@ -41,19 +42,26 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
+	taskFal "github.com/QuantumNous/new-api/relay/channel/task/fal"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
+	taskHedra "github.com/QuantumNous/new-api/relay/channel/task/hedra"
+	taskHeyGen "github.com/QuantumNous/new-api/relay/channel/task/heygen"
+	taskHunyuan "github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
+	taskHunyuanPPio "github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskLtx "github.com/QuantumNous/new-api/relay/channel/task/ltx"
+	taskNovita "github.com/QuantumNous/new-api/relay/channel/task/novita"
 	taskPixverse "github.com/QuantumNous/new-api/relay/channel/task/pixverse"
+	taskPPio "github.com/QuantumNous/new-api/relay/channel/task/ppio"
 	taskReplicateTask "github.com/QuantumNous/new-api/relay/channel/task/replicatetask"
-	taskHedra "github.com/QuantumNous/new-api/relay/channel/task/hedra"
-	taskHeyGen "github.com/QuantumNous/new-api/relay/channel/task/heygen"
 	taskRunwayML "github.com/QuantumNous/new-api/relay/channel/task/runwayml"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
+	taskSoraYunwu "github.com/QuantumNous/new-api/relay/channel/task/sora/yunwu"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
+	taskVertexYunwu "github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskWorldLabs "github.com/QuantumNous/new-api/relay/channel/task/worldlabs"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
@@ -161,6 +169,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &ppioImage.Adaptor{}
 	case constant.APITypeReve:
 		return &reve.Adaptor{}
+	case constant.APITypeAdvancedCustom:
+		return &advancedcustom.Adaptor{}
 	}
 	return nil
 }
@@ -179,6 +189,23 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	//	return &aiproxy.Adaptor{}
 	case constant.TaskPlatformSuno:
 		return &suno.TaskAdaptor{}
+	// 聚合上游（云雾 / PPInfra / Novita / 腾讯云 / FAL）：这些渠道复用通用
+	// ChannelType，只能靠 base URL 区分，所以用独立的 TaskPlatform 标识。
+	// 平台由 resolveTaskPlatform 判定一次并落库到 task，fetch 阶段直接按平台派发。
+	case constant.TaskPlatformYunwuVeo:
+		return &taskVertexYunwu.TaskAdaptor{}
+	case constant.TaskPlatformYunwuSora:
+		return &taskSoraYunwu.TaskAdaptor{}
+	case constant.TaskPlatformPPio:
+		return &taskPPio.TaskAdaptor{}
+	case constant.TaskPlatformPPioHunyuanImage:
+		return &taskHunyuanPPio.TaskAdaptor{}
+	case constant.TaskPlatformNovitaImage:
+		return &taskNovita.TaskAdaptor{}
+	case constant.TaskPlatformHunyuanImage:
+		return &taskHunyuan.TaskAdaptor{}
+	case constant.TaskPlatformFAL, constant.TaskPlatformFALImage:
+		return &taskFal.TaskAdaptor{}
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {
@@ -214,6 +241,12 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskHedra.TaskAdaptor{}
 		case constant.ChannelTypeHeyGen:
 			return &taskHeyGen.TaskAdaptor{}
+		case constant.ChannelTypeFAL:
+			return &taskFal.TaskAdaptor{}
+		case constant.ChannelTypePPIO:
+			return &taskPPio.TaskAdaptor{}
+		case constant.ChannelTypeTencent:
+			return &taskHunyuan.TaskAdaptor{}
 		}
 	}
 	return nil

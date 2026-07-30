@@ -222,17 +222,17 @@ func convertOpenAIToConverse(req *dto.GeneralOpenAIRequest) (*ConverseRequest, e
 
 	// Set inference config
 	// Temperature, topP and topK cannot be used with maxReasoningEffort set to high. This will cause an error.
-	if req.MaxTokens != 0 || req.Temperature != nil || req.TopP != 0 || req.Stop != nil {
+	if req.MaxTokens != nil || req.Temperature != nil || req.TopP != nil || req.Stop != nil {
 		converseReq.InferenceConfig = &InferenceConfig{}
-		if req.MaxTokens != 0 && !isHigh {
-			converseReq.InferenceConfig.MaxTokens = int(req.MaxTokens)
+		if req.MaxTokens != nil && !isHigh {
+			converseReq.InferenceConfig.MaxTokens = int(*req.MaxTokens)
 		}
 		if req.Temperature != nil && !isHigh {
 			temp := float32(*req.Temperature)
 			converseReq.InferenceConfig.Temperature = &temp
 		}
-		if req.TopP != 0 && !isHigh {
-			topP := float32(req.TopP)
+		if req.TopP != nil && !isHigh {
+			topP := float32(*req.TopP)
 			converseReq.InferenceConfig.TopP = &topP
 		}
 		if req.Stop != nil {

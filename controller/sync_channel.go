@@ -12,9 +12,9 @@ import (
 
 // SyncChannelsRequest 同步渠道请求
 type SyncChannelsRequest struct {
-	ChannelIds     []int                                `json:"channel_ids" binding:"required"`
-	EnvironmentIds []int                                `json:"environment_ids" binding:"required"`
-	ChannelMapping map[int]map[int]int                  `json:"channel_mapping,omitempty"` // environment_id -> source_channel_id -> target_channel_id
+	ChannelIds     []int               `json:"channel_ids" binding:"required"`
+	EnvironmentIds []int               `json:"environment_ids" binding:"required"`
+	ChannelMapping map[int]map[int]int `json:"channel_mapping,omitempty"` // environment_id -> source_channel_id -> target_channel_id
 }
 
 // PreviewSyncChannelsRequest 预览同步渠道请求

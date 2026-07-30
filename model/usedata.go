@@ -45,6 +45,8 @@ type QuotaData struct {
 	Quota              int    `json:"quota" gorm:"default:0"`
 	TokenId            int    `json:"token_id" gorm:"index"`
 	ChannelId          int    `json:"channel_id" gorm:"index"`
+	UseGroup           string `json:"use_group" gorm:"index;size:64;default:''"`
+	NodeName           string `json:"node_name" gorm:"index;size:64;default:''"`
 	ClientUserId       string `json:"client_user_id" gorm:"index;size:200;default:''"`
 	ClientScenairo     string `json:"client_scenairo" gorm:"index;size:200;default:''"`
 	ProjectName        string `json:"project_name" gorm:"index;size:200;default:''"`
@@ -66,6 +68,8 @@ type LogQuotaDataCache struct {
 	TokenName                   string
 	TokenId                     int
 	ChannelId                   int
+	UseGroup                    string
+	NodeName                    string
 	ClientUserId                string
 	ClientScenairo              string
 	ProjectName                 string
@@ -95,38 +99,38 @@ func UpdateQuotaData() {
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
-func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, tokenId int, channelId int, clientUserId string, clientScenairo string, projectName string, planId int, firstTokenMs int, useTimeSeconds int) {
-	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%d", userId, username, modelName, tokenId, createdAt, channelId, clientUserId, clientScenairo, projectName, planId)
+func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
+	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%s-%s-%d", params.UserId, params.Username, params.ModelName, params.TokenId, createdAt, params.ChannelId, params.UseGroup, params.NodeName, params.ClientUserId, params.ClientScenairo, params.ProjectName, params.PlanId)
 	// 按请求派生缓存命中次数：本次调用即一次请求，对应 token 数 > 0 则计一次。
 	cacheWrite5mReq, cacheWrite1hReq, cacheReadReq := 0, 0, 0
-	if claudeCacheCreation5mTokens > 0 {
+	if params.ClaudeCacheCreation5mTokens > 0 {
 		cacheWrite5mReq = 1
 	}
-	if claudeCacheCreation1hTokens > 0 {
+	if params.ClaudeCacheCreation1hTokens > 0 {
 		cacheWrite1hReq = 1
 	}
-	if cachedTokens > 0 {
+	if params.CachedTokens > 0 {
 		cacheReadReq = 1
 	}
 	// 耗时埋点：仅当测到首字（firstTokenMs>0，即流式请求）才计入首字样本与首字耗时累加，
 	// 保证 frt_sum 与 stream_request_count 样本集一致，平均值不被无首字请求稀释。
 	// 请求耗时统计所有请求，以毫秒累加（use_time 为秒，×1000）。
 	streamReq, frtSum := 0, 0
-	if firstTokenMs > 0 {
+	if params.FirstTokenMs > 0 {
 		streamReq = 1
-		frtSum = firstTokenMs
+		frtSum = params.FirstTokenMs
 	}
-	requestTimeSum := useTimeSeconds * 1000
+	requestTimeSum := params.UseTimeSeconds * 1000
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
 		quotaData.Count += 1
-		quotaData.Quota += quota
-		quotaData.TokenUsed += tokenUsed
-		quotaData.PromptTokens += promptTokens
-		quotaData.CompletionTokens += completionTokens
-		quotaData.CachedTokens += cachedTokens
-		quotaData.ClaudeCacheCreation5mTokens += claudeCacheCreation5mTokens
-		quotaData.ClaudeCacheCreation1hTokens += claudeCacheCreation1hTokens
+		quotaData.Quota += params.Quota
+		quotaData.TokenUsed += params.TokenUsed
+		quotaData.PromptTokens += params.PromptTokens
+		quotaData.CompletionTokens += params.CompletionTokens
+		quotaData.CachedTokens += params.CachedTokens
+		quotaData.ClaudeCacheCreation5mTokens += params.ClaudeCacheCreation5mTokens
+		quotaData.ClaudeCacheCreation1hTokens += params.ClaudeCacheCreation1hTokens
 		quotaData.CacheWrite5mRequestCount += cacheWrite5mReq
 		quotaData.CacheWrite1hRequestCount += cacheWrite1hReq
 		quotaData.CacheReadRequestCount += cacheReadReq
@@ -135,66 +139,45 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 		quotaData.RequestTimeSum += requestTimeSum
 	} else {
 		quotaData = &QuotaData{
-			UserID:                      userId,
-			Username:                    username,
-			ModelName:                   modelName,
+			UserID:                      params.UserId,
+			Username:                    params.Username,
+			ModelName:                   params.ModelName,
 			CreatedAt:                   createdAt,
 			Count:                       1,
-			Quota:                       quota,
-			TokenUsed:                   tokenUsed,
-			TokenName:                   tokenName,
-			PromptTokens:                promptTokens,
-			CompletionTokens:            completionTokens,
-			CachedTokens:                cachedTokens,
-			ClaudeCacheCreation5mTokens: claudeCacheCreation5mTokens,
-			ClaudeCacheCreation1hTokens: claudeCacheCreation1hTokens,
+			Quota:                       params.Quota,
+			TokenUsed:                   params.TokenUsed,
+			TokenName:                   params.TokenName,
+			PromptTokens:                params.PromptTokens,
+			CompletionTokens:            params.CompletionTokens,
+			CachedTokens:                params.CachedTokens,
+			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
+			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
 			CacheWrite5mRequestCount:    cacheWrite5mReq,
 			CacheWrite1hRequestCount:    cacheWrite1hReq,
 			CacheReadRequestCount:       cacheReadReq,
 			StreamRequestCount:          streamReq,
 			FrtSum:                      frtSum,
 			RequestTimeSum:              requestTimeSum,
-			TokenId:                     tokenId,
-			ChannelId:                   channelId,
-			ClientUserId:                clientUserId,
-			ClientScenairo:              clientScenairo,
-			ProjectName:                 projectName,
-			PlanId:                      planId,
+			TokenId:                     params.TokenId,
+			ChannelId:                   params.ChannelId,
+			UseGroup:                    params.UseGroup,
+			NodeName:                    params.NodeName,
+			ClientUserId:                params.ClientUserId,
+			ClientScenairo:              params.ClientScenairo,
+			ProjectName:                 params.ProjectName,
+			PlanId:                      params.PlanId,
 		}
 	}
 	CacheQuotaData[key] = quotaData
 }
 
-// func LogQuotaData(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int, tokenName string) {
 func LogQuotaData(logQuotaData *LogQuotaDataCache) {
-	common.SysLog(fmt.Sprintf("[DIAG] LogQuotaData called: model=%s, userId=%d, tokenId=%d, channelId=%d",
-		logQuotaData.ModelName, logQuotaData.UserId, logQuotaData.TokenId, logQuotaData.ChannelId))
-	userId := logQuotaData.UserId
-	username := logQuotaData.Username
-	modelName := logQuotaData.ModelName
-	createdAt := logQuotaData.CreatedAt
-	tokenUsed := logQuotaData.TokenUsed
-	tokenName := logQuotaData.TokenName
-	promptTokens := logQuotaData.PromptTokens
-	completionTokens := logQuotaData.CompletionTokens
-	cachedTokens := logQuotaData.CachedTokens
-	claudeCacheCreation5mTokens := logQuotaData.ClaudeCacheCreation5mTokens
-	claudeCacheCreation1hTokens := logQuotaData.ClaudeCacheCreation1hTokens
-	quota := logQuotaData.Quota
-	tokenId := logQuotaData.TokenId
-	channelId := logQuotaData.ChannelId
-	clientUserId := logQuotaData.ClientUserId
-	clientScenairo := logQuotaData.ClientScenairo
-	projectName := logQuotaData.ProjectName
-	planId := logQuotaData.PlanId
-	firstTokenMs := logQuotaData.FirstTokenMs
-	useTimeSeconds := logQuotaData.UseTimeSeconds
 	// 只精确到小时
-	createdAt = createdAt - (createdAt % 3600)
+	createdAt := logQuotaData.CreatedAt - (logQuotaData.CreatedAt % 3600)
 
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
-	logQuotaDataCache(userId, username, modelName, quota, createdAt, tokenUsed, tokenName, promptTokens, completionTokens, cachedTokens, claudeCacheCreation5mTokens, claudeCacheCreation1hTokens, tokenId, channelId, clientUserId, clientScenairo, projectName, planId, firstTokenMs, useTimeSeconds)
+	logQuotaDataCache(logQuotaData, createdAt)
 }
 
 // RefundQuotaData writes a negative quota entry to offset the original quota_data record
@@ -231,10 +214,10 @@ func SaveQuotaDataCache() {
 	// 3. 如果没有数据，就插入数据
 	for _, quotaData := range CacheQuotaData {
 		quotaDataDB := &QuotaData{}
-		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
+		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
+			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
-			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.Count, quotaData.Quota, quotaData.CreatedAt, quotaData.TokenUsed, quotaData.TokenId, quotaData.ChannelId, quotaData.PromptTokens, quotaData.CompletionTokens, quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens, quotaData.CacheWrite5mRequestCount, quotaData.CacheWrite1hRequestCount, quotaData.CacheReadRequestCount, quotaData.StreamRequestCount, quotaData.FrtSum, quotaData.RequestTimeSum, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId)
+			increaseQuotaData(quotaData)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		} else {
 			DB.Table("quota_data").Create(quotaData)
@@ -318,11 +301,11 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 
 	// Date logic based on DB type
 	dateField := ""
-	if common.UsingSQLite {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		dateField = "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
-	} else if common.UsingMySQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 		dateField = "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
-	} else if common.UsingPostgreSQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		dateField = "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
 	} else {
 		dateField = "DATE(created_at)"
@@ -580,23 +563,23 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, tokenUsed int, tokenId int, channelId int, promptTokens int, completionTokens int, cachedTokens int, claudeCacheCreation5mTokens int, claudeCacheCreation1hTokens int, cacheWrite5mRequestCount int, cacheWrite1hRequestCount int, cacheReadRequestCount int, streamRequestCount int, frtSum int, requestTimeSum int, clientUserId string, clientScenairo string, projectName string, planId int) {
-	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
-		userId, username, modelName, createdAt, tokenId, channelId, clientUserId, clientScenairo, projectName, planId).Updates(map[string]interface{}{
-		"count":                          gorm.Expr("count + ?", count),
-		"quota":                          gorm.Expr("quota + ?", quota),
-		"token_used":                     gorm.Expr("token_used + ?", tokenUsed),
-		"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", promptTokens),
-		"completion_tokens":              gorm.Expr("completion_tokens + ?", completionTokens),
-		"cached_tokens":                  gorm.Expr("cached_tokens + ?", cachedTokens),
-		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", claudeCacheCreation5mTokens),
-		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", claudeCacheCreation1hTokens),
-		"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", cacheWrite5mRequestCount),
-		"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", cacheWrite1hRequestCount),
-		"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", cacheReadRequestCount),
-		"stream_request_count":           gorm.Expr("stream_request_count + ?", streamRequestCount),
-		"frt_sum":                        gorm.Expr("frt_sum + ?", frtSum),
-		"request_time_sum":               gorm.Expr("request_time_sum + ?", requestTimeSum),
+func increaseQuotaData(quotaData *QuotaData) {
+	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
+		quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).Updates(map[string]interface{}{
+		"count":                          gorm.Expr("count + ?", quotaData.Count),
+		"quota":                          gorm.Expr("quota + ?", quotaData.Quota),
+		"token_used":                     gorm.Expr("token_used + ?", quotaData.TokenUsed),
+		"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", quotaData.PromptTokens),
+		"completion_tokens":              gorm.Expr("completion_tokens + ?", quotaData.CompletionTokens),
+		"cached_tokens":                  gorm.Expr("cached_tokens + ?", quotaData.CachedTokens),
+		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", quotaData.ClaudeCacheCreation5mTokens),
+		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", quotaData.ClaudeCacheCreation1hTokens),
+		"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", quotaData.CacheWrite5mRequestCount),
+		"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", quotaData.CacheWrite1hRequestCount),
+		"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", quotaData.CacheReadRequestCount),
+		"stream_request_count":           gorm.Expr("stream_request_count + ?", quotaData.StreamRequestCount),
+		"frt_sum":                        gorm.Expr("frt_sum + ?", quotaData.FrtSum),
+		"request_time_sum":               gorm.Expr("request_time_sum + ?", quotaData.RequestTimeSum),
 	}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())
@@ -615,6 +598,16 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, defaultTim
 	// 从quota_data表中查询数据
 	//err = DB.Table("quota_data").Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).Find(&quotaDatas).Error
 	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used,sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as  completion_tokens , created_at").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Group("model_name, created_at").Find(&quotaDatas).Error
+	return quotaDatas, err
+}
+
+func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	var quotaDatas []*QuotaData
+	err = DB.Table("quota_data").
+		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Where("created_at >= ? and created_at <= ?", startTime, endTime).
+		Group("username, created_at").
+		Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
@@ -748,11 +741,11 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 
 	// 日期字段按 +8 时区格式化，与 GetQuotaDataStatistics 保持一致
 	dateField := ""
-	if common.UsingSQLite {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		dateField = "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
-	} else if common.UsingMySQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 		dateField = "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
-	} else if common.UsingPostgreSQL {
+	} else if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		dateField = "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
 	} else {
 		dateField = "DATE(created_at)"

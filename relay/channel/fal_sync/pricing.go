@@ -249,4 +249,3 @@ func normalizeResolution(res string) string {
 	}
 	return nanoBananaDefaultResolution
 }
-

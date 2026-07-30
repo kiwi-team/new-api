@@ -20,7 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, processModelsData, processGroupsData } from '../../helpers';
-import { API_ENDPOINTS } from '../../constants/playground.constants';
+import { PG_API_ENDPOINTS } from '../../constants/playground.constants'
 
 export const useDataLoader = (
   userState,
@@ -33,7 +33,7 @@ export const useDataLoader = (
 
   const loadModels = useCallback(async () => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_MODELS);
+      const res = await API.get(PG_API_ENDPOINTS.USER_MODELS);
       const { success, message, data } = res.data;
 
       if (success) {
@@ -56,7 +56,7 @@ export const useDataLoader = (
 
   const loadGroups = useCallback(async () => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_GROUPS);
+      const res = await API.get(PG_API_ENDPOINTS.USER_GROUPS);
       const { success, message, data } = res.data;
 
       if (success) {
