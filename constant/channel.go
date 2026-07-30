@@ -72,6 +72,8 @@ const (
 	ChannelTypeHeyGen           = 72
 	ChannelTypeReve             = 73
 	ChannelTypeAdvancedCustom   = 74
+	ChannelTypeSub2API          = 75
+	ChannelTypeNewAPI           = 76
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -153,6 +155,8 @@ var ChannelBaseURLs = []string{
 	"https://api.heygen.com",               // 72 heygen
 	"https://api.reve.com",                 // 73 reve
 	"",                                     // 74
+	"",
+	"",
 }
 
 var ChannelTypeNames = map[int]string{
@@ -224,6 +228,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeHeyGen:         "HeyGen",
 	ChannelTypeReve:           "Reve",
 	ChannelTypeAdvancedCustom: "Advanced Custom",
+	ChannelTypeSub2API:        "Sub2API",
+	ChannelTypeNewAPI:         "New API",
 }
 
 func GetChannelTypeName(channelType int) string {
