@@ -26,7 +26,7 @@ import {
   Popover,
   Modal,
   Typography,
-  Button
+  Button,
 } from '@douyinfe/semi-ui';
 import {
   timestamp2string,
@@ -46,7 +46,7 @@ import {
   API,
 } from '../../../helpers';
 import { IconHelpCircle, IconEyeOpened, IconCopy } from '@douyinfe/semi-icons';
-import { Route,Sparkles } from 'lucide-react';
+import { Route, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 const colors = [
@@ -784,9 +784,9 @@ export const getLogsColumns = ({
           }
           if (other.admin_info !== undefined) {
             if (
-                other.admin_info.use_channel !== null &&
-                other.admin_info.use_channel !== undefined &&
-                other.admin_info.use_channel !== ''
+              other.admin_info.use_channel !== null &&
+              other.admin_info.use_channel !== undefined &&
+              other.admin_info.use_channel !== ''
             ) {
               let useChannel = other.admin_info.use_channel;
               // use_channel_time 与 use_channel 一一对应（毫秒）；缺失或长度不齐时降级为纯渠道
@@ -1029,6 +1029,7 @@ export const getLogsColumns = ({
               other?.settlement_ratio || 1,
               other?.tiered_cached_input_price || 0,
               other?.tiered_cache_write_price || 0,
+              other?.other_ratios,
             )
           : renderModelPriceSimple(
               other.model_ratio,
@@ -1057,16 +1058,17 @@ export const getLogsColumns = ({
               other?.settlement_ratio || 1,
               other?.tiered_cached_input_price || 0,
               other?.tiered_cache_write_price || 0,
+              other?.other_ratios,
             );
         return (
-            <Typography.Paragraph
-                ellipsis={{
-                  rows: 3,
-                }}
-                style={{ maxWidth: 240, whiteSpace: 'pre-line' }}
-            >
-              {content}
-            </Typography.Paragraph>
+          <Typography.Paragraph
+            ellipsis={{
+              rows: 3,
+            }}
+            style={{ maxWidth: 240, whiteSpace: 'pre-line' }}
+          >
+            {content}
+          </Typography.Paragraph>
         );
       },
     },

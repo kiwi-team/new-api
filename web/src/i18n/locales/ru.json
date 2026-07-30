@@ -3475,6 +3475,10 @@
     "默认折叠侧边栏": "Сворачивать боковую панель по умолчанию",
     "默认测试模型": "Модель для тестирования по умолчанию",
     "默认用户消息": "Здравствуйте",
-    "默认补全倍率": "Default completion ratio"
+    "默认补全倍率": "Default completion ratio",
+    "时长(秒)": "Длительность (с)",
+    "尺寸": "Размер",
+    "分辨率({{value}})": "Разрешение ({{value}})",
+    "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}": "Цена модели: {{symbol}}{{price}} * {{ratioType}}: {{ratio}} * {{factors}} = {{symbol}}{{total}}"
   }
 }

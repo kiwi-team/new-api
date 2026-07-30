@@ -156,29 +156,44 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	// Omni models use the interactions API with a different payload shape.
 	if isOmniModel(info.OriginModelName) {
-		data, err := BuildOmniRequestBody(req, info.OriginModelName)
+		data, err := BuildOmniRequestBody(c, req, info.OriginModelName)
 		if err != nil {
 			return nil, err
 		}
 		return bytes.NewReader(data), nil
 	}
 
-	// Create structured video generation request
-	body := GeminiVideoPayload{
-		Instances: []GeminiVideoRequest{
-			{Prompt: req.Prompt},
-		},
-		Parameters: GeminiVideoGenerationConfig{},
-	}
-
+	// Parameters 仍走既有的结构化字段 + metadata 合并。
+	params := GeminiVideoGenerationConfig{}
 	metadata := req.Metadata
 	medaBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "metadata marshal metadata failed")
 	}
-	err = json.Unmarshal(medaBytes, &body.Parameters)
-	if err != nil {
+	if err = json.Unmarshal(medaBytes, &params); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+	if req.NegativePrompt != "" && params.NegativePrompt == "" {
+		params.NegativePrompt = req.NegativePrompt
+	}
+	if req.AspectRatio != "" && params.AspectRatio == "" {
+		params.AspectRatio = req.AspectRatio
+	}
+	if req.Resolution != "" && params.Resolution == "" {
+		params.Resolution = req.Resolution
+	}
+
+	// instance 用 map 承载，便于挂载 referenceImages / image / lastFrame 等
+	// 结构化字段（注意这些字段在 instances 内，不在 parameters 内）。
+	instance := map[string]any{"prompt": req.Prompt}
+
+	if err := applyVeoInstanceReferences(c, &req, instance, &params); err != nil {
+		return nil, err
+	}
+
+	body := map[string]any{
+		"instances":  []map[string]any{instance},
+		"parameters": params,
 	}
 
 	data, err := json.Marshal(body)
@@ -186,6 +201,59 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(data), nil
+}
+
+// applyVeoInstanceReferences 把统一 references 映射到 Veo 的 instance 字段：
+// reference_image -> referenceImages（并施加 8s / allow_adult 硬约束）
+// first_frame     -> image
+// last_frame      -> lastFrame（官方要求必须与 image 搭配使用）
+func applyVeoInstanceReferences(c *gin.Context, req *relaycommon.TaskSubmitReq,
+	instance map[string]any, params *GeminiVideoGenerationConfig) error {
+
+	refImages, err := BuildVeoReferenceImages(c, req)
+	if err != nil {
+		return err
+	}
+	if len(refImages) > 0 {
+		instance["referenceImages"] = refImages
+		// 硬约束需要读写 parameters.personGeneration，这里用一个临时 map 承接，
+		// 再回写到结构化的 params 上。
+		pmap := map[string]any{}
+		if params.PersonGeneration != "" {
+			pmap["personGeneration"] = params.PersonGeneration
+		}
+		if err := ApplyVeoReferenceConstraints(instance, pmap, req); err != nil {
+			return err
+		}
+		if pg, ok := pmap["personGeneration"].(string); ok {
+			params.PersonGeneration = pg
+		}
+		params.DurationSeconds = VeoReferenceDurationSeconds
+	}
+
+	// 首帧 / 尾帧（与 referenceImages 是相互独立的机制）
+	if ref, ok := req.FirstRefByRole(relaycommon.RefRoleFirstFrame); ok && ref.URL != "" {
+		img, err := BuildVeoImageObject(c, ref.URL)
+		if err != nil {
+			return fmt.Errorf("resolve first_frame failed: %w", err)
+		}
+		if img != nil {
+			instance["image"] = img
+		}
+	}
+	if ref, ok := req.FirstRefByRole(relaycommon.RefRoleLastFrame); ok && ref.URL != "" {
+		if _, hasFirst := instance["image"]; !hasFirst {
+			return fmt.Errorf("last_frame must be used together with a first_frame image")
+		}
+		img, err := BuildVeoImageObject(c, ref.URL)
+		if err != nil {
+			return fmt.Errorf("resolve last_frame failed: %w", err)
+		}
+		if img != nil {
+			instance["lastFrame"] = img
+		}
+	}
+	return nil
 }
 
 // DoRequest delegates to common helper.

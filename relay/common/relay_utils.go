@@ -88,14 +88,18 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 	formData := c.Request.PostForm
 	seconds := common.String2Int(formData.Get("seconds"))
 	req = TaskSubmitReq{
-		Prompt:   formData.Get("prompt"),
-		Model:    formData.Get("model"),
-		Mode:     formData.Get("mode"),
-		Image:    formData.Get("image"),
-		Size:     formData.Get("size"),
-		Seconds:  fmt.Sprintf("%d", seconds),
-		Duration: seconds,
-		Metadata: make(map[string]interface{}),
+		Prompt:         formData.Get("prompt"),
+		Model:          formData.Get("model"),
+		Mode:           formData.Get("mode"),
+		Image:          formData.Get("image"),
+		Size:           formData.Get("size"),
+		Seconds:        fmt.Sprintf("%d", seconds),
+		Duration:       seconds,
+		NegativePrompt: formData.Get("negative_prompt"),
+		Resolution:     formData.Get("resolution"),
+		AspectRatio:    formData.Get("aspect_ratio"),
+		Audio:          formData.Get("audio"),
+		Metadata:       make(map[string]interface{}),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -149,6 +153,14 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 	}
 
+	explicitRefs := len(req.References) > 0
+	if explicitRefs {
+		normalizeReferences(&req)
+		if taskErr := ValidateReferenceCapability(info.ChannelType, req.Model, &req); taskErr != nil {
+			return taskErr
+		}
+	}
+
 	if req.HasImage() {
 		hasInputReference = true
 	}
@@ -158,7 +170,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 
 	action := constant.TaskActionTextGenerate
-	if hasInputReference {
+	if explicitRefs {
+		action = deriveActionFromReferences(&req, action)
+	} else if hasInputReference {
 		action = constant.TaskActionGenerate
 	}
 	if strings.HasPrefix(model, "sora-2") {
@@ -221,6 +235,11 @@ func isKnownTaskField(field string) bool {
 		"duration":        true,
 		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
+		"references":      true,
+		"negative_prompt": true,
+		"resolution":      true,
+		"aspect_ratio":    true,
+		"audio":           true,
 	}
 	return knownFields[field]
 }
@@ -242,12 +261,15 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return taskErr
 	}
 
-	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
-		// 兼容单图上传
-		req.Images = []string{req.Image}
-	}
+	// 客户端是否显式传了 references。只有显式传入时才按角色派生 action，
+	// 否则沿用既有的“按图片数量 + 渠道”规则，保证向后兼容。
+	explicitRefs := len(req.References) > 0
 
-	if req.HasImage() {
+	normalizeReferences(&req)
+
+	if explicitRefs {
+		action = deriveActionFromReferences(&req, action)
+	} else if req.HasImage() {
 		action = constant.TaskActionGenerate
 		if info.ChannelType == constant.ChannelTypeVidu {
 			// vidu 增加 首尾帧生视频和参考图生视频
@@ -260,6 +282,15 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	}
 
 	setModelMap(c, info, &req)
+
+	// 能力校验放在此处（定价与 BuildRequestBody 之前），不支持的素材直接 400，
+	// 既不会消耗额度，也不会被上层包装成 500。
+	if explicitRefs {
+		if taskErr := ValidateReferenceCapability(info.ChannelType, req.Model, &req); taskErr != nil {
+			return taskErr
+		}
+	}
+
 	storeTaskRequest(c, info, action, req)
 	return nil
 }

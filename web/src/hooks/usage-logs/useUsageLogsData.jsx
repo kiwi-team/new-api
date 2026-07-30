@@ -696,6 +696,7 @@ export const useLogsData = () => {
               other?.tiered_output_price || 0,
               other?.tiered_max_tokens || 0,
               other?.settlement_ratio || 1,
+              other?.other_ratios,
             );
           }
           expandDataLocal.push({
@@ -924,8 +925,7 @@ export const useLogsData = () => {
       return;
     }
 
-    const currentLogType =
-      formLogType !== undefined ? formLogType : logType;
+    const currentLogType = formLogType !== undefined ? formLogType : logType;
 
     setExporting(true);
     try {
@@ -951,7 +951,9 @@ export const useLogsData = () => {
 
       // Backend returns JSON on validation/permission error (status 200, success=false)
       const contentType =
-        (res.headers && (res.headers['content-type'] || res.headers['Content-Type'])) || '';
+        (res.headers &&
+          (res.headers['content-type'] || res.headers['Content-Type'])) ||
+        '';
       if (contentType.includes('application/json')) {
         const text = await res.data.text();
         try {

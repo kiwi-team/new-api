@@ -2872,6 +2872,10 @@
     "批量导入": "批量导入",
     "导入成功": "导入成功",
     "未配置结算价格": "未配置结算价格",
-    "请输入JSON格式的配置数据": "请输入JSON格式的配置数据"
+    "请输入JSON格式的配置数据": "请输入JSON格式的配置数据",
+    "时长(秒)": "时长(秒)",
+    "尺寸": "尺寸",
+    "分辨率({{value}})": "分辨率({{value}})",
+    "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}": "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}"
   }
 }

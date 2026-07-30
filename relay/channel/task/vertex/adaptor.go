@@ -172,7 +172,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	// Omni models use the interactions API with a different payload shape.
 	if taskgemini.IsOmniModel(info.OriginModelName) {
-		data, err := taskgemini.BuildOmniRequestBody(req, info.OriginModelName)
+		data, err := taskgemini.BuildOmniRequestBody(c, req, info.OriginModelName)
 		if err != nil {
 			return nil, err
 		}
@@ -183,10 +183,31 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Instances:  []map[string]any{{"prompt": req.Prompt}},
 		Parameters: map[string]any{},
 	}
+
+	// 参考生视频：referenceImages 挂在 instances 内（不是 parameters）。
+	refImages, err := taskgemini.BuildVeoReferenceImages(c, &req)
+	if err != nil {
+		return nil, err
+	}
+	if len(refImages) > 0 {
+		body.Instances[0]["referenceImages"] = refImages
+		// 官方硬约束：使用参考图时 durationSeconds 必须为 8、personGeneration 必须 allow_adult。
+		if err := taskgemini.ApplyVeoReferenceConstraints(body.Instances[0], body.Parameters, &req); err != nil {
+			return nil, err
+		}
+	}
+
 	// Image-to-video: attach the reference image to the instance when provided.
-	imageRef := strings.TrimSpace(req.Image)
-	if imageRef == "" && len(req.Images) > 0 {
-		imageRef = strings.TrimSpace(req.Images[0])
+	// 显式 references 时首帧取 first_frame，否则回退到旧的 image/images 语义。
+	imageRef := ""
+	if ref, ok := req.FirstRefByRole(relaycommon.RefRoleFirstFrame); ok {
+		imageRef = strings.TrimSpace(ref.URL)
+	}
+	if imageRef == "" && len(req.References) == 0 {
+		imageRef = strings.TrimSpace(req.Image)
+		if imageRef == "" && len(req.Images) > 0 {
+			imageRef = strings.TrimSpace(req.Images[0])
+		}
 	}
 	if imageRef != "" {
 		img, err := buildVeoImage(imageRef)
@@ -197,12 +218,28 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			body.Instances[0]["image"] = img
 		}
 	}
-	seconds := common.String2Int(req.Seconds)
-	if seconds > 0 {
-		body.Instances[0]["duration"] = seconds
+	// 尾帧（插值），必须与首帧搭配使用。
+	if ref, ok := req.FirstRefByRole(relaycommon.RefRoleLastFrame); ok && strings.TrimSpace(ref.URL) != "" {
+		if _, hasFirst := body.Instances[0]["image"]; !hasFirst {
+			return nil, fmt.Errorf("last_frame must be used together with a first_frame image")
+		}
+		img, err := buildVeoImage(strings.TrimSpace(ref.URL))
+		if err != nil {
+			return nil, fmt.Errorf("resolve last_frame failed: %w", err)
+		}
+		if img != nil {
+			body.Instances[0]["lastFrame"] = img
+		}
 	}
-	if req.Duration > 0 {
-		body.Instances[0]["duration"] = req.Duration
+
+	if len(refImages) == 0 {
+		seconds := common.String2Int(req.Seconds)
+		if seconds > 0 {
+			body.Instances[0]["duration"] = seconds
+		}
+		if req.Duration > 0 {
+			body.Instances[0]["duration"] = req.Duration
+		}
 	}
 	if req.Metadata != nil {
 		if v, ok := req.Metadata["storageUri"]; ok {

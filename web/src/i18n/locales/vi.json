@@ -3985,6 +3985,10 @@
     "默认折叠侧边栏": "Mặc định thu gọn thanh bên",
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "时长(秒)": "Thời lượng (giây)",
+    "尺寸": "Kích thước",
+    "分辨率({{value}})": "Độ phân giải ({{value}})",
+    "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}": "Giá mô hình: {{symbol}}{{price}} * {{ratioType}}: {{ratio}} * {{factors}} = {{symbol}}{{total}}"
   }
 }

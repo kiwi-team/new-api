@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -26,14 +27,26 @@ import (
 // ============================
 
 type ContentItem struct {
-	Type     string          `json:"type"`                // "text", "image_url" or "video"
+	Type     string          `json:"type"`                // "text", "image_url", "video_url" or "audio_url"
 	Text     string          `json:"text,omitempty"`      // for text type
 	ImageURL *ImageURL       `json:"image_url,omitempty"` // for image_url type
+	VideoURL *VideoURL       `json:"video_url,omitempty"` // for video_url type
+	AudioURL *AudioURL       `json:"audio_url,omitempty"` // for audio_url type
 	Video    *VideoReference `json:"video,omitempty"`     // for video (sample) type
-	Role     string          `json:"role,omitempty"`      // reference_image / first_frame / last_frame
+	Role     string          `json:"role,omitempty"`      // reference_image / reference_video / reference_audio / first_frame / last_frame
 }
 
 type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// VideoURL 参考视频（仅 Seedance 2.0 系列支持）
+type VideoURL struct {
+	URL string `json:"url"`
+}
+
+// AudioURL 参考音频（仅 Seedance 2.0 系列支持）
+type AudioURL struct {
 	URL string `json:"url"`
 }
 
@@ -100,10 +113,43 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
 }
 
+// seedance2MaxSeconds 是 Seedance 2.0 系列的时长上限。
+// 当客户端传 duration=-1（由模型自选时长）时按此上限预扣费，
+// 任务完成后由 controller 按上游返回的实际时长等比退还。
+const seedance2MaxSeconds = 15
+
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr = relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapper(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+
+	seconds := req.GetSeconds()
+	if seconds == -1 {
+		if !relaycommon.IsSeedance2Model(req.Model) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("model %s does not support duration=-1 (model-chosen duration)", req.Model),
+				"invalid_duration", http.StatusBadRequest)
+		}
+		// 时长未知：按上限预扣，并记录假定时长供完成后等比重算。
+		seconds = seedance2MaxSeconds
+		if info.TaskRelayInfo != nil {
+			info.AssumedSeconds = float64(seedance2MaxSeconds)
+		}
+	}
+	if seconds <= 0 {
+		seconds = 5 // 与方舟默认时长一致
+	}
+	if info.PriceData.OtherRatios == nil {
+		info.PriceData.OtherRatios = map[string]float64{}
+	}
+	info.PriceData.OtherRatios["seconds"] = float64(seconds)
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -207,13 +253,65 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+// doubaoRoleForRef 把统一 role 映射为方舟 content[].role。
+// 返回 false 表示方舟不支持该 role（由统一层能力校验拦截，此处兜底跳过）。
+func doubaoRoleForRef(role string) (string, bool) {
+	switch role {
+	case relaycommon.RefRoleFirstFrame:
+		return "first_frame", true
+	case relaycommon.RefRoleLastFrame:
+		return "last_frame", true
+	case relaycommon.RefRoleReferenceImage:
+		return "reference_image", true
+	case relaycommon.RefRoleReferenceVideo:
+		return "reference_video", true
+	case relaycommon.RefRoleReferenceAudio:
+		return "reference_audio", true
+	default:
+		return "", false
+	}
+}
+
+// appendReferenceContents 按素材角色追加 content 条目，保持 references 原始顺序。
+func appendReferenceContents(r *requestPayload, req *relaycommon.TaskSubmitReq) {
+	for _, ref := range req.References {
+		role, ok := doubaoRoleForRef(ref.Role)
+		if !ok || ref.URL == "" {
+			continue
+		}
+		switch ref.Type {
+		case relaycommon.RefTypeVideo:
+			r.Content = append(r.Content, ContentItem{
+				Type:     "video_url",
+				VideoURL: &VideoURL{URL: ref.URL},
+				Role:     role,
+			})
+		case relaycommon.RefTypeAudio:
+			r.Content = append(r.Content, ContentItem{
+				Type:     "audio_url",
+				AudioURL: &AudioURL{URL: ref.URL},
+				Role:     role,
+			})
+		default:
+			r.Content = append(r.Content, ContentItem{
+				Type:     "image_url",
+				ImageURL: &ImageURL{URL: ref.URL},
+				Role:     role,
+			})
+		}
+	}
+}
+
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
 		Model:   req.Model,
 		Content: []ContentItem{},
 	}
-	duration := req.Duration
-	if duration > 0 {
+	isSeedance2 := relaycommon.IsSeedance2Model(req.Model)
+
+	// duration=-1 表示由模型自选时长（仅 Seedance 2.0 系列支持），需原样透传。
+	duration := req.GetSeconds()
+	if duration > 0 || (duration == -1 && isSeedance2) {
 		r.Duration = dto.IntValue(duration)
 	}
 
@@ -223,6 +321,19 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 			Type: "text",
 			Text: req.Prompt,
 		})
+	}
+
+	// 统一的 resolution / aspect_ratio 优先于 metadata
+	if req.Resolution != "" {
+		r.Resolution = strings.ToLower(strings.TrimSpace(req.Resolution))
+	}
+	if req.AspectRatio != "" {
+		r.Ratio = req.AspectRatio
+	}
+	// audio: 统一层三态语义映射到方舟的 generate_audio 布尔。
+	if req.Audio != "" {
+		v := dto.BoolValue(!strings.EqualFold(req.Audio, "off"))
+		r.GenerateAudio = &v
 	}
 
 	// https://www.volcengine.com/docs/82379/1520757?lang=zh
@@ -244,7 +355,11 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		if seed, ok := metadata["seed"].(float64); ok {
 			r.Seed = dto.IntValue(seed)
 		}
-		if camerafixed, ok := metadata["camerafixed"].(bool); ok {
+		// 文档字段名是 camera_fixed；历史上这里只认 camerafixed，两者都接受。
+		if camerafixed, ok := metadata["camera_fixed"].(bool); ok {
+			v := dto.BoolValue(camerafixed)
+			r.CameraFixed = &v
+		} else if camerafixed, ok := metadata["camerafixed"].(bool); ok {
 			v := dto.BoolValue(camerafixed)
 			r.CameraFixed = &v
 		}
@@ -262,8 +377,11 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		}
 	}
 
-	// Add images if present
-	if req.HasImage() {
+	if len(req.References) > 0 {
+		// 显式 references：按角色组装，覆盖首帧/首尾帧/多模态参考三种场景。
+		appendReferenceContents(&r, req)
+	} else if req.HasImage() {
+		// 回退路径：保持既有的 image_role 语义。
 		imageNum := len(req.Images)
 		if imageNum == 2 && imageRole == "first_frame,last_frame" {
 			r.Content = append(r.Content, ContentItem{
@@ -294,9 +412,6 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		}
 	}
 
-	// TODO: Add support for additional parameters from metadata
-	// such as ratio, duration, seed, etc.
-
 	//common.PrintJson("requestPayload", r)
 	//metadata := req.Metadata
 	medaBytes, err := json.Marshal(metadata)
@@ -306,6 +421,14 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	err = json.Unmarshal(medaBytes, &r)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+
+	// Seedance 2.0 系列不支持 seed / camera_fixed / frames，
+	// 传了会触发强校验报错，这里统一剔除（放在 metadata 合并之后才能兜住直接透传的情况）。
+	if isSeedance2 {
+		r.Seed = 0
+		r.Frames = 0
+		r.CameraFixed = nil
 	}
 
 	return &r, nil
@@ -336,6 +459,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		// 解析 usage 信息用于按倍率计费
 		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
 		taskResult.TotalTokens = resTask.Usage.TotalTokens
+		// 实际生成时长：duration=-1 时由模型自选，需回传以便按实际时长重算计费。
+		if resTask.Duration > 0 {
+			taskResult.ActualSeconds = float64(resTask.Duration)
+		}
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"

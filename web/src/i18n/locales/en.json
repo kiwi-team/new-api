@@ -3498,6 +3498,10 @@
     "默认折叠侧边栏": "Default collapse sidebar",
     "默认测试模型": "Default Test Model",
     "默认用户消息": "Default User Message",
-    "默认补全倍率": "Default completion ratio"
+    "默认补全倍率": "Default completion ratio",
+    "时长(秒)": "Duration (s)",
+    "尺寸": "Size",
+    "分辨率({{value}})": "Resolution ({{value}})",
+    "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}": "Model price: {{symbol}}{{price}} * {{ratioType}}: {{ratio}} * {{factors}} = {{symbol}}{{total}}"
   }
 }

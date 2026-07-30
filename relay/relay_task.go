@@ -318,6 +318,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				if hasUserGroupRatio {
 					other["user_group_ratio"] = userGroupRatio
 				}
+				// 记录参与计费的额外倍率（视频时长 seconds、分辨率 resolution-* 等），
+				// 否则前端「计费过程」只能展示 价格 × 分组倍率，与实际扣费不符
+				// （例如 8 秒视频实际扣了 8 倍，但展示成 1 倍）。
+				// 按次计费的模型（TaskPricePatches）不参与倍率计算，此处也不记录。
+				if !common.StringsContains(constant.TaskPricePatches, modelName) && len(info.PriceData.OtherRatios) > 0 {
+					otherRatios := make(map[string]float64, len(info.PriceData.OtherRatios))
+					for k, v := range info.PriceData.OtherRatios {
+						otherRatios[k] = v
+					}
+					other["other_ratios"] = otherRatios
+				}
 
 				// Track project consumption and get project name for logging
 				projectName, planId, _ := service.TrackProjectConsumption(c, quota)
@@ -346,8 +357,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 				model.UpdateChannelUsedQuota(info.ChannelId, quota)
 
 				// Store billing metadata in task.Properties so that if the async task later
-				// fails, the refund path can accurately reverse the quota_data entry.
-				if task != nil && common.DataExportEnabled {
+				// fails (or needs a duration-based re-bill), the refund path can accurately
+				// reverse the quota_data entry and restore token-level quota.
+				// NOTE: this must NOT be gated on DataExportEnabled — TokenId is required by
+				// the refund path to restore tokens.remain_quota regardless of data export.
+				if task != nil {
 					task.Properties.TokenId = info.TokenId
 					task.Properties.TokenName = tokenName
 					task.Properties.ClientUserId = clientUserId
@@ -375,6 +389,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.
 	task.Data = taskData
 	task.Action = info.Action
 	task.Request = string(requestBytes)
+	// 时长由模型自选时（duration=-1），记录预扣费所依据的假定时长，
+	// 供任务完成后按实际时长等比重算（见 controller/task_video.go）。
+	if info.TaskRelayInfo != nil && info.AssumedSeconds > 0 {
+		task.Properties.AssumedSeconds = info.AssumedSeconds
+	}
 	err = task.Insert()
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)

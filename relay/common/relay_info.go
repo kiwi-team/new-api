@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -644,6 +645,44 @@ type TaskRelayInfo struct {
 	OriginTaskID string
 
 	ConsumeQuota bool
+
+	// AssumedSeconds 由 adaptor 在 ValidateRequestAndSetAction 中设置：
+	// 当客户端把时长交给模型自行决定（如 Seedance 2.0 传 duration=-1）时，
+	// 记录本次预扣费所假定的时长，任务完成后按实际时长等比重算多退少补。
+	AssumedSeconds float64
+}
+
+// 统一的素材类型（TaskReference.Type）
+const (
+	RefTypeImage   = "image"
+	RefTypeVideo   = "video"
+	RefTypeAudio   = "audio"
+	RefTypeElement = "element"
+)
+
+// 统一的素材角色（TaskReference.Role）。各 adaptor 负责翻译成上游方言。
+const (
+	RefRoleFirstFrame     = "first_frame"
+	RefRoleLastFrame      = "last_frame"
+	RefRoleReferenceImage = "reference_image"
+	RefRoleReferenceVideo = "reference_video"
+	RefRoleBaseVideo      = "base_video"
+	RefRoleReferenceAudio = "reference_audio"
+	RefRoleElement        = "element"
+)
+
+// TaskReference 是 /v1/videos 统一的多模态素材条目。
+// 顺序即上游数组顺序：提示词中的指代（阿里“图1”、可灵“@id”等）依赖该顺序，
+// 因此归一化过程中不得重排 References。
+type TaskReference struct {
+	Type          string `json:"type"`                     // image / video / audio / element
+	Role          string `json:"role"`                     // first_frame / reference_image / ...
+	URL           string `json:"url,omitempty"`            // 公网 URL、data URI 或裸 base64
+	ID            string `json:"id,omitempty"`             // 素材索引 ID，供 prompt 内指代（可灵）
+	ElementID     string `json:"element_id,omitempty"`     // 主体 ID（可灵 element）
+	ReferenceType string `json:"reference_type,omitempty"` // Veo referenceType，如 asset
+	VoiceURL      string `json:"voice_url,omitempty"`      // 单素材音色参考（wan2.7 reference_voice）
+	MimeType      string `json:"mime_type,omitempty"`      // 可选，缺省时由内容嗅探
 }
 
 type TaskSubmitReq struct {
@@ -656,6 +695,11 @@ type TaskSubmitReq struct {
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
+	References     []TaskReference        `json:"references,omitempty"`
+	NegativePrompt string                 `json:"negative_prompt,omitempty"`
+	Resolution     string                 `json:"resolution,omitempty"`
+	AspectRatio    string                 `json:"aspect_ratio,omitempty"`
+	Audio          string                 `json:"audio,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -665,6 +709,62 @@ func (t *TaskSubmitReq) GetPrompt() string {
 
 func (t *TaskSubmitReq) HasImage() bool {
 	return len(t.Images) > 0
+}
+
+// RefsByRole 返回指定角色的素材，保持原始顺序。
+func (t *TaskSubmitReq) RefsByRole(roles ...string) []TaskReference {
+	if len(t.References) == 0 || len(roles) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		want[r] = true
+	}
+	out := make([]TaskReference, 0, len(t.References))
+	for _, ref := range t.References {
+		if want[ref.Role] {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// FirstRefByRole 返回第一个指定角色的素材。
+func (t *TaskSubmitReq) FirstRefByRole(role string) (TaskReference, bool) {
+	for _, ref := range t.References {
+		if ref.Role == role {
+			return ref, true
+		}
+	}
+	return TaskReference{}, false
+}
+
+// CountRefsByRole 统计指定角色的素材数量。
+func (t *TaskSubmitReq) CountRefsByRole(roles ...string) int {
+	return len(t.RefsByRole(roles...))
+}
+
+// HasRefRole 判断是否存在指定角色的素材。
+func (t *TaskSubmitReq) HasRefRole(roles ...string) bool {
+	return t.CountRefsByRole(roles...) > 0
+}
+
+// HasReferenceMaterial 判断是否使用了“参考生视频”语义的素材
+// （参考图/参考视频/待编辑视频/参考音频/主体），用于派生 action 与能力校验。
+func (t *TaskSubmitReq) HasReferenceMaterial() bool {
+	return t.HasRefRole(RefRoleReferenceImage, RefRoleReferenceVideo,
+		RefRoleBaseVideo, RefRoleReferenceAudio, RefRoleElement)
+}
+
+// GetSeconds 返回归一化后的时长（秒）。
+// 返回 -1 表示由模型自行决定时长（Seedance 2.0）；返回 0 表示未指定。
+func (t *TaskSubmitReq) GetSeconds() int {
+	if t.Seconds != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(t.Seconds)); err == nil {
+			return n
+		}
+	}
+	return t.Duration
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
@@ -723,6 +823,9 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// ActualSeconds 是上游返回的实际生成时长（秒）。仅当提交时时长未知
+	// （如 Seedance 2.0 传 duration=-1 由模型自选）才需要，用于按实际时长重算计费。
+	ActualSeconds float64 `json:"actual_seconds,omitempty"`
 
 	// World Labs specific fields
 	ColliderMeshUrl string `json:"collider_mesh_url,omitempty"`

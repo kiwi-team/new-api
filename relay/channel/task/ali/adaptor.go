@@ -34,8 +34,9 @@ type AliVideoRequest struct {
 
 // AliMediaItem wan2.7 media 数组元素
 type AliMediaItem struct {
-	Type string `json:"type"`          // "first_frame"/"last_frame"/"reference_image"/"reference_video"
-	URL  string `json:"url,omitempty"` // 资源URL
+	Type           string `json:"type"`                      // "first_frame"/"last_frame"/"reference_image"/"reference_video"
+	URL            string `json:"url,omitempty"`             // 资源URL
+	ReferenceVoice string `json:"reference_voice,omitempty"` // 音色参考（wan2.7，wav/mp3，1-10s）
 }
 
 // AliVideoInput 视频输入参数
@@ -138,7 +139,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	aliReq, err := a.convertToAliRequest(info, taskReq)
 	if err != nil {
-		return service.TaskErrorWrapper(err, "convert_to_ali_request_failed", http.StatusInternalServerError)
+		// 参数转换失败基本都是客户端入参问题（size/metadata 非法等），
+		// 应返回 400 而非 500，避免被上层当作服务端故障跨渠道重试。
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	a.aliReq = aliReq
 	logger.LogJson(c, "ali video request body", aliReq)
@@ -204,9 +207,51 @@ func isResolutionRatioModel(model string) bool {
 	return strings.HasPrefix(model, "wan2.7") || strings.HasPrefix(model, "happyhorse")
 }
 
+// isReferenceToVideoModel: 是否为参考生视频（r2v）模型。
+// r2v 端点只认 input.media 数组，不认 input.img_url。
+func isReferenceToVideoModel(model string) bool {
+	return strings.Contains(model, "r2v")
+}
+
+// isHappyHorseModel: HappyHorse 系列（其 r2v 接口未提供 prompt_extend 参数）
+func isHappyHorseModel(model string) bool {
+	return strings.HasPrefix(model, "happyhorse")
+}
+
+// aliMediaTypeForRole 把统一 role 映射为阿里 media.type。
+// 返回 false 表示该 role 阿里不支持（由统一层的能力校验拦截，此处兜底）。
+func aliMediaTypeForRole(role string) (string, bool) {
+	switch role {
+	case relaycommon.RefRoleFirstFrame:
+		return "first_frame", true
+	case relaycommon.RefRoleLastFrame:
+		return "last_frame", true
+	case relaycommon.RefRoleReferenceImage:
+		return "reference_image", true
+	case relaycommon.RefRoleReferenceVideo:
+		return "reference_video", true
+	default:
+		return "", false
+	}
+}
+
 func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) {
 	otherRatios := make(map[string]float64)
 	aliRatios := map[string]map[string]float64{
+		"wan2.7-r2v": {
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
+		"happyhorse-1.0-r2v": {
+			"480P":  1,
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
+		"happyhorse-1.1-r2v": {
+			"480P":  1,
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
 		"wan2.7-i2v": {
 			"720P":  1,
 			"1080P": 1 / 0.6,
@@ -274,12 +319,82 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 			resolution = resolution + "P"
 		}
 	}
-	if otherRatio, ok := aliRatios[aliReq.Model]; ok {
+	if otherRatio, ok := lookupAliRatios(aliRatios, aliReq.Model); ok {
 		if ratio, ok := otherRatio[resolution]; ok {
 			otherRatios[fmt.Sprintf("resolution-%s", resolution)] = ratio
 		}
 	}
 	return otherRatios, nil
+}
+
+// buildAliMedia 按素材角色构造 wan2.7/happyhorse 的 input.media 数组。
+//
+// 顺序即上游顺序：提示词里的“图1/视频1”“[图片1]”依赖它与 references 严格一致，
+// 因此这里保持 req.References 的原始顺序，不做重排。
+//
+// 未显式传 references 时（旧客户端），回退到 img_url / first_frame_url /
+// last_frame_url 三个平行字段，行为与改动前一致。
+func buildAliMedia(req *relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) []AliMediaItem {
+	if len(req.References) > 0 {
+		media := make([]AliMediaItem, 0, len(req.References))
+		for _, ref := range req.References {
+			mediaType, ok := aliMediaTypeForRole(ref.Role)
+			if !ok || ref.URL == "" {
+				continue
+			}
+			media = append(media, AliMediaItem{
+				Type:           mediaType,
+				URL:            ref.URL,
+				ReferenceVoice: ref.VoiceURL,
+			})
+		}
+		if len(media) > 0 {
+			return media
+		}
+	}
+
+	// 回退路径：保持既有的 img_url/first_frame_url/last_frame_url 语义。
+	var media []AliMediaItem
+	firstFrameURL := aliReq.Input.ImgURL
+	if firstFrameURL == "" {
+		firstFrameURL = aliReq.Input.FirstFrameURL
+	}
+	if firstFrameURL != "" {
+		media = append(media, AliMediaItem{Type: "first_frame", URL: firstFrameURL})
+	}
+	if aliReq.Input.LastFrameURL != "" {
+		media = append(media, AliMediaItem{Type: "last_frame", URL: aliReq.Input.LastFrameURL})
+	}
+	return media
+}
+
+// lookupAliRatios 按模型名查倍率表，支持带日期后缀的快照版模型名。
+//
+// 阿里的部分模型有 "<base>-<yyyy-MM-dd>" 形式的快照版（如
+// wan2.7-r2v-2026-06-12），它们与基础版计价一致。精确匹配失败时退化为
+// 最长前缀匹配，避免快照版静默按 1 倍率计费（1080P 会被当成 720P 收费）。
+func lookupAliRatios(table map[string]map[string]float64, model string) (map[string]float64, bool) {
+	if r, ok := table[model]; ok {
+		return r, true
+	}
+	bestKey := ""
+	for key := range table {
+		if !strings.HasPrefix(model, key) {
+			continue
+		}
+		// 只接受在分隔符处截断的前缀，避免 "wan2.7-r2v" 误匹配 "wan2.7-r2vx"
+		rest := model[len(key):]
+		if rest != "" && rest[0] != '-' {
+			continue
+		}
+		if len(key) > len(bestKey) {
+			bestKey = key
+		}
+	}
+	if bestKey == "" {
+		return nil, false
+	}
+	return table[bestKey], true
 }
 
 func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) (*AliVideoRequest, error) {
@@ -290,20 +405,36 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	aliReq := &AliVideoRequest{
 		Model: req.Model,
 		Input: AliVideoInput{
-			Prompt: req.Prompt,
-			ImgURL: imageUrl,
+			Prompt:         req.Prompt,
+			ImgURL:         imageUrl,
+			NegativePrompt: req.NegativePrompt,
 		},
 		Parameters: &AliVideoParameters{
-			PromptExtend: lo.ToPtr(true),  // 默认开启智能改写
-			Watermark:    lo.ToPtr(false), // 默认不打水印
+			Watermark: lo.ToPtr(false), // 默认不打水印
 		},
+	}
+	// HappyHorse 的 r2v 接口未提供 prompt_extend 参数，传了会触发 InvalidParameter。
+	if !isHappyHorseModel(req.Model) {
+		aliReq.Parameters.PromptExtend = lo.ToPtr(true) // 默认开启智能改写
 	}
 
 	// wan2.7 / happyhorse 使用 resolution + ratio 新协议
 	isResolutionRatioProto := isResolutionRatioModel(req.Model)
 
+	// 统一的 resolution / aspect_ratio 优先于 size
+	if req.Resolution != "" {
+		resolution := strings.ToUpper(strings.TrimSpace(req.Resolution))
+		if !strings.HasSuffix(resolution, "P") && !strings.Contains(resolution, "*") {
+			resolution = resolution + "P"
+		}
+		aliReq.Parameters.Resolution = resolution
+	}
+	if req.AspectRatio != "" {
+		aliReq.Parameters.Ratio = req.AspectRatio
+	}
+
 	// 处理分辨率映射
-	if req.Size != "" {
+	if req.Size != "" && aliReq.Parameters.Resolution == "" && aliReq.Parameters.Size == "" {
 		if isResolutionRatioProto {
 			// 新协议不使用 size，只支持 resolution（如 "720P"/"1080P"）
 			resolution := strings.ToUpper(req.Size)
@@ -327,11 +458,13 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 				aliReq.Parameters.Resolution = resolution
 			}
 		}
-	} else {
-		// 根据模型设置默认分辨率
+	} else if aliReq.Parameters.Resolution == "" && aliReq.Parameters.Size == "" {
+		// 根据模型设置默认分辨率（仅在既没显式 resolution 也没 size 时）
 		if isResolutionRatioProto {
 			aliReq.Parameters.Resolution = "1080P"
-			if strings.Contains(req.Model, "t2v") {
+			// 参考生视频与文生视频都需要 ratio：r2v 无首帧时画面比例无从推断，
+			// 缺省按官方默认 16:9（传了 first_frame 时阿里会忽略 ratio）。
+			if strings.Contains(req.Model, "t2v") || isReferenceToVideoModel(req.Model) {
 				aliReq.Parameters.Ratio = "16:9"
 			}
 		} else if strings.Contains(req.Model, "t2v") {
@@ -450,26 +583,18 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		}
 	}
 
-	// wan2.7-i2v / happyhorse-i2v: 将 img_url / first_frame_url / last_frame_url 转换为 media 数组
-	if isResolutionRatioProto && strings.Contains(req.Model, "i2v") {
-		var media []AliMediaItem
-		// 首帧图片: 优先 img_url，其次 first_frame_url
-		firstFrameURL := aliReq.Input.ImgURL
-		if firstFrameURL == "" {
-			firstFrameURL = aliReq.Input.FirstFrameURL
+	// wan2.7 / happyhorse 使用 input.media 数组承载素材。
+	// 注意：r2v 端点只认 media，完全不认 img_url —— 之前这里按模型名是否含 "i2v"
+	// 判断，导致 *-r2v 命中新协议却仍发 img_url，请求必然失败。改为按素材角色构造。
+	if isResolutionRatioProto {
+		media := buildAliMedia(&req, aliReq)
+		if len(media) > 0 {
+			aliReq.Input.Media = media
+			// 清除旧字段，避免与 media 同时发送
+			aliReq.Input.ImgURL = ""
+			aliReq.Input.FirstFrameURL = ""
+			aliReq.Input.LastFrameURL = ""
 		}
-		if firstFrameURL != "" {
-			media = append(media, AliMediaItem{Type: "first_frame", URL: firstFrameURL})
-		}
-		// 尾帧图片
-		if aliReq.Input.LastFrameURL != "" {
-			media = append(media, AliMediaItem{Type: "last_frame", URL: aliReq.Input.LastFrameURL})
-		}
-		aliReq.Input.Media = media
-		// 清除旧字段，避免发送到 API
-		aliReq.Input.ImgURL = ""
-		aliReq.Input.FirstFrameURL = ""
-		aliReq.Input.LastFrameURL = ""
 	}
 
 	if aliReq.Model != req.Model {

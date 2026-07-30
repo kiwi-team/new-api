@@ -1053,6 +1053,20 @@ func updateUserUsedQuota(id int, quota int) {
 	}
 }
 
+// AdjustUserUsedQuota 只调整 used_quota，不影响 request_count。
+// 用于异步任务的事后校正（补扣/退还/失败退款）——这些场景下请求早已计过数，
+// 不能再次累加 request_count。quota 可为负数表示回滚。
+func AdjustUserUsedQuota(id int, quota int) {
+	if quota == 0 {
+		return
+	}
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
+		return
+	}
+	updateUserUsedQuota(id, quota)
+}
+
 func updateUserRequestCount(id int, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Update("request_count", gorm.Expr("request_count + ?", count)).Error
 	if err != nil {

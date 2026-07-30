@@ -1,6 +1,7 @@
 package ali
 
 var ModelList = []string{
+	"wan2.7-r2v",         // 万相2.7 参考生视频（参考图/参考视频/首帧）
 	"wan2.7-i2v",         // 万相2.7 图生视频（首帧/首尾帧）
 	"wan2.7-t2v",         // 万相2.7 文生视频（多镜头叙事、配音）
 	"wan2.5-i2v-preview", // 万相2.5 preview（有声视频）推荐
@@ -8,6 +9,8 @@ var ModelList = []string{
 	"wan2.2-i2v-plus",    // 万相2.2专业版（无声视频）
 	"wanx2.1-i2v-plus",   // 万相2.1专业版（无声视频）
 	"wanx2.1-i2v-turbo",  // 万相2.1极速版（无声视频）
+	"happyhorse-1.1-r2v", // HappyHorse 参考生视频（1~9 张参考图）
+	"happyhorse-1.0-r2v", // HappyHorse 参考生视频（1~9 张参考图）
 	"happyhorse-1.0-i2v", // HappyHorse 图生视频（首帧）
 	"happyhorse-1.0-t2v", // HappyHorse 文生视频
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/novita"
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -105,6 +106,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": taskId,
 		"action":  task.Action,
+		// 部分渠道（如可灵 Omni）的查询端点随模型而变，需要模型名才能拼出正确 URL。
+		"model": task.Properties.OriginModelName,
 	}, proxy)
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
@@ -177,8 +180,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			task.FailReason = taskResult.Url
 		}
 
-		// 如果返回了 total_tokens 并且配置了模型倍率(非固定价格),则重新计费
-		if taskResult.TotalTokens > 0 {
+		// 时长由模型自选（如 Seedance 2.0 duration=-1）时，按上游返回的实际时长
+		// 等比重算并多退少补。与下面的 total_tokens 重算互斥：前者按时长线性缩放，
+		// 后者按 token 倍率重算，同时生效会导致重复计费。
+		if task.Properties.AssumedSeconds > 0 {
+			applyDurationRebill(ctx, task, taskResult)
+		} else if taskResult.TotalTokens > 0 {
 			// 获取模型名称
 			//var taskData map[string]interface{}
 			//if err := json.Unmarshal(task.Data, &taskData); err == nil {
@@ -225,12 +232,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								logger.LogQuota(preConsumedQuota),
 								taskResult.TotalTokens,
 							))
-							if err := model.DecreaseUserQuota(task.UserId, quotaDelta); err != nil {
+							// 走 PostConsumeQuota 而非裸 DecreaseUserQuota，
+							// 以便同步扣减 token 级额度（tokens.remain_quota/used_quota）与订阅额度。
+							if err := service.PostConsumeQuota(buildTaskBillingRelayInfo(task), quotaDelta, 0, false); err != nil {
 								logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
 							} else {
-								model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+								model.AdjustUserUsedQuota(task.UserId, quotaDelta)
 								model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 								task.Quota = actualQuota // 更新任务记录的实际扣费额度
+								if common.DataExportEnabled {
+									recordDurationQuotaDelta(task, quotaDelta)
+								}
 
 								// 记录消费日志
 								logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
@@ -248,10 +260,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								logger.LogQuota(preConsumedQuota),
 								taskResult.TotalTokens,
 							))
-							if err := model.IncreaseUserQuota(task.UserId, refundQuota, false); err != nil {
+							// 负数表示退还；同样经由 PostConsumeQuota 以回滚 token 级额度。
+							if err := service.PostConsumeQuota(buildTaskBillingRelayInfo(task), quotaDelta, 0, false); err != nil {
 								logger.LogError(ctx, fmt.Sprintf("退还预扣费失败: %s", err.Error()))
 							} else {
+								model.AdjustUserUsedQuota(task.UserId, quotaDelta)
+								model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 								task.Quota = actualQuota // 更新任务记录的实际扣费额度
+								if common.DataExportEnabled {
+									recordDurationQuotaDelta(task, quotaDelta)
+								}
 
 								// 记录退款日志
 								logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
@@ -312,6 +330,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 				logger.LogWarn(ctx, fmt.Sprintf("Failed to get token %d for task %s refund: %s", tokenId, task.TaskID, err.Error()))
 			}
 		}
+		// 回滚提交时累加的 used_quota / 渠道已用额度，避免失败任务仍计入用量统计。
+		// 用 AdjustUserUsedQuota 而非 UpdateUserUsedQuotaAndRequestCount：
+		// 请求早已计过数，退款时不能再次累加 request_count。
+		model.AdjustUserUsedQuota(task.UserId, -quota)
+		model.UpdateChannelUsedQuota(task.ChannelId, -quota)
 		logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
 		model.RecordLog(task.UserId, model.LogTypeSystem, logContent, quota)
 		// Offset the quota_data entry that was written at submission time

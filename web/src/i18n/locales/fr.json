@@ -3457,6 +3457,10 @@
     "默认折叠侧边栏": "Réduire la barre latérale par défaut",
     "默认测试模型": "Modèle de test par défaut",
     "默认用户消息": "Bonjour",
-    "默认补全倍率": "Taux de complétion par défaut"
+    "默认补全倍率": "Taux de complétion par défaut",
+    "时长(秒)": "Durée (s)",
+    "尺寸": "Taille",
+    "分辨率({{value}})": "Résolution ({{value}})",
+    "模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}": "Prix du modèle : {{symbol}}{{price}} * {{ratioType}} : {{ratio}} * {{factors}} = {{symbol}}{{total}}"
   }
 }

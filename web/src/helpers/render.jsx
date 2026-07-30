@@ -1112,6 +1112,51 @@ function isValidGroupRatio(ratio) {
 }
 
 /**
+ * 格式化任务型模型（视频等）的额外计费倍率。
+ *
+ * 后端 relay/relay_task.go 把 PriceData.OtherRatios 写进日志的 other.other_ratios，
+ * 典型内容为 { seconds: 8, "resolution-1080P": 1.6667 } —— 这些倍率已参与实际扣费，
+ * 必须在「计费过程」里展示，否则用户看到的乘式算不出真实金额。
+ *
+ * 后端只把 !== 1 的倍率计入乘积，这里保持一致，避免展示出多余的 "* 1"。
+ *
+ * @param {Object|null} otherRatios - 形如 { seconds: 8, "resolution-1080P": 1.67 }
+ * @returns {Array<{key: string, label: string, value: number, display: string}>}
+ */
+function formatOtherRatios(otherRatios) {
+  if (!otherRatios || typeof otherRatios !== 'object') {
+    return [];
+  }
+  const labelMap = {
+    seconds: i18next.t('时长(秒)'),
+    size: i18next.t('尺寸'),
+  };
+  return Object.entries(otherRatios)
+    .filter(
+      ([, value]) =>
+        typeof value === 'number' && isFinite(value) && value !== 1,
+    )
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => {
+      let label = labelMap[key];
+      if (!label) {
+        // resolution-1080P -> 分辨率(1080P)
+        const resMatch = /^resolution-(.+)$/.exec(key);
+        label = resMatch
+          ? i18next.t('分辨率({{value}})', { value: resMatch[1] })
+          : key;
+      }
+      return {
+        key,
+        label,
+        value,
+        // 整数不显示小数位，避免 "时长(秒)：8.00" 这种噪音
+        display: Number.isInteger(value) ? String(value) : value.toFixed(4),
+      };
+    });
+}
+
+/**
  * Helper function to get effective ratio and label
  * @param {number} groupRatio - The default group ratio
  * @param {number} user_group_ratio - The user-specific group ratio
@@ -1132,7 +1177,12 @@ function getEffectiveRatio(groupRatio, user_group_ratio) {
 }
 
 // Render discount breakdown for user-level group/model discounts
-function renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio) {
+function renderDiscountBreakdown(
+  originalGroupRatio,
+  userGroupDiscount,
+  userModelExtraDiscount,
+  finalGroupRatio,
+) {
   const parts = [];
   if (originalGroupRatio > 0) {
     parts.push(i18next.t('原始分组倍率') + `: ${originalGroupRatio}`);
@@ -1176,6 +1226,7 @@ function renderPriceSimpleCore({
   tieredMaxTokens = 0,
   tieredCachedInputPrice = 0,
   tieredCacheWritePrice = 0,
+  otherRatios = null,
 }) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1183,7 +1234,9 @@ function renderPriceSimpleCore({
   );
   const finalGroupRatio = effectiveGroupRatio;
 
-  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const hasDiscount =
+    (userGroupDiscount > 0 && userGroupDiscount !== 1) ||
+    (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
   const hasSettlementRatio = settlementRatio > 0 && settlementRatio !== 1;
   const settlementSuffix = hasSettlementRatio
     ? ' * ' + i18next.t('结算倍率') + `: ${settlementRatio}`
@@ -1194,14 +1247,17 @@ function renderPriceSimpleCore({
   if (useTieredPrice) {
     const displayInput = (tieredInputPrice * rate).toFixed(6);
     const displayOutput = (tieredOutputPrice * rate).toFixed(6);
-    let priceText = i18next.t('阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}', {
-      maxTokens: tieredMaxTokens,
-      symbol: symbol,
-      inputPrice: displayInput,
-      outputPrice: displayOutput,
-      ratioType: ratioLabel,
-      ratio: finalGroupRatio,
-    });
+    let priceText = i18next.t(
+      '阶梯价格（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens * {{ratioType}}：{{ratio}}',
+      {
+        maxTokens: tieredMaxTokens,
+        symbol: symbol,
+        inputPrice: displayInput,
+        outputPrice: displayOutput,
+        ratioType: ratioLabel,
+        ratio: finalGroupRatio,
+      },
+    );
     // 缓存读取：档位绝对单价优先，否则回退 阶梯输入价格 × 缓存倍率
     if (cacheTokens > 0) {
       const cacheReadPrice =
@@ -1230,22 +1286,43 @@ function renderPriceSimpleCore({
     }
     priceText += settlementSuffix;
     if (hasDiscount) {
-      priceText += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+      priceText +=
+        '\n' +
+        renderDiscountBreakdown(
+          originalGroupRatio,
+          userGroupDiscount,
+          userModelExtraDiscount,
+          finalGroupRatio,
+        );
     }
     return priceText;
   }
 
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
-    let priceText = i18next.t('价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}', {
-      symbol: symbol,
-      price: displayPrice,
-      ratioType: ratioLabel,
-      ratio: finalGroupRatio,
-    });
+    let priceText = i18next.t(
+      '价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}',
+      {
+        symbol: symbol,
+        price: displayPrice,
+        ratioType: ratioLabel,
+        ratio: finalGroupRatio,
+      },
+    );
+    // 视频等任务型模型的额外倍率（时长、分辨率）已参与实际扣费，需一并展示
+    for (const item of formatOtherRatios(otherRatios)) {
+      priceText += ` * ${item.label}：${item.display}`;
+    }
     priceText += settlementSuffix;
     if (hasDiscount) {
-      priceText += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+      priceText +=
+        '\n' +
+        renderDiscountBreakdown(
+          originalGroupRatio,
+          userGroupDiscount,
+          userModelExtraDiscount,
+          finalGroupRatio,
+        );
     }
     return priceText;
   }
@@ -1308,7 +1385,14 @@ function renderPriceSimpleCore({
   result += settlementSuffix;
 
   if (hasDiscount) {
-    result += '\n' + renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, finalGroupRatio);
+    result +=
+      '\n' +
+      renderDiscountBreakdown(
+        originalGroupRatio,
+        userGroupDiscount,
+        userModelExtraDiscount,
+        finalGroupRatio,
+      );
   }
 
   if (isSystemPromptOverride) {
@@ -1350,6 +1434,7 @@ export function renderModelPrice(
   tieredOutputPrice = 0,
   tieredMaxTokens = 0,
   settlementRatio = 1,
+  otherRatios = null,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1359,13 +1444,24 @@ export function renderModelPrice(
 
   // 结算倍率：单独作为一个乘数，参与金额计算但在分组倍率之外单列展示
   const hasSettlement = settlementRatio > 0 && settlementRatio !== 1;
-  const billingRatio = hasSettlement ? groupRatio * settlementRatio : groupRatio;
+  const billingRatio = hasSettlement
+    ? groupRatio * settlementRatio
+    : groupRatio;
   const ratioDisplay = hasSettlement
     ? `${groupRatio} × ${i18next.t('结算倍率')} ${settlementRatio}`
     : groupRatio;
 
-  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
-  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+  const hasDiscount =
+    (userGroupDiscount > 0 && userGroupDiscount !== 1) ||
+    (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount
+    ? renderDiscountBreakdown(
+        originalGroupRatio,
+        userGroupDiscount,
+        userModelExtraDiscount,
+        groupRatio,
+      )
+    : null;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -1374,7 +1470,8 @@ export function renderModelPrice(
     const displayInputPrice = (tieredInputPrice * rate).toFixed(6);
     const displayOutputPrice = (tieredOutputPrice * rate).toFixed(6);
     const inputCost = (inputTokens / 1000000) * tieredInputPrice * billingRatio;
-    const outputCost = (completionTokens / 1000000) * tieredOutputPrice * billingRatio;
+    const outputCost =
+      (completionTokens / 1000000) * tieredOutputPrice * billingRatio;
     const totalCost = inputCost + outputCost;
 
     return (
@@ -1386,22 +1483,16 @@ export function renderModelPrice(
             })}
           </p>
           <p>
-            {i18next.t(
-              '输入价格：{{symbol}}{{price}} / 1M tokens',
-              {
-                symbol: symbol,
-                price: displayInputPrice,
-              },
-            )}
+            {i18next.t('输入价格：{{symbol}}{{price}} / 1M tokens', {
+              symbol: symbol,
+              price: displayInputPrice,
+            })}
           </p>
           <p>
-            {i18next.t(
-              '输出价格：{{symbol}}{{price}} / 1M tokens',
-              {
-                symbol: symbol,
-                price: displayOutputPrice,
-              },
-            )}
+            {i18next.t('输出价格：{{symbol}}{{price}} / 1M tokens', {
+              symbol: symbol,
+              price: displayOutputPrice,
+            })}
           </p>
           <p>
             {i18next.t(
@@ -1419,9 +1510,7 @@ export function renderModelPrice(
             )}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
-          {discountLine && (
-            <p style={{ color: '#f5a623' }}>{discountLine}</p>
-          )}
+          {discountLine && <p style={{ color: '#f5a623' }}>{discountLine}</p>}
         </article>
       </>
     );
@@ -1429,7 +1518,16 @@ export function renderModelPrice(
 
   if (modelPrice !== -1) {
     const displayPrice = (modelPrice * rate).toFixed(6);
-    const displayTotal = (modelPrice * billingRatio * rate).toFixed(6);
+    // 视频等任务型模型会带额外倍率（时长 seconds、分辨率 resolution-* 等），
+    // 这些倍率已参与实际扣费，必须一并展示，否则计费过程与扣费金额不符。
+    const extraRatios = formatOtherRatios(otherRatios);
+    const extraProduct = extraRatios.reduce((acc, item) => acc * item.value, 1);
+    const displayTotal = (
+      modelPrice *
+      billingRatio *
+      extraProduct *
+      rate
+    ).toFixed(6);
     let text = i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
@@ -1440,6 +1538,23 @@ export function renderModelPrice(
         ratioType: ratioLabel,
       },
     );
+    if (extraRatios.length > 0) {
+      // 重写成包含额外倍率的完整乘式
+      const factors = extraRatios
+        .map((item) => `${item.label}：${item.display}`)
+        .join(' * ');
+      text = i18next.t(
+        '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} * {{factors}} = {{symbol}}{{total}}',
+        {
+          symbol: symbol,
+          price: displayPrice,
+          ratio: ratioDisplay,
+          ratioType: ratioLabel,
+          factors: factors,
+          total: displayTotal,
+        },
+      );
+    }
     if (discountLine) {
       text += '\n' + discountLine;
     }
@@ -1661,9 +1776,7 @@ export function renderModelPrice(
             })()}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
-          {discountLine && (
-            <p style={{ color: '#f5a623' }}>{discountLine}</p>
-          )}
+          {discountLine && <p style={{ color: '#f5a623' }}>{discountLine}</p>}
         </article>
       </>
     );
@@ -1705,62 +1818,72 @@ export function renderLogContent(
   const { symbol, rate } = getCurrencyConfig();
 
   if (useTieredPrice) {
-    return i18next.t(
-      '阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}',
-      {
-        maxTokens: tieredMaxTokens,
-        symbol: symbol,
-        inputPrice: (tieredInputPrice * rate).toFixed(6),
-        outputPrice: (tieredOutputPrice * rate).toFixed(6),
-        ratioType: ratioLabel,
-        ratio,
-      },
-    ) + settlementSuffix;
+    return (
+      i18next.t(
+        '阶梯定价（≤{{maxTokens}} tokens）：输入 {{symbol}}{{inputPrice}} / 输出 {{symbol}}{{outputPrice}} /1M tokens，{{ratioType}} {{ratio}}',
+        {
+          maxTokens: tieredMaxTokens,
+          symbol: symbol,
+          inputPrice: (tieredInputPrice * rate).toFixed(6),
+          outputPrice: (tieredOutputPrice * rate).toFixed(6),
+          ratioType: ratioLabel,
+          ratio,
+        },
+      ) + settlementSuffix
+    );
   }
 
   if (modelPrice !== -1) {
-    return i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
-      symbol: symbol,
-      price: (modelPrice * rate).toFixed(6),
-      ratioType: ratioLabel,
-      ratio,
-    }) + settlementSuffix;
+    return (
+      i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
+        symbol: symbol,
+        price: (modelPrice * rate).toFixed(6),
+        ratioType: ratioLabel,
+        ratio,
+      }) + settlementSuffix
+    );
   } else {
     if (image) {
-      return i18next.t(
-        '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
-        {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
-          imageRatio: imageRatio,
-          ratioType: ratioLabel,
-          ratio,
-        },
-      ) + settlementSuffix;
+      return (
+        i18next.t(
+          '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
+          {
+            modelRatio: modelRatio,
+            cacheRatio: cacheRatio,
+            completionRatio: completionRatio,
+            imageRatio: imageRatio,
+            ratioType: ratioLabel,
+            ratio,
+          },
+        ) + settlementSuffix
+      );
     } else if (webSearch) {
-      return i18next.t(
-        '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次',
-        {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
-          ratioType: ratioLabel,
-          ratio,
-          webSearchCallCount,
-        },
-      ) + settlementSuffix;
+      return (
+        i18next.t(
+          '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次',
+          {
+            modelRatio: modelRatio,
+            cacheRatio: cacheRatio,
+            completionRatio: completionRatio,
+            ratioType: ratioLabel,
+            ratio,
+            webSearchCallCount,
+          },
+        ) + settlementSuffix
+      );
     } else {
-      return i18next.t(
-        '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}',
-        {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
-          ratioType: ratioLabel,
-          ratio,
-        },
-      ) + settlementSuffix;
+      return (
+        i18next.t(
+          '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}',
+          {
+            modelRatio: modelRatio,
+            cacheRatio: cacheRatio,
+            completionRatio: completionRatio,
+            ratioType: ratioLabel,
+            ratio,
+          },
+        ) + settlementSuffix
+      );
     }
   }
 }
@@ -1792,6 +1915,7 @@ export function renderModelPriceSimple(
   settlementRatio = 1,
   tieredCachedInputPrice = 0,
   tieredCacheWritePrice = 0,
+  otherRatios = null,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -1819,6 +1943,7 @@ export function renderModelPriceSimple(
     tieredMaxTokens,
     tieredCachedInputPrice,
     tieredCacheWritePrice,
+    otherRatios,
   });
 }
 
@@ -1850,7 +1975,9 @@ export function renderAudioModelPrice(
   groupRatio = effectiveGroupRatio;
 
   const hasSettlement = settlementRatio > 0 && settlementRatio !== 1;
-  const billingRatio = hasSettlement ? groupRatio * settlementRatio : groupRatio;
+  const billingRatio = hasSettlement
+    ? groupRatio * settlementRatio
+    : groupRatio;
   const ratioDisplay = hasSettlement
     ? `${groupRatio} × ${i18next.t('结算倍率')} ${settlementRatio}`
     : groupRatio;
@@ -1858,8 +1985,17 @@ export function renderAudioModelPrice(
     ? i18next.t('结算倍率') + `: ${settlementRatio}`
     : null;
 
-  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
-  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+  const hasDiscount =
+    (userGroupDiscount > 0 && userGroupDiscount !== 1) ||
+    (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount
+    ? renderDiscountBreakdown(
+        originalGroupRatio,
+        userGroupDiscount,
+        userModelExtraDiscount,
+        groupRatio,
+      )
+    : null;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -1900,14 +2036,20 @@ export function renderAudioModelPrice(
       (effectiveInputTokens / 1000000) * inputRatioPrice * billingRatio +
       (completionTokens / 1000000) * completionRatioPrice * billingRatio;
     let audioPrice =
-      (audioInputTokens / 1000000) * inputRatioPrice * audioRatio * billingRatio +
+      (audioInputTokens / 1000000) *
+        inputRatioPrice *
+        audioRatio *
+        billingRatio +
       (audioCompletionTokens / 1000000) *
         inputRatioPrice *
         audioRatio *
         audioCompletionRatio *
         billingRatio;
     let videoPrice =
-      (videoInputTokens / 1000000) * inputRatioPrice * videoRatio * billingRatio;
+      (videoInputTokens / 1000000) *
+      inputRatioPrice *
+      videoRatio *
+      billingRatio;
     let price = textPrice + audioPrice + videoPrice;
     return (
       <>
@@ -2038,7 +2180,11 @@ export function renderAudioModelPrice(
                   {
                     input: videoInputTokens,
                     symbol: symbol,
-                    videoInputPrice: (videoRatio * inputRatioPrice * rate).toFixed(6),
+                    videoInputPrice: (
+                      videoRatio *
+                      inputRatioPrice *
+                      rate
+                    ).toFixed(6),
                     total: (videoPrice * rate).toFixed(6),
                   },
                 )}
@@ -2071,9 +2217,7 @@ export function renderAudioModelPrice(
           {settlementNote && (
             <p style={{ color: '#f5a623' }}>{settlementNote}</p>
           )}
-          {discountLine && (
-            <p style={{ color: '#f5a623' }}>{discountLine}</p>
-          )}
+          {discountLine && <p style={{ color: '#f5a623' }}>{discountLine}</p>}
         </article>
       </>
     );
@@ -2116,13 +2260,24 @@ export function renderClaudeModelPrice(
   groupRatio = effectiveGroupRatio;
 
   const hasSettlement = settlementRatio > 0 && settlementRatio !== 1;
-  const billingRatio = hasSettlement ? groupRatio * settlementRatio : groupRatio;
+  const billingRatio = hasSettlement
+    ? groupRatio * settlementRatio
+    : groupRatio;
   const ratioDisplay = hasSettlement
     ? `${groupRatio} × ${i18next.t('结算倍率')} ${settlementRatio}`
     : groupRatio;
 
-  const hasDiscount = (userGroupDiscount > 0 && userGroupDiscount !== 1) || (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
-  const discountLine = hasDiscount ? renderDiscountBreakdown(originalGroupRatio, userGroupDiscount, userModelExtraDiscount, groupRatio) : null;
+  const hasDiscount =
+    (userGroupDiscount > 0 && userGroupDiscount !== 1) ||
+    (userModelExtraDiscount > 0 && userModelExtraDiscount !== 1);
+  const discountLine = hasDiscount
+    ? renderDiscountBreakdown(
+        originalGroupRatio,
+        userGroupDiscount,
+        userModelExtraDiscount,
+        groupRatio,
+      )
+    : null;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2371,9 +2526,7 @@ export function renderClaudeModelPrice(
             )}
           </p>
           <p>{i18next.t('仅供参考，以实际扣费为准')}</p>
-          {discountLine && (
-            <p style={{ color: '#f5a623' }}>{discountLine}</p>
-          )}
+          {discountLine && <p style={{ color: '#f5a623' }}>{discountLine}</p>}
         </article>
       </>
     );
@@ -2409,12 +2562,14 @@ export function renderClaudeLogContent(
   const { symbol, rate } = getCurrencyConfig();
 
   if (modelPrice !== -1) {
-    return i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
-      symbol: symbol,
-      price: (modelPrice * rate).toFixed(6),
-      ratioType: ratioLabel,
-      ratio: groupRatio,
-    }) + settlementSuffix;
+    return (
+      i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
+        symbol: symbol,
+        price: (modelPrice * rate).toFixed(6),
+        ratioType: ratioLabel,
+        ratio: groupRatio,
+      }) + settlementSuffix
+    );
   } else {
     const hasSplitCacheCreation =
       cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;

@@ -88,6 +88,12 @@ type Properties struct {
 	ClientScenairo string `json:"client_scenairo,omitempty"`
 	ProjectName    string `json:"project_name,omitempty"`
 	PlanId         int    `json:"plan_id,omitempty"`
+	// AssumedSeconds 是提交时用于预扣费的假定时长（秒）。仅当客户端把时长交给模型
+	// 自行决定（如 Seedance 2.0 传 duration=-1）时才写入，任务完成后按上游返回的
+	// 实际时长等比重算并多退少补。0 表示无需按时长重算。
+	AssumedSeconds float64 `json:"assumed_seconds,omitempty"`
+	// DurationSettled 标记按时长的重算已完成，防止轮询重复扣款/退款。
+	DurationSettled bool `json:"duration_settled,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
