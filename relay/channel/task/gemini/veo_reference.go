@@ -48,7 +48,7 @@ func SupportsVeoReferenceImages(model string) bool {
 	return strings.Contains(m, "3.1") || strings.Contains(m, "3-1")
 }
 
-// BuildVeoImageObject 把素材引用归一化为 Veo 的 image 对象。
+// BuildVeoImageObject 把素材引用归一化为 Veo 的 image 对象（Vertex 形状）。
 // gs:// 直接透传为 gcsUri；其余形态统一转成 inline base64。
 // 返回 nil 表示引用为空。
 func BuildVeoImageObject(c *gin.Context, ref string) (map[string]any, error) {
@@ -67,9 +67,14 @@ func BuildVeoImageObject(c *gin.Context, ref string) (map[string]any, error) {
 }
 
 // BuildVeoReferenceImages 由统一 references 构造 Veo 的 referenceImages 数组。
+//
 // 只取 reference_image 角色；首帧/尾帧走 instances 的 image/lastFrame，不在此列。
 // 返回空切片表示本次请求没有参考图。
-func BuildVeoReferenceImages(c *gin.Context, req *relaycommon.TaskSubmitReq) ([]map[string]any, error) {
+//
+// vertexShape 决定 image 字段的形状 —— 两家 API 在这里不兼容，用错会被静默忽略：
+//   - Vertex AI (predictLongRunning)：{"bytesBase64Encoded": ..., "mimeType": ...}
+//   - Gemini API：{"inlineData": {"data": ..., "mimeType": ...}}
+func BuildVeoReferenceImages(c *gin.Context, req *relaycommon.TaskSubmitReq, vertexShape bool) ([]map[string]any, error) {
 	refs := req.RefsByRole(relaycommon.RefRoleReferenceImage)
 	if len(refs) == 0 {
 		return nil, nil
@@ -81,20 +86,38 @@ func BuildVeoReferenceImages(c *gin.Context, req *relaycommon.TaskSubmitReq) ([]
 		return nil, fmt.Errorf("model %s supports at most %d reference images, got %d",
 			req.Model, VeoMaxReferenceImages, len(refs))
 	}
+	// 官方约束：Veo 3.1 不允许首帧与参考图同时出现，必须二选一。
+	if req.HasRefRole(relaycommon.RefRoleFirstFrame, relaycommon.RefRoleLastFrame) {
+		return nil, fmt.Errorf(
+			"model %s cannot combine first_frame/last_frame with reference images; choose one", req.Model)
+	}
 
 	out := make([]map[string]any, 0, len(refs))
 	for _, ref := range refs {
-		// Gemini API（非 Vertex）用 inlineData 包裹；Vertex 侧同样接受该结构。
-		data, mimeType, err := service.ResolveMediaRef(c, ref.URL, "image/jpeg")
-		if err != nil {
-			return nil, fmt.Errorf("resolve reference image failed: %w", err)
+		var image map[string]any
+		if service.ClassifyMediaRef(ref.URL) == service.MediaRefGSURL {
+			// gs:// 仅 Vertex 支持，Gemini API 不接受。
+			if !vertexShape {
+				return nil, fmt.Errorf("gs:// reference images are only supported on Vertex AI")
+			}
+			image = map[string]any{"gcsUri": ref.URL}
+		} else {
+			data, mimeType, err := service.ResolveMediaRef(c, ref.URL, "image/jpeg")
+			if err != nil {
+				return nil, fmt.Errorf("resolve reference image failed: %w", err)
+			}
+			if vertexShape {
+				image = map[string]any{"bytesBase64Encoded": data, "mimeType": mimeType}
+			} else {
+				image = map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}}
+			}
 		}
 		referenceType := strings.TrimSpace(ref.ReferenceType)
 		if referenceType == "" {
 			referenceType = veoDefaultReferenceType
 		}
 		out = append(out, map[string]any{
-			"image":         map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}},
+			"image":         image,
 			"referenceType": referenceType,
 		})
 	}

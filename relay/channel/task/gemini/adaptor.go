@@ -210,7 +210,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 func applyVeoInstanceReferences(c *gin.Context, req *relaycommon.TaskSubmitReq,
 	instance map[string]any, params *GeminiVideoGenerationConfig) error {
 
-	refImages, err := BuildVeoReferenceImages(c, req)
+	// Gemini API 的 image 用 inlineData 包裹（Vertex 用 bytesBase64Encoded）。
+	refImages, err := BuildVeoReferenceImages(c, req, false)
 	if err != nil {
 		return err
 	}

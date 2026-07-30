@@ -185,7 +185,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	// 参考生视频：referenceImages 挂在 instances 内（不是 parameters）。
-	refImages, err := taskgemini.BuildVeoReferenceImages(c, &req)
+	// Vertex 的 image 用 {bytesBase64Encoded, mimeType}，与 Gemini API 的 inlineData 不同。
+	refImages, err := taskgemini.BuildVeoReferenceImages(c, &req, true)
 	if err != nil {
 		return nil, err
 	}
