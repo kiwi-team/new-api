@@ -24,7 +24,7 @@ import (
 //   - other["group_ratio"]      = 折前分组倍率（= 当前 group_ratio / 折扣）
 //
 // 这样日志明细可分别展示「分组倍率」与「结算倍率」两个因子，二者乘积仍等于实际计费倍率。
-func appendSettlementRatio(other map[string]interface{}, gi types.GroupRatioInfo) {
+func appendSettlementRatio(other map[string]interface{}, gi hosttypes.GroupRatioInfo) {
 	sr := gi.SettlementDiscount
 	if sr <= 0 || sr == 1 || other == nil {
 		return

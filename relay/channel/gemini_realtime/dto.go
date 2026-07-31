@@ -1,18 +1,18 @@
 package gemini_realtime
 
 import (
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // GeminiLiveEvent is a minimal struct for parsing server-to-client WebSocket messages
 // from the Gemini Live API. Only the fields needed for usage extraction are defined;
 // all other messages are passed through transparently.
 type GeminiLiveEvent struct {
-	SetupComplete *struct{}              `json:"setupComplete,omitempty"`
-	ServerContent *GeminiServerContent   `json:"serverContent,omitempty"`
-	ToolCall      any                    `json:"toolCall,omitempty"`
-	UsageMetadata *GeminiUsageMetadata   `json:"usageMetadata,omitempty"`
-	GoAway        *GeminiGoAway          `json:"goAway,omitempty"`
+	SetupComplete *struct{}            `json:"setupComplete,omitempty"`
+	ServerContent *GeminiServerContent `json:"serverContent,omitempty"`
+	ToolCall      any                  `json:"toolCall,omitempty"`
+	UsageMetadata *GeminiUsageMetadata `json:"usageMetadata,omitempty"`
+	GoAway        *GeminiGoAway        `json:"goAway,omitempty"`
 }
 
 type GeminiServerContent struct {
@@ -28,11 +28,11 @@ type GeminiGoAway struct {
 // GeminiUsageMetadata holds token usage reported by the Gemini Live API.
 // It can appear alongside any server message.
 type GeminiUsageMetadata struct {
-	PromptTokenCount    int                    `json:"promptTokenCount"`
-	ResponseTokenCount  int                    `json:"responseTokenCount"`
-	ThoughtsTokenCount  int                    `json:"thoughtsTokenCount"`
-	TotalTokenCount     int                    `json:"totalTokenCount"`
-	PromptTokensDetails  []ModalityTokenCount  `json:"promptTokensDetails,omitempty"`
+	PromptTokenCount      int                  `json:"promptTokenCount"`
+	ResponseTokenCount    int                  `json:"responseTokenCount"`
+	ThoughtsTokenCount    int                  `json:"thoughtsTokenCount"`
+	TotalTokenCount       int                  `json:"totalTokenCount"`
+	PromptTokensDetails   []ModalityTokenCount `json:"promptTokensDetails,omitempty"`
 	ResponseTokensDetails []ModalityTokenCount `json:"responseTokensDetails,omitempty"`
 }
 

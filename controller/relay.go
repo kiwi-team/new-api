@@ -19,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"io"
 	"log"
@@ -756,8 +755,10 @@ func RelayTask(c *gin.Context) {
 		tokenChannelIds = tokenChannelIdsAny.([]int)
 	}
 
-	var result *relay.TaskSubmitResult
+	var result *taskdto.TaskSubmitResult
 	var taskErr *taskdto.TaskError
+	//var taskErr *taskdto.TaskError
+	//var result *dto.TaskSubmitResult
 	defer func() {
 		if taskErr != nil && relayInfo.Billing != nil {
 			relayInfo.Billing.Refund(c)
@@ -772,8 +773,6 @@ func RelayTask(c *gin.Context) {
 		ChannelIds:  tokenChannelIds,
 		RequestPath: c.Request.URL.Path,
 	}
-	var taskErr *dto.TaskError
-	var result *dto.TaskSubmitResult
 	channelFound := false
 	for ; shouldRetryTaskRelay(c, retryParam.GetRetry(), taskErr, retryTimes) && retryParam.GetRetry() <= retryTimes; retryParam.IncreaseRetry() {
 		if len(tokenChannelIds) > 0 {
@@ -784,11 +783,11 @@ func RelayTask(c *gin.Context) {
 		channel, newAPIError := getChannel(c, relayInfo, retryParam)
 		if len(tokenChannelIds) > 0 {
 			if channel.Status != common.ChannelStatusEnabled {
-				taskErr = &dto.TaskError{Code: "disabled_channel"}
+				taskErr = &taskdto.TaskError{Code: "disabled_channel"}
 				continue
 			}
 			if !slices.Contains(strings.Split(channel.Models, ","), relayInfo.OriginModelName) {
-				taskErr = &dto.TaskError{Code: "not_supported_channel"}
+				taskErr = &taskdto.TaskError{Code: "not_supported_channel"}
 				continue
 			}
 

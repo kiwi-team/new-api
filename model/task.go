@@ -157,6 +157,20 @@ func GenerateTaskID() string {
 	return "task_" + key
 }
 
+func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
+	if taskId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	var err error
+	err = DB.Where("task_id = ?", taskId).First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, err
+}
+
 func (p *TaskPrivateData) Scan(val interface{}) error {
 	bytesValue, _ := val.([]byte)
 	if len(bytesValue) == 0 {
@@ -576,4 +590,13 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.CompletedAt = t.UpdatedAt
 	openAIVideo.SetMetadata("url", t.GetResultURL())
 	return openAIVideo
+}
+
+func TaskBulkUpdate(TaskIds []string, params map[string]any) error {
+	if len(TaskIds) == 0 {
+		return nil
+	}
+	return DB.Model(&Task{}).
+		Where("task_id in (?)", TaskIds).
+		Updates(params).Error
 }

@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -101,7 +102,7 @@ func GetAllErrorLogs(c *gin.Context) {
 	traceId := strings.TrimSpace(c.Query("trace_id"))
 	trajId := strings.TrimSpace(c.Query("traj_id"))
 	sessionId := strings.TrimSpace(c.Query("session_id"))
-	logs, total, err := model.GetAllErrorLog(&dto.ErrorLogsRequest{
+	logs, total, err := model.GetAllErrorLog(&hostdto.ErrorLogsRequest{
 		RequestId:    requestId,
 		ChannelId:    channel,
 		ModelName:    modelName,
@@ -171,7 +172,7 @@ func ExportErrorLogsCSV(c *gin.Context) {
 		return
 	}
 
-	logs, err := model.GetErrorLogsForExport(&dto.ErrorLogsRequest{
+	logs, err := model.GetErrorLogsForExport(&hostdto.ErrorLogsRequest{
 		RequestId:    requestId,
 		ChannelId:    channel,
 		ModelName:    modelName,

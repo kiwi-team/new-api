@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -24,7 +25,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -442,7 +442,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 		if thinking.Type == "enabled" && slices.Contains(supportedModels, textRequest.Model) {
 			textRequest.SetEnableThinking(true)
 			if thinking.BudgetTokens > 0 {
-				textRequest.ThinkingBudget = thinking.BudgetTokens
+				textRequest.ThinkingBudget = json.RawMessage(strconv.Itoa(thinking.BudgetTokens))
 			}
 		} else {
 			textRequest.EnableThinking = nil

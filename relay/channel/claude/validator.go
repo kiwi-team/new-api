@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // 校验项对齐 Anthropic Messages API 的服务端约束，目的是在「最终请求体即将发往上游

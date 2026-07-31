@@ -32,13 +32,7 @@ ADD relaykit/go.mod ./relaykit/go.mod
 RUN go mod download
 
 COPY . .
-<<<<<<< HEAD
-COPY --from=builder /build/web/default/dist ./web/default/dist
-COPY --from=builder-classic /build/web/classic/dist ./web/classic/dist
-COPY --from=builder-portal /build/customer-portal/dist ./customer-portal/dist
-=======
 COPY --from=builder /build/web/dist ./web/dist
->>>>>>> main
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a

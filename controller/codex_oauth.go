@@ -9,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/url"
@@ -22,8 +21,17 @@ type codexOAuthCompleteRequest struct {
 	Input string `json:"input"`
 }
 
-func codexOAuthSessionKey(channelID int, field string) string {
-	return fmt.Sprintf("codex_oauth_%s_%d", field, channelID)
+// codexOAuthFlowTTL 覆盖用户手工复制授权码回填的时间。
+const codexOAuthFlowTTL = 15 * time.Minute
+
+type codexOAuthFlowPayload struct {
+	Verifier string `json:"verifier"`
+}
+
+// codexOAuthFlowProvider 把 PKCE 流按渠道隔离：授权码只能回填到发起授权的那个渠道
+// （channelID 0 表示"只生成 key、不落库"的入口）。
+func codexOAuthFlowProvider(channelID int) string {
+	return fmt.Sprintf("codex:%d", channelID)
 }
 
 func parseCodexAuthorizationInput(input string) (code string, state string, err error) {
@@ -93,11 +101,23 @@ func startCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		return
 	}
 
-	session := sessions.Default(c)
-	session.Set(codexOAuthSessionKey(channelID, "state"), flow.State)
-	session.Set(codexOAuthSessionKey(channelID, "verifier"), flow.Verifier)
-	session.Set(codexOAuthSessionKey(channelID, "created_at"), time.Now().Unix())
-	_ = session.Save()
+	// state/verifier 存 auth_flows（一次性、有 TTL、绑定发起人），
+	// 仪表盘鉴权已迁移到 JWT/PAT，进程里不再有 gin session 可用。
+	payload, err := common.Marshal(codexOAuthFlowPayload{Verifier: flow.Verifier})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := model.CreateAuthFlowWithToken(flow.State, model.AuthFlowCreate{
+		Purpose:   model.AuthFlowPurposeCodexOAuth,
+		Provider:  codexOAuthFlowProvider(channelID),
+		UserId:    c.GetInt("id"),
+		Payload:   string(payload),
+		ExpiresAt: time.Now().Add(codexOAuthFlowTTL),
+	}); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -159,15 +179,29 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		}
 	}
 
-	session := sessions.Default(c)
-	expectedState, _ := session.Get(codexOAuthSessionKey(channelID, "state")).(string)
-	verifier, _ := session.Get(codexOAuthSessionKey(channelID, "verifier")).(string)
-	if strings.TrimSpace(expectedState) == "" || strings.TrimSpace(verifier) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "oauth flow not started or session expired"})
+	// 一次性消费 state：重放、跨渠道回填、跨用户回填都在这里被拒（state 即查找键，
+	// 不匹配就找不到流程），因此不再需要单独的 state 比对。
+	authFlow, err := model.ConsumeAuthFlow(state, model.AuthFlowMatch{
+		Purpose:  model.AuthFlowPurposeCodexOAuth,
+		Provider: codexOAuthFlowProvider(channelID),
+		UserId:   c.GetInt("id"),
+	})
+	if err != nil {
+		if errors.Is(err, model.ErrAuthFlowInvalid) || errors.Is(err, model.ErrAuthFlowExpired) || errors.Is(err, model.ErrAuthFlowConsumed) {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "oauth flow not started or session expired"})
+			return
+		}
+		common.ApiError(c, err)
 		return
 	}
-	if state != expectedState {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "state mismatch"})
+	var flowPayload codexOAuthFlowPayload
+	if err := common.UnmarshalJsonStr(authFlow.Payload, &flowPayload); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	verifier := strings.TrimSpace(flowPayload.Verifier)
+	if verifier == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "oauth flow not started or session expired"})
 		return
 	}
 
@@ -203,10 +237,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		return
 	}
 
-	session.Delete(codexOAuthSessionKey(channelID, "state"))
-	session.Delete(codexOAuthSessionKey(channelID, "verifier"))
-	session.Delete(codexOAuthSessionKey(channelID, "created_at"))
-	_ = session.Save()
+	// state 已在 ConsumeAuthFlow 时原子消费，无需额外清理。
 
 	if channelID > 0 {
 		if err := model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("key", string(encoded)).Error; err != nil {

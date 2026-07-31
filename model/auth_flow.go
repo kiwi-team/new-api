@@ -22,6 +22,7 @@ const (
 	AuthFlowPurposePasskeyStepUp     = "passkey_step_up"
 	AuthFlowPurposeTelegramBind      = "telegram_bind"
 	AuthFlowPurposeTelegramAssertion = "telegram_assertion"
+	AuthFlowPurposeCodexOAuth        = "codex_oauth"
 	AuthFlowIntentLogin              = "login"
 	AuthFlowIntentBind               = "bind"
 	AuthFlowTokenBytes               = 32
@@ -116,6 +117,30 @@ func CreateAuthFlow(input AuthFlowCreate) (string, *AuthFlow, error) {
 		return "", nil, err
 	}
 	return token, flow, nil
+}
+
+// CreateAuthFlowWithToken stores a flow keyed by a token the caller already
+// owns, for ceremonies where the lookup key is fixed by an external protocol
+// (an OAuth `state` that the provider echoes back) instead of generated here.
+// The caller must supply an unguessable token; it is HMACed like any other.
+func CreateAuthFlowWithToken(token string, input AuthFlowCreate) (*AuthFlow, error) {
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(input.Purpose) == "" || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(time.Now()) {
+		return nil, ErrAuthFlowInvalid
+	}
+	flow := &AuthFlow{
+		TokenHash: authFlowTokenHash(token),
+		Purpose:   input.Purpose,
+		Provider:  input.Provider,
+		Intent:    input.Intent,
+		UserId:    input.UserId,
+		SessionId: input.SessionId,
+		Payload:   input.Payload,
+		ExpiresAt: input.ExpiresAt,
+	}
+	if err := DB.Create(flow).Error; err != nil {
+		return nil, err
+	}
+	return flow, nil
 }
 
 // ClaimExternalAuthAssertion records a signed provider assertion as consumed.

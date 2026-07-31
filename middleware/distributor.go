@@ -52,15 +52,15 @@ func Distribute() func(c *gin.Context) {
 		}
 		modelName := modelRequest.Model
 		channelRulesMapAny, okRule := c.Get("token_channel_rules")
-		var channelRulesMap map[string]dto.ChannelRulesItem
+		var channelRulesMap map[string]taskdto.ChannelRulesItem
 		if okRule {
-			channelRulesMap = channelRulesMapAny.(map[string]dto.ChannelRulesItem)
+			channelRulesMap = channelRulesMapAny.(map[string]taskdto.ChannelRulesItem)
 		} else {
-			channelRulesMap = make(map[string]dto.ChannelRulesItem)
+			channelRulesMap = make(map[string]taskdto.ChannelRulesItem)
 		}
 		// channelRules will be used in the next if block to store channel rules for the model
 		// 这个key，相关的渠道配置信息
-		var channelRules *dto.ChannelRulesItem
+		var channelRules *taskdto.ChannelRulesItem
 		for key, val := range channelRulesMap {
 			if key == modelName {
 				channelRules = &val
@@ -309,7 +309,7 @@ func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, er
 	if len(specialChannelsConfigStr) == 0 {
 		return ids, nil
 	}
-	specialChannels := []dto.SpecailChannels{}
+	specialChannels := []taskdto.SpecailChannels{}
 	err := json.Unmarshal([]byte(specialChannelsConfigStr), &specialChannels)
 	if err == nil {
 		for _, item := range specialChannels {

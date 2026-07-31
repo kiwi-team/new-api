@@ -1226,6 +1226,16 @@ func equalStringPtr(a, b *string) bool {
 	return *a == *b
 }
 
+func equalFloat64Ptr(a, b *float64) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
 type fetchModelsRequest struct {
 	ChannelID      int     `json:"channel_id"`
 	BaseURL        *string `json:"base_url"`

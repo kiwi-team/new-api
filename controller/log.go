@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -218,10 +217,10 @@ func GetLogResponse(c *gin.Context) {
 	})
 }
 
+// isAdmin 读取鉴权中间件写入的 role。仪表盘鉴权已迁移到 JWT/PAT（见 middleware.setDashboardAuthContext），
+// 不再挂 gin-contrib/sessions 中间件，读 session 会 panic。
 func isAdmin(c *gin.Context) bool {
-	session := sessions.Default(c)
-	role := session.Get("role")
-	return role.(int) >= common.RoleAdminUser
+	return c.GetInt("role") >= common.RoleAdminUser
 }
 
 func GetUserLogs(c *gin.Context) {

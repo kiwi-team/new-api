@@ -19,13 +19,6 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 	SetVideoRouter(router)
 	SetSearchRouter(router)
 
-	// Customer Portal 的构建产物是可选的，只有存在时才注册 /portal 路由，
-	// 且必须先于 web 路由注册（web 路由会占用 NoRoute）。
-	if len(assets.PortalIndexPage) > 0 {
-		SetPortalRouter(router, assets.PortalFS, assets.PortalIndexPage)
-		common.SysLog("Customer Portal is enabled and serving at /portal/")
-	}
-
 	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
 	if common.IsMasterNode && frontendBaseUrl != "" {
 		frontendBaseUrl = ""

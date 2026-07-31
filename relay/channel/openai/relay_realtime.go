@@ -133,7 +133,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						usage.InputTokenDetails.TextTokens += realtimeUsage.InputTokenDetails.TextTokens
 						usage.OutputTokenDetails.AudioTokens += realtimeUsage.OutputTokenDetails.AudioTokens
 						usage.OutputTokenDetails.TextTokens += realtimeUsage.OutputTokenDetails.TextTokens
-						err := preConsumeUsage(c, info, usage, sumUsage)
+						err := preConsumeRealtimeUsage(c, info, usage, sumUsage)
 						if err != nil {
 							errChan <- fmt.Errorf("error consume usage: %v", err)
 							return
@@ -154,7 +154,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						localUsage.InputTokens += textToken + audioToken
 						localUsage.InputTokenDetails.TextTokens += textToken
 						localUsage.InputTokenDetails.AudioTokens += audioToken
-						err = preConsumeUsage(c, info, localUsage, sumUsage)
+						err = preConsumeRealtimeUsage(c, info, localUsage, sumUsage)
 						if err != nil {
 							errChan <- fmt.Errorf("error consume usage: %v", err)
 							return
@@ -211,11 +211,11 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	}
 
 	if usage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, usage, sumUsage)
+		_ = preConsumeRealtimeUsage(c, info, usage, sumUsage)
 	}
 
 	if localUsage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, localUsage, sumUsage)
+		_ = preConsumeRealtimeUsage(c, info, localUsage, sumUsage)
 	}
 
 	// check usage total tokens, if 0, use local usage
@@ -223,7 +223,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	return nil, sumUsage
 }
 
-func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
+func preConsumeRealtimeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
 	}

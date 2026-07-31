@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/types"
+
+	//"github.com/QuantumNous/new-api//types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"gorm.io/gorm"
 )
 
@@ -453,4 +456,27 @@ func DeleteErrorLog(createTime int64, limit int) error {
 	maxId := slices.Max(ids)
 	minId := slices.Min(ids)
 	return LOG_DB.Where("id >= ? and id <= ?", minId, maxId).Delete(&ErrorLog{}).Error
+}
+
+func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	var total int64 = 0
+
+	for {
+		if nil != ctx.Err() {
+			return total, ctx.Err()
+		}
+
+		result := LOG_DB.Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+		if nil != result.Error {
+			return total, result.Error
+		}
+
+		total += result.RowsAffected
+
+		if result.RowsAffected < int64(limit) {
+			break
+		}
+	}
+
+	return total, nil
 }

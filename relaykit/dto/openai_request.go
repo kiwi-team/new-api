@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
@@ -133,8 +134,8 @@ type GeneralOpenAIRequest struct {
 	// baidu v2
 	WebSearch json.RawMessage `json:"web_search,omitempty"`
 	// doubao,zhipu_v4,anthropic
-	THINKING       json.RawMessage `json:"thinking,omitempty"`
-	ThinkingBudget int             `json:"thinking_budget,omitempty"`
+	THINKING json.RawMessage `json:"thinking,omitempty"`
+	//ThinkingBudget int             `json:"thinking_budget,omitempty"`
 	// pplx Params
 	SearchDomainFilter     json.RawMessage `json:"search_domain_filter,omitempty"`
 	SearchRecencyFilter    json.RawMessage `json:"search_recency_filter,omitempty"`
@@ -295,15 +296,15 @@ func (r *GeneralOpenAIRequest) GetSystemRoleName() string {
 	return "system"
 }
 
-func IsOpenAIReasoningOModel(modelName string) bool {
-	return strings.HasPrefix(modelName, "o1") ||
-		strings.HasPrefix(modelName, "o3") ||
-		strings.HasPrefix(modelName, "o4")
-}
+// func IsOpenAIReasoningOModel(modelName string) bool {
+// 	return strings.HasPrefix(modelName, "o1") ||
+// 		strings.HasPrefix(modelName, "o3") ||
+// 		strings.HasPrefix(modelName, "o4")
+// }
 
-func IsOpenAIGPT5Model(modelName string) bool {
-	return strings.HasPrefix(modelName, "gpt-5")
-}
+// func IsOpenAIGPT5Model(modelName string) bool {
+// 	return strings.HasPrefix(modelName, "gpt-5")
+// }
 
 const CustomType = "custom"
 

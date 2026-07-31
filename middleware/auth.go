@@ -11,15 +11,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/gin-contrib/sessions"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -129,130 +128,75 @@ func MixRouterAuth() func(c *gin.Context) {
 
 // mixRouterAuthHelper 复用 authHelper 的认证逻辑，但在 c.Next() 之前插入域名检查和 flag 设置
 func mixRouterAuthHelper(c *gin.Context, minRole int) {
-	session := sessions.Default(c)
-	username := session.Get("username")
-	role := session.Get("role")
-	id := session.Get("id")
-	status := session.Get("status")
-	useAccessToken := false
-	if username == nil {
-		accessToken := c.Request.Header.Get("Authorization")
-		if accessToken == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": "无权进行此操作，未登录且未提供 access token",
-			})
-			c.Abort()
-			return
-		}
-		user, _ := model.ValidateAccessToken(accessToken)
-		if user != nil && user.Username != "" {
-			if !validUserInfo(user.Username, user.Role) {
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": "无权进行此操作，用户信息无效",
-				})
-				c.Abort()
-				return
-			}
-			username = user.Username
-			role = user.Role
-			id = user.Id
-			status = user.Status
-			useAccessToken = true
-		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无权进行此操作，access token 无效",
-			})
-			c.Abort()
-			return
-		}
+	user, identity, useAccessToken, err := authenticateDashboardRequest(c)
+	if err != nil {
+		writeDashboardAuthError(c, err)
+		return
 	}
 	apiUserIdStr := c.Request.Header.Get("New-Api-User")
 	if apiUserIdStr == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"message": "无权进行此操作，未提供 New-Api-User",
 		})
-		c.Abort()
 		return
 	}
 	apiUserId, err := strconv.Atoi(apiUserIdStr)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"message": "无权进行此操作，New-Api-User 格式错误",
 		})
-		c.Abort()
 		return
 	}
-	if id != apiUserId {
-		c.JSON(http.StatusUnauthorized, gin.H{
+	if user.Id != apiUserId {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
 		})
-		c.Abort()
 		return
 	}
-	if status.(int) == common.UserStatusDisabled {
-		c.JSON(http.StatusOK, gin.H{
+	if user.Status != common.UserStatusEnabled {
+		c.AbortWithStatusJSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "用户已被封禁",
 		})
-		c.Abort()
 		return
 	}
-	// 认证通过后，检查角色权限
-	roleInt := role.(int)
-	if !validUserInfo(username.(string), roleInt) {
-		c.JSON(http.StatusOK, gin.H{
+	if !validUserInfo(user.Username, user.Role) || user.Role < minRole {
+		c.AbortWithStatusJSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "无权进行此操作，用户信息无效",
 		})
-		c.Abort()
 		return
 	}
 
+	setDashboardAuthContext(c, user, identity, useAccessToken)
+
 	// Leader 及以上用户在任何域名下都允许
-	if roleInt >= common.RoleLeaderUser {
-		// 正常设置上下文，继续执行
-	} else {
+	if user.Role < common.RoleLeaderUser {
 		// 组织标签:role=common 但 (org_code, org_role) 在 menu 里有 quota_statistics 的也放行
 		// 比如 mt-admin / wl-admin。详见 org.md 4.2。
 		// 通过组织获得的访问也属于"自助视图",同样要设置 force_self_user_id,让 controller 走
 		// resolveSelfScope 路径(mt-admin → 全 mt 组织 uid;wl-admin → 全 wl 组织 user_id)。
 		allowedByOrg := false
-		if userID, ok := id.(int); ok && userID > 0 {
-			if user, err := model.GetUserById(userID, false); err == nil && user != nil {
-				if service.HasPage(user, service.PageQuotaStatistics) {
-					allowedByOrg = true
-				}
-			}
+		if orgUser, err := model.GetUserById(user.Id, false); err == nil && orgUser != nil {
+			allowedByOrg = service.HasPage(orgUser, service.PageQuotaStatistics)
 		}
 		host := c.Request.Host
 		if idx := strings.Index(host, ":"); idx != -1 {
 			host = host[:idx]
 		}
 		if host != "api.mixrouter.com" && !allowedByOrg {
-			c.JSON(http.StatusOK, gin.H{
+			c.AbortWithStatusJSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "无权进行此操作，权限不足",
 			})
-			c.Abort()
 			return
 		}
 		// 在 c.Next() 之前设置标记，控制器将强制只查看自己的数据(或本 org 的数据)
 		c.Set("force_self_user_id", true)
 	}
-
-	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
-	c.Set("username", username)
-	c.Set("role", role)
-	c.Set("id", id)
-	c.Set("group", session.Get("group"))
-	c.Set("user_group", session.Get("group"))
-	c.Set("use_access_token", useAccessToken)
 
 	c.Next()
 }

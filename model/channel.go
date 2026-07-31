@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -504,7 +505,7 @@ func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	return channel, nil
 }
 
-func GetChannelByRule(channelRules dto.ChannelRulesItem, tags []string) (*Channel, error) {
+func GetChannelByRule(channelRules hostdto.ChannelRulesItem, tags []string) (*Channel, error) {
 	disabledChannels := channelRules.DisableChannels
 	for _, item := range channelRules.Channels {
 		if slices.Contains(disabledChannels, item.Id) {
@@ -540,7 +541,7 @@ func CheckMultiTags(tags []string, channelTags string) bool {
 	return true
 }
 
-func GetChannelIdsByRule(channelRules *dto.ChannelRulesItem, tags []string) (channelIds []int) {
+func GetChannelIdsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) (channelIds []int) {
 	disabledChannels := channelRules.DisableChannels
 	for _, item := range channelRules.Channels {
 		if item.Id > 0 {

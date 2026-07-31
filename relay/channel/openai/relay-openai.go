@@ -20,9 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
-	"github.com/QuantumNous/new-api/types"
-
-	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -633,7 +630,7 @@ func streamTTSResponse(c *gin.Context, resp *http.Response) {
 	}
 }
 
-func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.RealtimeUsage) {
+func OpenaiRealtimeHandlerBB(c *gin.Context, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.RealtimeUsage) {
 	if info == nil || info.ClientWs == nil || info.TargetWs == nil {
 		return types.NewError(fmt.Errorf("invalid websocket connection"), types.ErrorCodeBadResponse), nil
 	}

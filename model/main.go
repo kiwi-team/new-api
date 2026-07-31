@@ -288,6 +288,9 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if err := dropLegacyPrefillGroupNameUniqueConstraint(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -345,16 +348,14 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	if err := createProjectAllocationUniqueIndex(); err != nil {
 		common.SysLog("Warning: failed to create project allocation unique index: " + err.Error())
-=======
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
->>>>>>> main
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
@@ -369,6 +370,10 @@ func migrateDB() error {
 }
 
 func migrateDBFast() error {
+
+	if err := dropLegacyPrefillGroupNameUniqueConstraint(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -872,6 +877,50 @@ func createProjectAllocationUniqueIndex() error {
 	}
 
 	common.SysLog("Successfully created unique index " + newIndexName + " on " + tableName)
+	return nil
+}
+
+// dropLegacyPrefillGroupNameUniqueConstraint 删除历史版本遗留在 prefill_groups.name 上的整表唯一约束。
+// 当前模型使用带 `deleted_at IS NULL` 条件的部分唯一索引 uk_prefill_name，软删除后允许重新使用同名。
+// 旧的整表唯一约束会让 PostgreSQL 把 name 判定为 unique 列，而模型上并没有 `unique` 标签，
+// AutoMigrate 因此会尝试 `DROP CONSTRAINT uni_prefill_groups_name`（该名字的约束并不存在）并导致启动失败。
+// 仅 PostgreSQL 会把唯一索引之外的唯一约束单独暴露出来，其他数据库无需处理。幂等，可重复执行。
+func dropLegacyPrefillGroupNameUniqueConstraint() error {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		return nil
+	}
+	tableName := "prefill_groups"
+	if !DB.Migrator().HasTable(tableName) {
+		return nil
+	}
+
+	var constraintNames []string
+	if err := DB.Raw(`SELECT tc.constraint_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name
+		WHERE tc.table_schema = current_schema() AND tc.table_name = ? AND tc.constraint_type = 'UNIQUE'
+		GROUP BY tc.constraint_name
+		HAVING COUNT(*) = 1 AND MIN(kcu.column_name) = 'name'`, tableName).Scan(&constraintNames).Error; err != nil {
+		return fmt.Errorf("failed to query unique constraints on %s: %v", tableName, err)
+	}
+	if len(constraintNames) == 0 {
+		return nil
+	}
+
+	// 先补齐部分唯一索引，避免删除旧约束后 name 的唯一性出现空窗；
+	// deleted_at 列缺失说明是更老的表结构，交给随后的 AutoMigrate 建列建索引。
+	if DB.Migrator().HasColumn(&PrefillGroup{}, "deleted_at") {
+		if err := DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uk_prefill_name ON ` + tableName + ` (name) WHERE deleted_at IS NULL`).Error; err != nil {
+			return fmt.Errorf("failed to create unique index uk_prefill_name: %v", err)
+		}
+	}
+	for _, constraintName := range constraintNames {
+		if err := DB.Exec(`ALTER TABLE ` + tableName + ` DROP CONSTRAINT "` + constraintName + `"`).Error; err != nil {
+			return fmt.Errorf("failed to drop legacy unique constraint %s on %s: %v", constraintName, tableName, err)
+		}
+		common.SysLog("Dropped legacy unique constraint " + constraintName + " on " + tableName)
+	}
 	return nil
 }
 

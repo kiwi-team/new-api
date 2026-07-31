@@ -142,7 +142,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		audioRatio := ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
 
-		priceData := types.PriceData{
+		priceData := hosttypes.PriceData{
 			FreeModel:            freeModel,
 			GroupRatioInfo:       groupRatioInfo,
 			UseTieredPrice:       true,
@@ -167,7 +167,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		return priceData, nil
 	}
 
-	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+	//modelPrice, usePrice = ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	var preConsumedQuota int
 	var modelRatio float64

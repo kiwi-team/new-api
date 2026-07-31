@@ -3,7 +3,7 @@ package ali_dashscope
 import (
 	"encoding/json"
 
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 type Message struct {

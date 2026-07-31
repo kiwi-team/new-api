@@ -1,7 +1,7 @@
 package qwen_realtime
 
 import (
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // Qwen Realtime client→server event types
