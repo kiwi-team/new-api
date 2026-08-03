@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/elevenlabs"
 	"github.com/QuantumNous/new-api/relay/channel/fal_sync"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/jina"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
@@ -32,7 +33,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
 	ppioImage "github.com/QuantumNous/new-api/relay/channel/ppio"
-	"github.com/QuantumNous/new-api/relay/channel/gemini_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/reve"
@@ -43,13 +43,14 @@ import (
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
+	taskHedra "github.com/QuantumNous/new-api/relay/channel/task/hedra"
+	taskHeyGen "github.com/QuantumNous/new-api/relay/channel/task/heygen"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskLtx "github.com/QuantumNous/new-api/relay/channel/task/ltx"
+	taskMiniMax "github.com/QuantumNous/new-api/relay/channel/task/minimax"
 	taskPixverse "github.com/QuantumNous/new-api/relay/channel/task/pixverse"
 	taskReplicateTask "github.com/QuantumNous/new-api/relay/channel/task/replicatetask"
-	taskHedra "github.com/QuantumNous/new-api/relay/channel/task/hedra"
-	taskHeyGen "github.com/QuantumNous/new-api/relay/channel/task/heygen"
 	taskRunwayML "github.com/QuantumNous/new-api/relay/channel/task/runwayml"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
@@ -200,6 +201,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskGemini.TaskAdaptor{}
 		case constant.ChannelTypeMiniMax:
 			return &hailuo.TaskAdaptor{}
+		case constant.ChannelTypeMiniMaxVideo:
+			return &taskMiniMax.TaskAdaptor{}
 		case constant.ChannelTypePixverse:
 			return &taskPixverse.TaskAdaptor{}
 		case constant.ChannelTypeLtx:

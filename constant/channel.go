@@ -71,6 +71,7 @@ const (
 	ChannelTypeHedra            = 71
 	ChannelTypeHeyGen           = 72
 	ChannelTypeReve             = 73
+	ChannelTypeMiniMaxVideo     = 74
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -151,6 +152,7 @@ var ChannelBaseURLs = []string{
 	"https://api.hedra.com/web-app/public", // 71 hedra
 	"https://api.heygen.com",               // 72 heygen
 	"https://api.reve.com",                 // 73 reve
+	"https://api.minimaxi.com",             // 74 minimax video (v2)
 }
 
 var ChannelTypeNames = map[int]string{
@@ -221,6 +223,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeHedra:          "Hedra",
 	ChannelTypeHeyGen:         "HeyGen",
 	ChannelTypeReve:           "Reve",
+	ChannelTypeMiniMaxVideo:   "MiniMaxVideo",
 }
 
 func GetChannelTypeName(channelType int) string {

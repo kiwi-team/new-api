@@ -74,6 +74,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		constant.ChannelTypeSora,
 		constant.ChannelTypeSerper,
 		constant.ChannelTypeElevenLabs,
+		constant.ChannelTypeMiniMaxVideo,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)

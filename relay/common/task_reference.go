@@ -39,6 +39,10 @@ type referenceCapability struct {
 	// exclusiveScenes 为 true 时，首帧/首尾帧 与 参考生视频 三种场景互斥
 	// （Seedance 2.0 明确要求，不可混用）。
 	exclusiveScenes bool
+
+	// allowLastFrameAlone 为 true 时允许只传尾帧（MiniMax v2 支持该模式）；
+	// 可灵、豆包等则要求尾帧必须与首帧搭配。
+	allowLastFrameAlone bool
 }
 
 func (c referenceCapability) supports(role string) bool {
@@ -132,6 +136,22 @@ func getReferenceCapability(channelType int, model string) *referenceCapability 
 			roles:         capRoles(RefRoleFirstFrame, RefRoleLastFrame),
 			maxFirstFrame: 1,
 			maxLastFrame:  1,
+		}
+
+	case constant.ChannelTypeMiniMaxVideo:
+		// MiniMax v2（MiniMax-H3）多模态参考生视频：
+		// 首尾帧与参考素材互斥；音频不能单独输入；混合输入总数 ≤ 12。
+		return &referenceCapability{
+			name: "minimax v2",
+			roles: capRoles(RefRoleFirstFrame, RefRoleLastFrame, RefRoleReferenceImage,
+				RefRoleReferenceVideo, RefRoleReferenceAudio),
+			maxFirstFrame:       1,
+			maxLastFrame:        1,
+			maxRefImage:         9,
+			maxRefVideo:         3,
+			maxRefAudio:         3,
+			exclusiveScenes:     true,
+			allowLastFrameAlone: true,
 		}
 
 	case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi:
@@ -373,8 +393,9 @@ func ValidateReferenceCapability(channelType int, model string, req *TaskSubmitR
 		}
 	}
 
-	// 5. 只有尾帧没有首帧：可灵与豆包都要求首帧存在
-	if req.HasRefRole(RefRoleLastFrame) && !req.HasRefRole(RefRoleFirstFrame) {
+	// 5. 只有尾帧没有首帧：多数厂商要求首帧存在（MiniMax v2 例外）
+	if !cap.allowLastFrameAlone &&
+		req.HasRefRole(RefRoleLastFrame) && !req.HasRefRole(RefRoleFirstFrame) {
 		return createTaskError(
 			fmt.Errorf("last_frame requires a first_frame reference"),
 			"invalid_reference", http.StatusBadRequest, true)
