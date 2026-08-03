@@ -112,6 +112,9 @@ export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
 // Channel Status (label values are i18n keys; use t(config.label) in components)
 // ============================================================================
 
+/** Codex channels authenticate through an OAuth flow, not a pasted key. */
+export const CHANNEL_TYPE_CODEX = 68
+
 export const CHANNEL_STATUS = {
   UNKNOWN: 0,
   ENABLED: 1,
@@ -130,6 +133,8 @@ export const CHANNEL_STATUS_OPTIONS = [
   { value: 'all', label: 'All Status' },
   { value: 'enabled', label: 'Enabled' },
   { value: 'disabled', label: 'Disabled' },
+  // Channels the relay disabled itself after repeated upstream failures.
+  { value: 'auto_disabled', label: 'Auto Disabled' },
 ] as const
 
 export const CHANNEL_STATUS_CONFIG = {

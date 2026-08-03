@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import { TableId } from '@/components/table-id'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   Popover,
@@ -44,6 +45,7 @@ import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
+  formatRetryChain,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
@@ -287,6 +289,14 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<UsageLog>[] = [
     {
+      accessorKey: 'id',
+      header: t('ID'),
+      cell: ({ row }) => <TableId value={row.getValue('id') as number} />,
+      enableSorting: false,
+      size: 80,
+      meta: { mobileHidden: true },
+    },
+    {
       accessorKey: 'created_at',
       header: t('Time'),
       cell: ({ row }) => {
@@ -340,7 +350,10 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             : []
           const hasRetryChain = useChannel.length > 1
           const channelChain = hasRetryChain
-            ? useChannel.join(' → ')
+            ? formatRetryChain(
+                other?.admin_info?.use_channel,
+                other?.admin_info?.use_channel_time
+              )
             : undefined
           const channelDisplay = log.channel_name
             ? `${log.channel_name} #${log.channel}`

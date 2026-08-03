@@ -261,6 +261,19 @@ export const channelFormSchema = z
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
+    google_file_upload: z.string().optional(),
+    google_file_bucket: z.string().optional(),
+    model_output_mapping: z
+      .string()
+      .optional()
+      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    claude_code_guard_enabled: z.boolean().optional(),
+    claude_code_billing_header: z.string().optional(),
+    // Edited as one path per line; stored as arrays.
+    path_whitelist: z.string().optional(),
+    path_blacklist: z.string().optional(),
+    // Channel-level multiplier (top-level column, not part of `setting`)
+    ratio: z.number().optional(),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -433,6 +446,14 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   pass_through_body_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
+  google_file_upload: '',
+  google_file_bucket: '',
+  model_output_mapping: '',
+  claude_code_guard_enabled: false,
+  claude_code_billing_header: '',
+  path_whitelist: '',
+  path_blacklist: '',
+  ratio: 1,
   // Type-specific settings
   is_enterprise_account: false,
   vertex_key_type: 'json',
@@ -473,6 +494,13 @@ export function transformChannelToFormDefaults(
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    google_file_upload: '',
+    google_file_bucket: '',
+    model_output_mapping: '',
+    claude_code_guard_enabled: false,
+    claude_code_billing_header: '',
+    path_whitelist: '',
+    path_blacklist: '',
   }
 
   if (channel.setting) {
@@ -492,6 +520,13 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+        google_file_upload: parsed.google_file_upload || '',
+        google_file_bucket: parsed.google_file_bucket || '',
+        model_output_mapping: parsed.model_output_mapping || '',
+        claude_code_guard_enabled: parsed.claude_code_guard_enabled || false,
+        claude_code_billing_header: parsed.claude_code_billing_header || '',
+        path_whitelist: linesFromList(parsed.path_whitelist),
+        path_blacklist: linesFromList(parsed.path_blacklist),
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -560,6 +595,7 @@ export function transformChannelToFormDefaults(
     group: parseGroups(channel.group || 'default'),
     model_mapping: channel.model_mapping || '',
     priority: channel.priority || 0,
+    ratio: channel.ratio ?? 1,
     weight: channel.weight || 0,
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
@@ -601,6 +637,18 @@ export function transformChannelToFormDefaults(
 /**
  * Build the setting JSON string from form extra settings
  */
+/** Path lists are edited one entry per line and stored as arrays. */
+function listFromLines(value: string | undefined): string[] {
+  return String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function linesFromList(value: unknown): string {
+  return Array.isArray(value) ? value.join('\n') : ''
+}
+
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
     force_format: formData.force_format || false,
@@ -609,6 +657,14 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     pass_through_body_enabled: formData.pass_through_body_enabled || false,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+    google_file_bucket: formData.google_file_bucket?.trim() || '',
+    google_file_upload: formData.google_file_upload?.trim() || '',
+    model_output_mapping: formData.model_output_mapping?.trim() || '',
+    claude_code_guard_enabled: formData.claude_code_guard_enabled || false,
+    claude_code_billing_header:
+      formData.claude_code_billing_header?.trim() || '',
+    path_whitelist: listFromLines(formData.path_whitelist),
+    path_blacklist: listFromLines(formData.path_blacklist),
   }
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)
@@ -787,6 +843,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     model_mapping: formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
+    ratio: formData.ratio ?? null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
@@ -835,6 +892,7 @@ export function transformFormDataToUpdatePayload(
     model_mapping: formData.model_mapping || null,
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
+    ratio: formData.ratio ?? null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status_code_mapping: formData.status_code_mapping || null,

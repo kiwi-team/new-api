@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Code2, Eye, RotateCcw, Save } from 'lucide-react'
+import { Code2, Eye, RotateCcw, Save, Upload } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -46,6 +46,7 @@ import {
   ModelRatioVisualEditor,
   type ModelRatioVisualEditorHandle,
 } from './model-ratio-visual-editor'
+import { SyncModelPricesDialog } from './sync-model-prices-dialog'
 
 type ModelFormValues = {
   ModelPrice: string
@@ -176,6 +177,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
   const { t } = useTranslation()
   const isUnsetVariant = variant === 'unset'
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false)
   const visualEditorRef = useRef<ModelRatioVisualEditorHandle>(null)
 
   const enabledModelsQuery = useQuery({
@@ -223,6 +225,15 @@ export const ModelRatioForm = memo(function ModelRatioForm({
     <div className='space-y-6'>
       {!isUnsetVariant && (
         <div className='flex flex-wrap justify-end gap-2'>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            onClick={() => setSyncDialogOpen(true)}
+          >
+            <Upload data-icon='inline-start' />
+            {t('Sync to environments')}
+          </Button>
           <Button
             type='button'
             variant='destructive'
@@ -369,6 +380,18 @@ export const ModelRatioForm = memo(function ModelRatioForm({
           </SettingsForm>
         )}
       </Form>
+
+      {syncDialogOpen && (
+        <SyncModelPricesDialog
+          open
+          onOpenChange={setSyncDialogOpen}
+          options={{
+            ModelPrice: savedValues.ModelPrice,
+            ModelRatio: savedValues.ModelRatio,
+            CompletionRatio: savedValues.CompletionRatio,
+          }}
+        />
+      )}
     </div>
   )
 })

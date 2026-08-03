@@ -218,3 +218,21 @@ export async function adminUnbindCustomOAuth(
   )
   return res.data
 }
+
+export type OrgOption = {
+  code: string
+  name: string
+  enabled: boolean
+}
+
+/**
+ * Organisations a user can be assigned to.
+ *
+ * Root only. The list is a compile-time constant (`constant/org.go`) rather
+ * than a table, and only enabled entries are returned.
+ */
+export async function getOrgs(): Promise<OrgOption[]> {
+  const res = await api.get('/api/orgs/')
+  if (!res.data?.success) return []
+  return Array.isArray(res.data.data) ? res.data.data : []
+}

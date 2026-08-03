@@ -646,3 +646,75 @@ export async function getPrefillGroups(
   const res = await api.get('/api/prefill_group', { params: { type } })
   return res.data
 }
+
+// ============================================================================
+// Codex OAuth
+// ============================================================================
+
+export type CodexOAuthStartResponse = {
+  success: boolean
+  message?: string
+  data?: { authorize_url: string }
+}
+
+export type CodexOAuthCompleteResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    /** Only returned when authorising a channel that does not exist yet */
+    key?: string
+    channel_id?: number
+    account_id?: string
+    email?: string
+    expires_at?: number
+    last_refresh?: number
+  }
+}
+
+/**
+ * Begin the Codex authorization flow.
+ *
+ * Pass a channel id to re-authorise an existing channel (the new key is
+ * written server-side); omit it while creating one, and the completed flow
+ * returns the key for the form to use.
+ */
+export async function startCodexOAuth(
+  channelId?: number
+): Promise<CodexOAuthStartResponse> {
+  const path = channelId
+    ? `/api/channel/${channelId}/codex/oauth/start`
+    : '/api/channel/codex/oauth/start'
+  const res = await api.post(path, undefined, channelActionConfig())
+  return res.data
+}
+
+/** `input` is the full redirect URL or code the user pasted back. */
+export async function completeCodexOAuth(
+  input: string,
+  channelId?: number
+): Promise<CodexOAuthCompleteResponse> {
+  const path = channelId
+    ? `/api/channel/${channelId}/codex/oauth/complete`
+    : '/api/channel/codex/oauth/complete'
+  const res = await api.post(path, { input }, channelActionConfig())
+  return res.data
+}
+
+export type ChannelNameEntry = {
+  id: number
+  name: string
+  /** 1 enabled, other values disabled or auto-disabled */
+  status: number
+}
+
+/**
+ * Lightweight id/name pairs for channel pickers.
+ *
+ * Returns every channel regardless of status so a rule that references a
+ * disabled channel still renders its name instead of a bare id.
+ */
+export async function getChannelNameList(): Promise<ChannelNameEntry[]> {
+  const res = await api.get('/api/channel/channel-name-list')
+  if (!res.data?.success) return []
+  return Array.isArray(res.data.data) ? res.data.data : []
+}

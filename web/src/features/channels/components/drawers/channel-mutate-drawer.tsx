@@ -139,6 +139,7 @@ import {
 import {
   ADD_MODE_OPTIONS,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_CODEX,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
@@ -147,6 +148,7 @@ import {
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
+import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   CHANNEL_TYPE_ADVANCED_CUSTOM,
@@ -289,6 +291,14 @@ const SENSITIVE_FORM_FIELDS = [
   'pass_through_body_enabled',
   'system_prompt',
   'system_prompt_override',
+  'google_file_upload',
+  'google_file_bucket',
+  'model_output_mapping',
+  'claude_code_guard_enabled',
+  'claude_code_billing_header',
+  'path_whitelist',
+  'path_blacklist',
+  'ratio',
   'allow_service_tier',
   'disable_store',
   'allow_safety_identifier',
@@ -341,6 +351,13 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    values.google_file_upload?.trim() ||
+    values.google_file_bucket?.trim() ||
+    hasConfiguredOverrideValue(values.model_output_mapping) ||
+    values.claude_code_guard_enabled ||
+    values.path_whitelist?.trim() ||
+    values.path_blacklist?.trim() ||
+    (values.ratio != null && values.ratio !== 1) ||
     (values.http_protocol && values.http_protocol !== 'auto') ||
     (values.http2_connection_shards != null &&
       values.http2_connection_shards > 1) ||
@@ -619,6 +636,7 @@ export function ChannelMutateDrawer({
   )
   const canRevealChannelKey = currentUser?.role === ROLE.SUPER_ADMIN
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
+  const [codexOAuthOpen, setCodexOAuthOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
@@ -2912,6 +2930,23 @@ export function ChannelMutateDrawer({
                                 />
                               )}
 
+                              {/* Codex channels get their key from the OAuth
+                                  flow rather than a pasted secret. */}
+                              {currentType === CHANNEL_TYPE_CODEX && (
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  className='w-full'
+                                  onClick={() => setCodexOAuthOpen(true)}
+                                >
+                                  <KeyRound className='h-4 w-4' />
+                                  {isEditing
+                                    ? t('Re-authorize with Codex')
+                                    : t('Authorize with Codex')}
+                                </Button>
+                              )}
+
                               <FormField
                                 control={form.control}
                                 name='key'
@@ -4172,6 +4207,166 @@ export function ChannelMutateDrawer({
 
                             <FormField
                               control={form.control}
+                              name='ratio'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Channel ratio')}</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='number'
+                                      step='0.01'
+                                      value={field.value ?? ''}
+                                      onChange={(event) => {
+                                        const parsed = Number.parseFloat(
+                                          event.target.value
+                                        )
+                                        field.onChange(
+                                          Number.isNaN(parsed)
+                                            ? undefined
+                                            : parsed
+                                        )
+                                      }}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Multiplier carried with this channel when syncing to other environments'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            {/* Vertex AI (41): bucket used by multimodal uploads */}
+                            {currentType === 41 && (
+                              <FormField
+                                control={form.control}
+                                name='google_file_bucket'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Google file bucket')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input placeholder='my-bucket' {...field} />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Required by Vertex AI when multimodal input is enabled'
+                                      )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {/* Gemini (24): upload attachments through Google */}
+                            {currentType === 24 && (
+                              <FormField
+                                control={form.control}
+                                name='google_file_upload'
+                                render={({ field }) => (
+                                  <FormItem className='flex items-center justify-between gap-3'>
+                                    <div className='space-y-0.5'>
+                                      <FormLabel>
+                                        {t('generativelanguage file upload')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Upload attachments to Google before relaying the request'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value === 'enabled'}
+                                        onCheckedChange={(checked) =>
+                                          field.onChange(
+                                            checked ? 'enabled' : 'disabled'
+                                          )
+                                        }
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            <FormField
+                              control={form.control}
+                              name='model_output_mapping'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Model output mapping')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      rows={3}
+                                      placeholder='{"zai-org/glm-4.7-flash": "glm-4.7"}'
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'Rename the model in the response: key is the upstream name, value is what the client sees'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name='path_whitelist'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Path whitelist')}</FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      rows={3}
+                                      placeholder='/v1/messages'
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'One path prefix per line. When set, the channel only serves requests matching one of them'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name='path_blacklist'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('Path blacklist')}</FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      rows={3}
+                                      placeholder='/v1/embeddings'
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <FormDescription>
+                                    {t(
+                                      'One path prefix per line. Matching requests skip this channel; takes precedence over the whitelist'
+                                    )}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
                               name='proxy'
                               render={({ field }) => (
                                 <FormItem>
@@ -4606,6 +4801,59 @@ export function ChannelMutateDrawer({
                                         </FormItem>
                                       )}
                                     />
+
+                                    <FormField
+                                      control={form.control}
+                                      name='claude_code_guard_enabled'
+                                      render={({ field }) => (
+                                        <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                          <div className='space-y-0.5'>
+                                            <FormLabel className='text-sm'>
+                                              {t('Claude Code client check')}
+                                            </FormLabel>
+                                            <FormDescription>
+                                              {t(
+                                                'Requests that fail the check count as a channel failure and are retried on another channel'
+                                              )}
+                                            </FormDescription>
+                                          </div>
+                                          <FormControl>
+                                            <Switch
+                                              checked={field.value}
+                                              onCheckedChange={field.onChange}
+                                            />
+                                          </FormControl>
+                                        </FormItem>
+                                      )}
+                                    />
+
+                                    {form.watch('claude_code_guard_enabled') && (
+                                      <FormField
+                                        control={form.control}
+                                        name='claude_code_billing_header'
+                                        render={({ field }) => (
+                                          <FormItem className='px-4 py-3'>
+                                            <FormLabel className='text-sm'>
+                                              {t('Claude Code billing header')}
+                                            </FormLabel>
+                                            <FormControl>
+                                              <Input
+                                                placeholder={t(
+                                                  'Leave empty to use the built-in default'
+                                                )}
+                                                {...field}
+                                              />
+                                            </FormControl>
+                                            <FormDescription>
+                                              {t(
+                                                'Inserted at the top of system when the request passes the check but carries no billing signature block'
+                                              )}
+                                            </FormDescription>
+                                            <FormMessage />
+                                          </FormItem>
+                                        )}
+                                      />
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -4780,6 +5028,20 @@ export function ChannelMutateDrawer({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      {codexOAuthOpen && (
+        <CodexOAuthDialog
+          open
+          onOpenChange={setCodexOAuthOpen}
+          channelId={isEditing ? currentRow?.id : undefined}
+          onAuthorized={(key) =>
+            form.setValue('key', key, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+        />
+      )}
 
       {paramOverrideEditorOpen && !sensitiveLocked && (
         <ParamOverrideEditorDialog

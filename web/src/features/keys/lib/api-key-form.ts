@@ -39,6 +39,9 @@ export function getApiKeyFormSchema(t: TFunction) {
       allow_ips: z.string().optional(),
       group: z.string().optional(),
       cross_group_retry: z.boolean().optional(),
+      alert_threshold: z.number().min(0).optional(),
+      channel_ratios: z.string().optional(),
+      channel_rules: z.string().optional(),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -74,6 +77,9 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   allow_ips: '',
   group: DEFAULT_GROUP,
   cross_group_retry: true,
+  alert_threshold: 0,
+  channel_ratios: '',
+  channel_rules: '',
   tokenCount: 1,
 }
 
@@ -111,6 +117,11 @@ export function transformFormDataToPayload(
     allow_ips: data.allow_ips || '',
     group: data.group || '',
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    alert_threshold: data.alert_threshold ?? 0,
+    // Sent verbatim: the backend keeps these as JSON strings and only root
+    // may change them, but every update must echo them back or they are reset.
+    channel_ratios: data.channel_ratios ?? '',
+    channel_rules: data.channel_rules ?? '',
   }
 }
 
@@ -136,6 +147,9 @@ export function transformApiKeyToFormDefaults(
     allow_ips: apiKey.allow_ips || '',
     group: apiKey.group || DEFAULT_GROUP,
     cross_group_retry: !!apiKey.cross_group_retry,
+    alert_threshold: apiKey.alert_threshold ?? 0,
+    channel_ratios: apiKey.channel_ratios ?? '',
+    channel_rules: apiKey.channel_rules ?? '',
     tokenCount: 1,
   }
 }

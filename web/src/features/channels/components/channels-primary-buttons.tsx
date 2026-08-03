@@ -33,6 +33,7 @@ import {
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AdminCsvMenuItems } from '@/components/admin-csv-menu-items'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -56,6 +57,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -84,6 +86,8 @@ export function ChannelsPrimaryButtons() {
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false)
   const [isRepairingConsistency, setIsRepairingConsistency] = useState(false)
   const currentUser = useAuthStore((s) => s.auth.user)
+  // CSV import/export is root-only on the backend.
+  const isRoot = currentUser?.role === ROLE.SUPER_ADMIN
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -250,6 +254,20 @@ export function ChannelsPrimaryButtons() {
                 <ArrowUpFromLine className='h-4 w-4' />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
+
+            {isRoot && (
+              <>
+                <DropdownMenuSeparator />
+                <AdminCsvMenuItems
+                  entity='channels'
+                  onImported={() =>
+                    void queryClient.invalidateQueries({
+                      queryKey: ['channels'],
+                    })
+                  }
+                />
+              </>
+            )}
 
             <DropdownMenuSeparator />
 

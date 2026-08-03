@@ -27,6 +27,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { useSidebarConfig } from './use-sidebar-config'
 import { useSidebarData } from './use-sidebar-data'
+import { useUserMenu } from './use-user-menu'
 
 /** Sentinel key used for the root navigation in animation `key=` props */
 const ROOT_VIEW_KEY = '__root'
@@ -38,7 +39,8 @@ const ROOT_VIEW_KEY = '__root'
  *   groups) when the URL belongs to a registered drill-in workspace.
  * - Otherwise returns the root navigation, narrowed by:
  *     · admin-only group visibility (role-based);
- *     · `useSidebarConfig` (admin × user `sidebar_modules` overlay).
+ *     · `useSidebarConfig` (admin × user `sidebar_modules` overlay);
+ *     · `useUserMenu` (org page whitelist from `/api/user/menu`).
  *
  * Nested views are intentionally NOT passed through `useSidebarConfig`
  * — those filters target known dashboard URLs only, and gating is
@@ -50,19 +52,28 @@ export function useSidebarView(): ResolvedSidebarView {
   const userRole = useAuthStore((s) => s.auth.user?.role)
   const rootSidebarData = useSidebarData()
   const configFilteredRoot = useSidebarConfig(rootSidebarData.navGroups)
+  const { pages: allowedPages, isPrivileged } = useUserMenu()
 
   const rootNavGroups = useMemo<NavGroup[]>(() => {
     const role = userRole ?? ROLE.GUEST
     const isAdmin = role >= ROLE.ADMIN
+    // Admins bypass the whitelist; a not-yet-loaded menu must not hide
+    // anything, otherwise the sidebar flickers on every cold start.
+    const enforceWhitelist = !isPrivileged && allowedPages !== null
     return configFilteredRoot
       .filter((group) => (group.id === 'admin' ? isAdmin : true))
       .map((group) => {
-        const items = group.items.filter(
-          (item) => item.requiredRole === undefined || role >= item.requiredRole
-        )
+        const items = group.items.filter((item) => {
+          if (item.requiredRole !== undefined && role < item.requiredRole) {
+            return false
+          }
+          if (!enforceWhitelist || item.pageKeys === undefined) return true
+          return item.pageKeys.some((key) => allowedPages.includes(key))
+        })
         return items.length === group.items.length ? group : { ...group, items }
       })
-  }, [configFilteredRoot, userRole])
+      .filter((group) => group.items.length > 0)
+  }, [allowedPages, configFilteredRoot, isPrivileged, userRole])
 
   const view = resolveSidebarView(pathname)
 

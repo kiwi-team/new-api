@@ -66,11 +66,23 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     log: true,
     midjourney: true,
     task: true,
+    errorlog: true,
+    quotaStatistics: true,
+    modelUsageAnalysis: true,
+    // Tabs inside the billing page. The legacy console shipped with only the
+    // discount tab on, so the defaults match rather than revealing two tabs
+    // on upgrade.
+    billQuery: false,
+    billPricing: false,
+    billDiscount: true,
   },
   personal: {
     enabled: true,
     topup: true,
     personal: true,
+    // Sections of the profile page itself, not sidebar entries.
+    accountManagement: true,
+    preferences: true,
   },
   admin: {
     enabled: true,
@@ -80,6 +92,16 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     user: true,
     setting: true,
     subscription: true,
+    // These must default to visible: an admin who never opened this page has
+    // no key stored for them, and a missing key reads as "hidden".
+    deployment: true,
+    modelRouteConfig: true,
+    modelChannelMonitor: true,
+    internalChannelMonitor: true,
+    cuquota: true,
+    project: true,
+    settlementConfig: true,
+    pricingCenter: true,
   },
 }
 

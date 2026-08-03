@@ -103,6 +103,21 @@ export function SidebarModulesCard() {
           title: t('Task Logs'),
           description: t('System task records'),
         },
+        {
+          key: 'errorlog',
+          title: t('Error Logs'),
+          description: t('Failed request records'),
+        },
+        {
+          key: 'quotaStatistics',
+          title: t('Quota Statistics'),
+          description: t('Consumption totals'),
+        },
+        {
+          key: 'modelUsageAnalysis',
+          title: t('Model Usage Analysis'),
+          description: t('Per-model call volume and spend'),
+        },
       ],
     },
     {

@@ -58,6 +58,15 @@ export function buildSearchParams(
         ...(commonFilters.upstreamRequestId && {
           upstreamRequestId: commonFilters.upstreamRequestId,
         }),
+        ...(commonFilters.clientUserId && {
+          clientUserId: commonFilters.clientUserId,
+        }),
+        ...(commonFilters.mtSessionId && {
+          mtSessionId: commonFilters.mtSessionId,
+        }),
+        ...(commonFilters.traceId && { traceId: commonFilters.traceId }),
+        ...(commonFilters.trajId && { trajId: commonFilters.trajId }),
+        ...(commonFilters.sessionId && { sessionId: commonFilters.sessionId }),
       }
     }
     case 'drawing': {

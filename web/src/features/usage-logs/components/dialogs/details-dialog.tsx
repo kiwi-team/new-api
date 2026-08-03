@@ -38,6 +38,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Copy,
   Check,
+  FileJson,
   Route,
   Settings2,
   AlertTriangle,
@@ -50,6 +51,7 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -61,7 +63,9 @@ import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-p
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { UsageLog } from '../../data/schema'
 import {
@@ -72,6 +76,7 @@ import {
   getTieredBillingSummary,
   hasAnyCacheTokens,
   isViolationFeeLog,
+  formatRetryChain,
   getFirstResponseTimeColor,
   getResponseTimeColor,
   renderAuditContent,
@@ -82,6 +87,7 @@ import {
   isTimingLogType,
 } from '../../lib/utils'
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import { LogPayloadDialog } from './log-payload-dialog'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -290,6 +296,20 @@ function BillingBreakdown(props: {
     })
   }
 
+  // Only written when a settlement discount actually applied; the group ratio
+  // above is already the pre-discount value, so the two are shown as separate
+  // factors rather than one blended number.
+  if (
+    other.settlement_ratio != null &&
+    Number.isFinite(other.settlement_ratio) &&
+    other.settlement_ratio !== 1
+  ) {
+    rows.push({
+      label: t('Settlement Ratio'),
+      value: `${formatRatio(other.settlement_ratio)}x`,
+    })
+  }
+
   if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {
     if (other.cache_ratio != null && other.cache_ratio !== 1) {
       rows.push({
@@ -479,6 +499,10 @@ interface DetailsDialogProps {
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
+  const isRoot = useAuthStore(
+    (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
+  )
+  const [payloadOpen, setPayloadOpen] = useState(false)
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
@@ -601,9 +625,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
     props.log.type !== 6 &&
     (other?.request_path || conversionChain.length > 0)
 
-  const useChannel = other?.admin_info?.use_channel
-  const channelChain =
-    useChannel && useChannel.length > 0 ? useChannel.join(' → ') : undefined
+  const channelChain = formatRetryChain(
+    other?.admin_info?.use_channel,
+    other?.admin_info?.use_channel_time
+  )
   let reasoningEffortVariant: StatusBadgeProps['variant'] = 'green'
   if (other?.reasoning_effort === 'high') {
     reasoningEffortVariant = 'orange'
@@ -639,6 +664,21 @@ export function DetailsDialog(props: DetailsDialogProps) {
       bodyClassName='pr-2 sm:pr-4'
     >
       <div className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'>
+        {/* Raw request/response/header viewer. Root only: the endpoints sit
+            behind RootAuth and the payloads can carry prompts and upstream
+            credentials. */}
+        {isRoot && (
+          <Button
+            variant='outline'
+            size='sm'
+            className='w-full'
+            onClick={() => setPayloadOpen(true)}
+          >
+            <FileJson className='h-4 w-4' />
+            {t('View raw payload')}
+          </Button>
+        )}
+
         {/* Overview section - key identifiers */}
         <div className='min-w-0 space-y-1'>
           {props.log.request_id && (
@@ -1254,6 +1294,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </div>
         )}
       </div>
+      {isRoot && payloadOpen && (
+        <LogPayloadDialog
+          open
+          onOpenChange={setPayloadOpen}
+          logId={props.log.id}
+        />
+      )}
     </Dialog>
   )
 }

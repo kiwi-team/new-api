@@ -35,15 +35,13 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	var responsesReq *dto.OpenAIResponsesRequest
 	switch req := info.Request.(type) {
 	case *dto.OpenAIResponsesRequest:
-		// https://platform.openai.com/docs/guides/latest-model#gpt-5-2-parameter-compatibility
-		// responses gpt-5模型 开启reasoning后，不能设置top_p
-		if strings.Contains(responsesReq.Model, "gpt-5") && responsesReq.Reasoning != nil {
-			if responsesReq.Reasoning.Effort != "none" {
-				zero := float64(0)
-				responsesReq.TopP = &zero // 开启reasoning后，top_p必须为0
-			}
-		}
 		responsesReq = req
+		// https://platform.openai.com/docs/guides/latest-model#gpt-5-2-parameter-compatibility
+		// responses gpt-5 模型开启 reasoning 后不支持 top_p，需要剔除该字段
+		if strings.Contains(responsesReq.Model, "gpt-5") && responsesReq.Reasoning != nil &&
+			responsesReq.Reasoning.Effort != "none" {
+			responsesReq.TopP = nil
+		}
 	case *dto.OpenAIResponsesCompactionRequest:
 		// Only fields documented for POST /v1/responses/compact are forwarded:
 		// model, input, instructions, previous_response_id, prompt_cache_key,

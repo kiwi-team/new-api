@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 
 import type { NavGroup, NavItem } from '@/components/layout/types'
+import { SIDEBAR_MODULES_DEFAULT } from '@/features/system-settings/maintenance/config'
 import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -33,45 +34,12 @@ type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 // to signal "no narrowing" (empty/invalid/legacy users).
 type SidebarModulesUserConfig = SidebarModulesAdminConfig | null
 
-/**
- * Default sidebar modules configuration
- */
-const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
-  chat: {
-    enabled: true,
-    playground: true,
-    chat: true,
-  },
-  console: {
-    enabled: true,
-    detail: true,
-    token: true,
-    log: true,
-    midjourney: true,
-    task: true,
-  },
-  personal: {
-    enabled: true,
-    topup: true,
-    personal: true,
-  },
-  admin: {
-    enabled: true,
-    channel: true,
-    models: true,
-    redemption: true,
-    user: true,
-    setting: true,
-    subscription: true,
-  },
-}
-
 const mergeWithDefaultSidebarModules = (
   config: SidebarModulesAdminConfig
 ): SidebarModulesAdminConfig => {
   const merged: SidebarModulesAdminConfig = { ...config }
 
-  Object.entries(DEFAULT_SIDEBAR_MODULES).forEach(
+  Object.entries(SIDEBAR_MODULES_DEFAULT).forEach(
     ([sectionKey, defaultSection]) => {
       const existingSection = merged[sectionKey]
       if (!existingSection) {
@@ -105,6 +73,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/usage-logs/common': { section: 'console', module: 'log' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
+  '/error-logs': { section: 'console', module: 'errorlog' },
   '/wallet': { section: 'personal', module: 'topup' },
   '/profile': { section: 'personal', module: 'personal' },
   '/channels': { section: 'admin', module: 'channel' },
@@ -116,6 +85,27 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/system-settings': { section: 'admin', module: 'setting' },
   '/system-settings/site': { section: 'admin', module: 'setting' },
+  '/pricing-center': { section: 'admin', module: 'pricingCenter' },
+  '/settlement-config': { section: 'admin', module: 'settlementConfig' },
+  '/client-user-quota': { section: 'admin', module: 'cuquota' },
+  '/project-budget': { section: 'admin', module: 'project' },
+  '/quota-statistics': { section: 'console', module: 'quotaStatistics' },
+  '/model-route-config': {
+    section: 'admin',
+    module: 'modelRouteConfig',
+  },
+  '/model-channel-monitor': {
+    section: 'admin',
+    module: 'modelChannelMonitor',
+  },
+  '/internal-channel-monitor': {
+    section: 'admin',
+    module: 'internalChannelMonitor',
+  },
+  '/model-usage-analysis': {
+    section: 'console',
+    module: 'modelUsageAnalysis',
+  },
 }
 
 /**
@@ -126,7 +116,7 @@ function parseSidebarConfig(
 ): SidebarModulesAdminConfig {
   // If empty string, null, or undefined, use default config
   if (!value || value.trim() === '') {
-    return DEFAULT_SIDEBAR_MODULES
+    return SIDEBAR_MODULES_DEFAULT
   }
 
   try {
@@ -135,7 +125,7 @@ function parseSidebarConfig(
   } catch {
     // eslint-disable-next-line no-console
     console.error('Failed to parse sidebar modules configuration')
-    return DEFAULT_SIDEBAR_MODULES
+    return SIDEBAR_MODULES_DEFAULT
   }
 }
 
@@ -261,16 +251,15 @@ function filterNavItems(
  *
  * Two layers, AND-combined:
  *   1. Admin (status.SidebarModulesAdmin) — authoritative, falls back to
- *      DEFAULT_SIDEBAR_MODULES when empty/invalid. Disabling here hides the
+ *      SIDEBAR_MODULES_DEFAULT when empty/invalid. Disabling here hides the
  *      item for everyone regardless of user preference.
  *   2. User (auth.user.sidebar_modules) — narrower overlay, null sentinel
  *      means "don't narrow". A section/module is only hidden if the user
  *      explicitly set it to false; undefined fields default to visible so
  *      legacy users with empty sidebar_modules keep the full admin view.
- *      The overlay is also skipped entirely when the backend tells us the
- *      user cannot configure sidebar_settings (e.g. root accounts), so a
- *      stale historical value cannot lock them out of entries they have no
- *      UI to restore.
+ *      The overlay only applies to accounts the backend grants
+ *      `sidebar_settings` (root), since everyone else has no UI to change or
+ *      restore it.
  */
 export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   const { status } = useStatus()
@@ -285,12 +274,10 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   )
 
   const userConfig = useMemo(() => {
-    // If the backend marks the user as unable to configure the sidebar
-    // (e.g. root accounts), skip the user overlay entirely — a stale
-    // historical sidebar_modules value from a previous role would otherwise
-    // hide admin entries for someone who has no in-product UI to restore
-    // them.
-    if (auth?.user?.permissions?.sidebar_settings === false) {
+    // Only root can configure the sidebar, so only root's overlay applies.
+    // For everyone else a stale historical sidebar_modules value would hide
+    // entries they have no in-product UI to restore.
+    if (auth?.user?.permissions?.sidebar_settings !== true) {
       return null
     }
     return parseUserSidebarConfig(auth?.user?.sidebar_modules)
@@ -328,4 +315,21 @@ export function useIsSidebarModuleVisible(url: string): boolean {
       : parseUserSidebarConfig(auth?.user?.sidebar_modules)
 
   return isModuleEnabled(url, adminConfig, userConfig)
+}
+
+/**
+ * Read one admin-level module switch directly, for in-page sections that are
+ * not sidebar entries (e.g. the tabs of the billing page). Only the admin
+ * layer applies here: these switches are set by root for the whole site, and
+ * a module the admin never configured stays visible.
+ */
+export function useAdminSidebarModuleEnabled(
+  section: string,
+  module: string
+): boolean {
+  const { status } = useStatus()
+  const adminConfig = parseSidebarConfig(
+    status?.SidebarModulesAdmin as string | null | undefined
+  )
+  return adminConfig[section]?.[module] !== false
 }

@@ -57,6 +57,8 @@ export const channelSchema = z.object({
   status_code_mapping: z.string().nullish(),
   priority: z.number().nullish(),
   auto_ban: z.number().nullish(),
+  /** Channel-level multiplier of this deployment, carried by channel sync */
+  ratio: z.number().nullish(),
   other_info: z.string().default(''),
   tag: z.string().nullish(),
   setting: z.string().nullish(),
@@ -88,6 +90,17 @@ export interface ChannelSettings {
   system_prompt_override?: boolean
   http_protocol?: 'auto' | 'http1' | string
   http2_connection_shards?: number
+  /** `enabled` lets the channel upload attachments to Google */
+  google_file_upload?: string
+  google_file_bucket?: string
+  /** JSON map of upstream model name -> name returned to the client */
+  model_output_mapping?: string
+  /** Anthropic channels: verify the request really comes from Claude Code */
+  claude_code_guard_enabled?: boolean
+  claude_code_billing_header?: string
+  /** Request path prefixes this channel accepts / refuses */
+  path_whitelist?: string[]
+  path_blacklist?: string[]
 }
 
 export interface ChannelOtherSettings {

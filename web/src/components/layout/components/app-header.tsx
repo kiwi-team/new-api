@@ -23,6 +23,7 @@ import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { useUserMenu } from '@/hooks/use-user-menu'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import { type TopNavLink } from '../types'
@@ -110,6 +111,12 @@ export function AppHeader({
   // Notifications hook
   const notifications = useNotifications()
 
+  // Org "logout only" accounts: the header keeps the brand, the language
+  // switcher and the profile menu (which holds sign-out) — everything that
+  // navigates elsewhere is stripped.
+  const { topbarMode, isPrivileged } = useUserMenu()
+  const isLogoutOnly = topbarMode === 'logout_only' && !isPrivileged
+
   return (
     <>
       <Header>
@@ -121,13 +128,13 @@ export function AppHeader({
 
         {rightContent ?? (
           <div className='ms-auto flex items-center gap-1 sm:gap-2'>
-            {showTopNav && (
+            {showTopNav && !isLogoutOnly && (
               <div className='me-1 hidden lg:block'>
                 <TopNav links={links} />
               </div>
             )}
-            {showSearch && <Search />}
-            {showNotifications && (
+            {showSearch && !isLogoutOnly && <Search />}
+            {showNotifications && !isLogoutOnly && (
               <NotificationPopover
                 open={notifications.popoverOpen}
                 onOpenChange={notifications.setPopoverOpen}
@@ -140,7 +147,7 @@ export function AppHeader({
               />
             )}
             <LanguageSwitcher />
-            {showConfigDrawer && <ConfigDrawer />}
+            {showConfigDrawer && !isLogoutOnly && <ConfigDrawer />}
             {showProfileDropdown && <ProfileDropdown />}
           </div>
         )}

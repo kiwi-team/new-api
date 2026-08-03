@@ -34,6 +34,13 @@ type BaseNavItem = {
    * `useSidebarView`). Route-level guards still enforce access independently.
    */
   requiredRole?: number
+  /**
+   * Backend page key (`service/org_view.go`) this item belongs to. When set,
+   * org-tagged users only see the item if their `/api/user/menu` whitelist
+   * contains one of these keys; admins and root bypass the check. Menu
+   * visibility only — `middleware.PageAuth` still guards the API.
+   */
+  pageKeys?: string[]
 }
 
 /**

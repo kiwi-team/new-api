@@ -16,17 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Bell, Loader2, Mail, Server, Webhook } from 'lucide-react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { MultiSelect } from '@/components/multi-select'
 import { PasswordInput } from '@/components/password-input'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { getSelfSettlementConfigs } from '@/features/bill/api'
+import { getUserModels } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 
 import { updateUserSettings } from '../../api'
@@ -81,9 +85,60 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
     accept_unset_model_ratio_model: false,
     record_ip_log: false,
     upstream_model_update_notify_enabled: false,
+    model_limits_enabled: false,
+    model_limits: [],
   })
 
   // Update form field helper
+  // Models the user may pick from. `/api/user/models` is the same list the
+  // key editor uses; settlement models are merged in on demand because they
+  // can include models this user has never called.
+  const { data: userModels } = useQuery({
+    queryKey: ['user-models'],
+    queryFn: getUserModels,
+  })
+  const [extraModels, setExtraModels] = useState<string[]>([])
+  const [addingSettlementModels, setAddingSettlementModels] = useState(false)
+
+  const modelOptions = useMemo(() => {
+    const names = new Set([
+      ...(userModels?.data ?? []),
+      ...extraModels,
+      ...(settings.model_limits ?? []),
+    ])
+    return [...names].map((name) => ({ label: name, value: name }))
+  }, [userModels, extraModels, settings.model_limits])
+
+  const handleAddSettlementModels = async () => {
+    setAddingSettlementModels(true)
+    try {
+      const configs = await getSelfSettlementConfigs()
+      const settlementModels = [
+        ...new Set(configs.map((config) => config.model_name).filter(Boolean)),
+      ]
+      if (settlementModels.length === 0) {
+        toast.warning(t('No model has a settlement price yet'))
+        return
+      }
+      const current = settings.model_limits ?? []
+      const merged = [...new Set([...current, ...settlementModels])]
+      setExtraModels((prev) => [...new Set([...prev, ...settlementModels])])
+      setSettings((prev) => ({
+        ...prev,
+        model_limits: merged,
+        // Adding models is pointless while the limit is off, so turn it on.
+        model_limits_enabled: true,
+      }))
+      toast.success(
+        t('Added {{count}} models', {
+          count: merged.length - current.length,
+        })
+      )
+    } finally {
+      setAddingSettlementModels(false)
+    }
+  }
+
   const updateField = useCallback(
     <K extends keyof UserSettings>(field: K, value: UserSettings[K]) => {
       setSettings((prev) => ({ ...prev, [field]: value }))
@@ -110,6 +165,8 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
         record_ip_log: parsed.record_ip_log || false,
         upstream_model_update_notify_enabled:
           parsed.upstream_model_update_notify_enabled || false,
+        model_limits_enabled: parsed.model_limits_enabled || false,
+        model_limits: parsed.model_limits ?? [],
       })
     }
   }, [profile])
@@ -391,6 +448,65 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
             onCheckedChange={(checked) => updateField('record_ip_log', checked)}
           />
         </div>
+      </div>
+
+      {/* Divider */}
+      <div className='border-t' />
+
+      {/* Account-level model limits */}
+      <div className='space-y-3'>
+        <div>
+          <h4 className='text-sm font-medium'>{t('Model Limits')}</h4>
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {t(
+              'When on, every key of this account may only request the models selected below. A key with its own model limit overrides this.'
+            )}
+          </p>
+        </div>
+
+        <div className='flex items-start justify-between gap-3 rounded-lg border p-3 sm:items-center sm:p-4'>
+          <Label htmlFor='modelLimitsEnabled'>{t('Enable model limits')}</Label>
+          <Switch
+            id='modelLimitsEnabled'
+            className='shrink-0'
+            checked={settings.model_limits_enabled}
+            onCheckedChange={(checked) =>
+              updateField('model_limits_enabled', checked)
+            }
+          />
+        </div>
+
+        {settings.model_limits_enabled && (
+          <div className='space-y-2'>
+            <div className='space-y-1'>
+              <Button
+                variant='outline'
+                size='sm'
+                disabled={addingSettlementModels}
+                onClick={() => void handleAddSettlementModels()}
+              >
+                {t('Limit to models with a settlement price')}
+              </Button>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Adds models that already have a settlement price or discount to the list below, skipping duplicates.'
+                )}
+              </p>
+            </div>
+
+            <Label htmlFor='modelLimits'>{t('Allowed models')}</Label>
+            <MultiSelect
+              id='modelLimits'
+              options={modelOptions}
+              selected={settings.model_limits ?? []}
+              onChange={(values) => updateField('model_limits', values)}
+              placeholder={t('Select models')}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t('Leave empty to allow every model.')}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Save Button */}

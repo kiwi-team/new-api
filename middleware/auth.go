@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -133,29 +132,9 @@ func mixRouterAuthHelper(c *gin.Context, minRole int) {
 		writeDashboardAuthError(c, err)
 		return
 	}
-	apiUserIdStr := c.Request.Header.Get("New-Api-User")
-	if apiUserIdStr == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "无权进行此操作，未提供 New-Api-User",
-		})
-		return
-	}
-	apiUserId, err := strconv.Atoi(apiUserIdStr)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "无权进行此操作，New-Api-User 格式错误",
-		})
-		return
-	}
-	if user.Id != apiUserId {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
-		})
-		return
-	}
+	// 这里曾额外要求 New-Api-User 头与登录用户一致。那是 cookie session 时代
+	// 防冒充的兜底；改成无状态 Bearer token 后身份完全由 token 决定，该头不再
+	// 提供任何保证，前端也不再发送，继续强制只会让所有请求 401。
 	if user.Status != common.UserStatusEnabled {
 		c.AbortWithStatusJSON(http.StatusOK, gin.H{
 			"success": false,

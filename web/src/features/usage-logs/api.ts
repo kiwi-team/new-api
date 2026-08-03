@@ -110,3 +110,27 @@ export const getAllTaskLogs = (params: GetTaskLogsParams) =>
 
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
   fetchLogs('/api/task', params, false)
+
+// ============================================================================
+// Raw payload API (root only)
+// ============================================================================
+
+/**
+ * Request/response bodies and headers are fetched per log on demand: they are
+ * large, and the backend keeps all three behind `RootAuth` because they can
+ * contain prompts and upstream credentials.
+ */
+async function getLogPayload(
+  id: number,
+  kind: 'request' | 'response' | 'header'
+): Promise<string> {
+  const res = await api.get(`/api/log/${id}/${kind}`)
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to load')
+  }
+  return String(res.data.data?.content ?? '')
+}
+
+export const getLogRequestBody = (id: number) => getLogPayload(id, 'request')
+export const getLogResponseBody = (id: number) => getLogPayload(id, 'response')
+export const getLogHeaders = (id: number) => getLogPayload(id, 'header')

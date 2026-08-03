@@ -118,6 +118,30 @@ export function SidebarModulesSection({
         title: t('Task logs'),
         description: t('Background job tracker for queued work.'),
       },
+      errorlog: {
+        title: t('Error logs'),
+        description: t('Failed relay requests with upstream detail.'),
+      },
+      quotaStatistics: {
+        title: t('Quota statistics'),
+        description: t('Consumption totals by user, model, and group.'),
+      },
+      modelUsageAnalysis: {
+        title: t('Model usage analysis'),
+        description: t('Per-model call volume and spend breakdown.'),
+      },
+      billQuery: {
+        title: t('Bill: query tab'),
+        description: t('Look up bills for a period.'),
+      },
+      billPricing: {
+        title: t('Bill: pricing tab'),
+        description: t('Settlement prices used on the bill.'),
+      },
+      billDiscount: {
+        title: t('Bill: discount tab'),
+        description: t('Group and model discounts applied to the bill.'),
+      },
     },
     personal: {
       topup: {
@@ -127,6 +151,14 @@ export function SidebarModulesSection({
       personal: {
         title: t('Profile'),
         description: t('Personal settings and profile management.'),
+      },
+      accountManagement: {
+        title: t('Account security'),
+        description: t('Bindings, passkeys, 2FA, and login sessions.'),
+      },
+      preferences: {
+        title: t('Preferences'),
+        description: t('Language and display preferences.'),
       },
     },
     admin: {
@@ -145,6 +177,38 @@ export function SidebarModulesSection({
       user: {
         title: t('Users'),
         description: t('Administer user accounts and roles.'),
+      },
+      deployment: {
+        title: t('Model deployments'),
+        description: t('Deployment records for catalog models.'),
+      },
+      modelRouteConfig: {
+        title: t('Model route config'),
+        description: t('Per-model channel routing rules.'),
+      },
+      modelChannelMonitor: {
+        title: t('Model channel monitor'),
+        description: t('Health and latency per model and channel.'),
+      },
+      internalChannelMonitor: {
+        title: t('Internal channel monitor'),
+        description: t('Monitoring restricted to internal channels.'),
+      },
+      cuquota: {
+        title: t('UID budgets'),
+        description: t('Per-client-UID quota limits.'),
+      },
+      project: {
+        title: t('Project budgets'),
+        description: t('Budgets grouped by project.'),
+      },
+      settlementConfig: {
+        title: t('Settlement config'),
+        description: t('Settlement prices used for billing.'),
+      },
+      pricingCenter: {
+        title: t('Pricing center'),
+        description: t('Root-only pricing overview and editing.'),
       },
       setting: {
         title: t('System settings'),

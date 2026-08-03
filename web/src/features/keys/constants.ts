@@ -98,3 +98,10 @@ export const SUCCESS_MESSAGES = {
   API_KEY_ENABLED: 'API Key enabled successfully',
   API_KEY_DISABLED: 'API Key disabled successfully',
 } as const
+
+/**
+ * Sentinel for the root-only user filter's default option. The backend reads
+ * an absent `user_id` as "the caller's own keys", and `0` as "every user", so
+ * neither of those is usable as a Select value.
+ */
+export const OWN_KEYS_VALUE = 'self'

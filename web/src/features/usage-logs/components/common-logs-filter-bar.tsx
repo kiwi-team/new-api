@@ -238,7 +238,12 @@ export function CommonLogsFilterBar<TData>(
     !!filters.username ||
     !!filters.channel ||
     !!filters.requestId ||
-    !!filters.upstreamRequestId
+    !!filters.upstreamRequestId ||
+    !!filters.clientUserId ||
+    !!filters.mtSessionId ||
+    !!filters.traceId ||
+    !!filters.trajId ||
+    !!filters.sessionId
 
   const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
@@ -250,6 +255,11 @@ export function CommonLogsFilterBar<TData>(
     isAdmin ? filters.channel : undefined,
     filters.requestId,
     filters.upstreamRequestId,
+    filters.clientUserId,
+    filters.mtSessionId,
+    filters.traceId,
+    filters.trajId,
+    filters.sessionId,
   ].filter(Boolean).length
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
   const logTypeItems = useMemo(
@@ -403,6 +413,46 @@ export function CommonLogsFilterBar<TData>(
           placeholder={t('Upstream Request ID')}
           value={filters.upstreamRequestId || ''}
           onChange={(e) => handleChange('upstreamRequestId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          placeholder={t('Client UID')}
+          value={filters.clientUserId || ''}
+          onChange={(e) => handleChange('clientUserId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          placeholder={t('MT Session ID')}
+          value={filters.mtSessionId || ''}
+          onChange={(e) => handleChange('mtSessionId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          placeholder={t('Trace ID')}
+          value={filters.traceId || ''}
+          onChange={(e) => handleChange('traceId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          placeholder={t('Traj ID')}
+          value={filters.trajId || ''}
+          onChange={(e) => handleChange('trajId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          placeholder={t('Session ID')}
+          value={filters.sessionId || ''}
+          onChange={(e) => handleChange('sessionId', e.target.value)}
           onKeyDown={handleKeyDown}
         />
       </LogsFilterField>

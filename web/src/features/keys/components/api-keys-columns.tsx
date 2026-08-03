@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { BadgeCell, TruncatedCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
+import { TableId } from '@/components/table-id'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -102,6 +103,14 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       enableSorting: false,
       enableHiding: false,
       size: 40,
+    },
+    {
+      accessorKey: 'id',
+      header: t('ID'),
+      cell: ({ row }) => <TableId value={row.getValue('id') as number} />,
+      enableSorting: false,
+      size: 80,
+      meta: { mobileHidden: true },
     },
     {
       accessorKey: 'name',

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { type Table } from '@tanstack/react-table'
-import { Power, PowerOff, Tag, Trash2 } from 'lucide-react'
+import { Power, PowerOff, Tag, Trash2, UploadCloud } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -37,6 +37,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -47,6 +48,7 @@ import {
   handleBatchSetTag,
 } from '../lib'
 import type { Channel } from '../types'
+import { SyncChannelsDialog } from './dialogs/sync-channels-dialog'
 
 interface DataTableBulkActionsProps<TData> {
   table: Table<TData>
@@ -60,7 +62,10 @@ export function DataTableBulkActions<TData>({
   const [showTagDialog, setShowTagDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [tagValue, setTagValue] = useState('')
+  const [showSyncDialog, setShowSyncDialog] = useState(false)
   const currentUser = useAuthStore((s) => s.auth.user)
+  // Cross-environment sync writes to other deployments; root only.
+  const isRoot = currentUser?.role === ROLE.SUPER_ADMIN
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -174,6 +179,31 @@ export function DataTableBulkActions<TData>({
           </TooltipContent>
         </Tooltip>
 
+        {isRoot && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={() => setShowSyncDialog(true)}
+                  className='size-8'
+                  aria-label={t('Sync channels to other environments')}
+                  title={t('Sync channels to other environments')}
+                />
+              }
+            >
+              <UploadCloud />
+              <span className='sr-only'>
+                {t('Sync channels to other environments')}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('Sync channels to other environments')}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         <Tooltip>
           <TooltipTrigger
             render={
@@ -210,6 +240,12 @@ export function DataTableBulkActions<TData>({
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
+
+      <SyncChannelsDialog
+        open={showSyncDialog}
+        onOpenChange={setShowSyncDialog}
+        channelIds={selectedIds}
+      />
 
       {/* Set Tag Dialog */}
       <Dialog

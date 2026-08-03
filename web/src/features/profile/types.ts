@@ -110,6 +110,10 @@ export interface UserSettings {
   gotify_token?: string
   /** Gotify message priority (0-10) */
   gotify_priority?: number
+  /** Account-level model allowlist toggle */
+  model_limits_enabled?: boolean
+  /** Models this account's keys may request; empty means no restriction */
+  model_limits?: string[]
   /** Accept unset model ratio model */
   accept_unset_model_ratio_model?: boolean
   /** Record IP log */
@@ -145,6 +149,13 @@ export interface UpdateUserSettingsRequest {
   accept_unset_model_ratio_model?: boolean
   record_ip_log?: boolean
   upstream_model_update_notify_enabled?: boolean
+  /**
+   * Account-level model allowlist. Must always be sent: the backend rebuilds
+   * the whole setting from this request and treats an empty `model_limits` as
+   * "clear the limit and switch it off".
+   */
+  model_limits_enabled?: boolean
+  model_limits?: string[]
 }
 
 /**

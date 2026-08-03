@@ -40,17 +40,27 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatQuota } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { cn } from '@/lib/utils'
 
-import { getApiKeys, searchApiKeys } from '../api'
+import { getApiKeys, getUserOptions, searchApiKeys } from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
   API_KEY_STATUSES,
   ERROR_MESSAGES,
+  OWN_KEYS_VALUE,
 } from '../constants'
 import type { ApiKey } from '../types'
 import { ApiKeyCell, UnlimitedQuotaBadge } from './api-keys-cells'
@@ -229,6 +239,27 @@ export function ApiKeysTable() {
     onColumnFiltersChange,
   })
   const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
+  // Root can browse another user's keys; `undefined` keeps the request scoped
+  // to the caller, `0` asks the backend for every user's keys.
+  const isRoot = useAuthStore(
+    (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
+  )
+  const [userFilter, setUserFilter] = useState<number | undefined>(undefined)
+
+  const { data: userListData } = useQuery({
+    queryKey: ['keys', 'user-options'],
+    queryFn: getUserOptions,
+    enabled: isRoot,
+    staleTime: 5 * 60 * 1000,
+  })
+  const userSelectItems = [
+    { value: OWN_KEYS_VALUE, label: t('My keys') },
+    { value: '0', label: t('All users') },
+    ...(userListData ?? []).map((user) => ({
+      value: String(user.id),
+      label: `${user.username} (ID: ${user.id})`,
+    })),
+  ]
 
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
@@ -240,6 +271,7 @@ export function ApiKeysTable() {
       globalFilter,
       tokenFilter,
       refreshTrigger,
+      userFilter,
     ],
     queryFn: async () => {
       const result = shouldSearch
@@ -248,10 +280,12 @@ export function ApiKeysTable() {
             token: tokenFilter,
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            userId: userFilter,
           })
         : await getApiKeys({
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            userId: userFilter,
           })
 
       if (!result.success) {
@@ -308,13 +342,40 @@ export function ApiKeysTable() {
       toolbarProps={{
         searchPlaceholder: t('Filter by name...'),
         additionalSearch: (
-          <Input
-            placeholder={t('Filter by API key...')}
-            aria-label={t('Filter by API key...')}
-            value={tokenFilterInput}
-            onChange={(e) => setTokenFilterInput(e.target.value)}
-            className='w-full sm:w-50 lg:w-60'
-          />
+          <>
+            <Input
+              placeholder={t('Filter by API key...')}
+              aria-label={t('Filter by API key...')}
+              value={tokenFilterInput}
+              onChange={(e) => setTokenFilterInput(e.target.value)}
+              className='w-full sm:w-50 lg:w-60'
+            />
+            {isRoot && (
+              <Select
+                value={userFilter == null ? OWN_KEYS_VALUE : String(userFilter)}
+                onValueChange={(value) =>
+                  setUserFilter(
+                    value === OWN_KEYS_VALUE ? undefined : Number(value)
+                  )
+                }
+                items={userSelectItems}
+              >
+                <SelectTrigger
+                  className='w-full sm:w-52'
+                  aria-label={t('Filter by user')}
+                >
+                  <SelectValue placeholder={t('Filter by user')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {userSelectItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </>
         ),
         filters: [
           {

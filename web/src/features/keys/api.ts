@@ -35,8 +35,12 @@ import type {
 export async function getApiKeys(
   params: GetApiKeysParams = {}
 ): Promise<GetApiKeysResponse> {
-  const { p = 1, size = 10 } = params
-  const res = await api.get(`/api/token/?p=${p}&size=${size}`)
+  const { p = 1, size = 10, userId } = params
+  const queryParams = new URLSearchParams({ p: String(p), size: String(size) })
+  // Root only, ignored server-side otherwise: a specific id scopes the list to
+  // that user, 0 returns every user's keys.
+  if (userId != null) queryParams.set('user_id', String(userId))
+  const res = await api.get(`/api/token/?${queryParams.toString()}`)
   return res.data
 }
 
@@ -44,12 +48,13 @@ export async function getApiKeys(
 export async function searchApiKeys(
   params: SearchApiKeysParams
 ): Promise<GetApiKeysResponse> {
-  const { keyword = '', token = '', p, size } = params
+  const { keyword = '', token = '', p, size, userId } = params
   const queryParams = new URLSearchParams()
   if (keyword) queryParams.set('keyword', keyword)
   if (token) queryParams.set('token', token)
   if (p != null) queryParams.set('p', String(p))
   if (size != null) queryParams.set('size', String(size))
+  if (userId != null) queryParams.set('user_id', String(userId))
   const res = await api.get(`/api/token/search?${queryParams.toString()}`)
   return res.data
 }
@@ -115,4 +120,55 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
   return res.data
+}
+
+/**
+ * Assign a group to the selected keys.
+ *
+ * Non-root callers are scoped to their own keys server-side; root may set the
+ * group on anyone's.
+ */
+export async function batchSetApiKeyGroup(
+  ids: number[],
+  group: string
+): Promise<ApiResponse<number>> {
+  const res = await api.post('/api/token/batch/group', { ids, group })
+  return res.data
+}
+
+/**
+ * Append models to every key in a group.
+ *
+ * Note this is group-scoped, not selection-scoped: the backend
+ * (`BatchAppendTokenModelsByGroup`) matches on the group name, so the current
+ * row selection is irrelevant here.
+ */
+export async function batchAppendApiKeyModels(
+  group: string,
+  models: string[]
+): Promise<ApiResponse<number>> {
+  const res = await api.post('/api/token/batch/models', { group, models })
+  return res.data
+}
+
+export type UserOption = { id: number; username: string }
+
+/**
+ * Users available in the root-only key filter.
+ *
+ * `/api/user/` is admin-gated and paginated; one large page is enough for a
+ * picker and avoids a per-keystroke lookup.
+ */
+export async function getUserOptions(): Promise<UserOption[]> {
+  const res = await api.get('/api/user/', {
+    params: { p: 1, page_size: 1000 },
+  })
+  if (!res.data?.success) return []
+  const items = res.data.data?.items
+  return Array.isArray(items)
+    ? items.map((user: UserOption) => ({
+        id: user.id,
+        username: user.username,
+      }))
+    : []
 }

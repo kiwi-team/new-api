@@ -467,3 +467,29 @@ export function renderAuditContent(
   if (!template) return null
   return t(template, (op.params ?? {}) as Record<string, unknown>)
 }
+
+/**
+ * Render the retry chain as `3(1.20s) → 16`.
+ *
+ * `use_channel_time` is positionally matched to `use_channel` and records how
+ * long each attempt took, including the one that finally succeeded — that is
+ * what makes a slow failing channel visible. It is absent on logs written
+ * before the timings were recorded, and a short array is possible if an
+ * attempt died before its duration was captured, so each entry degrades to a
+ * bare channel id on its own.
+ */
+export function formatRetryChain(
+  useChannel: number[] | undefined,
+  useChannelTime: number[] | undefined
+): string | undefined {
+  if (!useChannel || useChannel.length === 0) return undefined
+
+  return useChannel
+    .map((channelId, index) => {
+      const ms = Number(useChannelTime?.[index])
+      if (!Number.isFinite(ms) || ms <= 0) return String(channelId)
+      const elapsed = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
+      return `${channelId}(${elapsed})`
+    })
+    .join(' → ')
+}

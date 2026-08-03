@@ -215,6 +215,17 @@ export function buildApiParams(config: {
     ...(searchParams.upstreamRequestId
       ? { upstream_request_id: String(searchParams.upstreamRequestId) }
       : {}),
+    ...(searchParams.clientUserId
+      ? { client_user_id: String(searchParams.clientUserId) }
+      : {}),
+    ...(searchParams.mtSessionId
+      ? { mt_session_id: String(searchParams.mtSessionId) }
+      : {}),
+    ...(searchParams.traceId ? { trace_id: String(searchParams.traceId) } : {}),
+    ...(searchParams.trajId ? { traj_id: String(searchParams.trajId) } : {}),
+    ...(searchParams.sessionId
+      ? { session_id: String(searchParams.sessionId) }
+      : {}),
     ...buildTimeRangeParams(searchParams, false),
   }
 

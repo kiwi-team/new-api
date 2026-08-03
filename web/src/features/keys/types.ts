@@ -45,6 +45,12 @@ export const apiKeySchema = z.object({
   model_limits_enabled: z.boolean(),
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),
+  /** Send a webhook alert every time this many dollars are consumed; 0 is off */
+  alert_threshold: z.number().nullish().default(0),
+  /** JSON map of channel id -> multiplier applied to requests from this key */
+  channel_ratios: z.string().nullish().default(''),
+  /** JSON routing rules for this key; root-writable only */
+  channel_rules: z.string().nullish().default(''),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -62,6 +68,8 @@ export interface ApiResponse<T = unknown> {
 export interface GetApiKeysParams {
   p?: number
   size?: number
+  /** Root only: scope to one user, or 0 for all users. */
+  userId?: number
 }
 
 export interface GetApiKeysResponse {
@@ -80,6 +88,8 @@ export interface SearchApiKeysParams {
   token?: string
   p?: number
   size?: number
+  /** Root only: scope to one user, or 0 for all users. */
+  userId?: number
 }
 
 export interface ApiKeyFormData {
@@ -92,6 +102,9 @@ export interface ApiKeyFormData {
   allow_ips: string
   group: string
   cross_group_retry: boolean
+  alert_threshold: number
+  channel_ratios: string
+  channel_rules: string
 }
 
 // ============================================================================

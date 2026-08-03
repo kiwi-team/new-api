@@ -34,18 +34,30 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedBillIndexRouteImport } from './routes/_authenticated/bill/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
+import { Route as AuthenticatedClientUserQuotaIndexRouteImport } from './routes/_authenticated/client-user-quota/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
+import { Route as AuthenticatedErrorLogsIndexRouteImport } from './routes/_authenticated/error-logs/index'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
+import { Route as AuthenticatedInternalChannelMonitorIndexRouteImport } from './routes/_authenticated/internal-channel-monitor/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
+import { Route as AuthenticatedModelChannelMonitorIndexRouteImport } from './routes/_authenticated/model-channel-monitor/index'
+import { Route as AuthenticatedModelRouteConfigIndexRouteImport } from './routes/_authenticated/model-route-config/index'
+import { Route as AuthenticatedModelUsageAnalysisIndexRouteImport } from './routes/_authenticated/model-usage-analysis/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
 import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
+import { Route as AuthenticatedPricingCenterIndexRouteImport } from './routes/_authenticated/pricing-center/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
+import { Route as AuthenticatedProjectBudgetIndexRouteImport } from './routes/_authenticated/project-budget/index'
+import { Route as AuthenticatedQuotaStatisticsIndexRouteImport } from './routes/_authenticated/quota-statistics/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
+import { Route as AuthenticatedSettlementConfigIndexRouteImport } from './routes/_authenticated/settlement-config/index'
 import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_authenticated/subscriptions/index'
+import { Route as AuthenticatedSyncEnvironmentsIndexRouteImport } from './routes/_authenticated/sync-environments/index'
 import { Route as AuthenticatedSystemInfoIndexRouteImport } from './routes/_authenticated/system-info/index'
 import { Route as AuthenticatedSystemSettingsIndexRouteImport } from './routes/_authenticated/system-settings/index'
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
@@ -192,6 +204,11 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AuthenticatedBillIndexRoute = AuthenticatedBillIndexRouteImport.update({
+  id: '/bill/',
+  path: '/bill/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -203,6 +220,12 @@ const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
   path: '/chat/$chatId',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedClientUserQuotaIndexRoute =
+  AuthenticatedClientUserQuotaIndexRouteImport.update({
+    id: '/client-user-quota/',
+    path: '/client-user-quota/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardIndexRoute =
   AuthenticatedDashboardIndexRouteImport.update({
     id: '/dashboard/',
@@ -215,10 +238,22 @@ const AuthenticatedDashboardSectionRoute =
     path: '/dashboard/$section',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedErrorLogsIndexRoute =
+  AuthenticatedErrorLogsIndexRouteImport.update({
+    id: '/error-logs/',
+    path: '/error-logs/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
     id: '/errors/$error',
     path: '/errors/$error',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInternalChannelMonitorIndexRoute =
+  AuthenticatedInternalChannelMonitorIndexRouteImport.update({
+    id: '/internal-channel-monitor/',
+    path: '/internal-channel-monitor/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
@@ -226,6 +261,24 @@ const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
   path: '/keys/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedModelChannelMonitorIndexRoute =
+  AuthenticatedModelChannelMonitorIndexRouteImport.update({
+    id: '/model-channel-monitor/',
+    path: '/model-channel-monitor/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedModelRouteConfigIndexRoute =
+  AuthenticatedModelRouteConfigIndexRouteImport.update({
+    id: '/model-route-config/',
+    path: '/model-route-config/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedModelUsageAnalysisIndexRoute =
+  AuthenticatedModelUsageAnalysisIndexRouteImport.update({
+    id: '/model-usage-analysis/',
+    path: '/model-usage-analysis/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedModelsIndexRoute =
   AuthenticatedModelsIndexRouteImport.update({
     id: '/models/',
@@ -244,10 +297,28 @@ const AuthenticatedPlaygroundIndexRoute =
     path: '/playground/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedPricingCenterIndexRoute =
+  AuthenticatedPricingCenterIndexRouteImport.update({
+    id: '/pricing-center/',
+    path: '/pricing-center/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedProfileIndexRoute =
   AuthenticatedProfileIndexRouteImport.update({
     id: '/profile/',
     path: '/profile/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedProjectBudgetIndexRoute =
+  AuthenticatedProjectBudgetIndexRouteImport.update({
+    id: '/project-budget/',
+    path: '/project-budget/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedQuotaStatisticsIndexRoute =
+  AuthenticatedQuotaStatisticsIndexRouteImport.update({
+    id: '/quota-statistics/',
+    path: '/quota-statistics/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedRedemptionCodesIndexRoute =
@@ -256,10 +327,22 @@ const AuthenticatedRedemptionCodesIndexRoute =
     path: '/redemption-codes/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedSettlementConfigIndexRoute =
+  AuthenticatedSettlementConfigIndexRouteImport.update({
+    id: '/settlement-config/',
+    path: '/settlement-config/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSubscriptionsIndexRoute =
   AuthenticatedSubscriptionsIndexRouteImport.update({
     id: '/subscriptions/',
     path: '/subscriptions/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSyncEnvironmentsIndexRoute =
+  AuthenticatedSyncEnvironmentsIndexRouteImport.update({
+    id: '/sync-environments/',
+    path: '/sync-environments/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedSystemInfoIndexRoute =
@@ -416,14 +499,26 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/bill/': typeof AuthenticatedBillIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/client-user-quota/': typeof AuthenticatedClientUserQuotaIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/error-logs/': typeof AuthenticatedErrorLogsIndexRoute
+  '/internal-channel-monitor/': typeof AuthenticatedInternalChannelMonitorIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
+  '/model-channel-monitor/': typeof AuthenticatedModelChannelMonitorIndexRoute
+  '/model-route-config/': typeof AuthenticatedModelRouteConfigIndexRoute
+  '/model-usage-analysis/': typeof AuthenticatedModelUsageAnalysisIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
+  '/pricing-center/': typeof AuthenticatedPricingCenterIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
+  '/project-budget/': typeof AuthenticatedProjectBudgetIndexRoute
+  '/quota-statistics/': typeof AuthenticatedQuotaStatisticsIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/settlement-config/': typeof AuthenticatedSettlementConfigIndexRoute
   '/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
+  '/sync-environments/': typeof AuthenticatedSyncEnvironmentsIndexRoute
   '/system-info/': typeof AuthenticatedSystemInfoIndexRoute
   '/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -473,14 +568,26 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/bill': typeof AuthenticatedBillIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
+  '/client-user-quota': typeof AuthenticatedClientUserQuotaIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
+  '/error-logs': typeof AuthenticatedErrorLogsIndexRoute
+  '/internal-channel-monitor': typeof AuthenticatedInternalChannelMonitorIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
+  '/model-channel-monitor': typeof AuthenticatedModelChannelMonitorIndexRoute
+  '/model-route-config': typeof AuthenticatedModelRouteConfigIndexRoute
+  '/model-usage-analysis': typeof AuthenticatedModelUsageAnalysisIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
+  '/pricing-center': typeof AuthenticatedPricingCenterIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
+  '/project-budget': typeof AuthenticatedProjectBudgetIndexRoute
+  '/quota-statistics': typeof AuthenticatedQuotaStatisticsIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/settlement-config': typeof AuthenticatedSettlementConfigIndexRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsIndexRoute
+  '/sync-environments': typeof AuthenticatedSyncEnvironmentsIndexRoute
   '/system-info': typeof AuthenticatedSystemInfoIndexRoute
   '/system-settings': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
@@ -534,14 +641,26 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/_authenticated/bill/': typeof AuthenticatedBillIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/_authenticated/client-user-quota/': typeof AuthenticatedClientUserQuotaIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/_authenticated/error-logs/': typeof AuthenticatedErrorLogsIndexRoute
+  '/_authenticated/internal-channel-monitor/': typeof AuthenticatedInternalChannelMonitorIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
+  '/_authenticated/model-channel-monitor/': typeof AuthenticatedModelChannelMonitorIndexRoute
+  '/_authenticated/model-route-config/': typeof AuthenticatedModelRouteConfigIndexRoute
+  '/_authenticated/model-usage-analysis/': typeof AuthenticatedModelUsageAnalysisIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
+  '/_authenticated/pricing-center/': typeof AuthenticatedPricingCenterIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
+  '/_authenticated/project-budget/': typeof AuthenticatedProjectBudgetIndexRoute
+  '/_authenticated/quota-statistics/': typeof AuthenticatedQuotaStatisticsIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/_authenticated/settlement-config/': typeof AuthenticatedSettlementConfigIndexRoute
   '/_authenticated/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
+  '/_authenticated/sync-environments/': typeof AuthenticatedSyncEnvironmentsIndexRoute
   '/_authenticated/system-info/': typeof AuthenticatedSystemInfoIndexRoute
   '/_authenticated/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -594,14 +713,26 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/bill/'
     | '/channels/'
+    | '/client-user-quota/'
     | '/dashboard/'
+    | '/error-logs/'
+    | '/internal-channel-monitor/'
     | '/keys/'
+    | '/model-channel-monitor/'
+    | '/model-route-config/'
+    | '/model-usage-analysis/'
     | '/models/'
     | '/playground/'
+    | '/pricing-center/'
     | '/profile/'
+    | '/project-budget/'
+    | '/quota-statistics/'
     | '/redemption-codes/'
+    | '/settlement-config/'
     | '/subscriptions/'
+    | '/sync-environments/'
     | '/system-info/'
     | '/system-settings/'
     | '/usage-logs/'
@@ -651,14 +782,26 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/bill'
     | '/channels'
+    | '/client-user-quota'
     | '/dashboard'
+    | '/error-logs'
+    | '/internal-channel-monitor'
     | '/keys'
+    | '/model-channel-monitor'
+    | '/model-route-config'
+    | '/model-usage-analysis'
     | '/models'
     | '/playground'
+    | '/pricing-center'
     | '/profile'
+    | '/project-budget'
+    | '/quota-statistics'
     | '/redemption-codes'
+    | '/settlement-config'
     | '/subscriptions'
+    | '/sync-environments'
     | '/system-info'
     | '/system-settings'
     | '/usage-logs'
@@ -711,14 +854,26 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
+    | '/_authenticated/bill/'
     | '/_authenticated/channels/'
+    | '/_authenticated/client-user-quota/'
     | '/_authenticated/dashboard/'
+    | '/_authenticated/error-logs/'
+    | '/_authenticated/internal-channel-monitor/'
     | '/_authenticated/keys/'
+    | '/_authenticated/model-channel-monitor/'
+    | '/_authenticated/model-route-config/'
+    | '/_authenticated/model-usage-analysis/'
     | '/_authenticated/models/'
     | '/_authenticated/playground/'
+    | '/_authenticated/pricing-center/'
     | '/_authenticated/profile/'
+    | '/_authenticated/project-budget/'
+    | '/_authenticated/quota-statistics/'
     | '/_authenticated/redemption-codes/'
+    | '/_authenticated/settlement-config/'
     | '/_authenticated/subscriptions/'
+    | '/_authenticated/sync-environments/'
     | '/_authenticated/system-info/'
     | '/_authenticated/system-settings/'
     | '/_authenticated/usage-logs/'
@@ -937,6 +1092,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
     }
+    '/_authenticated/bill/': {
+      id: '/_authenticated/bill/'
+      path: '/bill'
+      fullPath: '/bill/'
+      preLoaderRoute: typeof AuthenticatedBillIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
       path: '/channels'
@@ -949,6 +1111,13 @@ declare module '@tanstack/react-router' {
       path: '/chat/$chatId'
       fullPath: '/chat/$chatId'
       preLoaderRoute: typeof AuthenticatedChatChatIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/client-user-quota/': {
+      id: '/_authenticated/client-user-quota/'
+      path: '/client-user-quota'
+      fullPath: '/client-user-quota/'
+      preLoaderRoute: typeof AuthenticatedClientUserQuotaIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard/': {
@@ -965,6 +1134,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardSectionRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/error-logs/': {
+      id: '/_authenticated/error-logs/'
+      path: '/error-logs'
+      fullPath: '/error-logs/'
+      preLoaderRoute: typeof AuthenticatedErrorLogsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/errors/$error': {
       id: '/_authenticated/errors/$error'
       path: '/errors/$error'
@@ -972,11 +1148,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedErrorsErrorRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/internal-channel-monitor/': {
+      id: '/_authenticated/internal-channel-monitor/'
+      path: '/internal-channel-monitor'
+      fullPath: '/internal-channel-monitor/'
+      preLoaderRoute: typeof AuthenticatedInternalChannelMonitorIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/keys/': {
       id: '/_authenticated/keys/'
       path: '/keys'
       fullPath: '/keys/'
       preLoaderRoute: typeof AuthenticatedKeysIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/model-channel-monitor/': {
+      id: '/_authenticated/model-channel-monitor/'
+      path: '/model-channel-monitor'
+      fullPath: '/model-channel-monitor/'
+      preLoaderRoute: typeof AuthenticatedModelChannelMonitorIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/model-route-config/': {
+      id: '/_authenticated/model-route-config/'
+      path: '/model-route-config'
+      fullPath: '/model-route-config/'
+      preLoaderRoute: typeof AuthenticatedModelRouteConfigIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/model-usage-analysis/': {
+      id: '/_authenticated/model-usage-analysis/'
+      path: '/model-usage-analysis'
+      fullPath: '/model-usage-analysis/'
+      preLoaderRoute: typeof AuthenticatedModelUsageAnalysisIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/models/': {
@@ -1000,11 +1204,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPlaygroundIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/pricing-center/': {
+      id: '/_authenticated/pricing-center/'
+      path: '/pricing-center'
+      fullPath: '/pricing-center/'
+      preLoaderRoute: typeof AuthenticatedPricingCenterIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/profile/': {
       id: '/_authenticated/profile/'
       path: '/profile'
       fullPath: '/profile/'
       preLoaderRoute: typeof AuthenticatedProfileIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/project-budget/': {
+      id: '/_authenticated/project-budget/'
+      path: '/project-budget'
+      fullPath: '/project-budget/'
+      preLoaderRoute: typeof AuthenticatedProjectBudgetIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/quota-statistics/': {
+      id: '/_authenticated/quota-statistics/'
+      path: '/quota-statistics'
+      fullPath: '/quota-statistics/'
+      preLoaderRoute: typeof AuthenticatedQuotaStatisticsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/redemption-codes/': {
@@ -1014,11 +1239,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRedemptionCodesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/settlement-config/': {
+      id: '/_authenticated/settlement-config/'
+      path: '/settlement-config'
+      fullPath: '/settlement-config/'
+      preLoaderRoute: typeof AuthenticatedSettlementConfigIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/subscriptions/': {
       id: '/_authenticated/subscriptions/'
       path: '/subscriptions'
       fullPath: '/subscriptions/'
       preLoaderRoute: typeof AuthenticatedSubscriptionsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/sync-environments/': {
+      id: '/_authenticated/sync-environments/'
+      path: '/sync-environments'
+      fullPath: '/sync-environments/'
+      preLoaderRoute: typeof AuthenticatedSyncEnvironmentsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-info/': {
@@ -1262,14 +1501,26 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
+  AuthenticatedBillIndexRoute: typeof AuthenticatedBillIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
+  AuthenticatedClientUserQuotaIndexRoute: typeof AuthenticatedClientUserQuotaIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
+  AuthenticatedErrorLogsIndexRoute: typeof AuthenticatedErrorLogsIndexRoute
+  AuthenticatedInternalChannelMonitorIndexRoute: typeof AuthenticatedInternalChannelMonitorIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
+  AuthenticatedModelChannelMonitorIndexRoute: typeof AuthenticatedModelChannelMonitorIndexRoute
+  AuthenticatedModelRouteConfigIndexRoute: typeof AuthenticatedModelRouteConfigIndexRoute
+  AuthenticatedModelUsageAnalysisIndexRoute: typeof AuthenticatedModelUsageAnalysisIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
+  AuthenticatedPricingCenterIndexRoute: typeof AuthenticatedPricingCenterIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
+  AuthenticatedProjectBudgetIndexRoute: typeof AuthenticatedProjectBudgetIndexRoute
+  AuthenticatedQuotaStatisticsIndexRoute: typeof AuthenticatedQuotaStatisticsIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
+  AuthenticatedSettlementConfigIndexRoute: typeof AuthenticatedSettlementConfigIndexRoute
   AuthenticatedSubscriptionsIndexRoute: typeof AuthenticatedSubscriptionsIndexRoute
+  AuthenticatedSyncEnvironmentsIndexRoute: typeof AuthenticatedSyncEnvironmentsIndexRoute
   AuthenticatedSystemInfoIndexRoute: typeof AuthenticatedSystemInfoIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
@@ -1285,15 +1536,35 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
+  AuthenticatedBillIndexRoute: AuthenticatedBillIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
+  AuthenticatedClientUserQuotaIndexRoute:
+    AuthenticatedClientUserQuotaIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
+  AuthenticatedErrorLogsIndexRoute: AuthenticatedErrorLogsIndexRoute,
+  AuthenticatedInternalChannelMonitorIndexRoute:
+    AuthenticatedInternalChannelMonitorIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
+  AuthenticatedModelChannelMonitorIndexRoute:
+    AuthenticatedModelChannelMonitorIndexRoute,
+  AuthenticatedModelRouteConfigIndexRoute:
+    AuthenticatedModelRouteConfigIndexRoute,
+  AuthenticatedModelUsageAnalysisIndexRoute:
+    AuthenticatedModelUsageAnalysisIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
+  AuthenticatedPricingCenterIndexRoute: AuthenticatedPricingCenterIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
+  AuthenticatedProjectBudgetIndexRoute: AuthenticatedProjectBudgetIndexRoute,
+  AuthenticatedQuotaStatisticsIndexRoute:
+    AuthenticatedQuotaStatisticsIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:
     AuthenticatedRedemptionCodesIndexRoute,
+  AuthenticatedSettlementConfigIndexRoute:
+    AuthenticatedSettlementConfigIndexRoute,
   AuthenticatedSubscriptionsIndexRoute: AuthenticatedSubscriptionsIndexRoute,
+  AuthenticatedSyncEnvironmentsIndexRoute:
+    AuthenticatedSyncEnvironmentsIndexRoute,
   AuthenticatedSystemInfoIndexRoute: AuthenticatedSystemInfoIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,

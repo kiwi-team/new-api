@@ -52,6 +52,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Sheet,
   SheetClose,
@@ -79,6 +80,7 @@ import {
   updateUser,
   getUser,
   getGroups,
+  getOrgs,
   getPermissionCatalog,
 } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -86,6 +88,7 @@ import {
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
+  ORG_ROLES,
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from '../lib'
@@ -154,6 +157,19 @@ export function UsersMutateDrawer({
   const currentQuotaRaw = form.watch('quota_dollars') || 0
   const selectedRole = form.watch('role')
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
+  const isRoot = currentUser?.role === ROLE.SUPER_ADMIN
+
+  // Org list is a backend constant; only enabled entries come back.
+  const { data: orgs } = useQuery({
+    queryKey: ['orgs'],
+    queryFn: getOrgs,
+    enabled: isRoot && open,
+    staleTime: 5 * 60 * 1000,
+  })
+  const orgSelectItems = (orgs ?? []).map((org) => ({
+    value: org.code,
+    label: `${org.name} (${org.code})`,
+  }))
   const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
 
   const onSubmit = async (data: UserFormValues) => {
@@ -173,7 +189,9 @@ export function UsersMutateDrawer({
       const payload = transformFormDataToPayload(
         data,
         currentRow?.id,
-        permissionCatalog
+        permissionCatalog,
+        currentRow,
+        isRoot
       )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
@@ -443,6 +461,214 @@ export function UsersMutateDrawer({
                             rows={3}
                           />
                         </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </SideDrawerSection>
+              )}
+
+              {/* Root-only. Changing the org changes which menus and data the
+                  user sees on their next request (org.md 6.4). */}
+              {isRoot && isUpdate && (
+                <SideDrawerSection>
+                  <h3 className='text-sm font-medium'>
+                    {t('Organization & UID')}
+                  </h3>
+
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                    <FormField
+                      control={form.control}
+                      name='org_code'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Organization')}</FormLabel>
+                          <Select
+                            value={field.value || ''}
+                            onValueChange={(value) => field.onChange(value ?? '')}
+                            items={orgSelectItems}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue
+                                  placeholder={t('Select an organization')}
+                                />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {orgSelectItems.map((item) => (
+                                <SelectItem key={item.value} value={item.value}>
+                                  {item.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {t(
+                              'Menus and data scope are recalculated for the new organization'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name='org_role'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Organization role')}</FormLabel>
+                          <Select
+                            value={field.value || 'member'}
+                            onValueChange={(value) =>
+                              field.onChange(value ?? 'member')
+                            }
+                            items={ORG_ROLES.map((role) => ({
+                              value: role,
+                              label: role,
+                            }))}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {ORG_ROLES.map((role) => (
+                                <SelectItem key={role} value={role}>
+                                  {role}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <FormField
+                    control={form.control}
+                    name='uid'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('UID')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder={t("The account's own client_user_id")}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='related_uids'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Related UIDs')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            className='font-mono text-xs'
+                            placeholder='["uid1","uid2"]'
+                            rows={2}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('JSON array of strings; rejected if malformed')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='check_uid'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-lg border p-3'>
+                        <div className='space-y-0.5'>
+                          <FormLabel>{t('Require UID')}</FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Every key of this user must send a uid, via the "uid" header or a "_uid" suffix in the key'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={!!field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='toio_registered'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-lg border p-3'>
+                        <FormLabel>{t('TOIO registered')}</FormLabel>
+                        <FormControl>
+                          <Switch
+                            checked={!!field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='group_discount'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Group discount')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            className='font-mono text-xs'
+                            placeholder='{"default": 0.8}'
+                            rows={3}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'JSON: group name to discount multiplier (0-1). Left unchanged if the JSON is invalid.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='model_extra_discount'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Model extra discount')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            className='font-mono text-xs'
+                            placeholder='{"default": {"gpt-4o": 0.9}}'
+                            rows={3}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'JSON: group then model to discount multiplier. Stacks with the group discount.'
+                          )}
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -119,11 +119,17 @@ export function CacheStatsDialog(props: Props) {
     const cachedTokens = Number(s.cached_tokens || 0)
     const completionTokens = Number(s.completion_tokens || 0)
     const totalTokens = Number(s.total_tokens || 0)
+    // Providers that bill cache reads separately report them here rather than
+    // in `cached_tokens`, so both rows are needed to explain a hit.
+    const cacheHit = Number(s.prompt_cache_hit_tokens || 0)
 
     if (promptTokens > 0)
       data.push({ key: 'Prompt tokens', value: promptTokens })
     if (cachedTokens > 0)
       data.push({ key: 'Cached tokens', value: cachedTokens })
+    if (cacheHit > 0) {
+      data.push({ key: 'Prompt cache hit tokens', value: cacheHit })
+    }
     if (completionTokens > 0)
       data.push({ key: 'Completion tokens', value: completionTokens })
     if (totalTokens > 0) data.push({ key: 'Total tokens', value: totalTokens })

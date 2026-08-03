@@ -583,29 +583,31 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}
 
 	// 根据用户角色计算权限
+	// sidebar_settings 控制「左侧边栏个人设置」入口：仅 root 可见可改。
+	// 其余角色拿到 false，前端据此隐藏入口，并跳过用户层 sidebar_modules
+	// 叠加——既然改不了，历史值就不应继续生效。
 	if userRole == common.RoleRootUser {
-		// 超级管理员不需要边栏设置功能
-		permissions["sidebar_settings"] = false
+		permissions["sidebar_settings"] = true
 		permissions["sidebar_modules"] = map[string]interface{}{}
 	} else if userRole == common.RoleAdminUser {
-		// 管理员可以设置边栏，但不包含系统设置功能
-		permissions["sidebar_settings"] = true
+		// 管理员不含系统设置功能
+		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": map[string]interface{}{
 				"setting": false, // 管理员不能访问系统设置
 			},
 		}
 	} else if userRole == common.RoleLeaderUser {
-		// Leader 用户可以设置边栏，可以看消耗统计，但不能访问管理员区域
-		permissions["sidebar_settings"] = true
+		// Leader 可以看消耗统计，但不能访问管理员区域
+		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": map[string]interface{}{
 				"enabled": false, // Leader 用户不能访问管理员区域
 			},
 		}
 	} else {
-		// 普通用户只能设置个人功能，不包含管理员区域
-		permissions["sidebar_settings"] = true
+		// 普通用户不包含管理员区域
+		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": false, // 普通用户不能访问管理员区域
 		}

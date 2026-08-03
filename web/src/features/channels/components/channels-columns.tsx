@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Eye,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -32,6 +33,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { CopyButton } from '@/components/copy-button'
 import { BadgeListCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { ProviderBadge } from '@/components/provider-badge'
@@ -46,6 +48,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { toIntlLocale } from '@/i18n/languages'
 import {
   formatCurrencyFromUSD,
@@ -53,9 +59,11 @@ import {
   getCurrencyLabel,
 } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { truncateText } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getCodexUsage } from '../api'
+import { getChannelKey, getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   formatRelativeTime,
@@ -172,6 +180,98 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
 /**
  * Priority cell component with inline editing
  */
+/**
+ * Channel keys are stripped from the list payload (`GetAllChannels` omits the
+ * column), so the row fetches one on demand. `/api/channel/:id/key` is gated
+ * by passkey/2FA the same way the edit drawer's reveal is — each row owns its
+ * verification dialog because only one is ever open at a time.
+ */
+function ChannelKeyCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const [revealed, setRevealed] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const {
+    open: verificationOpen,
+    methods: verificationMethods,
+    state: verificationState,
+    executeVerification,
+    withVerification,
+    cancel: cancelVerification,
+    setCode: setVerificationCode,
+    switchMethod: switchVerificationMethod,
+  } = useSecureVerification()
+
+  if (isTagAggregateRow(channel)) return null
+
+  const handleReveal = async () => {
+    try {
+      await withVerification(
+        async (proofToken?: string) => {
+          setIsLoading(true)
+          try {
+            const res = await getChannelKey(channel.id, proofToken)
+            if (!res.success) {
+              throw new Error(res.message || t('Failed to fetch channel key'))
+            }
+            setRevealed(res.data?.key ?? '')
+            return res
+          } finally {
+            setIsLoading(false)
+          }
+        },
+        {
+          scope: 'channel.key.read',
+          preferredMethod: 'passkey',
+          title: t('Verify to view channel key'),
+          description: t(
+            'Use Passkey or 2FA to confirm your identity before revealing this channel key.'
+          ),
+        }
+      )
+    } catch (error) {
+      if (error instanceof Error) toast.error(error.message)
+    }
+  }
+
+  return (
+    <>
+      {revealed === null ? (
+        <Button
+          variant='ghost'
+          size='sm'
+          className='text-muted-foreground h-7 gap-1 px-2 text-xs'
+          disabled={isLoading}
+          onClick={() => void handleReveal()}
+        >
+          <Eye className='h-3.5 w-3.5' />
+          {t('Reveal')}
+        </Button>
+      ) : (
+        <div className='flex max-w-[220px] items-center gap-1'>
+          <span className='truncate font-mono text-xs'>{revealed || '-'}</span>
+          {revealed && (
+            <CopyButton value={revealed} className='h-5 w-5 shrink-0' />
+          )}
+        </div>
+      )}
+      <SecureVerificationDialog
+        open={verificationOpen}
+        onOpenChange={(open) => {
+          if (!open) cancelVerification()
+        }}
+        methods={verificationMethods}
+        state={verificationState}
+        onVerify={async (method, code) => {
+          await executeVerification(method, code)
+        }}
+        onCancel={cancelVerification}
+        onCodeChange={setVerificationCode}
+        onMethodChange={switchVerificationMethod}
+      />
+    </>
+  )
+}
+
 function PriorityCell({ channel }: { channel: Channel }) {
   if (isTagAggregateRow(channel)) {
     return <TagPriorityCell channel={channel} />
@@ -550,6 +650,8 @@ export function useChannelsColumns(
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
+  const canRevealKey =
+    useAuthStore((state) => state.auth.user?.role) === ROLE.SUPER_ADMIN
   const enableSelection = options.enableSelection ?? true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
@@ -1088,6 +1190,20 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      // Key column: root-only, revealed per row on demand.
+      ...(canRevealKey
+        ? [
+            {
+              id: 'key',
+              header: t('Key'),
+              meta: { mobileHidden: true },
+              cell: ({ row }) => <ChannelKeyCell channel={row.original} />,
+              size: 150,
+              enableSorting: false,
+            } as ColumnDef<Channel>,
+          ]
+        : []),
+
       // Balance column (Used/Remaining)
       {
         accessorKey: 'balance',
@@ -1184,6 +1300,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible]
+    [enableSelection, t, locale, sensitiveVisible, canRevealKey]
   )
 }

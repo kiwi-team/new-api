@@ -53,6 +53,13 @@ export interface CommonLogFilters extends CommonFilters {
   username?: string
   requestId?: string
   upstreamRequestId?: string
+  /** Downstream caller id recorded on each request */
+  clientUserId?: string
+  /** Correlation ids stored inside the log's `extra` blob */
+  mtSessionId?: string
+  traceId?: string
+  trajId?: string
+  sessionId?: string
 }
 
 /**
@@ -117,6 +124,11 @@ export interface LogOtherData {
     is_multi_key?: boolean
     multi_key_index?: number
     use_channel?: number[]
+    /**
+     * Elapsed milliseconds per retry attempt, positionally matched to
+     * `use_channel`. Absent on older logs, so the chain must render without it.
+     */
+    use_channel_time?: number[]
     local_count_tokens?: boolean
     usage_billing_path?: UsageBillingPath | string
     channel_affinity?: ChannelAffinityInfo
@@ -178,6 +190,13 @@ export interface LogOtherData {
   model_price?: number
   group_ratio?: number
   user_group_ratio?: number
+  /**
+   * Per-user, per-model discount from settlement config. Billing folds it
+   * into the group ratio, so the backend writes it out separately here and
+   * restores `group_ratio` to its pre-discount value — the two multiply back
+   * to the ratio actually charged.
+   */
+  settlement_ratio?: number
   cache_ratio?: number
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number
@@ -321,6 +340,11 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  client_user_id?: string
+  mt_session_id?: string
+  trace_id?: string
+  traj_id?: string
+  session_id?: string
 }
 
 export interface GetLogsResponse {

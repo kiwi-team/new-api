@@ -38,7 +38,9 @@ export function getRedemptionFormSchema(t: TFunction) {
       .string()
       .min(REDEMPTION_VALIDATION.NAME_MIN_LENGTH, msg.NAME_LENGTH_INVALID)
       .max(REDEMPTION_VALIDATION.NAME_MAX_LENGTH, msg.NAME_LENGTH_INVALID),
-    quota_dollars: z.number().min(0, t('Quota must be a positive number')),
+    // A zero-quota code redeems for nothing; the backend only bounds `count`,
+    // so the positive check has to live here.
+    quota_dollars: z.number().gt(0, t('Quota must be a positive number')),
     expired_time: z.date().optional(),
     count: z
       .number()

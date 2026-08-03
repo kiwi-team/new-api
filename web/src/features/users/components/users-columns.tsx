@@ -192,6 +192,30 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { mobileOrder: 30 },
     },
     {
+      // The org tag decides which menus and data the user sees (org.md). An
+      // empty org_code behaves as "other", so it is shown that way rather than
+      // left blank.
+      id: 'org',
+      accessorKey: 'org_code',
+      header: t('Organization'),
+      cell: ({ row }) => {
+        const user = row.original
+        return (
+          <BadgeCell>
+            <StatusBadge
+              label={`${user.org_code || 'other'} / ${user.org_role || 'member'}`}
+              variant='neutral'
+              size='sm'
+              copyable={false}
+            />
+          </BadgeCell>
+        )
+      },
+      enableSorting: false,
+      size: 160,
+      meta: { mobileHidden: true },
+    },
+    {
       accessorKey: 'role',
       header: t('Role'),
       cell: ({ row }) => {

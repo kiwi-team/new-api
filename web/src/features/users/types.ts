@@ -59,6 +59,15 @@ export const userSchema = z.object({
   last_login_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
+  // Fields the console does not edit but MUST echo back on update: the backend
+  // decodes the payload into a fresh User and `EditWithTx` writes these columns
+  // unconditionally, so any field omitted here is persisted as its zero value.
+  uid: z.string().optional(),
+  related_uids: z.string().optional(),
+  toio_registered: z.number().optional(),
+  org_code: z.string().optional(),
+  org_role: z.string().optional(),
+  setting: z.string().optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),
@@ -126,6 +135,14 @@ export interface UserFormData {
   group?: string // Only used when updating user
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
+  // Echoed verbatim on update — see the note on `userSchema`. Omitting any of
+  // these resets the stored value (quota would be zeroed).
+  uid?: string
+  related_uids?: string
+  toio_registered?: number
+  org_code?: string
+  org_role?: string
+  setting?: string
 }
 
 export type ManageUserAction =

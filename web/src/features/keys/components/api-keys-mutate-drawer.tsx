@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
+import {
+  ChevronDown,
+  KeyRound,
+  Settings2,
+  SlidersHorizontal,
+  WalletCards,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -63,6 +69,8 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { cn } from '@/lib/utils'
@@ -82,6 +90,7 @@ import {
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
+import { ChannelRulesEditorDialog } from './channel-rules-editor-dialog'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -98,8 +107,14 @@ export function ApiKeysMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useApiKeys()
   const { status } = useStatus()
+  // Channel ratios are a root-only contract on the backend; hide the editor
+  // for everyone else rather than letting them submit a value that is ignored.
+  const isRoot = useAuthStore(
+    (state) => (state.auth.user?.role ?? ROLE.GUEST) >= ROLE.SUPER_ADMIN
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [channelRulesEditorOpen, setChannelRulesEditorOpen] = useState(false)
   const defaultUseAutoGroup = status?.default_use_auto_group === true
 
   // Fetch models
@@ -555,6 +570,102 @@ export function ApiKeysMutateDrawer({
 
                     <FormField
                       control={form.control}
+                      name='alert_threshold'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Consumption alert threshold (USD)')}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0}
+                              step={10}
+                              value={field.value ?? 0}
+                              onChange={(event) => {
+                                const parsed = Number.parseFloat(
+                                  event.target.value
+                                )
+                                field.onChange(Number.isNaN(parsed) ? 0 : parsed)
+                              }}
+                              placeholder='0'
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Alerts go to the webhook set in Profile settings. 0 disables them; the trigger may lag slightly behind the exact amount.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {isRoot && (
+                      <FormField
+                        control={form.control}
+                        name='channel_ratios'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Channel ratios')}</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                className='min-h-20 resize-none font-mono text-xs'
+                                placeholder='{"1": 0.8}'
+                                rows={3}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'JSON map of channel id to multiplier applied to requests from this key'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {isRoot && (
+                      <FormField
+                        control={form.control}
+                        name='channel_rules'
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className='flex items-center justify-between gap-2'>
+                              <FormLabel>{t('Channel rules')}</FormLabel>
+                              <Button
+                                type='button'
+                                variant='outline'
+                                size='sm'
+                                onClick={() => setChannelRulesEditorOpen(true)}
+                              >
+                                <SlidersHorizontal className='h-3.5 w-3.5' />
+                                {t('Visual editor')}
+                              </Button>
+                            </div>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                className='min-h-20 resize-none font-mono text-xs'
+                                placeholder='{"default": {"retry": 2}}'
+                                rows={3}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'JSON routing rules for this key (retry count, channel weights, disabled channels)'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    <FormField
+                      control={form.control}
                       name='allow_ips'
                       render={({ field }) => (
                         <FormItem>
@@ -602,6 +713,20 @@ export function ApiKeysMutateDrawer({
           </Button>
         </SheetFooter>
       </SheetContent>
+
+      {channelRulesEditorOpen && (
+        <ChannelRulesEditorDialog
+          open
+          onOpenChange={setChannelRulesEditorOpen}
+          value={form.watch('channel_rules') || ''}
+          onSave={(json) =>
+            form.setValue('channel_rules', json, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+        />
+      )}
     </Sheet>
   )
 }
