@@ -89,6 +89,50 @@ type usageAdjustmentRowKey struct {
 	ModelName string
 }
 
+// attachUsageActiveHours 为每个日聚合行填上当天真正落有 quota_data 的 +8 时区整点小时。
+// GetUsageHourSnapshot 对没有原始明细的小时返回 ErrUsageHourNotFound，所以修正弹窗只应
+// 让管理员选择这里列出的小时；纯粹由调整记录补出来的行没有可修正的小时，保持空列表。
+func attachUsageActiveHours(rows []*ModelUsageAnalysisRow, userId int, startTime int64, endTime int64) error {
+	for _, row := range rows {
+		row.ActiveHours = make([]int, 0)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	activeHours := make([]struct {
+		Date       string `gorm:"column:date"`
+		TokenId    int    `gorm:"column:token_id"`
+		ModelName  string `gorm:"column:model_name"`
+		ActiveHour int    `gorm:"column:active_hour"`
+	}, 0)
+	query := DB.Model(&QuotaData{}).
+		Select(usageAnalysisDateExpr()+" as date, token_id, model_name, "+usageAnalysisHourExpr()+" as active_hour").
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	if err := query.
+		Group("date, token_id, model_name, active_hour").
+		Order("date, token_id, model_name, active_hour").
+		Scan(&activeHours).Error; err != nil {
+		return err
+	}
+
+	rowByKey := make(map[usageAdjustmentRowKey]*ModelUsageAnalysisRow, len(rows))
+	for _, row := range rows {
+		rowByKey[usageAdjustmentRowKey{Date: row.Date, TokenId: row.TokenId, ModelName: row.ModelName}] = row
+	}
+	for _, hour := range activeHours {
+		row := rowByKey[usageAdjustmentRowKey{Date: hour.Date, TokenId: hour.TokenId, ModelName: hour.ModelName}]
+		if row == nil {
+			continue
+		}
+		row.ActiveHours = append(row.ActiveHours, hour.ActiveHour)
+	}
+	return nil
+}
+
 func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int, startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
 	adjustments := make([]*UsageAdjustment, 0)
 	query := DB.Where("reverted_at = 0 AND hour_start >= ? AND hour_start <= ?", startTime, endTime)

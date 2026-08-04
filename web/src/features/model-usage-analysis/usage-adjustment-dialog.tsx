@@ -86,7 +86,12 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
   const [ticket, setTicket] = useState('')
   const [revertReason, setRevertReason] = useState('')
 
-  const hourStart = props.row ? usageHourTimestamp(props.row.date, hour) : 0
+  // Only hours that hold raw usage can be corrected, so the picker falls back to
+  // the row's first active hour whenever the hour carried over from a previous
+  // row is not one of them.
+  const activeHours = props.row?.active_hours ?? []
+  const selectedHour = activeHours.includes(hour) ? hour : (activeHours[0] ?? 0)
+  const hourStart = props.row ? usageHourTimestamp(props.row.date, selectedHour) : 0
   const snapshotQuery = useQuery({
     queryKey: [
       'model-usage-adjustment-hour',
@@ -103,6 +108,7 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
     enabled:
       props.open &&
       hourStart > 0 &&
+      activeHours.length > 0 &&
       !!props.row?.token_id &&
       !!props.row?.model_name,
     retry: false,
@@ -251,19 +257,25 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
           </div>
           <div className='grid gap-1'>
             <Label htmlFor='usage-adjustment-hour'>{t('Hour (UTC+8)')}</Label>
-            <NativeSelect
-              id='usage-adjustment-hour'
-              className='w-full'
-              value={hour}
-              onChange={(event) => setHour(Number(event.target.value))}
-            >
-              {Array.from({ length: 24 }, (_, value) => (
-                <NativeSelectOption key={value} value={value}>
-                  {String(value).padStart(2, '0')}:00–
-                  {String(value).padStart(2, '0')}:59
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+            {activeHours.length === 0 ? (
+              <p className='text-muted-foreground text-sm'>
+                {t('No hourly usage recorded on this day')}
+              </p>
+            ) : (
+              <NativeSelect
+                id='usage-adjustment-hour'
+                className='w-full'
+                value={selectedHour}
+                onChange={(event) => setHour(Number(event.target.value))}
+              >
+                {activeHours.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {String(value).padStart(2, '0')}:00–
+                    {String(value).padStart(2, '0')}:59
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
           </div>
         </div>
 

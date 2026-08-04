@@ -34,6 +34,11 @@ export type ModelUsageRow = {
   avg_first_token_ms: number
   avg_use_time_ms: number
   cost_usd: number
+  /**
+   * UTC+8 hours of this day that hold raw hourly usage, ascending. Only these
+   * hours can be corrected; the snapshot endpoint 404s on any other hour.
+   */
+  active_hours?: number[]
 }
 
 /** Totals across the rows currently in view. */

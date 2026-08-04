@@ -33,10 +33,13 @@ const domGlobals = [
   'Element',
   'Event',
   'CustomEvent',
+  'MouseEvent',
+  'PointerEvent',
   'MutationObserver',
   'requestAnimationFrame',
   'cancelAnimationFrame',
   'getComputedStyle',
+  'ResizeObserver',
 ] as const
 
 for (const key of domGlobals) {
@@ -58,7 +61,14 @@ const { useAuthStore } = await import('@/stores/auth-store')
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
   lng: 'en',
-  resources: { en: { translation: { Correct: 'Correct' } } },
+  resources: {
+    en: {
+      translation: {
+        Correct: 'Correct',
+        'Correct hourly usage': 'Correct hourly usage',
+      },
+    },
+  },
 })
 
 const reactTestGlobals = globalThis as typeof globalThis & {
@@ -81,6 +91,7 @@ async function renderForRole(role: number) {
         token_id: 7,
         token_name: 'key',
         model_name: 'model',
+        active_hours: [9, 11],
         total_requests: 1,
         cache_write_requests: 0,
         cache_write_5m_requests: 0,
@@ -135,6 +146,47 @@ describe('usage correction visibility', () => {
       ...rendered.container.querySelectorAll('button'),
     ].some((button) => button.textContent?.includes('Correct'))
     assert.equal(hasCorrectButton, true)
+    await cleanup(rendered)
+  })
+
+  // SectionPageLayout only renders children that match one of its slot
+  // components, so a dialog placed as its direct sibling is dropped and the
+  // action button silently does nothing.
+  test('opens the adjustment dialog when the action is clicked', async () => {
+    const rendered = await renderForRole(10)
+    const button = [...rendered.container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent?.includes('Correct')
+    )
+    assert.ok(button, 'admin users should see the correction action')
+
+    await act(async () => button.click())
+
+    assert.ok(
+      document.body.textContent?.includes('Correct hourly usage'),
+      'clicking the correction action should open the dialog'
+    )
+    await cleanup(rendered)
+  })
+
+  // Offering all 24 hours made the dialog 404 on open, because a daily row only
+  // holds raw usage for the few hours the backend reports in active_hours.
+  test('offers only the hours that carry correctable usage', async () => {
+    const rendered = await renderForRole(10)
+    const button = [...rendered.container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent?.includes('Correct')
+    )
+    assert.ok(button)
+    await act(async () => button.click())
+
+    const select = document.querySelector<HTMLSelectElement>(
+      '#usage-adjustment-hour'
+    )
+    assert.ok(select, 'the hour picker should render')
+    assert.deepEqual(
+      [...select.querySelectorAll('option')].map((option) => option.value),
+      ['9', '11']
+    )
+    assert.equal(select.value, '9', 'the first active hour is preselected')
     await cleanup(rendered)
   })
 })

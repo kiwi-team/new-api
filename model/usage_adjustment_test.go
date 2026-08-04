@@ -100,3 +100,37 @@ func TestUsageAdjustmentRejectsMissingSourceAndNegativeCorrection(t *testing.T) 
 	)
 	assert.ErrorContains(t, err, "non-negative")
 }
+
+// 修正弹窗只把 ActiveHours 里的小时列给管理员，所以这个列表必须精确等于当天真正
+// 落有 quota_data 的小时；多列一个小时用户点进去就会撞上 ErrUsageHourNotFound。
+func TestModelUsageAnalysisReportsOnlyCorrectableHours(t *testing.T) {
+	truncateTables(t)
+	chinaTime := time.FixedZone("UTC+8", 8*60*60)
+	dayStart := time.Date(2026, 8, 4, 0, 0, 0, 0, chinaTime)
+
+	for _, hour := range []int{3, 11, 11} {
+		require.NoError(t, DB.Create(&QuotaData{
+			UserID:       7,
+			TokenId:      11,
+			TokenName:    "billing-key",
+			ModelName:    "claude-test",
+			CreatedAt:    dayStart.Add(time.Duration(hour)*time.Hour).Unix() + 60,
+			PromptTokens: 100,
+			Quota:        1000,
+			Count:        1,
+		}).Error)
+	}
+
+	rows, err := GetModelUsageAnalysis(7, dayStart.Unix(), dayStart.Add(24*time.Hour).Unix()-1)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "2026-08-04", rows[0].Date)
+	assert.Equal(t, []int{3, 11}, rows[0].ActiveHours)
+
+	for _, hour := range rows[0].ActiveHours {
+		_, err := GetUsageHourSnapshot(dayStart.Add(time.Duration(hour)*time.Hour).Unix(), 11, "claude-test")
+		assert.NoError(t, err, "hour %d is offered by the dialog so it must be correctable", hour)
+	}
+	_, err = GetUsageHourSnapshot(dayStart.Unix(), 11, "claude-test")
+	assert.ErrorIs(t, err, ErrUsageHourNotFound)
+}

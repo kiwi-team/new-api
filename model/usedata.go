@@ -732,6 +732,39 @@ type ModelUsageAnalysisRow struct {
 	AvgFirstTokenMs int64 `json:"avg_first_token_ms" gorm:"-"`
 	// 平均请求耗时（毫秒，统计所有请求）。
 	AvgUseTimeMs int64 `json:"avg_use_time_ms" gorm:"-"`
+	// 该行（日期 + Token + 模型）下真正落有 quota_data 的 +8 时区整点小时，升序去重。
+	// 小时账单修正只能针对这些小时，其余小时没有可修正的原始数据。
+	ActiveHours []int `json:"active_hours" gorm:"-"`
+}
+
+// usageAnalysisDateExpr 返回把 quota_data.created_at 渲染成 +8 时区日历日期的 SQL 表达式，
+// 与 GetQuotaDataStatistics 保持一致。
+func usageAnalysisDateExpr() string {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		return "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
+	}
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		return "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
+	}
+	return "DATE(created_at)"
+}
+
+// usageAnalysisHourExpr 返回把 quota_data.created_at 渲染成 +8 时区整点小时（0-23 整数）
+// 的 SQL 表达式，与 usageAnalysisDateExpr 同一时区口径。
+func usageAnalysisHourExpr() string {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return "CAST(strftime('%H', datetime(created_at, 'unixepoch', '+8 hours')) AS INTEGER)"
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		return "HOUR(FROM_UNIXTIME(created_at))"
+	}
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		return "CAST(EXTRACT(HOUR FROM TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai') AS INTEGER)"
+	}
+	return "HOUR(created_at)"
 }
 
 // GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合。
@@ -740,17 +773,7 @@ type ModelUsageAnalysisRow struct {
 func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
 	rows := make([]*ModelUsageAnalysisRow, 0)
 
-	// 日期字段按 +8 时区格式化，与 GetQuotaDataStatistics 保持一致
-	dateField := ""
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		dateField = "strftime('%Y-%m-%d', datetime(created_at, 'unixepoch', '+8 hours'))"
-	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		dateField = "DATE_FORMAT(FROM_UNIXTIME(created_at), '%Y-%m-%d')"
-	} else if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		dateField = "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
-	} else {
-		dateField = "DATE(created_at)"
-	}
+	dateField := usageAnalysisDateExpr()
 
 	selectFields := dateField + " as date, token_id, MAX(token_name) as token_name, model_name, " +
 		"sum(quota) as quota, sum(count) as total_requests, " +
@@ -779,6 +802,9 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 	}
 	rows, err = applyUsageAdjustmentsToDailyRows(rows, userId, startTime, endTime)
 	if err != nil {
+		return rows, err
+	}
+	if err = attachUsageActiveHours(rows, userId, startTime, endTime); err != nil {
 		return rows, err
 	}
 

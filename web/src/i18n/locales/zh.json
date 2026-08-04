@@ -11,6 +11,7 @@
     "Correction reason": "修正原因",
     "Hour (UTC+8)": "小时（UTC+8）",
     "No adjustments for this hour": "该小时暂无调整记录",
+    "No hourly usage recorded on this day": "该行当天没有可修正的小时用量",
     "Original": "原始值",
     "Please select a date range": "请选择日期范围",
     "Related ticket": "关联工单",

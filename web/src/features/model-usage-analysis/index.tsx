@@ -125,7 +125,18 @@ export function ModelUsageAnalysisPage() {
       toast.warning(t('The start date cannot be later than the end date'))
       return
     }
-    setRange(usageDateRangeTimestamps(startDate, endDate))
+    const next = usageDateRangeTimestamps(startDate, endDate)
+    // React Query hashes the key structurally, so re-setting an equal range
+    // yields the same query and never refetches. Refresh with unchanged dates
+    // has to go through refetch() explicitly to bypass staleTime.
+    if (
+      next.start_timestamp === range.start_timestamp &&
+      next.end_timestamp === range.end_timestamp
+    ) {
+      void usageQuery.refetch()
+      return
+    }
+    setRange(next)
   }
 
   const handleExport = () => {
@@ -378,18 +389,18 @@ export function ModelUsageAnalysisPage() {
               ]}
             />
           </div>
+          {canAdjustUsage && (
+            <UsageAdjustmentDialog
+              open={adjustmentRow !== null}
+              row={adjustmentRow}
+              onOpenChange={(open) => {
+                if (!open) setAdjustmentRow(null)
+              }}
+              onSaved={() => void usageQuery.refetch()}
+            />
+          )}
         </div>
       </SectionPageLayout.Content>
-      {canAdjustUsage && (
-        <UsageAdjustmentDialog
-          open={adjustmentRow !== null}
-          row={adjustmentRow}
-          onOpenChange={(open) => {
-            if (!open) setAdjustmentRow(null)
-          }}
-          onSaved={() => void usageQuery.refetch()}
-        />
-      )}
     </SectionPageLayout>
   )
 }
