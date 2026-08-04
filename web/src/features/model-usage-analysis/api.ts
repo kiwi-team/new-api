@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { ModelUsageRow } from './types'
+import type {
+  CreateUsageAdjustmentPayload,
+  ModelUsageRow,
+  UsageHourSnapshot,
+} from './types'
 
 export async function getModelUsageAnalysis(params: {
   start_timestamp: number
@@ -29,4 +33,44 @@ export async function getModelUsageAnalysis(params: {
     throw new Error(res.data?.message || 'Failed to load')
   }
   return Array.isArray(res.data.data) ? res.data.data : []
+}
+
+export async function getUsageHourSnapshot(params: {
+  hour_start: number
+  token_id: number
+  model_name: string
+}): Promise<UsageHourSnapshot> {
+  const res = await api.get('/api/data/model-usage-analysis/adjustments/hour', {
+    params,
+  })
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to load usage hour')
+  }
+  return res.data.data as UsageHourSnapshot
+}
+
+export async function createUsageAdjustment(
+  payload: CreateUsageAdjustmentPayload
+): Promise<UsageHourSnapshot> {
+  const res = await api.post(
+    '/api/data/model-usage-analysis/adjustments',
+    payload
+  )
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to create adjustment')
+  }
+  return res.data.data as UsageHourSnapshot
+}
+
+export async function revertUsageAdjustment(
+  id: number,
+  reason: string
+): Promise<void> {
+  const res = await api.post(
+    `/api/data/model-usage-analysis/adjustments/${id}/revert`,
+    { reason }
+  )
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Failed to revert adjustment')
+  }
 }

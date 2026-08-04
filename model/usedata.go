@@ -708,8 +708,9 @@ type ModelUsageAnalysisRow struct {
 	TokenId   int    `json:"token_id" gorm:"column:token_id"`
 	TokenName string `json:"token_name" gorm:"column:token_name"`
 	ModelName string `json:"model_name" gorm:"column:model_name"`
-	// 费用（美元）= quota / QuotaPerUnit
-	CostUsd float64 `json:"cost_usd" gorm:"column:cost_usd"`
+	// 费用（美元）= quota / QuotaPerUnit。Quota 是合并管理员调整前后的内部整数口径。
+	CostUsd float64 `json:"cost_usd" gorm:"-"`
+	Quota   int64   `json:"-" gorm:"column:quota"`
 	// 请求次数
 	TotalRequests int64 `json:"total_requests" gorm:"column:total_requests"`
 	// 缓存写请求总数 = 5m + 1h（同一请求若同时写 5m/1h 会被分别计入）
@@ -752,7 +753,7 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 	}
 
 	selectFields := dateField + " as date, token_id, MAX(token_name) as token_name, model_name, " +
-		"sum(quota) as cost_usd, sum(count) as total_requests, " +
+		"sum(quota) as quota, sum(count) as total_requests, " +
 		"sum(cache_write_5m_request_count) as cache_write_5m_requests, " +
 		"sum(cache_write_1h_request_count) as cache_write_1h_requests, " +
 		"sum(cache_read_request_count) as cache_read_requests, " +
@@ -776,6 +777,10 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 	if err != nil {
 		return rows, err
 	}
+	rows, err = applyUsageAdjustmentsToDailyRows(rows, userId, startTime, endTime)
+	if err != nil {
+		return rows, err
+	}
 
 	// quota 转换为美元单位；写请求总数 = 5m + 1h；耗时均值由聚合后的求和列计算。
 	// 耗时口径（写入时已埋点到 quota_data，避免读取时扫描明细 logs 表）：
@@ -783,7 +788,7 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 	//   - 平均首字耗时(ms) = sum(frt_sum) / sum(stream_request_count)（仅有首字测量的流式请求）
 	// frt_sum 与 request_time_sum 均以毫秒存储，可直接相除得到毫秒均值。
 	for _, r := range rows {
-		r.CostUsd /= common.QuotaPerUnit
+		r.CostUsd = float64(r.Quota) / common.QuotaPerUnit
 		r.CacheWriteRequests = r.CacheWrite5mRequests + r.CacheWrite1hRequests
 		if r.TotalRequests > 0 {
 			r.AvgUseTimeMs = int64(math.Round(float64(r.RequestTimeSumMs) / float64(r.TotalRequests)))

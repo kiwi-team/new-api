@@ -47,3 +47,63 @@ export type ModelUsageSummary = {
   inputTokens: number
   outputTokens: number
 }
+
+export type UsageHourValues = {
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_5m_tokens: number
+  cache_write_1h_tokens: number
+  quota: number
+  cost_usd: number
+}
+
+export type UsageAdjustment = {
+  id: number
+  user_id: number
+  hour_start: number
+  token_id: number
+  token_name: string
+  model_name: string
+  prompt_tokens_delta: number
+  completion_tokens_delta: number
+  cached_tokens_delta: number
+  claude_cache_creation_5m_tokens_delta: number
+  claude_cache_creation_1h_tokens_delta: number
+  quota_delta: number
+  reason: string
+  ticket: string
+  operator_id: number
+  operator_name: string
+  created_at: number
+  reverted_at: number
+  reverted_by: number
+  reverted_by_name: string
+  revert_reason: string
+}
+
+export type UsageHourSnapshot = {
+  hour_start: number
+  hour_end: number
+  user_id: number
+  token_id: number
+  token_name: string
+  model_name: string
+  original: UsageHourValues
+  effective: UsageHourValues
+  adjustments: UsageAdjustment[]
+}
+
+export type CreateUsageAdjustmentPayload = {
+  hour_start: number
+  token_id: number
+  model_name: string
+  correct_input_tokens: number
+  correct_output_tokens: number
+  correct_cache_read_tokens: number
+  correct_cache_write_5m_tokens: number
+  correct_cache_write_1h_tokens: number
+  correct_cost_usd: number
+  reason: string
+  ticket: string
+}
