@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getUsers, searchUsers } from '@/features/users/api'
 import { api } from '@/lib/api'
 
 import type {
@@ -27,12 +28,31 @@ import type {
 export async function getModelUsageAnalysis(params: {
   start_timestamp: number
   end_timestamp: number
+  user_id?: number
 }): Promise<ModelUsageRow[]> {
   const res = await api.get('/api/data/model-usage-analysis', { params })
   if (!res.data?.success) {
     throw new Error(res.data?.message || 'Failed to load')
   }
   return Array.isArray(res.data.data) ? res.data.data : []
+}
+
+export type UsageUserOption = { value: number; label: string }
+
+/** Admin-only user picker source: keyword search, or the first user page. */
+export async function getUsageUserOptions(
+  keyword: string
+): Promise<UsageUserOption[]> {
+  const trimmed = keyword.trim()
+  const res = trimmed
+    ? await searchUsers({ keyword: trimmed, p: 1, page_size: 20 })
+    : await getUsers({ p: 1, page_size: 20 })
+  if (!res.success) return []
+  const items = res.data?.items ?? []
+  return items.map((user) => ({
+    value: user.id,
+    label: `${user.username} (ID: ${user.id})`,
+  }))
 }
 
 export async function getUsageHourSnapshot(params: {

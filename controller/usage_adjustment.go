@@ -45,7 +45,7 @@ func GetUsageHourAdjustmentSnapshot(c *gin.Context) {
 		usageAdjustmentError(c, usageAdjustmentStatus(err), err)
 		return
 	}
-	if !canManageUsageAdjustment(c, snapshot.UserId) {
+	if !canManageUsageAdjustment(c) {
 		usageAdjustmentError(c, http.StatusForbidden, errors.New("not authorized to adjust this usage record"))
 		return
 	}
@@ -68,7 +68,7 @@ func CreateUsageAdjustment(c *gin.Context) {
 		usageAdjustmentError(c, usageAdjustmentStatus(err), err)
 		return
 	}
-	if !canManageUsageAdjustment(c, snapshot.UserId) {
+	if !canManageUsageAdjustment(c) {
 		usageAdjustmentError(c, http.StatusForbidden, errors.New("not authorized to adjust this usage record"))
 		return
 	}
@@ -127,7 +127,7 @@ func RevertUsageAdjustment(c *gin.Context) {
 		usageAdjustmentError(c, usageAdjustmentStatus(err), err)
 		return
 	}
-	if !canManageUsageAdjustment(c, adjustment.UserId) {
+	if !canManageUsageAdjustment(c) {
 		usageAdjustmentError(c, http.StatusForbidden, errors.New("not authorized to revert this adjustment"))
 		return
 	}
@@ -145,8 +145,8 @@ func RevertUsageAdjustment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
 
-func canManageUsageAdjustment(c *gin.Context, targetUserId int) bool {
-	return c.GetInt("role") >= common.RoleRootUser || c.GetInt("id") == targetUserId
+func canManageUsageAdjustment(c *gin.Context) bool {
+	return c.GetInt("role") >= common.RoleAdminUser
 }
 
 func usageAdjustmentStatus(err error) int {

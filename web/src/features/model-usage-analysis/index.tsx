@@ -37,10 +37,19 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useDebounce } from '@/hooks/use-debounce'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getModelUsageAnalysis } from './api'
+import { getModelUsageAnalysis, getUsageUserOptions } from './api'
 import {
   buildUsageSummary,
   exportUsageRowsCsv,
@@ -57,6 +66,10 @@ import type { ModelUsageRow } from './types'
 import { UsageAdjustmentDialog } from './usage-adjustment-dialog'
 
 const DEFAULT_DATE_RANGE = getDefaultUsageDateRange()
+const ALL_USERS_VALUE = 'all'
+type UsageAnalysisQuery = ReturnType<typeof usageDateRangeTimestamps> & {
+  user_id?: number
+}
 
 function SummaryCard(props: {
   label: string
@@ -84,8 +97,11 @@ export function ModelUsageAnalysisPage() {
   const canAdjustUsage = role >= ROLE.ADMIN
   const [startDate, setStartDate] = useState(DEFAULT_DATE_RANGE.start)
   const [endDate, setEndDate] = useState(DEFAULT_DATE_RANGE.end)
+  const [selectedUserId, setSelectedUserId] = useState<number | undefined>()
+  const [userKeyword, setUserKeyword] = useState('')
+  const debouncedUserKeyword = useDebounce(userKeyword, 300)
   const [tokenFilter, setTokenFilter] = useState<string[]>([])
-  const [range, setRange] = useState(() =>
+  const [range, setRange] = useState<UsageAnalysisQuery>(() =>
     usageDateRangeTimestamps(DEFAULT_DATE_RANGE.start, DEFAULT_DATE_RANGE.end)
   )
   const [adjustmentRow, setAdjustmentRow] = useState<ModelUsageRow | null>(null)
@@ -94,6 +110,23 @@ export function ModelUsageAnalysisPage() {
     queryKey: ['model-usage-analysis', range],
     queryFn: () => getModelUsageAnalysis(range),
   })
+
+  const userOptionsQuery = useQuery({
+    queryKey: ['model-usage-analysis', 'user-options', debouncedUserKeyword],
+    queryFn: () => getUsageUserOptions(debouncedUserKeyword),
+    enabled: canAdjustUsage,
+  })
+
+  const userSelectItems = useMemo(
+    () => [
+      { value: ALL_USERS_VALUE, label: t('All users') },
+      ...(userOptionsQuery.data ?? []).map((option) => ({
+        value: String(option.value),
+        label: option.label,
+      })),
+    ],
+    [t, userOptionsQuery.data]
+  )
 
   const rawRows = useMemo(() => usageQuery.data ?? [], [usageQuery.data])
 
@@ -125,18 +158,34 @@ export function ModelUsageAnalysisPage() {
       toast.warning(t('The start date cannot be later than the end date'))
       return
     }
-    const next = usageDateRangeTimestamps(startDate, endDate)
+    const next = {
+      ...usageDateRangeTimestamps(startDate, endDate),
+      ...(selectedUserId === undefined ? {} : { user_id: selectedUserId }),
+    }
     // React Query hashes the key structurally, so re-setting an equal range
     // yields the same query and never refetches. Refresh with unchanged dates
     // has to go through refetch() explicitly to bypass staleTime.
     if (
       next.start_timestamp === range.start_timestamp &&
-      next.end_timestamp === range.end_timestamp
+      next.end_timestamp === range.end_timestamp &&
+      next.user_id === range.user_id
     ) {
       void usageQuery.refetch()
       return
     }
     setRange(next)
+  }
+
+  const handleUserChange = (value: string | null) => {
+    const nextUserId =
+      !value || value === ALL_USERS_VALUE ? undefined : Number(value)
+    setSelectedUserId(nextUserId)
+    setTokenFilter([])
+    setRange((current) => ({
+      start_timestamp: current.start_timestamp,
+      end_timestamp: current.end_timestamp,
+      ...(nextUserId === undefined ? {} : { user_id: nextUserId }),
+    }))
   }
 
   const handleExport = () => {
@@ -150,7 +199,8 @@ export function ModelUsageAnalysisPage() {
         start: startDate,
         end: endDate,
       },
-      t
+      t,
+      canAdjustUsage
     )
   }
 
@@ -162,6 +212,44 @@ export function ModelUsageAnalysisPage() {
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col gap-4'>
           <div className='flex flex-wrap items-end gap-3'>
+            {canAdjustUsage && (
+              <div className='grid gap-1.5'>
+                <Label htmlFor='model-usage-user-filter'>{t('User')}</Label>
+                <Select
+                  items={userSelectItems}
+                  value={
+                    selectedUserId === undefined
+                      ? ALL_USERS_VALUE
+                      : String(selectedUserId)
+                  }
+                  onValueChange={handleUserChange}
+                >
+                  <SelectTrigger
+                    id='model-usage-user-filter'
+                    className='w-60'
+                    aria-label={t('Filter by user')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <div className='p-1'>
+                      <Input
+                        placeholder={t('Filter by user')}
+                        value={userKeyword}
+                        onChange={(event) => setUserKeyword(event.target.value)}
+                      />
+                    </div>
+                    <SelectGroup>
+                      {userSelectItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className='grid gap-1.5'>
               <Label htmlFor='model-usage-start-date'>
                 {t('Usage start date')}
@@ -271,6 +359,22 @@ export function ModelUsageAnalysisPage() {
               emptyClassName='text-muted-foreground py-8'
               columns={[
                 { id: 'date', header: t('Date'), cell: (row) => row.date },
+                ...(canAdjustUsage
+                  ? [
+                      {
+                        id: 'user',
+                        header: t('User'),
+                        cell: (row: ModelUsageRow) => (
+                          <div className='flex flex-col leading-tight'>
+                            <span>{row.username || '-'}</span>
+                            <span className='text-muted-foreground text-xs'>
+                              ID {row.user_id ?? '-'}
+                            </span>
+                          </div>
+                        ),
+                      },
+                    ]
+                  : []),
                 {
                   id: 'token',
                   header: t('Key name'),

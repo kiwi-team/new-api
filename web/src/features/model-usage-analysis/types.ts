@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 /** One aggregate row: date × key × model. */
 export type ModelUsageRow = {
   date: string
+  user_id?: number
+  username?: string
   token_id?: number
   token_name?: string
   model_name?: string

@@ -77,7 +77,12 @@ export function buildUsageSummary(rows: ModelUsageRow[]): ModelUsageSummary {
 }
 
 export function usageRowKey(row: ModelUsageRow): string {
-  return [row.date, row.token_id ?? '', row.model_name ?? ''].join('_')
+  return [
+    row.date,
+    row.user_id ?? '',
+    row.token_id ?? '',
+    row.model_name ?? '',
+  ].join('_')
 }
 
 function csvCell(value: unknown): string {
@@ -130,7 +135,8 @@ export function usageHourTimestamp(date: string, hour: number): number {
 export function exportUsageRowsCsv(
   rows: ModelUsageRow[],
   range: { start: string; end: string },
-  t: TFunction
+  t: TFunction,
+  includeUser = false
 ): void {
   const columns: { header: string; get: (row: ModelUsageRow) => unknown }[] = [
     { header: t('Date'), get: (row) => row.date },
@@ -187,6 +193,15 @@ export function exportUsageRowsCsv(
       get: (row) => Number(row.cost_usd || 0).toFixed(6),
     },
   ]
+
+  if (includeUser) {
+    columns.splice(
+      1,
+      0,
+      { header: t('User ID'), get: (row) => row.user_id },
+      { header: t('Username'), get: (row) => row.username }
+    )
+  }
 
   const lines = [columns.map((column) => csvCell(column.header)).join(',')]
   for (const row of rows) {

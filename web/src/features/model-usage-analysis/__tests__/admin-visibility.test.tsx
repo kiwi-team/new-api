@@ -88,6 +88,8 @@ async function renderForRole(role: number) {
     [
       {
         date: dates.end,
+        user_id: 8,
+        username: 'customer',
         token_id: 7,
         token_name: 'key',
         model_name: 'model',
@@ -106,6 +108,10 @@ async function renderForRole(role: number) {
         cost_usd: 0.01,
       },
     ]
+  )
+  queryClient.setQueryData(
+    ['model-usage-analysis', 'user-options', ''],
+    [{ value: 8, label: 'customer (ID: 8)' }]
   )
   const container = document.createElement('div')
   document.body.append(container)
@@ -137,6 +143,10 @@ describe('usage correction visibility', () => {
       ...rendered.container.querySelectorAll('button'),
     ].some((button) => button.textContent?.includes('Correct'))
     assert.equal(hasCorrectButton, false)
+    assert.equal(
+      rendered.container.querySelector('[aria-label="Filter by user"]'),
+      null
+    )
     await cleanup(rendered)
   })
 
@@ -146,6 +156,11 @@ describe('usage correction visibility', () => {
       ...rendered.container.querySelectorAll('button'),
     ].some((button) => button.textContent?.includes('Correct'))
     assert.equal(hasCorrectButton, true)
+    assert.ok(
+      rendered.container.querySelector('[aria-label="Filter by user"]'),
+      'admin users should see the customer filter'
+    )
+    assert.ok(rendered.container.textContent?.includes('customer'))
     await cleanup(rendered)
   })
 

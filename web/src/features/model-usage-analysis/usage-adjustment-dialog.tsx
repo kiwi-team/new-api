@@ -91,7 +91,9 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
   // row is not one of them.
   const activeHours = props.row?.active_hours ?? []
   const selectedHour = activeHours.includes(hour) ? hour : (activeHours[0] ?? 0)
-  const hourStart = props.row ? usageHourTimestamp(props.row.date, selectedHour) : 0
+  const hourStart = props.row
+    ? usageHourTimestamp(props.row.date, selectedHour)
+    : 0
   const snapshotQuery = useQuery({
     queryKey: [
       'model-usage-adjustment-hour',
@@ -240,7 +242,13 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
       }
     >
       <div className='space-y-5'>
-        <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-4'>
+        <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-5'>
+          <div>
+            <div className='text-muted-foreground text-xs'>{t('User')}</div>
+            <div className='font-medium'>
+              {props.row?.username || '-'} (ID: {props.row?.user_id ?? '-'})
+            </div>
+          </div>
           <div>
             <div className='text-muted-foreground text-xs'>{t('Date')}</div>
             <div className='font-medium'>{props.row?.date ?? '-'}</div>

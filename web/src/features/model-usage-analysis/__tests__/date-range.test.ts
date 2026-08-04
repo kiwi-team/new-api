@@ -23,7 +23,9 @@ import {
   getDefaultUsageDateRange,
   usageDateRangeTimestamps,
   usageHourTimestamp,
+  usageRowKey,
 } from '../lib'
+import type { ModelUsageRow } from '../types'
 
 describe('model usage date boundaries', () => {
   it('uses seven complete calendar days in UTC+8 by default', () => {
@@ -49,6 +51,14 @@ describe('model usage date boundaries', () => {
     assert.equal(
       usageHourTimestamp('2026-08-01', 13),
       Date.parse('2026-08-01T13:00:00+08:00') / 1000
+    )
+  })
+
+  it('keeps different users distinct in aggregate row keys', () => {
+    const base = { date: '2026-08-01', token_id: 7, model_name: 'model' }
+    assert.notEqual(
+      usageRowKey({ ...base, user_id: 1 } as ModelUsageRow),
+      usageRowKey({ ...base, user_id: 2 } as ModelUsageRow)
     )
   })
 })

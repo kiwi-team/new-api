@@ -702,9 +702,11 @@ func GetChannelQuotaStatistics(startTime int64, endTime int64) ([]*ChannelQuotaS
 }
 
 // ModelUsageAnalysisRow 用量分析页（/console/model-usage-analysis）单行数据，
-// 按 日期 + Token + 模型 聚合。
+// 按 日期 + 用户 + Token + 模型 聚合。
 type ModelUsageAnalysisRow struct {
 	Date      string `json:"date" gorm:"column:date"`
+	UserId    int    `json:"user_id" gorm:"column:user_id"`
+	Username  string `json:"username" gorm:"column:username"`
 	TokenId   int    `json:"token_id" gorm:"column:token_id"`
 	TokenName string `json:"token_name" gorm:"column:token_name"`
 	ModelName string `json:"model_name" gorm:"column:model_name"`
@@ -767,15 +769,14 @@ func usageAnalysisHourExpr() string {
 	return "HOUR(created_at)"
 }
 
-// GetModelUsageAnalysis 返回用量分析页数据，按 日期 + Token + 模型 聚合。
-// userId > 0 时仅统计该用户创建的 key（token）的数据（非 root 自限范围）；
-// userId == 0 表示不限用户，返回全量（root 可见）。
+// GetModelUsageAnalysis 返回用量分析页数据，按 日期 + 用户 + Token + 模型聚合。
+// userId > 0 时仅统计指定用户创建的 key（token）的数据；userId == 0 返回全量。
 func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
 	rows := make([]*ModelUsageAnalysisRow, 0)
 
 	dateField := usageAnalysisDateExpr()
 
-	selectFields := dateField + " as date, token_id, MAX(token_name) as token_name, model_name, " +
+	selectFields := dateField + " as date, user_id, MAX(username) as username, token_id, MAX(token_name) as token_name, model_name, " +
 		"sum(quota) as quota, sum(count) as total_requests, " +
 		"sum(cache_write_5m_request_count) as cache_write_5m_requests, " +
 		"sum(cache_write_1h_request_count) as cache_write_1h_requests, " +
@@ -794,7 +795,7 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 		db = db.Where("user_id = ?", userId)
 	}
 	err := db.
-		Group("date, token_id, model_name").
+		Group("date, user_id, token_id, model_name").
 		Order("date DESC").
 		Scan(&rows).Error
 	if err != nil {

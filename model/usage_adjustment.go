@@ -85,6 +85,7 @@ type usageHourAggregate struct {
 
 type usageAdjustmentRowKey struct {
 	Date      string
+	UserId    int
 	TokenId   int
 	ModelName string
 }
@@ -102,29 +103,30 @@ func attachUsageActiveHours(rows []*ModelUsageAnalysisRow, userId int, startTime
 
 	activeHours := make([]struct {
 		Date       string `gorm:"column:date"`
+		UserId     int    `gorm:"column:user_id"`
 		TokenId    int    `gorm:"column:token_id"`
 		ModelName  string `gorm:"column:model_name"`
 		ActiveHour int    `gorm:"column:active_hour"`
 	}, 0)
 	query := DB.Model(&QuotaData{}).
-		Select(usageAnalysisDateExpr()+" as date, token_id, model_name, "+usageAnalysisHourExpr()+" as active_hour").
+		Select(usageAnalysisDateExpr()+" as date, user_id, token_id, model_name, "+usageAnalysisHourExpr()+" as active_hour").
 		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
 	if userId > 0 {
 		query = query.Where("user_id = ?", userId)
 	}
 	if err := query.
-		Group("date, token_id, model_name, active_hour").
-		Order("date, token_id, model_name, active_hour").
+		Group("date, user_id, token_id, model_name, active_hour").
+		Order("date, user_id, token_id, model_name, active_hour").
 		Scan(&activeHours).Error; err != nil {
 		return err
 	}
 
 	rowByKey := make(map[usageAdjustmentRowKey]*ModelUsageAnalysisRow, len(rows))
 	for _, row := range rows {
-		rowByKey[usageAdjustmentRowKey{Date: row.Date, TokenId: row.TokenId, ModelName: row.ModelName}] = row
+		rowByKey[usageAdjustmentRowKey{Date: row.Date, UserId: row.UserId, TokenId: row.TokenId, ModelName: row.ModelName}] = row
 	}
 	for _, hour := range activeHours {
-		row := rowByKey[usageAdjustmentRowKey{Date: hour.Date, TokenId: hour.TokenId, ModelName: hour.ModelName}]
+		row := rowByKey[usageAdjustmentRowKey{Date: hour.Date, UserId: hour.UserId, TokenId: hour.TokenId, ModelName: hour.ModelName}]
 		if row == nil {
 			continue
 		}
@@ -145,13 +147,14 @@ func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int,
 
 	rowByKey := make(map[usageAdjustmentRowKey]*ModelUsageAnalysisRow, len(rows))
 	for _, row := range rows {
-		key := usageAdjustmentRowKey{Date: row.Date, TokenId: row.TokenId, ModelName: row.ModelName}
+		key := usageAdjustmentRowKey{Date: row.Date, UserId: row.UserId, TokenId: row.TokenId, ModelName: row.ModelName}
 		rowByKey[key] = row
 	}
 	chinaTime := time.FixedZone("UTC+8", 8*60*60)
 	for _, adjustment := range adjustments {
 		key := usageAdjustmentRowKey{
 			Date:      time.Unix(adjustment.HourStart, 0).In(chinaTime).Format("2006-01-02"),
+			UserId:    adjustment.UserId,
 			TokenId:   adjustment.TokenId,
 			ModelName: adjustment.ModelName,
 		}
@@ -159,6 +162,7 @@ func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int,
 		if row == nil {
 			row = &ModelUsageAnalysisRow{
 				Date:      key.Date,
+				UserId:    key.UserId,
 				TokenId:   key.TokenId,
 				TokenName: adjustment.TokenName,
 				ModelName: key.ModelName,
@@ -175,6 +179,9 @@ func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int,
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Date != rows[j].Date {
 			return rows[i].Date > rows[j].Date
+		}
+		if rows[i].UserId != rows[j].UserId {
+			return rows[i].UserId < rows[j].UserId
 		}
 		if rows[i].TokenId != rows[j].TokenId {
 			return rows[i].TokenId < rows[j].TokenId

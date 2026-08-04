@@ -134,3 +134,28 @@ func TestModelUsageAnalysisReportsOnlyCorrectableHours(t *testing.T) {
 	_, err = GetUsageHourSnapshot(dayStart.Unix(), 11, "claude-test")
 	assert.ErrorIs(t, err, ErrUsageHourNotFound)
 }
+
+func TestModelUsageAnalysisCanFilterAndIdentifyUsers(t *testing.T) {
+	truncateTables(t)
+	chinaTime := time.FixedZone("UTC+8", 8*60*60)
+	hourStart := time.Date(2026, 8, 4, 9, 0, 0, 0, chinaTime).Unix()
+	for _, usage := range []QuotaData{
+		{UserID: 7, Username: "alice", TokenId: 11, TokenName: "alice-key", ModelName: "model", CreatedAt: hourStart + 1, PromptTokens: 100},
+		{UserID: 8, Username: "bob", TokenId: 12, TokenName: "bob-key", ModelName: "model", CreatedAt: hourStart + 2, PromptTokens: 200},
+	} {
+		record := usage
+		require.NoError(t, DB.Create(&record).Error)
+	}
+
+	allRows, err := GetModelUsageAnalysis(0, hourStart, hourStart+3599)
+	require.NoError(t, err)
+	require.Len(t, allRows, 2)
+	assert.Equal(t, []int{7, 8}, []int{allRows[0].UserId, allRows[1].UserId})
+	assert.Equal(t, []string{"alice", "bob"}, []string{allRows[0].Username, allRows[1].Username})
+
+	bobRows, err := GetModelUsageAnalysis(8, hourStart, hourStart+3599)
+	require.NoError(t, err)
+	require.Len(t, bobRows, 1)
+	assert.Equal(t, 8, bobRows[0].UserId)
+	assert.Equal(t, int64(200), bobRows[0].InputTokens)
+}

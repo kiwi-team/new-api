@@ -413,16 +413,16 @@ func GetChannelMonitor(c *gin.Context) {
 	})
 }
 
-// GetModelUsageAnalysis 用量分析页数据（按 日期 + Token + 模型 聚合）
-// 非 root 用户仅能查看自己创建的 key（token）的数据，root 用户查看全部。
+// GetModelUsageAnalysis 用量分析页数据（按 日期 + 用户 + Token + 模型聚合）。
+// 普通用户只能查看自己的数据；admin/root 可通过 user_id 筛选，省略时查看全部。
 func GetModelUsageAnalysis(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 
-	// scopeUserId=0 表示不限用户（全量）；非 root 限定为当前用户自己
-	scopeUserId := 0
-	if c.GetInt("role") < common.RoleRootUser {
-		scopeUserId = c.GetInt("id")
+	scopeUserId, err := modelUsageAnalysisScope(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
 	}
 
 	rows, err := model.GetModelUsageAnalysis(scopeUserId, startTimestamp, endTimestamp)
@@ -436,6 +436,21 @@ func GetModelUsageAnalysis(c *gin.Context) {
 		"message": "",
 		"data":    rows,
 	})
+}
+
+func modelUsageAnalysisScope(c *gin.Context) (int, error) {
+	if c.GetInt("role") < common.RoleAdminUser {
+		return c.GetInt("id"), nil
+	}
+	rawUserId := c.Query("user_id")
+	if rawUserId == "" {
+		return 0, nil
+	}
+	userId, err := strconv.Atoi(rawUserId)
+	if err != nil || userId < 0 {
+		return 0, fmt.Errorf("user_id parameter is invalid")
+	}
+	return userId, nil
 }
 
 // GetDistinctProjectNames 获取所有不重复的项目名称
