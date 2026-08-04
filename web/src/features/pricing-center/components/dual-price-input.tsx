@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 import { Input } from '@/components/ui/input'
 
-import { round6 } from '../lib'
+import { formatPrice, nearlyEqual, round6 } from '../lib'
 
 type DualPriceInputProps = {
   /** Price in USD; the CNY field is derived from it via `rate`. */
@@ -32,8 +32,18 @@ type DualPriceInputProps = {
 
 /**
  * Inline price cell in both currencies: editing either field converts to the
- * other, and blur or Enter commits the USD value. Commits are skipped when the
- * rounded value is unchanged so tabbing through the table saves nothing.
+ * other, and blur or Enter commits the USD value.
+ *
+ * Only USD is stored, so CNY is a derived view and the round trip through
+ * `usd * rate` always leaves noise in the last digits. What is shown is what
+ * gets saved: both fields render through `formatPrice`, including while
+ * focused, so clicking a cell never swaps ¥1.50 for its raw ¥1.499998.
+ *
+ * Two guards keep that noise out of the database: a field that was not actually
+ * typed into commits nothing on blur, and a commit landing on the same price
+ * (`nearlyEqual`) is skipped — otherwise retyping the same CNY amount writes a
+ * value that reads back unchanged, which looks exactly like the edit never
+ * reached the database.
  */
 export function DualPriceInput({
   value,
@@ -43,39 +53,51 @@ export function DualPriceInput({
 }: DualPriceInputProps) {
   const [usdText, setUsdText] = useState('')
   const [cnyText, setCnyText] = useState('')
+  // Focus and blur alone must not count as an edit.
+  const usdEdited = useRef(false)
+  const cnyEdited = useRef(false)
 
   useEffect(() => {
     if (value === null || value === undefined) {
       setUsdText('')
       setCnyText('')
-      return
+    } else {
+      setUsdText(formatPrice(round6(value)))
+      setCnyText(formatPrice(round6(value * rate)))
     }
-    setUsdText(String(value))
-    setCnyText(String(round6(value * rate)))
+    usdEdited.current = false
+    cnyEdited.current = false
   }, [value, rate])
 
   if (disabled) {
     return <span className='text-muted-foreground'>-</span>
   }
 
+  const commit = (usd: number) => {
+    usdEdited.current = false
+    cnyEdited.current = false
+    setUsdText(formatPrice(usd))
+    setCnyText(formatPrice(round6(usd * rate)))
+    if (!nearlyEqual(usd, value ?? 0)) onCommit(usd)
+  }
+
   const commitFromUsd = () => {
     const parsed = usdText === '' ? 0 : Number.parseFloat(usdText)
-    const usd = Number.isNaN(parsed) ? 0 : parsed
-    setCnyText(String(round6(usd * rate)))
-    if (round6(usd) !== round6(value ?? 0)) onCommit(round6(usd))
+    commit(round6(Number.isNaN(parsed) ? 0 : parsed))
   }
 
   const commitFromCny = () => {
     const parsed = cnyText === '' ? 0 : Number.parseFloat(cnyText)
-    const usd = (Number.isNaN(parsed) ? 0 : parsed) / rate
-    setUsdText(String(round6(usd)))
-    if (round6(usd) !== round6(value ?? 0)) onCommit(round6(usd))
+    commit(round6((Number.isNaN(parsed) ? 0 : parsed) / rate))
   }
 
   const commitOnEnter =
-    (commit: () => void) => (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter') commit()
+    (commitField: () => void) => (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') commitField()
     }
+
+  const shownUsd = value === null ? '' : formatPrice(round6(value))
+  const shownCny = value === null ? '' : formatPrice(round6(value * rate))
 
   return (
     <div className='flex w-40 flex-col gap-1'>
@@ -86,8 +108,14 @@ export function DualPriceInput({
         <Input
           className='h-8 ps-5 text-xs'
           value={usdText}
-          onChange={(event) => setUsdText(event.target.value)}
-          onBlur={commitFromUsd}
+          onChange={(event) => {
+            usdEdited.current = true
+            setUsdText(event.target.value)
+          }}
+          onBlur={() => {
+            if (usdEdited.current) commitFromUsd()
+            else setUsdText(shownUsd)
+          }}
           onKeyDown={commitOnEnter(commitFromUsd)}
           inputMode='decimal'
         />
@@ -99,8 +127,14 @@ export function DualPriceInput({
         <Input
           className='h-8 ps-5 text-xs'
           value={cnyText}
-          onChange={(event) => setCnyText(event.target.value)}
-          onBlur={commitFromCny}
+          onChange={(event) => {
+            cnyEdited.current = true
+            setCnyText(event.target.value)
+          }}
+          onBlur={() => {
+            if (cnyEdited.current) commitFromCny()
+            else setCnyText(shownCny)
+          }}
           onKeyDown={commitOnEnter(commitFromCny)}
           inputMode='decimal'
         />

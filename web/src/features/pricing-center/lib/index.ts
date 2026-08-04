@@ -21,6 +21,7 @@ export {
   buildOfficialPriceRows,
   formatPrice,
   formatTokens,
+  nearlyEqual,
   parseTieredPriceMap,
   ratioToUsdPer1M,
   round6,
