@@ -40,18 +40,48 @@ export type ClientUserQuotaPayload = {
   remark?: string
 }
 
-/** One project's slice of a client UID's budget. */
+/**
+ * One project allocation behind a client UID, as returned by
+ * `/api/cliend_user_quota/project-allocations`.
+ *
+ * "Currently effective" needs all three of: the project is enabled, the plan is
+ * the project's active plan, and today falls inside the plan's date range. The
+ * three flags are kept separate so the UI can explain *why* an allocation is
+ * not effective.
+ */
 export type ProjectAllocation = {
+  allocation_id: number
   project_id: number
   project_name: string
+  /** 1 = enabled, 2 = paused */
+  project_status: number
+  plan_id: number
+  plan_name: string
+  /** `YYYYMMDD`, empty when the plan has no bound */
+  start_date: string
+  end_date: string
   allocated_quota: number
-  used_quota_usd?: number | string
+  used_quota_usd: number
+  remaining_quota_usd: number
+  is_active_plan: boolean
+  is_in_date_range: boolean
+  is_current_effective: boolean
 }
 
-/** Rollup shown inline in the list, keyed by client UID. */
+/**
+ * Rollup shown inline in the list, keyed by client UID. Only currently
+ * effective allocations are counted; history, paused, not-yet-started and
+ * expired plans are excluded.
+ */
 export type ProjectBudgetSummary = {
+  client_user_id: string
   total_allocated: number
-  projects: { project_id: number; project_name: string; allocated_quota: number }[]
+  total_used_usd: number
+  total_remaining_usd: number
+  /** Project-attributed spend this month, used to derive non-project spend */
+  monthly_project_used_usd: number
+  project_count: number
+  projects: ProjectAllocation[]
 }
 
 export type ApiResponse<T = unknown> = {

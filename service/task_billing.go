@@ -40,6 +40,19 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	other["is_task"] = true
 	other["request_path"] = c.Request.URL.Path
 	other["model_price"] = info.PriceData.ModelPrice
+	// 记录参与计费的额外倍率（视频时长 seconds、分辨率 resolution-* 等），
+	// 否则前端「计费过程」只能展示 价格 × 分组倍率，与实际扣费不符
+	// （例如 8 秒视频实际扣了 8 倍，但展示成 1 倍）。
+	// 按次计费的模型（TaskPricePatches）不参与倍率计算，此处也不记录。
+	if !common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+		if otherRatios := info.PriceData.OtherRatios(); len(otherRatios) > 0 {
+			snapshot := make(map[string]float64, len(otherRatios))
+			for k, v := range otherRatios {
+				snapshot[k] = v
+			}
+			other["other_ratios"] = snapshot
+		}
+	}
 	if info.PriceData.ModelRatio > 0 {
 		other["model_ratio"] = info.PriceData.ModelRatio
 	}

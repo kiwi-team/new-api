@@ -91,6 +91,21 @@ export function ProjectBudgetDialogs() {
           onChanged={triggerRefresh}
         />
       )}
+
+      {open === 'plan-allocations' && currentProject && currentPlan && (
+        <AllocationsDialog
+          open
+          onOpenChange={(isOpen) => {
+            if (isOpen) return
+            setCurrentPlan(null)
+            setCurrentProject(null)
+            setOpen(null)
+          }}
+          project={currentProject}
+          plan={currentPlan}
+          onChanged={triggerRefresh}
+        />
+      )}
     </>
   )
 }

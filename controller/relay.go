@@ -888,6 +888,7 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	taskErr.Message = common.MessageWithRequestId(taskErr.Message, c.GetString(common.RequestIdKey))
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 

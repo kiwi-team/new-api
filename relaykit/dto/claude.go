@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
@@ -26,7 +25,7 @@ func ExtractSessionIdFromMetadata(metadata json.RawMessage) string {
 		return ""
 	}
 	var meta ClaudeMetadata
-	if err := common.Unmarshal(metadata, &meta); err != nil {
+	if err := kitutil.Unmarshal(metadata, &meta); err != nil {
 		return ""
 	}
 	userId := strings.TrimSpace(meta.UserId)
@@ -38,7 +37,7 @@ func ExtractSessionIdFromMetadata(metadata json.RawMessage) string {
 		var inner struct {
 			SessionId string `json:"session_id"`
 		}
-		if err := common.UnmarshalJsonStr(userId, &inner); err == nil {
+		if err := kitutil.UnmarshalJsonStr(userId, &inner); err == nil {
 			return strings.TrimSpace(inner.SessionId)
 		}
 		return ""

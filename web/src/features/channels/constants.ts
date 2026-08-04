@@ -21,7 +21,7 @@ For commercial licensing, please contact support@quantumnous.com
 // All label/name values are i18n keys; use t(value) when displaying.
 // ============================================================================
 
-export const CHANNEL_TYPE_NEW_API = 60
+export const CHANNEL_TYPE_NEW_API = 76
 
 export const CHANNEL_TYPES = {
   0: 'Unknown',
@@ -71,22 +71,43 @@ export const CHANNEL_TYPES = {
   48: 'xAI',
   49: 'Coze',
   50: 'Kling',
-  51: 'Jimeng',
-  52: 'Vidu',
-  53: 'Submodel',
-  54: 'DoubaoVideo',
-  55: 'Sora',
-  56: 'Replicate',
-  57: 'ChatGPT Subscription (Codex)',
-  58: 'Advanced Custom',
-  59: 'Sub2API',
-  60: 'New API',
+  51: 'Sensenova',
+  52: 'Visual VolcEngine',
+  53: 'Jimeng',
+  54: 'Serper',
+  55: 'Vidu',
+  56: 'Submodel',
+  57: 'DoubaoVideo',
+  58: 'Sora',
+  59: 'ElevenLabs',
+  60: 'AliDashScope',
+  61: 'Fal',
+  62: 'Replicate',
+  63: 'Pixverse',
+  64: 'Ltx',
+  65: 'AWS V2',
+  66: 'WorldLabs',
+  67: 'FAL Sync',
+  68: 'ChatGPT Subscription (Codex)',
+  69: 'RunwayML',
+  70: 'PPIO',
+  71: 'Hedra',
+  72: 'HeyGen',
+  73: 'Reve',
+  74: 'Advanced Custom',
+  75: 'Sub2API',
+  76: 'New API',
+  77: 'MiniMax Video',
 } as const
 
+// Curated ordering for the type picker: mainstream LLM providers first, then
+// aggregators/self-hosted, then the media/task channels. IDs must match
+// constant/channel.go — this fork's numbering diverges from upstream from 51 on.
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 33, 24, 43, 3, 41, 48, 60, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15,
-  46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 22, 21, 44, 2,
-  5, 36, 50, 51, 52, 53, 54, 55, 56,
+  1, 14, 33, 65, 24, 43, 3, 41, 48, 76, 74, 42, 34, 20, 4, 40, 27, 25, 17, 60,
+  26, 15, 46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 8, 68, 75, 22, 44, 51,
+  52, 2, 5, 36, 50, 53, 55, 56, 57, 58, 77, 61, 67, 62, 63, 64, 66, 69, 70, 71,
+  72, 73, 54, 59,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -392,9 +413,12 @@ export const FIELD_DESCRIPTIONS = {
 // Channel Type Specific Configurations
 // ============================================================================
 
+// Channels whose upstream exposes an OpenAI-compatible /v1/models endpoint.
+// IDs follow constant/channel.go — 68/74/75/76 are Codex / Advanced Custom /
+// Sub2API / New API in this fork.
 export const MODEL_FETCHABLE_TYPES = new Set([
-  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 57, 58,
-  59, 60,
+  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 68, 74,
+  75, 76,
 ])
 
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {

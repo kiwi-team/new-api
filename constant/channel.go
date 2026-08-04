@@ -74,6 +74,7 @@ const (
 	ChannelTypeAdvancedCustom   = 74
 	ChannelTypeSub2API          = 75
 	ChannelTypeNewAPI           = 76
+	ChannelTypeMiniMaxVideo     = 77
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -155,8 +156,9 @@ var ChannelBaseURLs = []string{
 	"https://api.heygen.com",               // 72 heygen
 	"https://api.reve.com",                 // 73 reve
 	"",                                     // 74
-	"",
-	"",
+	"",                                     // 75
+	"",                                     // 76
+	"https://api.minimaxi.com",             // 77 minimax video (v2)
 }
 
 var ChannelTypeNames = map[int]string{
@@ -230,6 +232,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom: "Advanced Custom",
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
+	ChannelTypeMiniMaxVideo:   "MiniMaxVideo",
 }
 
 func GetChannelTypeName(channelType int) string {

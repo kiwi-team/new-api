@@ -22,8 +22,11 @@ import { useTranslation } from 'react-i18next'
 import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { formatCurrencyFromUSD } from '@/lib/currency'
+import { formatPlanDate } from '@/lib/format'
 
 import { getProjectAllocations } from '../api'
+
+import { AllocationStatusBadge } from './allocation-status-badge'
 
 type ProjectBudgetDialogProps = {
   open: boolean
@@ -31,7 +34,14 @@ type ProjectBudgetDialogProps = {
   clientUserId: string
 }
 
-/** Read-only breakdown of the project allocations behind one client UID. */
+/** Budgets are stored in USD with 6 decimals; anything coarser hides real spend. */
+const budgetFormat = { digitsLarge: 6, digitsSmall: 6 } as const
+
+/**
+ * Read-only breakdown of every project allocation behind one client UID,
+ * including plans that are not currently effective — the list view only counts
+ * effective ones, so this dialog is where history and upcoming plans surface.
+ */
 export function ProjectBudgetDialog({
   open,
   onOpenChange,
@@ -49,13 +59,16 @@ export function ProjectBudgetDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`${t('Project budget details')} - ${clientUserId}`}
-      contentClassName='sm:max-w-xl'
+      title={`${t('Project budget details (including history)')} - ${clientUserId}`}
+      description={t(
+        '"Currently effective" requires all three: the project is enabled, the plan is selected as active, and today falls inside the budget period.'
+      )}
+      contentClassName='sm:max-w-4xl'
       contentHeight='auto'
     >
       <StaticDataTable
         data={data ?? []}
-        getRowKey={(allocation) => allocation.project_id}
+        getRowKey={(allocation) => allocation.allocation_id}
         emptyContent={t('No project budget allocated')}
         emptyClassName='text-muted-foreground py-8'
         columns={[
@@ -66,19 +79,44 @@ export function ProjectBudgetDialog({
             cell: (allocation) => allocation.project_name,
           },
           {
+            id: 'plan',
+            header: t('Plan'),
+            cell: (allocation) => allocation.plan_name || '-',
+          },
+          {
+            id: 'period',
+            header: t('Budget period'),
+            cell: (allocation) =>
+              `${formatPlanDate(allocation.start_date)} ~ ${formatPlanDate(allocation.end_date)}`,
+          },
+          {
+            id: 'status',
+            header: t('Status'),
+            cell: (allocation) => (
+              <AllocationStatusBadge allocation={allocation} />
+            ),
+          },
+          {
             id: 'allocated',
             header: t('Allocated budget'),
             cell: (allocation) =>
-              formatCurrencyFromUSD(allocation.allocated_quota),
+              formatCurrencyFromUSD(allocation.allocated_quota, budgetFormat),
           },
           {
             id: 'used',
             header: t('Used'),
             cell: (allocation) =>
-              formatCurrencyFromUSD(Number(allocation.used_quota_usd) || 0, {
-                digitsLarge: 6,
-                digitsSmall: 6,
-              }),
+              formatCurrencyFromUSD(allocation.used_quota_usd, budgetFormat),
+          },
+          {
+            id: 'remaining',
+            header: t('Available'),
+            cellClassName: 'font-medium',
+            cell: (allocation) =>
+              formatCurrencyFromUSD(
+                allocation.remaining_quota_usd,
+                budgetFormat
+              ),
           },
         ]}
       />

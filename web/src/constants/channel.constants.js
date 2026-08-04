@@ -258,6 +258,10 @@ export const CHANNEL_OPTIONS = [
     value: 73,
     color: 'purple',
     label: 'Reve'
+  }, {
+    value: 77,
+    color: 'orange',
+    label: 'MiniMax Video'
   }
 ];
 

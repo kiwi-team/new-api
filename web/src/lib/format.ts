@@ -281,3 +281,20 @@ export function stringToColor(str: string): string {
 
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`
 }
+
+/**
+ * Budget plan dates are stored as compact `YYYYMMDD` strings, not timestamps.
+ * Renders them as `YYYY-MM-DD`; anything of another shape is passed through.
+ */
+export function formatPlanDate(date: string | undefined): string {
+  if (!date || date.length !== 8) return date ?? '-'
+  return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
+}
+
+/** Today in the same compact `YYYYMMDD` shape plan dates use. */
+export function todayPlanDate(): string {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}${month}${day}`
+}

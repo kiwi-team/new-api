@@ -26,9 +26,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatTimestampToDate, quotaUnitsToDollars } from '@/lib/format'
+import { quotaUnitsToDollars } from '@/lib/format'
 
 import type { ClientUserQuota, ProjectBudgetSummary } from '../types'
+import { NonProjectBudgetCell, ProjectBudgetCell } from './budget-cells'
 import { ClientUserQuotaRowActions } from './data-table-row-actions'
 
 type ColumnsOptions = {
@@ -66,43 +67,33 @@ export function useClientUserQuotaColumns({
         ]
       : []),
     {
-      accessorKey: 'fixed_quota',
-      header: t('Monthly fixed budget'),
-      cell: ({ row }) => formatCurrencyFromUSD(row.original.fixed_quota),
-      size: 140,
-    },
-    {
-      accessorKey: 'temp_quota',
-      header: t('Temporary budget'),
-      cell: ({ row }) => formatCurrencyFromUSD(row.original.temp_quota),
-      size: 120,
+      id: 'non_project_budget',
+      header: t('Monthly non-project budget'),
+      enableSorting: false,
+      cell: ({ row }) => (
+        <NonProjectBudgetCell
+          quota={row.original}
+          summary={projectBudgets[row.original.client_user_id]}
+        />
+      ),
+      size: 300,
     },
     {
       accessorKey: 'used_quota',
-      header: t('Used this month'),
+      header: t('Total used this month'),
       cell: ({ row }) =>
-        formatCurrencyFromUSD(quotaUnitsToDollars(row.original.used_quota ?? 0), { digitsLarge: 6, digitsSmall: 6 }),
+        formatCurrencyFromUSD(quotaUnitsToDollars(row.original.used_quota ?? 0), {
+          digitsLarge: 6,
+          digitsSmall: 6,
+        }),
       size: 160,
     },
     {
-      accessorKey: 'expired_at',
-      header: t('Temporary budget expires at'),
-      meta: { mobileHidden: true },
-      cell: ({ row }) =>
-        row.original.expired_at
-          ? formatTimestampToDate(row.original.expired_at)
-          : '-',
-      size: 200,
-    },
-    {
       id: 'project_budget',
-      header: t('Project budget'),
+      header: t('Current project budget'),
       enableSorting: false,
       cell: ({ row }) => {
         const summary = projectBudgets[row.original.client_user_id]
-        if (!summary?.projects?.length) {
-          return <span className='text-muted-foreground'>-</span>
-        }
         return (
           <Tooltip>
             <TooltipTrigger
@@ -110,28 +101,50 @@ export function useClientUserQuotaColumns({
                 <Button
                   variant='link'
                   size='sm'
-                  className='h-auto p-0'
-                  onClick={() => onOpenProjectBudget(row.original.client_user_id)}
+                  className='h-auto justify-start p-0 whitespace-normal'
+                  onClick={() =>
+                    onOpenProjectBudget(row.original.client_user_id)
+                  }
                 />
               }
             >
-              {formatCurrencyFromUSD(summary.total_allocated)}
-              {t('({{count}} projects)', { count: summary.projects.length })}
+              <ProjectBudgetCell summary={summary} />
             </TooltipTrigger>
             <TooltipContent>
-              <div className='space-y-0.5'>
-                {summary.projects.map((project) => (
-                  <div key={project.project_id}>
-                    {project.project_name}:{' '}
-                    {formatCurrencyFromUSD(project.allocated_quota)}
-                  </div>
-                ))}
-              </div>
+              {summary?.projects?.length ? (
+                <div className='space-y-1'>
+                  {summary.projects.map((project) => (
+                    <div key={project.allocation_id}>
+                      <div>
+                        {project.project_name} / {project.plan_name}
+                      </div>
+                      <div className='text-muted-foreground'>
+                        {t('Allocated {{allocated}}, used {{used}}, available {{available}}', {
+                          allocated: formatCurrencyFromUSD(
+                            project.allocated_quota,
+                            { digitsLarge: 6, digitsSmall: 6 }
+                          ),
+                          used: formatCurrencyFromUSD(project.used_quota_usd, {
+                            digitsLarge: 6,
+                            digitsSmall: 6,
+                          }),
+                          available: formatCurrencyFromUSD(
+                            project.remaining_quota_usd,
+                            { digitsLarge: 6, digitsSmall: 6 }
+                          ),
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                t('Click to view all project budgets, including history')
+              )}
             </TooltipContent>
           </Tooltip>
         )
       },
-      size: 200,
+      size: 240,
     },
     {
       id: 'actions',

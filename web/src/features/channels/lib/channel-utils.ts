@@ -51,9 +51,9 @@ export function getChannelTypeIcon(type: number): string {
     6: 'OpenAI', // OpenAIMax
     7: 'OpenAI', // OhMyGPT
     8: 'OpenAI', // Custom
-    58: 'NewAPI', // Advanced Custom
-    59: 'Sub2API', // Sub2API
-    60: 'NewAPI', // New API
+    74: 'NewAPI', // Advanced Custom
+    75: 'Sub2API', // Sub2API
+    76: 'NewAPI', // New API
     3: 'Azure', // Azure
 
     // Anthropic
@@ -98,19 +98,28 @@ export function getChannelTypeIcon(type: number): string {
     2: 'Midjourney', // MjProxy
     5: 'Midjourney', // MjProxyPlus
     50: 'Kling', // Kling
-    51: 'Jimeng', // Jimeng
-    52: 'Vidu', // Vidu
+    53: 'Jimeng', // Jimeng
+    55: 'Vidu', // Vidu
     36: 'Suno', // SunoAPI
-    55: 'OpenAI', // Sora
-    54: 'Doubao', // DoubaoVideo
-    56: 'Replicate', // Replicate
+    58: 'OpenAI', // Sora
+    57: 'Doubao', // DoubaoVideo
+    62: 'Replicate', // Replicate
+    52: 'Volcengine', // Visual VolcEngine
+    61: 'Fal', // Fal
+    67: 'Fal', // FAL Sync
+    63: 'Pixverse', // Pixverse
+    77: 'Minimax', // MiniMax Video
 
     // Tools & Platforms
     37: 'Dify', // Dify
     38: 'Jina', // Jina
     22: 'FastGPT', // FastGPT
     47: 'Xinference', // Xinference
-    53: 'OpenAI', // Submodel
+    56: 'OpenAI', // Submodel
+    54: 'OpenAI', // Serper
+    51: 'OpenAI', // Sensenova
+    68: 'OpenAI', // Codex
+    60: 'Qwen', // AliDashScope
 
     // AI Proxy services
     10: 'OpenAI', // AI Proxy

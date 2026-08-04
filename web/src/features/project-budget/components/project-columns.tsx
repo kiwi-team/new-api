@@ -36,7 +36,8 @@ import { cn } from '@/lib/utils'
 
 import { setActivePlan, updateProjectStatus } from '../api'
 import { PROJECT_STATUS, formatPlanDate, todayPlanDate } from '../constants'
-import type { Project } from '../types'
+import type { Project, ProjectPlanSummary } from '../types'
+import { ActivePlanPeriod, ActivePlanStatusBadge } from './active-plan-status'
 import { PlanAllocationsCell } from './plan-allocations-cell'
 import { useProjectBudget } from './project-budget-provider'
 
@@ -44,7 +45,28 @@ const NO_ACTIVE_PLAN = '0'
 
 export function useProjectColumns(): ColumnDef<Project>[] {
   const { t } = useTranslation()
-  const { setOpen, setCurrentProject, triggerRefresh } = useProjectBudget()
+  const { setOpen, setCurrentProject, setCurrentPlan, triggerRefresh } =
+    useProjectBudget()
+
+  // The row payload carries plan summaries, not full plan records; the
+  // allocations dialog only needs identity plus the date range it displays.
+  const openPlanAllocations = (project: Project, plan: ProjectPlanSummary) => {
+    setCurrentProject(project)
+    setCurrentPlan({
+      id: plan.plan_id,
+      plan_name: plan.plan_name,
+      start_date: plan.start_date,
+      end_date: plan.end_date,
+      is_active: plan.is_active,
+      is_expired: plan.end_date < todayPlanDate(),
+      allocated_total: (plan.allocations ?? []).reduce(
+        (sum, allocation) => sum + (allocation.allocated_quota || 0),
+        0
+      ),
+      allocations: plan.allocations,
+    })
+    setOpen('plan-allocations')
+  }
 
   const handleStatusToggle = async (project: Project) => {
     const nextStatus =
@@ -106,7 +128,12 @@ export function useProjectColumns(): ColumnDef<Project>[] {
       id: 'plans',
       header: t('Allocated'),
       enableSorting: false,
-      cell: ({ row }) => <PlanAllocationsCell plans={row.original.plans} />,
+      cell: ({ row }) => (
+        <PlanAllocationsCell
+          plans={row.original.plans}
+          onOpenPlan={(plan) => openPlanAllocations(row.original, plan)}
+        />
+      ),
       size: 280,
     },
     {
@@ -165,7 +192,7 @@ export function useProjectColumns(): ColumnDef<Project>[] {
             label: `${plan.plan_name} (${formatPlanDate(plan.start_date)}~${formatPlanDate(plan.end_date)})`,
           })),
         ]
-        return (
+        const select = (
           <Select
             items={items}
             value={String(row.original.active_plan_id || 0)}
@@ -190,8 +217,54 @@ export function useProjectColumns(): ColumnDef<Project>[] {
             </SelectContent>
           </Select>
         )
+        return (
+          <div className='space-y-1'>
+            <div className='flex flex-wrap items-center gap-1'>
+              <ActivePlanStatusBadge project={row.original} />
+              <ActivePlanPeriod project={row.original} />
+            </div>
+            {select}
+          </div>
+        )
       },
-      size: 200,
+      size: 220,
+    },
+    {
+      id: 'active_plan_budget',
+      header: t('Current plan budget'),
+      enableSorting: false,
+      cell: ({ row }) => {
+        const project = row.original
+        const activePlan = (project.plans ?? []).find(
+          (plan) => plan.plan_id === project.active_plan_id
+        )
+        if (!activePlan) {
+          return <span className='text-muted-foreground'>{t('No plan selected')}</span>
+        }
+        return (
+          <div className='space-y-0.5 text-xs'>
+            <Button
+              variant='link'
+              size='sm'
+              className='h-auto p-0'
+              onClick={() => openPlanAllocations(project, activePlan)}
+            >
+              {t('Allocated: {{amount}}', {
+                amount: formatCurrencyFromUSD(project.active_allocated_total ?? 0),
+              })}
+            </Button>
+            <div className='text-muted-foreground'>
+              {t('Used: {{amount}}', {
+                amount: formatCurrencyFromUSD(
+                  quotaUnitsToDollars(project.active_used_quota ?? 0),
+                  { digitsLarge: 6, digitsSmall: 6 }
+                ),
+              })}
+            </div>
+          </div>
+        )
+      },
+      size: 180,
     },
     {
       id: 'actions',

@@ -203,6 +203,13 @@ export interface LogOtherData {
   cache_creation_ratio_1h?: number
   is_model_mapped?: boolean
   upstream_model_name?: string
+  /**
+   * Extra multipliers that already applied to the charge for task-style models
+   * (video duration, resolution, ...), e.g. `{ seconds: 8, 'resolution-1080P': 1.67 }`.
+   * Without these the breakdown shows only price x group ratio, which does not
+   * multiply out to the amount actually billed.
+   */
+  other_ratios?: Record<string, number>
   audio_ratio?: number
   audio_completion_ratio?: number
   frt?: number

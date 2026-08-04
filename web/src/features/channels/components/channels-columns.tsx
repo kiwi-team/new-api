@@ -64,7 +64,11 @@ import { truncateText } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getChannelKey, getCodexUsage } from '../api'
-import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
+import {
+  CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_CODEX,
+  MODEL_FETCHABLE_TYPES,
+} from '../constants'
 import {
   formatRelativeTime,
   formatResponseTime,
@@ -524,7 +528,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
     }
 
     setIsUpdating(true)
-    if (channel.type === 57) {
+    if (channel.type === CHANNEL_TYPE_CODEX) {
       try {
         const res = await getCodexUsage(channel.id)
         if (!res.success) {
@@ -548,17 +552,17 @@ function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
-  } else if (sensitiveVisible && channel.type === 57) {
+  } else if (sensitiveVisible && channel.type === CHANNEL_TYPE_CODEX) {
     remainingBadgeLabel = t('Account Info')
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
-  } else if (channel.type === 57) {
+  } else if (channel.type === CHANNEL_TYPE_CODEX) {
     remainingTooltipLabel = t('Click to view Codex usage')
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57) {
+  if (channel.type === CHANNEL_TYPE_CODEX) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -600,7 +604,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {channel.type !== CHANNEL_TYPE_CODEX && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
       </div>

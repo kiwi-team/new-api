@@ -36,8 +36,9 @@ type AliVideoRequest struct {
 
 // AliVideoMedia describes Wan2.7 image-to-video media inputs.
 type AliVideoMedia struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type           string `json:"type"`
+	URL            string `json:"url"`
+	ReferenceVoice string `json:"reference_voice,omitempty"` // 音色参考（wan2.7，wav/mp3，1-10s）
 }
 
 // AliVideoInput 视频输入参数
@@ -208,9 +209,80 @@ func isResolutionRatioModel(model string) bool {
 	return strings.HasPrefix(model, "wan2.7") || strings.HasPrefix(model, "happyhorse")
 }
 
+// isReferenceToVideoModel: 是否为参考生视频（r2v）模型。
+// r2v 端点只认 input.media 数组，不认 input.img_url。
+func isReferenceToVideoModel(model string) bool {
+	return strings.Contains(model, "r2v")
+}
+
+// isHappyHorseModel: HappyHorse 系列（其 r2v 接口未提供 prompt_extend 参数）
+func isHappyHorseModel(model string) bool {
+	return strings.HasPrefix(model, "happyhorse")
+}
+
+// aliMediaTypeForRole 把统一 role 映射为阿里 media.type。
+// 返回 false 表示该 role 阿里不支持（由统一层的能力校验拦截，此处兜底）。
+func aliMediaTypeForRole(role string) (string, bool) {
+	switch role {
+	case relaycommon.RefRoleFirstFrame:
+		return "first_frame", true
+	case relaycommon.RefRoleLastFrame:
+		return "last_frame", true
+	case relaycommon.RefRoleReferenceImage:
+		return "reference_image", true
+	case relaycommon.RefRoleReferenceVideo:
+		return "reference_video", true
+	default:
+		return "", false
+	}
+}
+
+// lookupAliRatios 按模型名查倍率表，支持带日期后缀的快照版模型名。
+//
+// 阿里的部分模型有 "<base>-<yyyy-MM-dd>" 形式的快照版（如
+// wan2.7-r2v-2026-06-12），它们与基础版计价一致。精确匹配失败时退化为
+// 最长前缀匹配，避免快照版静默按 1 倍率计费（1080P 会被当成 720P 收费）。
+func lookupAliRatios(table map[string]map[string]float64, model string) (map[string]float64, bool) {
+	if r, ok := table[model]; ok {
+		return r, true
+	}
+	bestKey := ""
+	for key := range table {
+		if !strings.HasPrefix(model, key) {
+			continue
+		}
+		// 只接受在分隔符处截断的前缀，避免 "wan2.7-r2v" 误匹配 "wan2.7-r2vx"
+		rest := model[len(key):]
+		if rest != "" && rest[0] != '-' {
+			continue
+		}
+		if len(key) > len(bestKey) {
+			bestKey = key
+		}
+	}
+	if bestKey == "" {
+		return nil, false
+	}
+	return table[bestKey], true
+}
+
 func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) {
 	otherRatios := make(map[string]float64)
 	aliRatios := map[string]map[string]float64{
+		"wan2.7-r2v": {
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
+		"happyhorse-1.0-r2v": {
+			"480P":  1,
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
+		"happyhorse-1.1-r2v": {
+			"480P":  1,
+			"720P":  1,
+			"1080P": 1 / 0.6,
+		},
 		"wan2.6-i2v": {
 			"720P":  1,
 			"1080P": 1 / 0.6,
@@ -278,7 +350,7 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 			resolution = resolution + "P"
 		}
 	}
-	if otherRatio, ok := aliRatios[aliReq.Model]; ok {
+	if otherRatio, ok := lookupAliRatios(aliRatios, aliReq.Model); ok {
 		if ratio, ok := otherRatio[resolution]; ok {
 			otherRatios[fmt.Sprintf("resolution-%s", resolution)] = ratio
 		}
@@ -286,10 +358,12 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 	return otherRatios, nil
 }
 
-// isMediaProtocolI2VModel: 图生视频且使用 input.media 协议的模型（wan2.7-i2v / happyhorse-i2v）。
-// 这些模型不再接受 img_url / first_frame_url / last_frame_url 等旧字段。
+// isMediaProtocolI2VModel: 需要用 input.media 承载素材的模型（wan2.7 / happyhorse 的 i2v 与 r2v）。
+// 这些模型不再接受 img_url / first_frame_url / last_frame_url 等旧字段；
+// r2v 端点更是完全不认 img_url，只认 media 数组。t2v 无素材，不走该协议。
 func isMediaProtocolI2VModel(model string) bool {
-	return isResolutionRatioModel(model) && strings.Contains(model, "i2v")
+	return isResolutionRatioModel(model) &&
+		(strings.Contains(model, "i2v") || isReferenceToVideoModel(model))
 }
 
 func firstNonEmpty(values ...string) string {
@@ -342,6 +416,22 @@ func normalizeMediaProtocolInput(aliReq *AliVideoRequest, req relaycommon.TaskSu
 	}
 
 	if len(aliReq.Input.Media) == 0 {
+		// 显式 references 优先：按角色映射为 media，顺序与 references 严格一致
+		// （提示词里的“图1/视频1”依赖该顺序）。
+		for _, ref := range req.References {
+			mediaType, ok := aliMediaTypeForRole(ref.Role)
+			if !ok || ref.URL == "" {
+				continue
+			}
+			aliReq.Input.Media = append(aliReq.Input.Media, AliVideoMedia{
+				Type:           mediaType,
+				URL:            ref.URL,
+				ReferenceVoice: ref.VoiceURL,
+			})
+		}
+	}
+
+	if len(aliReq.Input.Media) == 0 {
 		firstFrameURL := firstNonEmpty(aliReq.Input.FirstFrameURL, aliReq.Input.ImgURL, firstTaskImage(req))
 		lastFrameURL := firstNonEmpty(aliReq.Input.LastFrameURL, secondTaskImage(req))
 		audioURL := aliReq.Input.AudioURL
@@ -382,20 +472,36 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	aliReq := &AliVideoRequest{
 		Model: req.Model,
 		Input: AliVideoInput{
-			Prompt: req.Prompt,
-			ImgURL: firstTaskImage(req),
+			Prompt:         req.Prompt,
+			ImgURL:         firstTaskImage(req),
+			NegativePrompt: req.NegativePrompt,
 		},
 		Parameters: &AliVideoParameters{
-			PromptExtend: lo.ToPtr(true),  // 默认开启智能改写
-			Watermark:    lo.ToPtr(false), // 默认不打水印
+			Watermark: lo.ToPtr(false), // 默认不打水印
 		},
+	}
+	// HappyHorse 的 r2v 接口未提供 prompt_extend 参数，传了会触发 InvalidParameter。
+	if !isHappyHorseModel(req.Model) {
+		aliReq.Parameters.PromptExtend = lo.ToPtr(true) // 默认开启智能改写
 	}
 
 	// wan2.7 / happyhorse 使用 resolution + ratio 新协议
 	isResolutionRatioProto := isResolutionRatioModel(req.Model)
 
+	// 统一的 resolution / aspect_ratio 优先于 size
+	if req.Resolution != "" {
+		resolution := strings.ToUpper(strings.TrimSpace(req.Resolution))
+		if !strings.HasSuffix(resolution, "P") && !strings.Contains(resolution, "*") {
+			resolution = resolution + "P"
+		}
+		aliReq.Parameters.Resolution = resolution
+	}
+	if req.AspectRatio != "" {
+		aliReq.Parameters.Ratio = req.AspectRatio
+	}
+
 	// 处理分辨率映射
-	if req.Size != "" {
+	if req.Size != "" && aliReq.Parameters.Resolution == "" && aliReq.Parameters.Size == "" {
 		if isResolutionRatioProto {
 			// 新协议不使用 size，只支持 resolution（如 "720P"/"1080P"）
 			resolution := strings.ToUpper(req.Size)
@@ -419,11 +525,13 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 				aliReq.Parameters.Resolution = resolution
 			}
 		}
-	} else {
-		// 根据模型设置默认分辨率
+	} else if aliReq.Parameters.Resolution == "" && aliReq.Parameters.Size == "" {
+		// 根据模型设置默认分辨率（仅在既没显式 resolution 也没 size 时）
 		if isResolutionRatioProto {
 			aliReq.Parameters.Resolution = "1080P"
-			if strings.Contains(req.Model, "t2v") {
+			// 参考生视频与文生视频都需要 ratio：r2v 无首帧时画面比例无从推断，
+			// 缺省按官方默认 16:9（传了 first_frame 时阿里会忽略 ratio）。
+			if strings.Contains(req.Model, "t2v") || isReferenceToVideoModel(req.Model) {
 				aliReq.Parameters.Ratio = "16:9"
 			}
 		} else if strings.Contains(req.Model, "t2v") {

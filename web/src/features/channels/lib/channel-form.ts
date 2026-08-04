@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import {
+  CHANNEL_TYPE_CODEX,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
@@ -344,7 +345,7 @@ export const channelFormSchema = z
       )
     }
 
-    if (data.type === 57) {
+    if (data.type === CHANNEL_TYPE_CODEX) {
       if (data.multi_key_mode && data.multi_key_mode !== 'single') {
         addRequiredIssue(
           ctx,
@@ -730,13 +731,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   // Field passthrough controls:
   // - OpenAI (type 1) and Anthropic (type 14): allow_service_tier
   // - OpenAI only: disable_store, allow_safety_identifier
-  if (formData.type === 1 || formData.type === 14 || formData.type === 57) {
+  if (formData.type === 1 || formData.type === 14 || formData.type === CHANNEL_TYPE_CODEX) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
     delete settingsObj.allow_service_tier
   }
 
-  if (formData.type === 1 || formData.type === 57) {
+  if (formData.type === 1 || formData.type === CHANNEL_TYPE_CODEX) {
     settingsObj.disable_store = formData.disable_store === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true

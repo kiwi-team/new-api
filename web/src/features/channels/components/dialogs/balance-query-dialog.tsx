@@ -29,6 +29,7 @@ import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { getCodexUsage, updateChannelBalance } from '../../api'
+import { CHANNEL_TYPE_CODEX } from '../../constants'
 import { channelsQueryKeys } from '../../lib'
 import { useChannels } from '../channels-provider'
 import {
@@ -56,7 +57,7 @@ export function BalanceQueryDialog({
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
 
-  const isCodex = currentRow?.type === 57
+  const isCodex = currentRow?.type === CHANNEL_TYPE_CODEX
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow

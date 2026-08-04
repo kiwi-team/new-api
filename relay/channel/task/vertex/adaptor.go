@@ -53,12 +53,15 @@ type operationResponse struct {
 	Name     string `json:"name"`
 	Done     bool   `json:"done"`
 	Response struct {
-		Type                  string           `json:"@type"`
-		RaiMediaFilteredCount int              `json:"raiMediaFilteredCount"`
-		Videos                []operationVideo `json:"videos"`
-		BytesBase64Encoded    string           `json:"bytesBase64Encoded"`
-		Encoding              string           `json:"encoding"`
-		Video                 string           `json:"video"`
+		Type                  string `json:"@type"`
+		RaiMediaFilteredCount int    `json:"raiMediaFilteredCount"`
+		// RaiMediaFilteredReasons 是内容安全过滤的具体原因，
+		// operation done 但无产物时用它区分“被拦截”与“上游异常”。
+		RaiMediaFilteredReasons []string         `json:"raiMediaFilteredReasons"`
+		Videos                  []operationVideo `json:"videos"`
+		BytesBase64Encoded      string           `json:"bytesBase64Encoded"`
+		Encoding                string           `json:"encoding"`
+		Video                   string           `json:"video"`
 	} `json:"response"`
 	Error struct {
 		Message string `json:"message"`
@@ -178,7 +181,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	// Omni models use the interactions API with a different payload shape.
 	if geminitask.IsOmniModel(info.OriginModelName) {
-		data, err := geminitask.BuildOmniRequestBody(req, info.OriginModelName)
+		data, err := geminitask.BuildOmniRequestBody(c, req, info.OriginModelName)
 		if err != nil {
 			return nil, err
 		}
@@ -208,6 +211,22 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if params.AspectRatio == "" && req.Size != "" {
 		params.AspectRatio = geminitask.SizeToVeoAspectRatio(req.Size)
 	}
+	// 统一层的标量字段：仅在 metadata / size 都没给出时兜底。
+	if params.NegativePrompt == "" {
+		params.NegativePrompt = req.NegativePrompt
+	}
+	if params.AspectRatio == "" {
+		params.AspectRatio = req.AspectRatio
+	}
+	if params.Resolution == "" {
+		params.Resolution = req.Resolution
+	}
+
+	// referenceImages / 首尾帧在 instances 内。Vertex 额外支持 gs:// 引用。
+	if err := geminitask.ApplyVeoInstanceReferences(c, &req, &instance, params, true); err != nil {
+		return nil, err
+	}
+
 	params.Resolution = strings.ToLower(params.Resolution)
 	params.SampleCount = 1
 
@@ -477,6 +496,17 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 		return ti, nil
 	}
+	// 走到这里说明 operation done 但没提取到任何视频产物。
+	// Veo 内容安全过滤（done 但视频被 RAI 拦截）会命中这里：带上过滤原因判失败，
+	// 否则会被误判为成功（既不退款，下游也拿不到视频地址）。
+	ti.Status = model.TaskStatusFailure
+	if op.Response.RaiMediaFilteredCount > 0 && len(op.Response.RaiMediaFilteredReasons) > 0 {
+		ti.Reason = strings.Join(op.Response.RaiMediaFilteredReasons, "; ")
+	} else if op.Response.RaiMediaFilteredCount > 0 {
+		ti.Reason = "video generation blocked by safety filter"
+	} else {
+		ti.Reason = "operation done but no video returned"
+	}
 	return ti, nil
 }
 
@@ -509,6 +539,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	v.CompletedAt = task.UpdatedAt
 	if resultURL := task.GetResultURL(); strings.HasPrefix(resultURL, "data:") && len(resultURL) > 0 {
 		v.SetMetadata("url", resultURL)
+	}
+	// 成功且 FailReason 存的是 S3 直链时，输出顶层 video_url/url，供级联下游
+	// （openai/sora 类型渠道，其 ParseTaskResult 读顶层 video_url/url/result_url）取到真实地址，
+	// 否则下游只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
+	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
+		v.VideoUrl = task.FailReason
+		v.Url = task.FailReason
 	}
 	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
 	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {

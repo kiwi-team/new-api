@@ -26,6 +26,8 @@ type OpenAIVideo struct {
 	Seconds            string            `json:"seconds,omitempty"`
 	Size               string            `json:"size,omitempty"`
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
+	VideoUrl           string            `json:"video_url,omitempty"` // 级联下游（openai/sora 类型渠道）从顶层读取视频直链
+	Url                string            `json:"url,omitempty"`       // 同上，兼容读取 url 字段的下游
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
 }

@@ -81,6 +81,7 @@ import {
   getResponseTimeColor,
   renderAuditContent,
 } from '../../lib/format'
+import { formatOtherRatios } from '../../lib/other-ratios'
 import {
   getLogTypeConfig,
   isPerCallBilling,
@@ -370,6 +371,15 @@ function BillingBreakdown(props: {
         value: `${fmtPrice(baseInputUSD * other.image_ratio)}/M`,
       })
     }
+  }
+
+  // Task-style extra multipliers (video duration, resolution, ...). These are
+  // already part of the charge, so they belong beside the other factors.
+  for (const entry of formatOtherRatios(t, other.other_ratios)) {
+    rows.push({
+      label: entry.label,
+      value: `${formatRatio(entry.value)}x`,
+    })
   }
 
   if (other.web_search && other.web_search_call_count) {

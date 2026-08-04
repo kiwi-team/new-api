@@ -59,6 +59,16 @@ export type Project = {
   status: number
   active_plan_id?: number
   plans?: ProjectPlanSummary[]
+  /** Allocated total of the active plan only, in USD */
+  active_allocated_total?: number
+  /** Consumption booked against the active plan, in quota units */
+  active_used_quota?: number
+  active_plan_name?: string
+  /** `YYYYMMDD` */
+  active_plan_start_date?: string
+  active_plan_end_date?: string
+  /** Project enabled AND today inside the active plan's date range */
+  active_plan_effective?: boolean
 }
 
 export type ProjectDashboard = {

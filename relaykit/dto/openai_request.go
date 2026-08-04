@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/common"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
@@ -687,7 +686,7 @@ func (m *Message) ParseContent() []MediaContent {
 				contentList = append(contentList, MediaContent{
 					Type:      ContentTypeThinking,
 					Thinking:  thinking,
-					Signature: common.Interface2String(contentItem["signature"]),
+					Signature: kitutil.Interface2String(contentItem["signature"]),
 				})
 			}
 
@@ -766,7 +765,7 @@ func (m *Message) ParseContent() []MediaContent {
 					Type: ContentTypeVideoUrl,
 					VideoUrl: &MessageVideoUrl{
 						Url: videoMap["url"].(string),
-						//Detail:    common.Interface2String(videoMap["detail"]),
+						//Detail:    kitutil.Interface2String(videoMap["detail"]),
 						//MaxFrames: 16, //videoMap["max_frames"].(int),
 						//FPS:       1,  //videoMap["fps"].(int),
 					},
@@ -793,7 +792,7 @@ func (m *Message) ParseContent() []MediaContent {
 		// 保留 cache_control（如 Claude 的 ephemeral 缓存标记），透传给上游
 		if len(contentList) > lenBefore {
 			if cc, ok := contentItem["cache_control"]; ok && cc != nil {
-				if raw, err := common.Marshal(cc); err == nil {
+				if raw, err := kitutil.Marshal(cc); err == nil {
 					contentList[len(contentList)-1].CacheControl = raw
 				}
 			}

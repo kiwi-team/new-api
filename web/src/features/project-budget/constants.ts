@@ -22,16 +22,6 @@ export const PROJECT_STATUS = {
   PAUSED: 2,
 } as const
 
-/** Plans store dates as `YYYYMMDD` strings. */
-export function formatPlanDate(date: string | undefined): string {
-  if (!date || date.length !== 8) return date ?? '-'
-  return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
-}
-
-/** Today in the same `YYYYMMDD` shape plans use, for expiry comparisons. */
-export function todayPlanDate(): string {
-  const now = new Date()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${now.getFullYear()}${month}${day}`
-}
+// Plan dates are a backend-wide encoding (`YYYYMMDD`), shared with the client
+// UID budget views, so the formatters live in @/lib/format.
+export { formatPlanDate, todayPlanDate } from '@/lib/format'

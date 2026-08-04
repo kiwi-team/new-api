@@ -75,8 +75,12 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 					},
 				})
 			case "signature_delta":
-				signatureContent := "\n"
-				choice.Delta.ReasoningContent = &signatureContent
+				// 透传 thinking 块的签名，供 OpenAI 格式的客户端在多轮对话时回传，
+				// 否则 Claude 侧会因缺少 signature 无法复用/校验思考块
+				if claudeResponse.Delta.Signature != "" {
+					sig := claudeResponse.Delta.Signature
+					choice.Delta.Signature = &sig
+				}
 			case "thinking_delta":
 				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
 			}

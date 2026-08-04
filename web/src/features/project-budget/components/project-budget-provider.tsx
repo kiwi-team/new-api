@@ -27,6 +27,9 @@ export type ProjectDialogType =
   | 'plans'
   | 'plan-form'
   | 'allocations'
+  // Opened straight from a project row rather than through the plans dialog,
+  // so closing it returns to the list instead of opening plans.
+  | 'plan-allocations'
   | 'allocation-form'
 
 type ProjectBudgetContextType = {

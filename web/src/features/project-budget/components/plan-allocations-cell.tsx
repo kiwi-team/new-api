@@ -28,6 +28,8 @@ import type { ProjectPlanSummary } from '../types'
 
 type PlanAllocationsCellProps = {
   plans?: ProjectPlanSummary[]
+  /** Opens that plan's allocation editor straight from the row. */
+  onOpenPlan?: (plan: ProjectPlanSummary) => void
 }
 
 /**
@@ -35,7 +37,10 @@ type PlanAllocationsCellProps = {
  * expanded by default and inactive ones start collapsed, so a project with a
  * long history of plans stays readable.
  */
-export function PlanAllocationsCell({ plans }: PlanAllocationsCellProps) {
+export function PlanAllocationsCell({
+  plans,
+  onOpenPlan,
+}: PlanAllocationsCellProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
 
@@ -89,6 +94,15 @@ export function PlanAllocationsCell({ plans }: PlanAllocationsCellProps) {
                     {formatCurrencyFromUSD(allocation.allocated_quota)}
                   </div>
                 ))}
+                {onOpenPlan && (
+                  <button
+                    type='button'
+                    className='text-primary underline-offset-4 hover:underline'
+                    onClick={() => onOpenPlan(plan)}
+                  >
+                    {t('Manage allocations')}
+                  </button>
+                )}
               </div>
             )}
           </div>

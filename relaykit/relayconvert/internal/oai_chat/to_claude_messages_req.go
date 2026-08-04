@@ -243,6 +243,12 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		if message.Role == "assistant" && message.ToolCalls != nil {
 			fmtMessage.ToolCalls = message.ToolCalls
 		}
+		// 带 signature 的思考内容必须透传到下面的内容块还原逻辑，
+		// 否则会在这里被 fmtMessage 重建时丢掉。
+		if message.Role == "assistant" && message.GetReasoningContent() != "" {
+			fmtMessage.ReasoningContent = kitutil.GetPointer[string](message.GetReasoningContent())
+			fmtMessage.Signature = message.Signature
+		}
 		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
 			if lastMessage.IsStringContent() && message.IsStringContent() {
 				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
@@ -330,11 +336,28 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				},
 			}
 		} else if message.IsStringContent() && message.ToolCalls == nil {
-			text := message.StringContent()
-			if text == "" {
-				text = "..."
+			// assistant 回传带 signature 的思考块时，需要还原为 thinking + text 的数组内容，
+			// 否则 Claude 会因缺少已签名的思考块而报错或无法复用上一轮推理
+			if message.Role == "assistant" && message.GetReasoningContent() != "" && message.Signature != "" {
+				contentBlocks := []dto.ClaudeMediaMessage{{
+					Type:      "thinking",
+					Thinking:  kitutil.GetPointer[string](message.GetReasoningContent()),
+					Signature: message.Signature,
+				}}
+				if text := message.StringContent(); text != "" {
+					contentBlocks = append(contentBlocks, dto.ClaudeMediaMessage{
+						Type: "text",
+						Text: kitutil.GetPointer[string](text),
+					})
+				}
+				claudeMessage.Content = contentBlocks
+			} else {
+				text := message.StringContent()
+				if text == "" {
+					text = "..."
+				}
+				claudeMessage.Content = text
 			}
-			claudeMessage.Content = text
 		} else {
 			claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
 			for _, mediaMessage := range message.ParseContent() {

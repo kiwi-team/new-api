@@ -112,7 +112,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	// Omni models use the interactions API with a different payload shape.
 	if isOmniModel(info.OriginModelName) {
-		data, err := BuildOmniRequestBody(req, info.OriginModelName)
+		data, err := BuildOmniRequestBody(c, req, info.OriginModelName)
 		if err != nil {
 			return nil, err
 		}
@@ -142,6 +142,22 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if params.AspectRatio == "" && req.Size != "" {
 		params.AspectRatio = SizeToVeoAspectRatio(req.Size)
 	}
+	// 统一层的标量字段：仅在 metadata / size 都没给出时兜底。
+	if params.NegativePrompt == "" {
+		params.NegativePrompt = req.NegativePrompt
+	}
+	if params.AspectRatio == "" {
+		params.AspectRatio = req.AspectRatio
+	}
+	if params.Resolution == "" {
+		params.Resolution = req.Resolution
+	}
+
+	// referenceImages / lastFrame 在 instances 内，且带 8s + allow_adult 硬约束。
+	if err := ApplyVeoInstanceReferences(c, &req, &instance, params, false); err != nil {
+		return nil, err
+	}
+
 	params.Resolution = strings.ToLower(params.Resolution)
 	params.SampleCount = 1
 
@@ -332,8 +348,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if len(generated) > 0 && generated[0].Video.URI != "" {
 		ti.RemoteUrl = generated[0].Video.URI
+		return ti, nil
 	}
 
+	// operation done 但没有任何视频产物。Veo 的内容安全过滤会命中这里：
+	// 带上过滤原因判失败，否则会被误判为成功（既不退款，下游也拿不到视频地址）。
+	ti.Status = model.TaskStatusFailure
+	if op.Response.RaiMediaFilteredCount > 0 && len(op.Response.RaiMediaFilteredReasons) > 0 {
+		ti.Reason = strings.Join(op.Response.RaiMediaFilteredReasons, "; ")
+	} else if op.Response.RaiMediaFilteredCount > 0 {
+		ti.Reason = "video generation blocked by safety filter"
+	} else {
+		ti.Reason = "operation done but no video returned"
+	}
 	return ti, nil
 }
 

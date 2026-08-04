@@ -123,9 +123,9 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Use model IDs from OpenRouter',
     },
   },
-  56: {
-    id: 56,
-    name: CHANNEL_TYPES[56],
+  62: {
+    id: 62,
+    name: CHANNEL_TYPES[62],
     icon: 'replicate',
     defaultBaseUrl: 'https://api.replicate.com',
     hints: {
@@ -134,9 +134,9 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Default: https://api.replicate.com',
     },
   },
-  58: {
-    id: 58,
-    name: CHANNEL_TYPES[58],
+  74: {
+    id: 74,
+    name: CHANNEL_TYPES[74],
     icon: 'newapi',
     hints: {
       baseUrl: 'Fallback base URL',
@@ -144,9 +144,9 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
-  59: {
-    id: 59,
-    name: CHANNEL_TYPES[59],
+  75: {
+    id: 75,
+    name: CHANNEL_TYPES[75],
     icon: 'Sub2API',
     hints: {
       baseUrl: 'Sub2API gateway base URL',
@@ -154,9 +154,9 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models fetched from upstream /v1/models',
     },
   },
-  60: {
-    id: 60,
-    name: CHANNEL_TYPES[60],
+  76: {
+    id: 76,
+    name: CHANNEL_TYPES[76],
     icon: 'NewAPI',
     hints: {
       baseUrl: 'Base URL is required for this channel type',

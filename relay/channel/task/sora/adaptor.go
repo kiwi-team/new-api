@@ -23,6 +23,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -340,6 +341,23 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	var err error
 	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
 		return nil, errors.Wrap(err, "set id failed")
+	}
+	// 任务成功且 FailReason 存的是 S3 直链时，把地址合并进上游原始数据再返回。
+	// 否则 OpenAI 原生 /v1/videos/{id} 端点不会吐出视频地址，级联的下游渠道
+	// （同款代码互相代理时）拿不到 url，只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
+	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
+		for _, key := range []string{"video_url", "url"} {
+			if gjson.GetBytes(data, key).String() != "" {
+				continue
+			}
+			if data, err = sjson.SetBytes(data, key, task.FailReason); err != nil {
+				return nil, errors.Wrap(err, "set "+key+" failed")
+			}
+		}
+		// 确保状态为 completed，避免下游因原始数据里的过期状态而误判。
+		if data, err = sjson.SetBytes(data, "status", "completed"); err != nil {
+			return nil, errors.Wrap(err, "set status failed")
+		}
 	}
 	return data, nil
 }

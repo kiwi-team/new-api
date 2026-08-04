@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )
 
@@ -156,38 +157,24 @@ type omniInteractionResponse struct {
 // Gemini-specific parameters are passed through the request `metadata` map.
 // It is exported so other providers (e.g. Vertex AI) that share the interactions API
 // can reuse the same payload shape.
-func BuildOmniRequestBody(req relaycommon.TaskSubmitReq, modelName string) ([]byte, error) {
+func BuildOmniRequestBody(c *gin.Context, req relaycommon.TaskSubmitReq, modelName string) ([]byte, error) {
 	reqMap := map[string]any{
 		"model":      modelName,
 		"background": true,
 		"store":      true,
 	}
 
-	// support single Image field or the Images slice
-	images := req.Images
-	if len(images) == 0 && strings.TrimSpace(req.Image) != "" {
-		images = []string{req.Image}
+	parts, task, prompt, err := buildOmniInput(c, &req)
+	if err != nil {
+		return nil, err
 	}
-
-	if len(images) > 0 {
-		parts := make([]omniPart, 0, len(images)+1)
-		for _, img := range images {
-			data, mimeType, err := resolveOmniImage(img)
-			if err != nil {
-				return nil, errors.Wrap(err, "resolve image failed")
-			}
-			parts = append(parts, omniPart{Type: "image", Data: data, MimeType: mimeType})
-		}
-		parts = append(parts, omniPart{Type: "text", Text: req.Prompt})
+	if len(parts) > 0 {
 		reqMap["input"] = parts
-		reqMap["generation_config"] = map[string]any{
-			"video_config": map[string]any{"task": "image_to_video"},
-		}
 	} else {
-		reqMap["input"] = req.Prompt
-		reqMap["generation_config"] = map[string]any{
-			"video_config": map[string]any{"task": "text_to_video"},
-		}
+		reqMap["input"] = prompt
+	}
+	reqMap["generation_config"] = map[string]any{
+		"video_config": map[string]any{"task": task},
 	}
 
 	// Merge gemini-specific params from metadata (metadata wins), but never let it
@@ -203,44 +190,95 @@ func BuildOmniRequestBody(req relaycommon.TaskSubmitReq, modelName string) ([]by
 	return common.Marshal(reqMap)
 }
 
-// resolveOmniImage normalizes an image reference (data URI / http(s) url / raw base64)
-// into base64 data plus its mime type, as required by the interactions API.
-func resolveOmniImage(image string) (data string, mimeType string, err error) {
-	image = strings.TrimSpace(image)
-	if image == "" {
-		return "", "", fmt.Errorf("empty image")
-	}
-	if strings.HasPrefix(image, "data:") {
-		// data:<mime>;base64,<data>
-		idx := strings.Index(image, ",")
-		if idx < 0 {
-			return "", "", fmt.Errorf("invalid data uri")
-		}
-		meta := image[len("data:"):idx]
-		b64 := image[idx+1:]
-		mt := meta
-		if semi := strings.Index(meta, ";"); semi >= 0 {
-			mt = meta[:semi]
-		}
-		if strings.TrimSpace(mt) == "" {
-			mt = "image/jpeg"
-		}
-		return b64, mt, nil
-	}
-	if strings.HasPrefix(image, "http://") || strings.HasPrefix(image, "https://") {
-		mt, b64, err := service.GetImageFromUrl(image)
-		if err != nil {
-			return "", "", err
-		}
-		return b64, mt, nil
-	}
-	// assume raw base64 without a data-uri prefix
-	return image, "image/jpeg", nil
-}
+// buildOmniInput 组装 Omni 的 input 数组、video_config.task 与最终 prompt。
+//
+// Omni 通过 prompt 里的标签把素材与叙述绑定（<FIRST_FRAME> 标记首帧，
+// <IMAGE_REF_n> 标记第 n 个参考图，0-indexed）。这是 Omni 强制的机制，不是对
+// 用户指代语法的改写：只在 prompt 前追加必需的标签声明，不改动用户自己写的指代文字。
+//
+// 返回的 parts 为空表示纯文生视频（此时 input 直接用 prompt 字符串）。
+func buildOmniInput(c *gin.Context, req *relaycommon.TaskSubmitReq) (parts []omniPart, task string, prompt string, err error) {
+	prompt = req.Prompt
 
-// ============================
-// Response parsing
-// ============================
+	// 显式 references：按角色区分首帧 / 参考图 / 待编辑视频。
+	if len(req.References) > 0 {
+		firstFrame, hasFirstFrame := req.FirstRefByRole(relaycommon.RefRoleFirstFrame)
+		refImages := req.RefsByRole(relaycommon.RefRoleReferenceImage)
+		baseVideo, hasBaseVideo := req.FirstRefByRole(relaycommon.RefRoleBaseVideo)
+
+		var tags []string
+
+		// 首帧排在最前，对应 <FIRST_FRAME>
+		if hasFirstFrame && firstFrame.URL != "" {
+			data, mimeType, e := service.ResolveMediaRef(c, firstFrame.URL, "image/jpeg")
+			if e != nil {
+				return nil, "", "", errors.Wrap(e, "resolve first_frame failed")
+			}
+			parts = append(parts, omniPart{Type: "image", Data: data, MimeType: mimeType})
+			tags = append(tags, "<FIRST_FRAME>")
+		}
+
+		// 参考图按顺序对应 <IMAGE_REF_0..n>
+		for i, ref := range refImages {
+			if ref.URL == "" {
+				continue
+			}
+			data, mimeType, e := service.ResolveMediaRef(c, ref.URL, "image/jpeg")
+			if e != nil {
+				return nil, "", "", errors.Wrap(e, "resolve reference image failed")
+			}
+			parts = append(parts, omniPart{Type: "image", Data: data, MimeType: mimeType})
+			tags = append(tags, fmt.Sprintf("<IMAGE_REF_%d>", i))
+		}
+
+		if hasBaseVideo && baseVideo.URL != "" {
+			data, mimeType, e := service.ResolveMediaRef(c, baseVideo.URL, "video/mp4")
+			if e != nil {
+				return nil, "", "", errors.Wrap(e, "resolve base_video failed")
+			}
+			parts = append(parts, omniPart{Type: "video", Data: data, MimeType: mimeType})
+		}
+
+		// 追加标签声明。仅在用户尚未自行书写标签时补充，避免与手写标签重复。
+		if len(tags) > 0 && !strings.Contains(prompt, "<IMAGE_REF_") && !strings.Contains(prompt, "<FIRST_FRAME>") {
+			prompt = strings.Join(tags, " ") + " " + prompt
+		}
+
+		if len(parts) > 0 {
+			parts = append(parts, omniPart{Type: "text", Text: prompt})
+		}
+
+		switch {
+		case hasBaseVideo:
+			task = "edit"
+		case len(refImages) > 0:
+			task = "reference_to_video"
+		case hasFirstFrame:
+			task = "image_to_video"
+		default:
+			task = "text_to_video"
+		}
+		return parts, task, prompt, nil
+	}
+
+	// 回退路径：沿用旧的 image/images 语义，一律按 image_to_video 处理。
+	images := req.Images
+	if len(images) == 0 && strings.TrimSpace(req.Image) != "" {
+		images = []string{req.Image}
+	}
+	if len(images) == 0 {
+		return nil, "text_to_video", prompt, nil
+	}
+	for _, img := range images {
+		data, mimeType, e := service.ResolveMediaRef(c, img, "image/jpeg")
+		if e != nil {
+			return nil, "", "", errors.Wrap(e, "resolve image failed")
+		}
+		parts = append(parts, omniPart{Type: "image", Data: data, MimeType: mimeType})
+	}
+	parts = append(parts, omniPart{Type: "text", Text: prompt})
+	return parts, "image_to_video", prompt, nil
+}
 
 // isOmniResponseBody reports whether a fetched task body is an Omni interaction object.
 func isOmniResponseBody(respBody []byte) bool {

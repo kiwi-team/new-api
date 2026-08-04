@@ -872,7 +872,7 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== CHANNEL_TYPE_CODEX && !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -1044,7 +1044,7 @@ export function ChannelMutateDrawer({
     (currentHttp2ConnectionShards != null && currentHttp2ConnectionShards > 1)
   )
   let fieldPassthroughConfigured = false
-  if (currentType === 1 || currentType === 57) {
+  if (currentType === 1 || currentType === CHANNEL_TYPE_CODEX) {
     fieldPassthroughConfigured = Boolean(
       currentAllowServiceTier ||
       currentDisableStore ||
@@ -1095,7 +1095,7 @@ export function ChannelMutateDrawer({
       configured: extraSettingsConfigured,
     },
   ]
-  if (currentType === 1 || currentType === 14 || currentType === 57) {
+  if (currentType === 1 || currentType === 14 || currentType === CHANNEL_TYPE_CODEX) {
     advancedNavChildren.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
       title: t('Field passthrough controls'),
@@ -3112,7 +3112,7 @@ export function ChannelMutateDrawer({
                                 }}
                               />
 
-                              {currentType === 57 && (
+                              {currentType === CHANNEL_TYPE_CODEX && (
                                 <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                                   <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
                                     <div className='text-muted-foreground text-xs'>
@@ -4566,7 +4566,7 @@ export function ChannelMutateDrawer({
 
                         {(currentType === 1 ||
                           currentType === 14 ||
-                          currentType === 57) && (
+                          currentType === CHANNEL_TYPE_CODEX) && (
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
                             className={sideDrawerSectionClassName(
@@ -4611,7 +4611,7 @@ export function ChannelMutateDrawer({
                                   )}
                                 />
 
-                                {(currentType === 1 || currentType === 57) && (
+                                {(currentType === 1 || currentType === CHANNEL_TYPE_CODEX) && (
                                   <>
                                     <FormField
                                       control={form.control}

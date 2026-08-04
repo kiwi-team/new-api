@@ -52,6 +52,7 @@ import {
   isViolationFeeLog,
   renderAuditContent,
 } from '../../lib/format'
+import { formatOtherRatios } from '../../lib/other-ratios'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -273,6 +274,18 @@ function buildTypeDetailSegments(
         })
       }
     }
+  }
+
+  // Task-style extra multipliers (video duration, resolution, ...) are part of
+  // the charge; leaving them out makes the compact summary understate the price.
+  const otherRatios = formatOtherRatios(t, other.other_ratios)
+  if (otherRatios.length > 0) {
+    segments.push({
+      text: otherRatios
+        .map((entry) => `${entry.label} ${formatRatioCompact(entry.value)}x`)
+        .join(' · '),
+      muted: true,
+    })
   }
 
   if (other.is_system_prompt_overwritten) {
