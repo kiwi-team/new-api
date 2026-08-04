@@ -36,6 +36,7 @@ import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
+import { dateToUnixTimestamp, getNormalizedDateRange } from '@/lib/time'
 
 import { getModelUsageAnalysis } from './api'
 import {
@@ -50,10 +51,6 @@ import {
 } from './lib'
 
 const DEFAULT_RANGE_DAYS = 7
-
-function daysAgo(days: number): Date {
-  return new Date(Date.now() - days * 24 * 3600 * 1000)
-}
 
 function SummaryCard(props: {
   label: string
@@ -77,14 +74,19 @@ function SummaryCard(props: {
 
 export function ModelUsageAnalysisPage() {
   const { t } = useTranslation()
-  const [startTime, setStartTime] = useState<Date | undefined>(() =>
-    daysAgo(DEFAULT_RANGE_DAYS)
+  // The range is picked by day, so both ends cover their whole day: the start
+  // at 00:00:00 and the end at 23:59:59.
+  const [initialRange] = useState(() =>
+    getNormalizedDateRange(DEFAULT_RANGE_DAYS)
   )
-  const [endTime, setEndTime] = useState<Date | undefined>(() => new Date())
+  const [startTime, setStartTime] = useState<Date | undefined>(
+    initialRange.start
+  )
+  const [endTime, setEndTime] = useState<Date | undefined>(initialRange.end)
   const [tokenFilter, setTokenFilter] = useState<string[]>([])
   const [range, setRange] = useState(() => ({
-    start_timestamp: Math.floor(daysAgo(DEFAULT_RANGE_DAYS).getTime() / 1000),
-    end_timestamp: Math.floor(Date.now() / 1000),
+    start_timestamp: dateToUnixTimestamp(initialRange.start),
+    end_timestamp: dateToUnixTimestamp(initialRange.end),
   }))
 
   const usageQuery = useQuery({
@@ -119,8 +121,8 @@ export function ModelUsageAnalysisPage() {
       return
     }
     setRange({
-      start_timestamp: Math.floor(startTime.getTime() / 1000),
-      end_timestamp: Math.floor(endTime.getTime() / 1000),
+      start_timestamp: dateToUnixTimestamp(startTime),
+      end_timestamp: dateToUnixTimestamp(endTime),
     })
   }
 
@@ -132,8 +134,8 @@ export function ModelUsageAnalysisPage() {
     exportUsageRowsCsv(
       rows,
       {
-        start: startTime ?? daysAgo(DEFAULT_RANGE_DAYS),
-        end: endTime ?? new Date(),
+        start: startTime ?? initialRange.start,
+        end: endTime ?? initialRange.end,
       },
       t
     )
@@ -149,11 +151,19 @@ export function ModelUsageAnalysisPage() {
           <div className='flex flex-wrap items-end gap-3'>
             <div className='grid gap-1.5'>
               <Label>{t('Start Time')}</Label>
-              <DateTimePicker value={startTime} onChange={setStartTime} />
+              <DateTimePicker
+                value={startTime}
+                onChange={setStartTime}
+                dayBoundary='start'
+              />
             </div>
             <div className='grid gap-1.5'>
               <Label>{t('End Time')}</Label>
-              <DateTimePicker value={endTime} onChange={setEndTime} />
+              <DateTimePicker
+                value={endTime}
+                onChange={setEndTime}
+                dayBoundary='end'
+              />
             </div>
             <div className='grid gap-1.5'>
               <Label>{t('Key name')}</Label>

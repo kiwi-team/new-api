@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import dayjs from '@/lib/dayjs'
+import { getEndOfDay, getStartOfDay } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 const calendarLocales = {
@@ -46,6 +47,14 @@ interface DateTimePickerProps {
   onChange?: (date: Date | undefined) => void
   placeholder?: string
   className?: string
+  /**
+   * Reduce the control to a plain date picker: the time field is hidden and the
+   * picked day is reported as its first (`start`, 00:00:00.000) or last (`end`,
+   * 23:59:59.999) instant. A start/end pair set this way covers whole days, so
+   * picking 2026-07-08 to 2026-08-02 filters 07-08 00:00:00 through
+   * 08-02 23:59:59 instead of cutting the last day off at the current hour.
+   */
+  dayBoundary?: 'start' | 'end'
 }
 
 export function DateTimePicker({
@@ -53,6 +62,7 @@ export function DateTimePicker({
   onChange,
   placeholder,
   className,
+  dayBoundary,
 }: DateTimePickerProps) {
   const { t, i18n } = useTranslation()
   const placeholderText = placeholder ?? t('Select date')
@@ -75,19 +85,26 @@ export function DateTimePicker({
   }, [value])
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
-    if (selectedDate) {
-      const [hours, minutes] = time.split(':').map(Number)
-      const newDate = new Date(selectedDate)
-      newDate.setHours(hours, minutes, 0, 0)
-      setDate(newDate)
-      setMonth(newDate)
-      onChange?.(newDate)
-      setOpen(false)
-    } else {
+    if (!selectedDate) {
       setDate(undefined)
       setMonth(undefined)
       onChange?.(undefined)
+      return
     }
+    let newDate: Date
+    if (dayBoundary === 'start') {
+      newDate = getStartOfDay(selectedDate)
+    } else if (dayBoundary === 'end') {
+      newDate = getEndOfDay(selectedDate)
+    } else {
+      const [hours, minutes] = time.split(':').map(Number)
+      newDate = new Date(selectedDate)
+      newDate.setHours(hours, minutes, 0, 0)
+    }
+    setDate(newDate)
+    setMonth(newDate)
+    onChange?.(newDate)
+    setOpen(false)
   }
 
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,13 +158,15 @@ export function DateTimePicker({
           />
         </PopoverContent>
       </Popover>
-      <Input
-        type='time'
-        value={time}
-        onChange={handleTimeChange}
-        className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
-        disabled={!date}
-      />
+      {!dayBoundary && (
+        <Input
+          type='time'
+          value={time}
+          onChange={handleTimeChange}
+          className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
+          disabled={!date}
+        />
+      )}
       {date && (
         <Button
           type='button'
