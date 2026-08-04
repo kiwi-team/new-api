@@ -7,7 +7,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -98,23 +97,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			return nil, selectGroup, err
 		}
 	} else if param.TokenGroup == "auto" {
-		if len(setting.GetAutoGroups()) == 0 {
+		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
-		// for _, autoGroup := range GetUserAutoGroup(userGroup) {
-		// 	logger.LogDebug(c, "Auto selecting group:", autoGroup)
-		// 	channel, _ = model.GetRandomSatisfiedChannel(autoGroup, modelName, retry, tags)
-		// 	if channel == nil {
-		// 		continue
-		// 	} else {
-		// 		c.Set("auto_group", autoGroup)
-		// 		selectGroup = autoGroup
-		// 		logger.LogDebug(c, "Auto selected group:", autoGroup)
-		// 		break
-		autoGroups := GetUserAutoGroup(userGroup)
-
-		// startGroupIndex: the group index to start searching from
-		// startGroupIndex: 开始搜索的分组索引
 		startGroupIndex := 0
 		crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
 
