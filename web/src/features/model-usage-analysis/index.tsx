@@ -35,16 +35,18 @@ import { SectionPageLayout } from '@/components/layout'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+} from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { useDebounce } from '@/hooks/use-debounce'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -98,6 +100,7 @@ export function ModelUsageAnalysisPage() {
   const [startDate, setStartDate] = useState(DEFAULT_DATE_RANGE.start)
   const [endDate, setEndDate] = useState(DEFAULT_DATE_RANGE.end)
   const [selectedUserId, setSelectedUserId] = useState<number | undefined>()
+  const [selectedUserLabel, setSelectedUserLabel] = useState('')
   const [userKeyword, setUserKeyword] = useState('')
   const debouncedUserKeyword = useDebounce(userKeyword, 300)
   const [tokenFilter, setTokenFilter] = useState<string[]>([])
@@ -117,16 +120,17 @@ export function ModelUsageAnalysisPage() {
     enabled: canAdjustUsage,
   })
 
-  const userSelectItems = useMemo(
-    () => [
-      { value: ALL_USERS_VALUE, label: t('All users') },
-      ...(userOptionsQuery.data ?? []).map((option) => ({
-        value: String(option.value),
-        label: option.label,
-      })),
-    ],
-    [t, userOptionsQuery.data]
-  )
+  const userSelectItems = useMemo(() => {
+    const options = (userOptionsQuery.data ?? []).map((option) => ({
+      value: String(option.value),
+      label: option.label,
+    }))
+    // The keyword search runs on the server, so the "all users" reset is only
+    // pinned onto the unfiltered list. While searching, an empty result has to
+    // stay empty for the popup's empty state to appear.
+    if (debouncedUserKeyword.trim()) return options
+    return [{ value: ALL_USERS_VALUE, label: t('All users') }, ...options]
+  }, [debouncedUserKeyword, t, userOptionsQuery.data])
 
   const rawRows = useMemo(() => usageQuery.data ?? [], [usageQuery.data])
 
@@ -180,6 +184,13 @@ export function ModelUsageAnalysisPage() {
     const nextUserId =
       !value || value === ALL_USERS_VALUE ? undefined : Number(value)
     setSelectedUserId(nextUserId)
+    // The trigger keeps showing the picked user even after the keyword search
+    // reloads the list without them, so the label is stored on selection.
+    setSelectedUserLabel(
+      nextUserId === undefined
+        ? ''
+        : (userSelectItems.find((item) => item.value === value)?.label ?? '')
+    )
     setTokenFilter([])
     setRange((current) => ({
       start_timestamp: current.start_timestamp,
@@ -215,7 +226,10 @@ export function ModelUsageAnalysisPage() {
             {canAdjustUsage && (
               <div className='grid gap-1.5'>
                 <Label htmlFor='model-usage-user-filter'>{t('User')}</Label>
-                <Select
+                {/* Combobox rather than Select: a Select popup swallows every
+                    character keydown for its own typeahead, so a search input
+                    nested in it can never be typed into. */}
+                <Combobox
                   items={userSelectItems}
                   value={
                     selectedUserId === undefined
@@ -223,31 +237,39 @@ export function ModelUsageAnalysisPage() {
                       : String(selectedUserId)
                   }
                   onValueChange={handleUserChange}
+                  filter={null}
+                  inputValue={userKeyword}
+                  onInputValueChange={setUserKeyword}
+                  onOpenChange={(open) => {
+                    if (!open) setUserKeyword('')
+                  }}
                 >
-                  <SelectTrigger
+                  <ComboboxTrigger
                     id='model-usage-user-filter'
-                    className='w-60'
                     aria-label={t('Filter by user')}
+                    render={<Button variant='outline' />}
+                    className='w-60 justify-between font-normal'
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <div className='p-1'>
-                      <Input
-                        placeholder={t('Filter by user')}
-                        value={userKeyword}
-                        onChange={(event) => setUserKeyword(event.target.value)}
-                      />
-                    </div>
-                    <SelectGroup>
+                    <ComboboxValue>
+                      {() => selectedUserLabel || t('All users')}
+                    </ComboboxValue>
+                  </ComboboxTrigger>
+                  <ComboboxContent>
+                    <ComboboxInput
+                      showTrigger={false}
+                      placeholder={t('Filter by user')}
+                      aria-label={t('Filter by user')}
+                    />
+                    <ComboboxList>
                       {userSelectItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
+                        <ComboboxItem key={item.value} value={item.value}>
                           {item.label}
-                        </SelectItem>
+                        </ComboboxItem>
                       ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                    </ComboboxList>
+                    <ComboboxEmpty>{t('No matching items')}</ComboboxEmpty>
+                  </ComboboxContent>
+                </Combobox>
               </div>
             )}
             <div className='grid gap-1.5'>
