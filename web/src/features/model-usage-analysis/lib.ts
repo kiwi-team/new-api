@@ -41,7 +41,10 @@ export function formatMs(value: number | undefined): string {
 }
 
 /** Share of requests that hit a given cache path, guarding divide-by-zero. */
-export function requestRatio(part: number | undefined, total: number | undefined): number {
+export function requestRatio(
+  part: number | undefined,
+  total: number | undefined
+): number {
   return total ? ((part || 0) / total) * 100 : 0
 }
 
@@ -54,7 +57,8 @@ export function buildUsageSummary(rows: ModelUsageRow[]): ModelUsageSummary {
         summary.cacheWriteRequests + (row.cache_write_requests || 0),
       cacheReadRequests:
         summary.cacheReadRequests + (row.cache_read_requests || 0),
-      cacheWriteTokens: summary.cacheWriteTokens + (row.cache_write_tokens || 0),
+      cacheWriteTokens:
+        summary.cacheWriteTokens + (row.cache_write_tokens || 0),
       cacheReadTokens: summary.cacheReadTokens + (row.cache_read_tokens || 0),
       inputTokens: summary.inputTokens + (row.input_tokens || 0),
       outputTokens: summary.outputTokens + (row.output_tokens || 0),
@@ -85,10 +89,38 @@ function pad2(value: number): string {
   return String(value).padStart(2, '0')
 }
 
-function fileStamp(date: Date): string {
-  return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(
-    date.getDate()
-  )}${pad2(date.getHours())}`
+function formatChinaDate(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(
+    date.getUTCDate()
+  )}`
+}
+
+export function getDefaultUsageDateRange(now = new Date()): {
+  start: string
+  end: string
+} {
+  const chinaNow = new Date(now.getTime() + 8 * 3600 * 1000)
+  const end = formatChinaDate(chinaNow)
+  const startValue = new Date(chinaNow)
+  startValue.setUTCDate(startValue.getUTCDate() - 6)
+  return { start: formatChinaDate(startValue), end }
+}
+
+export function usageDateRangeTimestamps(
+  start: string,
+  end: string
+): {
+  start_timestamp: number
+  end_timestamp: number
+} {
+  return {
+    start_timestamp: Math.floor(Date.parse(`${start}T00:00:00+08:00`) / 1000),
+    end_timestamp: Math.floor(Date.parse(`${end}T23:59:59+08:00`) / 1000),
+  }
+}
+
+export function usageHourTimestamp(date: string, hour: number): number {
+  return Math.floor(Date.parse(`${date}T${pad2(hour)}:00:00+08:00`) / 1000)
 }
 
 /**
@@ -97,7 +129,7 @@ function fileStamp(date: Date): string {
  */
 export function exportUsageRowsCsv(
   rows: ModelUsageRow[],
-  range: { start: Date; end: Date },
+  range: { start: string; end: string },
   t: TFunction
 ): void {
   const columns: { header: string; get: (row: ModelUsageRow) => unknown }[] = [
@@ -136,7 +168,10 @@ export function exportUsageRowsCsv(
       header: t('Cache write tokens'),
       get: (row) => row.cache_write_tokens || 0,
     },
-    { header: t('Cache read tokens'), get: (row) => row.cache_read_tokens || 0 },
+    {
+      header: t('Cache read tokens'),
+      get: (row) => row.cache_read_tokens || 0,
+    },
     { header: t('Input tokens'), get: (row) => row.input_tokens || 0 },
     { header: t('Output tokens'), get: (row) => row.output_tokens || 0 },
     {
@@ -163,7 +198,7 @@ export function exportUsageRowsCsv(
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `model-usage-${fileStamp(range.start)}-${fileStamp(range.end)}.csv`
+  link.download = `model-usage-${range.start.replaceAll('-', '')}-${range.end.replaceAll('-', '')}.csv`
   link.click()
   window.URL.revokeObjectURL(url)
 }

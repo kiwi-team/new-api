@@ -367,6 +367,13 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/statistics/export", middleware.MixRouterAuth(), controller.ExportQuotaDataStatistics)
 		dataRoute.GET("/channel-statistics", middleware.AdminAuth(), controller.GetChannelQuotaStatistics)
 		dataRoute.GET("/model-usage-analysis", middleware.UserAuth(), controller.GetModelUsageAnalysis)
+		usageAdjustmentRoute := dataRoute.Group("/model-usage-analysis/adjustments")
+		usageAdjustmentRoute.Use(middleware.AdminAuth())
+		{
+			usageAdjustmentRoute.GET("/hour", controller.GetUsageHourAdjustmentSnapshot)
+			usageAdjustmentRoute.POST("", controller.CreateUsageAdjustment)
+			usageAdjustmentRoute.POST("/:id/revert", controller.RevertUsageAdjustment)
+		}
 		dataRoute.GET("/channel-monitor", middleware.RootAuth(), controller.GetChannelMonitor)
 		dataRoute.GET("/project-names", middleware.MixRouterAuth(), controller.GetDistinctProjectNames)
 		dataRoute.GET("/token-list", middleware.MixRouterAuth(), controller.GetTokenListForStatistics)

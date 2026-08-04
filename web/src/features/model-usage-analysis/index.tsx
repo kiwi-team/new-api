@@ -21,6 +21,7 @@ import {
   Database,
   DollarSign,
   Download,
+  Pencil,
   RefreshCw,
   TrendingUp,
   WalletCards,
@@ -30,12 +31,14 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StaticDataTable } from '@/components/data-table'
-import { DateTimePicker } from '@/components/datetime-picker'
 import { SectionPageLayout } from '@/components/layout'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getModelUsageAnalysis } from './api'
 import {
@@ -45,15 +48,15 @@ import {
   formatMs,
   formatPercent,
   formatUsd,
+  getDefaultUsageDateRange,
   requestRatio,
+  usageDateRangeTimestamps,
   usageRowKey,
 } from './lib'
+import type { ModelUsageRow } from './types'
+import { UsageAdjustmentDialog } from './usage-adjustment-dialog'
 
-const DEFAULT_RANGE_DAYS = 7
-
-function daysAgo(days: number): Date {
-  return new Date(Date.now() - days * 24 * 3600 * 1000)
-}
+const DEFAULT_DATE_RANGE = getDefaultUsageDateRange()
 
 function SummaryCard(props: {
   label: string
@@ -77,15 +80,15 @@ function SummaryCard(props: {
 
 export function ModelUsageAnalysisPage() {
   const { t } = useTranslation()
-  const [startTime, setStartTime] = useState<Date | undefined>(() =>
-    daysAgo(DEFAULT_RANGE_DAYS)
-  )
-  const [endTime, setEndTime] = useState<Date | undefined>(() => new Date())
+  const role = useAuthStore((state) => state.auth.user?.role) ?? ROLE.GUEST
+  const canAdjustUsage = role >= ROLE.ADMIN
+  const [startDate, setStartDate] = useState(DEFAULT_DATE_RANGE.start)
+  const [endDate, setEndDate] = useState(DEFAULT_DATE_RANGE.end)
   const [tokenFilter, setTokenFilter] = useState<string[]>([])
-  const [range, setRange] = useState(() => ({
-    start_timestamp: Math.floor(daysAgo(DEFAULT_RANGE_DAYS).getTime() / 1000),
-    end_timestamp: Math.floor(Date.now() / 1000),
-  }))
+  const [range, setRange] = useState(() =>
+    usageDateRangeTimestamps(DEFAULT_DATE_RANGE.start, DEFAULT_DATE_RANGE.end)
+  )
+  const [adjustmentRow, setAdjustmentRow] = useState<ModelUsageRow | null>(null)
 
   const usageQuery = useQuery({
     queryKey: ['model-usage-analysis', range],
@@ -98,9 +101,9 @@ export function ModelUsageAnalysisPage() {
   // takes a time range.
   const tokenOptions = useMemo(
     () =>
-      [
-        ...new Set(rawRows.map((row) => row.token_name).filter(Boolean)),
-      ].map((name) => ({ value: name as string, label: name as string })),
+      [...new Set(rawRows.map((row) => row.token_name).filter(Boolean))].map(
+        (name) => ({ value: name as string, label: name as string })
+      ),
     [rawRows]
   )
 
@@ -114,14 +117,15 @@ export function ModelUsageAnalysisPage() {
   const tokenCount = new Set(rows.map((row) => row.token_name)).size
 
   const handleRefresh = () => {
-    if (!startTime || !endTime) {
-      toast.warning(t('Please select a time range'))
+    if (!startDate || !endDate) {
+      toast.warning(t('Please select a date range'))
       return
     }
-    setRange({
-      start_timestamp: Math.floor(startTime.getTime() / 1000),
-      end_timestamp: Math.floor(endTime.getTime() / 1000),
-    })
+    if (startDate > endDate) {
+      toast.warning(t('The start date cannot be later than the end date'))
+      return
+    }
+    setRange(usageDateRangeTimestamps(startDate, endDate))
   }
 
   const handleExport = () => {
@@ -132,8 +136,8 @@ export function ModelUsageAnalysisPage() {
     exportUsageRowsCsv(
       rows,
       {
-        start: startTime ?? daysAgo(DEFAULT_RANGE_DAYS),
-        end: endTime ?? new Date(),
+        start: startDate,
+        end: endDate,
       },
       t
     )
@@ -148,12 +152,26 @@ export function ModelUsageAnalysisPage() {
         <div className='flex h-full min-h-0 flex-col gap-4'>
           <div className='flex flex-wrap items-end gap-3'>
             <div className='grid gap-1.5'>
-              <Label>{t('Start Time')}</Label>
-              <DateTimePicker value={startTime} onChange={setStartTime} />
+              <Label htmlFor='model-usage-start-date'>
+                {t('Usage start date')}
+              </Label>
+              <Input
+                id='model-usage-start-date'
+                type='date'
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
             </div>
             <div className='grid gap-1.5'>
-              <Label>{t('End Time')}</Label>
-              <DateTimePicker value={endTime} onChange={setEndTime} />
+              <Label htmlFor='model-usage-end-date'>
+                {t('Usage end date')}
+              </Label>
+              <Input
+                id='model-usage-end-date'
+                type='date'
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
             </div>
             <div className='grid gap-1.5'>
               <Label>{t('Key name')}</Label>
@@ -339,11 +357,39 @@ export function ModelUsageAnalysisPage() {
                   cellClassName: 'font-medium',
                   cell: (row) => formatUsd(row.cost_usd),
                 },
+                ...(canAdjustUsage
+                  ? [
+                      {
+                        id: 'actions',
+                        header: t('Actions'),
+                        cell: (row: ModelUsageRow) => (
+                          <Button
+                            size='sm'
+                            variant='outline'
+                            onClick={() => setAdjustmentRow(row)}
+                          >
+                            <Pencil className='h-4 w-4' />
+                            {t('Correct')}
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </div>
         </div>
       </SectionPageLayout.Content>
+      {canAdjustUsage && (
+        <UsageAdjustmentDialog
+          open={adjustmentRow !== null}
+          row={adjustmentRow}
+          onOpenChange={(open) => {
+            if (!open) setAdjustmentRow(null)
+          }}
+          onSaved={() => void usageQuery.refetch()}
+        />
+      )}
     </SectionPageLayout>
   )
 }
