@@ -59,10 +59,17 @@ function Field(props: { label: string; value: React.ReactNode }) {
   )
 }
 
-function JsonBlock(props: { value: string }) {
-  let text = props.value
+/**
+ * Renders a raw API payload. The value is typed `unknown` on purpose: it comes
+ * straight from an untyped JSON response, and handing React a non-string here
+ * throws during render, which the root error boundary turns into a full-page
+ * 500 instead of a broken field.
+ */
+function JsonBlock(props: { value: unknown }) {
+  let text =
+    typeof props.value === 'string' ? props.value : JSON.stringify(props.value)
   try {
-    text = JSON.stringify(JSON.parse(props.value), null, 2)
+    text = JSON.stringify(JSON.parse(text), null, 2)
   } catch {
     // Not JSON — show as-is.
   }
@@ -193,7 +200,7 @@ export function ErrorLogDetailSheet({
                   {t('Loading...')}
                 </p>
               ) : (
-                <JsonBlock value={headerQuery.data?.data || '-'} />
+                <JsonBlock value={headerQuery.data?.data?.content || '-'} />
               )}
             </div>
           )}

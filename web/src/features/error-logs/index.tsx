@@ -46,7 +46,6 @@ import {
   errorLogRowKey,
   formatUseTime,
   isRangeExportable,
-  parseErrorLogExtra,
   statusTone,
 } from './lib'
 import type { ErrorLog, ErrorLogFilters } from './types'
@@ -335,20 +334,16 @@ export function ErrorLogsPage() {
                     cell: (log) => log.client_user_id || '-',
                   },
                   {
-                    id: 'session',
-                    header: t('Session ID'),
-                    cell: (log) => {
-                      const extra = parseErrorLogExtra(log.extra)
-                      const id =
-                        log.session_id || (extra.mt_session_id as string) || ''
-                      return id ? (
-                        <span className='block max-w-40 truncate font-mono text-xs'>
-                          {id}
+                    id: 'request-id',
+                    header: t('Request ID'),
+                    cell: (log) =>
+                      log.request_id ? (
+                        <span className='block max-w-48 truncate font-mono text-xs'>
+                          {log.request_id}
                         </span>
                       ) : (
                         '-'
-                      )
-                    },
+                      ),
                   },
                   {
                     id: 'actions',

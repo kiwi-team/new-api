@@ -50,10 +50,15 @@ export async function getErrorLogBody(
   return res.data
 }
 
-/** Root only: request headers can carry upstream credentials. */
+/**
+ * Root only: request headers can carry upstream credentials.
+ *
+ * Unlike the body endpoint this one wraps the payload in `{ content }`, matching
+ * `/api/log/:id/header`.
+ */
 export async function getErrorLogHeader(
   id: number
-): Promise<ApiResponse<string>> {
+): Promise<ApiResponse<{ content: string }>> {
   const res = await api.get(`/api/log/error-logs/${id}/header`)
   return res.data
 }
