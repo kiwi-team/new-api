@@ -257,6 +257,8 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	summary.PromptTokens = usage.PromptTokens
 	summary.CompletionTokens = usage.CompletionTokens
+	// TotalTokens keeps the upstream-reported input so a fully cached request still
+	// counts as billable usage; PromptTokens is normalized below and can reach 0.
 	summary.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	summary.CacheTokens = usage.PromptTokensDetails.CachedTokens
 	summary.CacheCreationTokens = usage.PromptTokensDetails.CacheCreationTokensTotal()
@@ -270,15 +272,29 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.IsClaudeUsageSemantic
 
 	if isOpenRouterClaudeBilling {
-		summary.PromptTokens -= summary.CacheTokens
 		isUsingCustomSettings := relayInfo.PriceData.UsePrice || hasCustomModelRatio(summary.ModelName, relayInfo.PriceData.ModelRatio)
 		if summary.CacheCreationTokens == 0 && relayInfo.PriceData.CacheCreationRatio != 1 && usage.Cost != 0 && !isUsingCustomSettings {
 			maybeCacheCreationTokens := CalcOpenRouterCacheCreateTokens(*usage, relayInfo.PriceData)
-			if maybeCacheCreationTokens >= 0 && summary.PromptTokens >= maybeCacheCreationTokens {
+			if maybeCacheCreationTokens >= 0 && summary.PromptTokens-summary.CacheTokens >= maybeCacheCreationTokens {
 				summary.CacheCreationTokens = maybeCacheCreationTokens
 			}
 		}
-		summary.PromptTokens -= summary.CacheCreationTokens
+	}
+
+	// PromptTokens follows the Anthropic convention everywhere downstream: uncached
+	// input only. OpenAI- and Gemini-semantic upstreams — and OpenRouter, even when it
+	// reports Anthropic usage — fold cache read/write tokens into their prompt count,
+	// so the overlap is removed once here instead of inside the billing branch below.
+	// The billing base, the consume log and quota_data then share one convention,
+	// which is what makes prompt/cache token columns reconcilable across channels.
+	if isOpenRouterClaudeBilling || (!summary.IsClaudeUsageSemantic && !legacyClaudeDerived) {
+		summary.PromptTokens -= summary.CacheTokens + summary.CacheCreationTokens
+		// OpenAI cache-write usage reports unadjusted prefix counts, so cached_tokens +
+		// cache_write_tokens can exceed prompt_tokens. Clamp so the overlap never becomes
+		// a negative stored token count or a negative base charge.
+		if summary.PromptTokens < 0 {
+			summary.PromptTokens = 0
+		}
 	}
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
@@ -307,9 +323,6 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 		var cachedTokensWithRatio decimal.Decimal
 		if !dCacheTokens.IsZero() {
-			if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
-				baseTokens = baseTokens.Sub(dCacheTokens)
-			}
 			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
 		}
 
@@ -317,7 +330,6 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		hasSplitCacheCreationTokens := summary.CacheCreationTokens5m > 0 || summary.CacheCreationTokens1h > 0
 		if !dCachedCreationTokens.IsZero() || hasSplitCacheCreationTokens {
 			if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
-				baseTokens = baseTokens.Sub(dCachedCreationTokens)
 				cachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCacheCreationRatio)
 			} else {
 				remaining := summary.CacheCreationTokens - summary.CacheCreationTokens5m - summary.CacheCreationTokens1h
@@ -345,10 +357,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 			}
 		}
 
-		// OpenAI cache-write usage reports unadjusted prefix counts, so
-		// cached_tokens + cache_write_tokens can exceed prompt_tokens and the
-		// remainder can go negative. Clamp at zero so overlap never turns into
-		// a negative base charge.
+		// Image and audio tokens are carved out of the (already cache-normalized) prompt
+		// count, and those carve-outs can overlap too. Clamp so an oversized carve-out
+		// never turns into a negative base charge.
 		if baseTokens.IsNegative() {
 			baseTokens = decimal.Zero
 		}

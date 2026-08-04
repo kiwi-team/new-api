@@ -239,7 +239,9 @@ func TestCalculateTextQuotaSummaryUsesGeminiBillingUsageBeforeTopLevelUsage(t *t
 
 	require.False(t, summary.IsClaudeUsageSemantic)
 	require.Equal(t, dto.BillingUsageSemanticGemini, summary.UsageSemantic)
-	require.Equal(t, 105, summary.PromptTokens)
+	// Gemini reports promptTokenCount inclusive of cached content, so the stored
+	// prompt count drops the 7 cached tokens: 100 + 5 - 7 = 98.
+	require.Equal(t, 98, summary.PromptTokens)
 	require.Equal(t, 23, summary.CompletionTokens)
 	require.Equal(t, 7, summary.CacheTokens)
 	require.Equal(t, 128, summary.TotalTokens)
@@ -281,6 +283,74 @@ func TestCalculateTextQuotaSummaryUsesOpenAIBillingUsageBeforeTopLevelUsage(t *t
 	require.Equal(t, 9, summary.CompletionTokens)
 	require.Equal(t, 89, summary.TotalTokens)
 	require.Equal(t, 98, summary.Quota)
+}
+
+// The consume log and quota_data store summary.PromptTokens, so it must mean the
+// same thing regardless of which upstream served the request: uncached input only,
+// matching the Anthropic convention. Otherwise sum(prompt_tokens) and
+// sum(cached_tokens) cannot be reconciled against a charge once rows from
+// OpenAI-compatible and native Claude channels land in the same aggregate.
+func TestCalculateTextQuotaSummaryStoresPromptTokensExcludingCacheReads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	priceData := hosttypes.PriceData{
+		ModelRatio:      1,
+		CompletionRatio: 2,
+		CacheRatio:      0.1,
+		GroupRatioInfo:  hosttypes.GroupRatioInfo{GroupRatio: 1},
+	}
+
+	// Same logical request — 216 input tokens all served from cache, 108 output —
+	// reported under each upstream's own convention.
+	openAIUsage := &dto.Usage{
+		BillingUsage: dto.NewOpenAIChatBillingUsage(&dto.Usage{
+			PromptTokens:     216, // OpenAI folds cache reads into prompt_tokens
+			CompletionTokens: 108,
+			TotalTokens:      324,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens: 216,
+			},
+		}),
+	}
+	claudeUsage := &dto.Usage{
+		BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{
+			InputTokens:          0, // Anthropic reports input excluding cache reads
+			CacheReadInputTokens: 216,
+			OutputTokens:         108,
+		}),
+	}
+
+	openAISummary := calculateTextQuotaSummary(ctx, &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatClaude,
+		OriginModelName: "kimi-k3",
+		PriceData:       priceData,
+		StartTime:       time.Now(),
+	}, effectiveBillingUsage(openAIUsage))
+	claudeSummary := calculateTextQuotaSummary(ctx, &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatClaude,
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "kimi-k3",
+		PriceData:               priceData,
+		StartTime:               time.Now(),
+	}, effectiveBillingUsage(claudeUsage))
+
+	require.Equal(t, dto.BillingUsageSemanticOpenAI, openAISummary.UsageSemantic)
+	require.Equal(t, dto.BillingUsageSemanticAnthropic, claudeSummary.UsageSemantic)
+
+	assert.Equal(t, 0, openAISummary.PromptTokens)
+	assert.Equal(t, 216, openAISummary.CacheTokens)
+	assert.Equal(t, claudeSummary.PromptTokens, openAISummary.PromptTokens)
+	assert.Equal(t, claudeSummary.CacheTokens, openAISummary.CacheTokens)
+
+	// Normalization must not move the charge: 0 + 216*0.1 + 108*2 = 237.6 => 238
+	assert.Equal(t, 238, openAISummary.Quota)
+	assert.Equal(t, claudeSummary.Quota, openAISummary.Quota)
+
+	// TotalTokens stays on the upstream-reported input so a fully cached request is
+	// still recognized as billable usage.
+	assert.Equal(t, 324, openAISummary.TotalTokens)
 }
 
 func TestUsageBillingPathForLog(t *testing.T) {
@@ -419,14 +489,16 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
 		require.Equal(t, 1470, summary.CacheCreationTokens)
-		// (1473-0-1470) + 1470*1.25 + 19*2 = 3 + 1837.5 + 38 = 1878.5 => 1879
+		require.Equal(t, 3, summary.PromptTokens)
+		// 3 + 1470*1.25 + 19*2 = 3 + 1837.5 + 38 = 1878.5 => 1879
 		require.Equal(t, 1879, summary.Quota)
 	})
 
 	t.Run("uncached remainder clamps to zero", func(t *testing.T) {
 		// Real OpenAI payload shape: cached_tokens + cache_write_tokens exceeds
 		// prompt_tokens because both are unadjusted prefix counts. The negative
-		// remainder must clamp to zero, never turn into a negative base charge.
+		// remainder must clamp to zero, never turn into a negative stored token
+		// count or a negative base charge.
 		usage := &dto.Usage{
 			PromptTokens:     3619,
 			CompletionTokens: 36,
@@ -438,7 +510,7 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 
 		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
-		require.Equal(t, 3619, summary.PromptTokens)
+		require.Equal(t, 0, summary.PromptTokens)
 		require.Equal(t, 3616, summary.CacheCreationTokens)
 		// max(3619-2921-3616, 0) + 2921*0.1 + 3616*1.25 + 36*2 = 4884.1 => 4884
 		require.Equal(t, 4884, summary.Quota)
@@ -475,10 +547,10 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(
 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
-	// OpenRouter OpenAI-format display keeps prompt_tokens as total input,
-	// but billing still separates normal input from cache read tokens.
+	// OpenRouter's OpenAI-format usage reports prompt_tokens as total input, so the
+	// stored prompt count drops the cache read tokens and billing separates them.
 	// quota = (2604 - 2432) + 2432*0.1 + 383 = 798.2 => 798
-	require.Equal(t, 2604, summary.PromptTokens)
+	require.Equal(t, 172, summary.PromptTokens)
 	require.Equal(t, 798, summary.Quota)
 }
 
@@ -511,9 +583,9 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheCreationFromPromptBill
 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
-	// prompt_tokens is still logged as total input, but cache creation is billed separately.
+	// Cache creation is carved out of the stored prompt count and billed separately.
 	// quota = (2604 - 100) + 100*1.25 + 383 = 3012
-	require.Equal(t, 2604, summary.PromptTokens)
+	require.Equal(t, 2504, summary.PromptTokens)
 	require.Equal(t, 3012, summary.Quota)
 }
 

@@ -30,7 +30,7 @@ type Adaptor struct {
 }
 
 const aliAnthropicMessagesModelsEnv = "ALI_ANTHROPIC_MESSAGES_MODELS"
-const defaultAliAnthropicMessagesModels = "qwen,deepseek-v4,kimi,glm,minimax-m"
+const defaultAliAnthropicMessagesModels = "qwen,deepseek-v4,glm,minimax-m"
 
 /*
 	var syncModels = []string{
