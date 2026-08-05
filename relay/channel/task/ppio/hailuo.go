@@ -2,7 +2,6 @@ package ppio
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 
@@ -61,7 +60,7 @@ func HailuoRequestBody(req relaycommon.TaskSubmitReq) (io.Reader, error) {
 		}
 	}
 
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}

@@ -2,11 +2,11 @@ package fal
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 
 	"github.com/pkg/errors"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -58,17 +58,17 @@ func HunyuanImage2VideoRequestBody(req relaycommon.TaskSubmitReq) (io.Reader, er
 	if req.Metadata != nil {
 
 		metadata := req.Metadata
-		medaBytes, err := json.Marshal(metadata)
+		medaBytes, err := common.Marshal(metadata)
 		if err != nil {
 			return nil, errors.Wrap(err, "metadata marshal metadata failed")
 		}
-		err = json.Unmarshal(medaBytes, &body)
+		err = common.Unmarshal(medaBytes, &body)
 		if err != nil {
 			return nil, errors.Wrap(err, "unmarshal metadata failed")
 		}
 	}
 
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,6 @@ package kling
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -218,7 +217,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			return nil, err
 		}
-		data, err := json.Marshal(body)
+		data, err := common.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
@@ -353,11 +352,11 @@ func (a *TaskAdaptor) convertToAvatarRequestPayload(req *relaycommon.TaskSubmitR
 		Mode:   taskcommon.DefaultString(req.Mode, "std"),
 	}
 	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
+	medaBytes, err := common.Marshal(metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "metadata marshal metadata failed")
 	}
-	err = json.Unmarshal(medaBytes, &r)
+	err = common.Unmarshal(medaBytes, &r)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}

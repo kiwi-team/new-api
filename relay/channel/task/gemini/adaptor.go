@@ -3,7 +3,6 @@ package gemini
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -189,7 +188,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// Omni interactions API returns an interaction object with an `id`.
 	if isOmniModel(info.OriginModelName) {
 		var os omniSubmitResponse
-		if err := json.Unmarshal(responseBody, &os); err != nil {
+		if err := common.Unmarshal(responseBody, &os); err != nil {
 			return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		}
 		if os.Error != nil && os.Error.Message != "" {
@@ -200,8 +199,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		}
 		taskID = encodeOmniTaskID(os.ID)
 		ov := dto.NewOpenAIVideo()
-		ov.ID = taskID
-		ov.TaskID = taskID
+		ov.ID = info.PublicTaskID
+		ov.TaskID = info.PublicTaskID
 		ov.Status = dto.VideoStatusQueued
 		ov.CreatedAt = time.Now().Unix()
 		ov.Model = info.OriginModelName

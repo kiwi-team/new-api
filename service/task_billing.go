@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,7 +18,9 @@ import (
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
-func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
+// requestBody 由调用方通过 TaskRequestLogBody 取得——它同时要写进 tasks 表，
+// 在这里重复读一次请求体存储对磁盘缓存的大 body 是白白多一次文件读。
+func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, requestBody string) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -74,9 +77,45 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
 		Other:     other,
+		Request:   requestBody,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+}
+
+// TaskRequestLogBody 返回异步任务要留档的提交请求体（消费日志的「请求体」列和
+// tasks.request 共用），与同步链路（image/claude/gemini 等 handler）一样由
+// SAVE_REQUEST_RESPONSE 控制，未开启时返回空串。
+//
+// multipart 提交（Sora、阿里的文件上传）的原始 body 是带二进制分段的表单，
+// 直接落 TEXT 列既巨大又不可读，改用校验层归一化后的 TaskSubmitReq，
+// 它就是网关实际据以请求上游的内容。
+func TaskRequestLogBody(c *gin.Context) string {
+	if os.Getenv("SAVE_REQUEST_RESPONSE") != "true" || c == nil || c.Request == nil {
+		return ""
+	}
+
+	if strings.HasPrefix(strings.ToLower(c.Request.Header.Get("Content-Type")), "multipart/form-data") {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return ""
+		}
+		body, err := common.Marshal(req)
+		if err != nil {
+			return ""
+		}
+		return string(body)
+	}
+
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return ""
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 // ---------------------------------------------------------------------------

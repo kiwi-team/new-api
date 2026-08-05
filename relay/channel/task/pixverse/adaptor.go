@@ -2,7 +2,6 @@ package pixverse
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -95,7 +94,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	} else {
 		return nil, fmt.Errorf("params error for model: %s,image count %v", info.UpstreamModelName, len(body.ImgIDS))
 	}
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +118,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	var taskResp ToVideoResponse
-	err = json.Unmarshal(responseBody, &taskResp)
+	err = common.Unmarshal(responseBody, &taskResp)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		return
@@ -130,8 +129,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	ov := dto.NewOpenAIVideo()
 	videoID := strconv.FormatInt(taskResp.Resp.VideoID, 10)
-	ov.ID = videoID
-	ov.TaskID = ov.ID
+	ov.ID = info.PublicTaskID
+	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
@@ -216,7 +215,7 @@ func uploadFile(info *relaycommon.RelayInfo, imageUrl string) (int64, error) {
 	}
 
 	var uploadResp UploadResponse
-	if err := json.Unmarshal(respBody, &uploadResp); err != nil {
+	if err := common.Unmarshal(respBody, &uploadResp); err != nil {
 		return 0, err
 	}
 
@@ -265,11 +264,11 @@ func (a *TaskAdaptor) convertToRequestPayload(info *relaycommon.RelayInfo, req *
 	}
 
 	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
+	medaBytes, err := common.Marshal(metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "metadata marshal metadata failed")
 	}
-	err = json.Unmarshal(medaBytes, &r)
+	err = common.Unmarshal(medaBytes, &r)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
@@ -283,7 +282,7 @@ func (a *TaskAdaptor) convertToRequestPayload(info *relaycommon.RelayInfo, req *
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	taskInfo := &relaycommon.TaskInfo{}
 	resPayload := VideoTaskResult{}
-	err := json.Unmarshal(respBody, &resPayload)
+	err := common.Unmarshal(respBody, &resPayload)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal response body")
 	}
@@ -314,7 +313,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
 	var resp VideoTaskResult
-	if err := json.Unmarshal(originTask.Data, &resp); err != nil {
+	if err := common.Unmarshal(originTask.Data, &resp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal kling task data failed")
 	}
 

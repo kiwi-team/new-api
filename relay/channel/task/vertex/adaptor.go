@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -264,7 +263,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		if err := json.Unmarshal(responseBody, &os); err != nil {
+		if err := common.Unmarshal(responseBody, &os); err != nil {
 			return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		}
 		if os.Error != nil && os.Error.Message != "" {
@@ -274,7 +273,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			return "", nil, service.TaskErrorWrapper(fmt.Errorf("missing interaction id"), "invalid_response", http.StatusInternalServerError)
 		}
 		adc := &vertexcore.Credentials{}
-		if err := json.Unmarshal([]byte(a.apiKey), adc); err != nil {
+		if err := common.Unmarshal([]byte(a.apiKey), adc); err != nil {
 			return "", nil, service.TaskErrorWrapper(err, "decode_credentials_failed", http.StatusInternalServerError)
 		}
 		modelName := info.OriginModelName
@@ -282,10 +281,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		if strings.TrimSpace(region) == "" {
 			region = "global"
 		}
+		// localID 内嵌了 region 和 GCP project ID，只能作为上游 ID 落库，
+		// 绝不能作为对外 task_id 返回——base64 可逆，等于把项目信息给了调用方。
 		localID := encodeOmniTaskID(region, adc.ProjectID, os.ID)
 		ov := dto.NewOpenAIVideo()
-		ov.ID = localID
-		ov.TaskID = localID
+		ov.ID = info.PublicTaskID
+		ov.TaskID = info.PublicTaskID
 		ov.Status = dto.VideoStatusQueued
 		ov.Model = modelName
 		c.JSON(http.StatusOK, ov)
@@ -361,7 +362,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 			url = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/interactions/%s", region, project, region, interactionID)
 		}
 		adc := &vertexcore.Credentials{}
-		if err := json.Unmarshal([]byte(key), adc); err != nil {
+		if err := common.Unmarshal([]byte(key), adc); err != nil {
 			return nil, fmt.Errorf("failed to decode credentials: %w", err)
 		}
 		token, err := vertexcore.AcquireAccessToken(*adc, proxy)

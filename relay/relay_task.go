@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -354,7 +356,8 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		// 不 return 会让下面直接调用 nil 函数并 panic。
+		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
 
 	respBody, taskErr := respBuilder(c)
@@ -455,7 +458,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	// 其余情况向上游实时拉取最新状态
-	if realtimeResp, done := tryRealtimeFetch(originTask, isOpenAIVideoAPI); done {
+	if realtimeResp, done := tryRealtimeFetch(c, originTask, isOpenAIVideoAPI); done {
 		respBody = realtimeResp
 		if len(respBody) != 0 {
 			return
@@ -541,7 +544,12 @@ func simpleVideoRespBody(task *model.Task, taskResult *relaycommon.TaskInfo, for
 // tryRealtimeFetch 向上游实时拉取任务最新状态并回写 task。
 // 适配器按 task.Platform 从注册表取得（提交时已判定并落库）；取不到时回退到渠道类型。
 // done 表示确实完成了一次上游查询；respBody 仅在非 OpenAI Video API 时构建。
-func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) (respBody []byte, done bool) {
+//
+// 客户端轮询通常比 15 秒一轮的后台轮询更快，所以这里很可能是第一个把任务推进到
+// 终态的地方。一旦写入终态，GetAllUnFinishSyncTasks / GetTimedOutUnfinishedTasks
+// 都会过滤掉这条任务，后台轮询再也不会碰它——因此结算和退款必须在这里一并完成，
+// 否则失败任务的预扣费永远不会退还。
+func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (respBody []byte, done bool) {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil, false
@@ -565,6 +573,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) (respBody []byte,
 	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
+		"model":   task.Properties.UpstreamModelName,
 	}, proxy)
 	if err != nil || resp == nil {
 		return nil, false
@@ -602,11 +611,45 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) (respBody []byte,
 	}
 	task.Data = body
 
-	if !snap.Equal(task.Snapshot()) {
-		_, _ = task.UpdateWithStatus(snap.Status)
+	// 与轮询循环保持一致：终态一律补齐进度和完成时间，否则任务会以
+	// SUCCESS + "20%" + finish_time=0 的形态留在库里。
+	isTerminal := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	if isTerminal {
+		task.Progress = taskcommon.ProgressComplete
+		if task.FinishTime == 0 {
+			task.FinishTime = time.Now().Unix()
+		}
 	}
 
-	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
+	if snap.Equal(task.Snapshot()) {
+		return realtimeFetchRespBody(task, ti, body, isOpenAIVideoAPI)
+	}
+
+	won, err := task.UpdateWithStatus(snap.Status)
+	if err != nil {
+		logger.LogError(c, fmt.Sprintf("实时查询回写任务 %s 失败: %s", task.TaskID, err.Error()))
+		return realtimeFetchRespBody(task, ti, body, isOpenAIVideoAPI)
+	}
+
+	// 只有真正赢下终态流转的一方才结算：CAS 失败说明后台轮询或另一个
+	// 并发请求已经推进过，结算由它负责，这里重复执行会造成双倍退款。
+	if won && isTerminal && snap.Status != task.Status {
+		switch task.Status {
+		case model.TaskStatusSuccess:
+			service.SettleTaskBillingOnComplete(c, adaptor, task, ti)
+		case model.TaskStatusFailure:
+			if task.Quota != 0 {
+				service.RefundTaskQuota(c, task, task.FailReason)
+			}
+		}
+	}
+
+	return realtimeFetchRespBody(task, ti, body, isOpenAIVideoAPI)
+}
+
+// realtimeFetchRespBody 构建 tryRealtimeFetch 的返回体。
+// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理，这里只回 done。
+func realtimeFetchRespBody(task *model.Task, ti *relaycommon.TaskInfo, body []byte, isOpenAIVideoAPI bool) (respBody []byte, done bool) {
 	if isOpenAIVideoAPI {
 		return nil, true
 	}

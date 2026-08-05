@@ -2,7 +2,6 @@ package worldlabs
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -265,7 +264,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.Wrap(err, "convert request payload failed")
 	}
 
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +285,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	var wResp GenerateWorldResponse
-	if err := json.Unmarshal(responseBody, &wResp); err != nil {
+	if err := common.Unmarshal(responseBody, &wResp); err != nil {
 		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		return
 	}
@@ -306,17 +305,14 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	ov := dto.NewOpenAIVideo()
-	ov.ID = wResp.OperationID
-	ov.TaskID = wResp.OperationID
+	ov.ID = info.PublicTaskID
+	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
-	if wResp.Done {
-		ov.Status = dto.VideoStatusCompleted
-		ov.Progress = 100
-	} else {
-		ov.Status = dto.VideoStatusQueued
-		ov.Progress = 0
-	}
+	// 无论上游是否已 done，任务行都以未开始状态落库，终态由轮询推进。
+	// 这里跟着上游报 completed 会与紧随其后的 GET 结果自相矛盾。
+	ov.Status = dto.VideoStatusQueued
+	ov.Progress = 0
 
 	c.JSON(http.StatusOK, ov)
 	return wResp.OperationID, responseBody, nil
@@ -355,7 +351,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var opResp GenerateWorldResponse
-	if err := json.Unmarshal(respBody, &opResp); err != nil {
+	if err := common.Unmarshal(respBody, &opResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
 
@@ -416,7 +412,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
 	var wResp GenerateWorldResponse
-	if err := json.Unmarshal(originTask.Data, &wResp); err != nil {
+	if err := common.Unmarshal(originTask.Data, &wResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal worldlabs task data failed")
 	}
 

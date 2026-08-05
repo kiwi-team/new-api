@@ -3,13 +3,13 @@ package ltx
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/samber/lo"
@@ -23,6 +23,13 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+)
+
+// 任务行由 controller 在 DoResponse 返回之后才落库，后台生成 goroutine
+// 需要等它出现才能写回结果。
+const (
+	taskInsertWaitAttempts = 10
+	taskInsertWaitInterval = time.Second
 )
 
 // https://docs.ltx.video/api-documentation/api-reference/video-generation/image-to-video
@@ -137,7 +144,7 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 	if priceMap[taskType][modelName][Resolution] == 0 {
 		return 0
 	}
-	return priceMap[taskType][modelName][Resolution] * 1.3 // 国外模型计费1.5 cover成本
+	return priceMap[taskType][modelName][Resolution] * 1.5 // 国外模型计费1.5 cover成本
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -171,37 +178,38 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		c.Set("action", constant.TaskActionImageGenerate)
 	}
 
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	return bytes.NewReader(data), nil
 }
 
-// DoRequest delegates to common helper.
+// DoRequest 不发起上游请求：LTX 的生成接口是同步的，直接返回视频字节，
+// 耗时远超一次提交请求的生命周期。这里返回一个已提交的 mock 响应，真正的
+// 调用由 DoResponse 起的后台 goroutine 完成。
+// mock 的 task_id 必须用预生成的公开 ID，否则它会被当成「上游 ID」存进
+// PrivateData.UpstreamTaskID，与落库的 task_id 对不上，轮询和后台写回都会失败。
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	if action := c.GetString("action"); action != "" {
 		info.Action = action
 	}
-	//return channel.DoTaskApiRequest(a, c, info, requestBody)
-	taskId := common.GetRandomString(32)
-	mockResp := getMockResponse(LtxTaskResponse{
-		TaskID: taskId,
+	return getMockResponse(LtxTaskResponse{
+		TaskID: info.PublicTaskID,
 		Status: string(model.TaskStatusSubmitted),
 	})
-
-	return mockResp, nil
 }
 
-func getMockResponse(resp LtxTaskResponse) *http.Response {
-	data, err := json.Marshal(resp)
+func getMockResponse(resp LtxTaskResponse) (*http.Response, error) {
+	data, err := common.Marshal(resp)
 	if err != nil {
-		return nil
+		return nil, errors.Wrap(err, "marshal mock response failed")
 	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(bytes.NewBuffer(data)),
-	}
+	}, nil
 }
 
 // DoResponse handles upstream response, returns taskID etc.
@@ -213,78 +221,114 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	var kResp LtxTaskResponse
-	err = json.Unmarshal(responseBody, &kResp)
-	if err != nil {
+	if err = common.Unmarshal(responseBody, &kResp); err != nil {
 		taskErr = service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		return
 	}
+	// DoRequest 造的 mock 里 task_id 就是公开 ID，两者不一致说明链路被改坏了。
+	if kResp.TaskID != info.PublicTaskID {
+		taskErr = service.TaskErrorWrapper(errors.New("mock task id mismatch"), "task_id_mismatch", http.StatusInternalServerError)
+		return
+	}
+
+	// 后台 goroutine 不能再碰 gin.Context（handler 返回后它会被放回池中复用），
+	// 所以在响应前把需要的值取成副本。
+	v, exists := c.Get("task_request")
+	if !exists {
+		taskErr = service.TaskErrorWrapper(errors.New("request not found in context"), "task_request_missing", http.StatusInternalServerError)
+		return
+	}
+	req, ok := v.(relaycommon.TaskSubmitReq)
+	if !ok {
+		taskErr = service.TaskErrorWrapper(errors.New("unexpected task request type in context"), "task_request_invalid", http.StatusInternalServerError)
+		return
+	}
+
 	ov := dto.NewOpenAIVideo()
-	ov.ID = kResp.TaskID
-	ov.TaskID = kResp.TaskID
+	ov.ID = info.PublicTaskID
+	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
-	go func() {
-		time.Sleep(2 * time.Second)
-		task, exists, err := model.GetByOnlyTaskId(kResp.TaskID)
-		if err != nil || !exists {
-			return
-		}
-		request := task.Request
-		var reqBody relaycommon.TaskSubmitReq
-		err = json.Unmarshal([]byte(request), &reqBody)
-		if err != nil {
-			return
-		}
-		body, err := a.convertToRequestPayload(&reqBody)
-		if err != nil {
-			return
-		}
-		jsonBody, err := json.Marshal(body)
-		if err != nil {
-			return
-		}
-		action := c.GetString("action")
-		path := lo.Ternary(action == constant.TaskActionImageGenerate, "/v1/image-to-video", "/v1/text-to-video")
-		url := fmt.Sprintf("%s%s", a.baseURL, path)
-		httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(jsonBody))
-		if err != nil {
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+a.apiKey)
 
-		client := service.GetHttpClient()
-		resp, err := client.Do(httpReq)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			if err != nil {
-				task.FailReason = err.Error()
-			} else {
-				body, _ := io.ReadAll(resp.Body)
-				task.FailReason = string(body)
-			}
-			task.Status = model.TaskStatusFailure
-			task.Progress = "100%"
-			task.FinishTime = time.Now().Unix()
-			task.Update()
-			return
+	go a.runBackgroundGeneration(info.PublicTaskID, info.Action, req)
+
+	return info.PublicTaskID, responseBody, nil
+}
+
+// runBackgroundGeneration 在提交响应返回之后补齐真正的生成结果。
+//
+// 只写 video_url / fail_reason，不把任务置为终态：终态流转、退款和差额结算
+// 统一由轮询（service.updateVideoSingleTask）通过 CAS 完成。若在此直接写
+// SUCCESS/FAILURE，未完成任务查询会跳过该行，失败任务永远拿不到退款。
+func (a *TaskAdaptor) runBackgroundGeneration(publicTaskID, action string, req relaycommon.TaskSubmitReq) {
+	ctx := context.Background()
+
+	var task *model.Task
+	for i := 0; i < taskInsertWaitAttempts; i++ {
+		time.Sleep(taskInsertWaitInterval)
+		t, exists, err := model.GetByOnlyTaskId(publicTaskID)
+		if err == nil && exists {
+			task = t
+			break
 		}
-		videoUrl, err := service.UploadIOReaderToS3(context.Background(), resp)
-		if err != nil || videoUrl == "" {
-			task.FailReason = err.Error()
-			task.Status = model.TaskStatusFailure
-			task.Progress = "100%"
-		} else {
-			task.FailReason = videoUrl
-			task.Status = model.TaskStatusSuccess
-			task.VideoUrl = videoUrl
-			task.Progress = "100%"
-		}
-		task.FinishTime = time.Now().Unix()
-		task.Update()
-	}()
-	return kResp.TaskID, responseBody, nil
+	}
+	if task == nil {
+		logger.LogError(ctx, fmt.Sprintf("ltx: task %s not persisted, generation skipped", publicTaskID))
+		return
+	}
+
+	update := map[string]any{}
+	videoURL, err := a.generateVideo(ctx, action, req)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("ltx: task %s generation failed: %s", publicTaskID, err.Error()))
+		update["fail_reason"] = err.Error()
+	} else {
+		update["video_url"] = videoURL
+	}
+	if err := model.TaskBulkUpdate([]string{publicTaskID}, update); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("ltx: write back result for task %s failed: %s", publicTaskID, err.Error()))
+	}
+}
+
+// generateVideo 调用 LTX 同步生成接口，并把返回的视频流转存到 S3。
+func (a *TaskAdaptor) generateVideo(ctx context.Context, action string, req relaycommon.TaskSubmitReq) (string, error) {
+	body, err := a.convertToRequestPayload(&req)
+	if err != nil {
+		return "", err
+	}
+	jsonBody, err := common.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	path := lo.Ternary(action == constant.TaskActionImageGenerate, "/v1/image-to-video", "/v1/text-to-video")
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s%s", a.baseURL, path), bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+a.apiKey)
+
+	resp, err := service.GetHttpClient().Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("ltx upstream returned %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	videoURL, err := service.UploadIOReaderToS3(ctx, resp)
+	if err != nil {
+		return "", errors.Wrap(err, "upload video to s3 failed")
+	}
+	if videoURL == "" {
+		return "", errors.New("upload video to s3 returned empty url")
+	}
+	return videoURL, nil
 }
 
 //	fetch task status
@@ -302,13 +346,20 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	if !exists {
 		return nil, fmt.Errorf("task not found")
 	}
-	mockResp := getMockResponse(LtxTaskResponse{
+	// 后台生成只写结果字段、不写终态，这里据结果推导对外状态；两者都为空表示仍在生成中。
+	var status model.TaskStatus = model.TaskStatusInProgress
+	switch {
+	case task.VideoUrl != "":
+		status = model.TaskStatusSuccess
+	case task.FailReason != "":
+		status = model.TaskStatusFailure
+	}
+	return getMockResponse(LtxTaskResponse{
 		TaskID:     taskID,
-		Status:     string(task.Status),
+		Status:     string(status),
 		VideoURL:   task.VideoUrl,
 		FailReason: task.FailReason,
 	})
-	return mockResp, nil
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -335,11 +386,11 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Resolution: req.Size,
 	}
 	metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
+	medaBytes, err := common.Marshal(metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "metadata marshal metadata failed")
 	}
-	err = json.Unmarshal(medaBytes, &r)
+	err = common.Unmarshal(medaBytes, &r)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
@@ -365,7 +416,7 @@ func (a *TaskAdaptor) getAspectRatio(size string) string {
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	taskInfo := &relaycommon.TaskInfo{}
 	resPayload := LtxTaskResponse{}
-	err := json.Unmarshal(respBody, &resPayload)
+	err := common.Unmarshal(respBody, &resPayload)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal response body")
 	}

@@ -2,7 +2,6 @@ package doubao
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -465,11 +464,11 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 
 	//common.PrintJson("requestPayload", r)
 	//metadata := req.Metadata
-	medaBytes, err := json.Marshal(metadata)
+	medaBytes, err := common.Marshal(metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "metadata marshal metadata failed")
 	}
-	err = json.Unmarshal(medaBytes, &r)
+	err = common.Unmarshal(medaBytes, &r)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}

@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -111,7 +110,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			}
 		}
 	}
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +153,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	// 实例化一个client选项，可选的，没有特殊需求可以跳过
 	body := HunyuanTaskSubmitRequest{}
 	if data, err1 := io.ReadAll(requestBody); err1 == nil {
-		json.Unmarshal(data, &body)
+		common.Unmarshal(data, &body)
 	} else {
 		return nil, err1
 	}
@@ -206,14 +205,14 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	var s HunyuanTaskSubmitResponse
-	if err := json.Unmarshal(responseBody, &s); err != nil {
+	if err := common.Unmarshal(responseBody, &s); err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 	}
 	if strings.TrimSpace(s.Response.JobId) == "" {
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("missing taskId"), "invalid_response", http.StatusInternalServerError)
 	}
 	localID := s.Response.JobId
-	c.JSON(http.StatusOK, gin.H{"task_id": localID})
+	c.JSON(http.StatusOK, gin.H{"task_id": info.PublicTaskID})
 	return localID, responseBody, nil
 }
 
@@ -231,7 +230,7 @@ func (a *TaskAdaptor) FetchTaskBak(baseUrl, key string, body map[string]any) (*h
 		"JobId": taskID,
 	}
 	a.JobId = taskID
-	jsonBody, err := json.Marshal(tbody)
+	jsonBody, err := common.Marshal(tbody)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +314,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var op HunyuanTaskResultResponse
-	if err := json.Unmarshal(respBody, &op); err != nil {
+	if err := common.Unmarshal(respBody, &op); err != nil {
 		return nil, fmt.Errorf("unmarshal operation response failed: %w", err)
 	}
 	ti := &relaycommon.TaskInfo{}

@@ -2,7 +2,6 @@ package ppio
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 
 	"github.com/QuantumNous/new-api/common"
@@ -76,7 +75,7 @@ func WanRequestBody(req relaycommon.TaskSubmitReq) (io.Reader, error) {
 		}
 	}
 
-	data, err := json.Marshal(body)
+	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
