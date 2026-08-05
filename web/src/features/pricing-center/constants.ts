@@ -29,21 +29,20 @@ export const DEFAULT_EXCHANGE_RATE = 7.3
  */
 export const USD_PER_1M_AT_RATIO_ONE = 2
 
-/** Input-token ceiling seeded into a model's first tier. */
-export const DEFAULT_FIRST_TIER_MAX_TOKENS = 128_000
-
 /** Discount bounds mirror `SettlementDiscountMin/Max` in the backend model. */
 export const DISCOUNT_MIN = 0.01
 export const DISCOUNT_MAX = 10
 
-export const BILLING_MODES: BillingMode[] = ['token', 'call', 'tiered']
+export const BILLING_MODES: BillingMode[] = ['token', 'call']
 
 export function getBillingModeLabel(mode: BillingMode, t: TFunction): string {
   switch (mode) {
     case 'call':
       return t('Per-call billing')
-    case 'tiered':
-      return t('Tiered billing')
+    case 'legacy-tiered':
+      return t('Legacy tiered pricing')
+    case 'expression':
+      return t('Expression billing')
     default:
       return t('Per-token billing')
   }

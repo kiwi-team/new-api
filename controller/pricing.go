@@ -1,13 +1,17 @@
 package controller
 
 import (
+	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -143,17 +147,7 @@ func snapRatio(x float64) float64 {
 	return x
 }
 
-// saveModelPriceMap 将某个价格 map 持久化到 option 并热更新运行时倍率表。
-func saveModelPriceMap(key string, m map[string]float64) error {
-	b, err := common.Marshal(m)
-	if err != nil {
-		return err
-	}
-	return model.UpdateOption(key, string(b))
-}
-
-// touchModelPriceUpdateTime 记录/更新某模型价格的修改时间。
-func touchModelPriceUpdateTime(modelName string, ts int64) error {
+func getModelPriceUpdateTimes() map[string]int64 {
 	common.OptionMapRWMutex.RLock()
 	cur := common.OptionMap[modelPriceUpdateTimeOption]
 	common.OptionMapRWMutex.RUnlock()
@@ -161,12 +155,19 @@ func touchModelPriceUpdateTime(modelName string, ts int64) error {
 	if cur != "" {
 		_ = common.UnmarshalJsonStr(cur, &tsMap)
 	}
-	tsMap[modelName] = ts
-	b, err := common.Marshal(tsMap)
-	if err != nil {
-		return err
+	return tsMap
+}
+
+func marshalPricingOptions(values map[string]any) (map[string]string, error) {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		data, err := common.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = string(data)
 	}
-	return model.UpdateOption(modelPriceUpdateTimeOption, string(b))
+	return result, nil
 }
 
 type updateModelPricingRequest struct {
@@ -205,6 +206,9 @@ func UpdateModelPricing(c *gin.Context) {
 	priceMap := ratio_setting.GetModelPriceCopy()
 	cacheMap := ratio_setting.GetCacheRatioCopy()
 	createCacheMap := ratio_setting.GetCreateCacheRatioCopy()
+	tieredMap := ratio_setting.GetTieredPriceCopy()
+	billingModeMap := billing_setting.GetBillingModeCopy()
+	billingExprMap := billing_setting.GetBillingExprCopy()
 
 	if req.IsPerCall {
 		priceMap[req.ModelName] = snapRatio(req.PerCallPrice)
@@ -234,22 +238,28 @@ func UpdateModelPricing(c *gin.Context) {
 			delete(createCacheMap, req.ModelName)
 		}
 	}
-
-	for key, m := range map[string]map[string]float64{
-		"ModelRatio":       ratioMap,
-		"CompletionRatio":  completionMap,
-		"ModelPrice":       priceMap,
-		"CacheRatio":       cacheMap,
-		"CreateCacheRatio": createCacheMap,
-	} {
-		if err := saveModelPriceMap(key, m); err != nil {
-			c.JSON(200, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-	}
+	delete(tieredMap, req.ModelName)
+	delete(billingModeMap, req.ModelName)
+	delete(billingExprMap, req.ModelName)
 
 	now := time.Now().Unix()
-	if err := touchModelPriceUpdateTime(req.ModelName, now); err != nil {
+	updateTimes := getModelPriceUpdateTimes()
+	updateTimes[req.ModelName] = now
+	values, err := marshalPricingOptions(map[string]any{
+		"ModelRatio":                   ratioMap,
+		"CompletionRatio":              completionMap,
+		"ModelPrice":                   priceMap,
+		"CacheRatio":                   cacheMap,
+		"CreateCacheRatio":             createCacheMap,
+		"TieredPrice":                  tieredMap,
+		"billing_setting.billing_mode": billingModeMap,
+		"billing_setting.billing_expr": billingExprMap,
+		modelPriceUpdateTimeOption:     updateTimes,
+	})
+	if err == nil {
+		err = model.UpdateOptionsBulk(values)
+	}
+	if err != nil {
 		c.JSON(200, gin.H{"success": false, "message": err.Error()})
 		return
 	}
@@ -273,35 +283,143 @@ func DeleteModelPricing(c *gin.Context) {
 	priceMap := ratio_setting.GetModelPriceCopy()
 	cacheMap := ratio_setting.GetCacheRatioCopy()
 	createCacheMap := ratio_setting.GetCreateCacheRatioCopy()
+	tieredMap := ratio_setting.GetTieredPriceCopy()
+	billingModeMap := billing_setting.GetBillingModeCopy()
+	billingExprMap := billing_setting.GetBillingExprCopy()
 	delete(ratioMap, modelName)
 	delete(completionMap, modelName)
 	delete(priceMap, modelName)
 	delete(cacheMap, modelName)
 	delete(createCacheMap, modelName)
-	for key, m := range map[string]map[string]float64{
-		"ModelRatio":       ratioMap,
-		"CompletionRatio":  completionMap,
-		"ModelPrice":       priceMap,
-		"CacheRatio":       cacheMap,
-		"CreateCacheRatio": createCacheMap,
-	} {
-		if err := saveModelPriceMap(key, m); err != nil {
-			c.JSON(200, gin.H{"success": false, "message": err.Error()})
-			return
-		}
+	delete(tieredMap, modelName)
+	delete(billingModeMap, modelName)
+	delete(billingExprMap, modelName)
+	updateTimes := getModelPriceUpdateTimes()
+	delete(updateTimes, modelName)
+	values, err := marshalPricingOptions(map[string]any{
+		"ModelRatio":                   ratioMap,
+		"CompletionRatio":              completionMap,
+		"ModelPrice":                   priceMap,
+		"CacheRatio":                   cacheMap,
+		"CreateCacheRatio":             createCacheMap,
+		"TieredPrice":                  tieredMap,
+		"billing_setting.billing_mode": billingModeMap,
+		"billing_setting.billing_expr": billingExprMap,
+		modelPriceUpdateTimeOption:     updateTimes,
+	})
+	if err == nil {
+		err = model.UpdateOptionsBulk(values)
 	}
-	// 同步清理修改时间记录
-	common.OptionMapRWMutex.RLock()
-	cur := common.OptionMap[modelPriceUpdateTimeOption]
-	common.OptionMapRWMutex.RUnlock()
-	if cur != "" {
-		tsMap := map[string]int64{}
-		if err := common.UnmarshalJsonStr(cur, &tsMap); err == nil {
-			delete(tsMap, modelName)
-			if b, err := common.Marshal(tsMap); err == nil {
-				_ = model.UpdateOption(modelPriceUpdateTimeOption, string(b))
-			}
-		}
+	if err != nil {
+		c.JSON(200, gin.H{"success": false, "message": err.Error()})
+		return
 	}
 	c.JSON(200, gin.H{"success": true, "message": ""})
+}
+
+type migrateTieredModelPricingRequest struct {
+	ModelName string `json:"model_name"`
+}
+
+func formatExprNumber(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func legacyTiersToBillingExpr(modelName string, tiers []ratio_setting.PriceTier) (string, error) {
+	if len(tiers) == 0 {
+		return "", fmt.Errorf("model %s has no legacy tiered pricing", modelName)
+	}
+	tiers = append([]ratio_setting.PriceTier(nil), tiers...)
+	sort.Slice(tiers, func(i, j int) bool { return tiers[i].MaxTokens < tiers[j].MaxTokens })
+	cacheRatio, _ := ratio_setting.GetCacheRatio(modelName)
+	cacheWriteRatio, _ := ratio_setting.GetCreateCacheRatio(modelName)
+	imageRatio, _ := ratio_setting.GetImageRatio(modelName)
+	audioRatio := ratio_setting.GetAudioRatio(modelName)
+	audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(modelName)
+
+	parts := make([]string, 0, len(tiers))
+	for index, tier := range tiers {
+		cachedPrice := tier.CachedInputPrice
+		if cachedPrice == 0 {
+			cachedPrice = tier.InputPrice * cacheRatio
+		}
+		cacheWritePrice := tier.CacheWritePrice
+		if cacheWritePrice == 0 {
+			cacheWritePrice = tier.InputPrice * cacheWriteRatio
+		}
+		terms := []string{
+			"p * " + formatExprNumber(tier.InputPrice),
+			"c * " + formatExprNumber(tier.OutputPrice),
+		}
+		for _, item := range []struct {
+			name  string
+			price float64
+		}{
+			{"cr", cachedPrice},
+			{"cc", cacheWritePrice},
+			{"cc1h", cacheWritePrice * 1.6},
+			{"img", tier.InputPrice * imageRatio},
+			{"ai", tier.InputPrice * audioRatio},
+			{"ao", tier.OutputPrice * audioCompletionRatio},
+		} {
+			if item.price != 0 {
+				terms = append(terms, item.name+" * "+formatExprNumber(item.price))
+			}
+		}
+		body := fmt.Sprintf("tier(\"legacy_%d\", %s)", index+1, strings.Join(terms, " + "))
+		if index < len(tiers)-1 {
+			parts = append(parts, fmt.Sprintf("len <= %d ? %s : ", tier.MaxTokens, body))
+		} else {
+			parts = append(parts, body)
+		}
+	}
+	expr := strings.Join(parts, "")
+	if err := billing_setting.SmokeTestExpr(expr); err != nil {
+		return "", err
+	}
+	return expr, nil
+}
+
+// MigrateTieredModelPricing converts one legacy TieredPrice entry into the
+// active billing expression engine and removes the legacy entry atomically.
+func MigrateTieredModelPricing(c *gin.Context) {
+	var req migrateTieredModelPricingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(200, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	req.ModelName = strings.TrimSpace(req.ModelName)
+	tieredMap := ratio_setting.GetTieredPriceCopy()
+	tiers, ok := tieredMap[req.ModelName]
+	if req.ModelName == "" || !ok {
+		c.JSON(200, gin.H{"success": false, "message": "未找到该模型的旧阶梯价格"})
+		return
+	}
+	expr, err := legacyTiersToBillingExpr(req.ModelName, tiers)
+	if err != nil {
+		c.JSON(200, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	billingModeMap := billing_setting.GetBillingModeCopy()
+	billingExprMap := billing_setting.GetBillingExprCopy()
+	billingModeMap[req.ModelName] = billing_setting.BillingModeTieredExpr
+	billingExprMap[req.ModelName] = expr
+	delete(tieredMap, req.ModelName)
+	updateTimes := getModelPriceUpdateTimes()
+	now := time.Now().Unix()
+	updateTimes[req.ModelName] = now
+	values, err := marshalPricingOptions(map[string]any{
+		"TieredPrice":                  tieredMap,
+		"billing_setting.billing_mode": billingModeMap,
+		"billing_setting.billing_expr": billingExprMap,
+		modelPriceUpdateTimeOption:     updateTimes,
+	})
+	if err == nil {
+		err = model.UpdateOptionsBulk(values)
+	}
+	if err != nil {
+		c.JSON(200, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "message": "", "data": gin.H{"billing_expr": expr, "updated_at": now}})
 }

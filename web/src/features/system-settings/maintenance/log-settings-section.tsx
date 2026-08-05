@@ -80,12 +80,14 @@ import type { LogCleanupTask } from '../types'
 
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
+  UserLogQueryLimitDays: z.number().int().min(1).max(3650),
 })
 
 type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
 
 type LogSettingsSectionProps = {
   defaultEnabled: boolean
+  defaultQueryLimitDays: number
 }
 
 type ServerLogInfo = {
@@ -141,6 +143,7 @@ function isActiveLogCleanupTask(task: LogCleanupTask | null) {
 
 export function LogSettingsSection({
   defaultEnabled,
+  defaultQueryLimitDays,
 }: LogSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -148,6 +151,7 @@ export function LogSettingsSection({
     resolver: zodResolver(logSettingsSchema),
     defaultValues: {
       LogConsumeEnabled: defaultEnabled,
+      UserLogQueryLimitDays: defaultQueryLimitDays,
     },
   })
 
@@ -174,8 +178,11 @@ export function LogSettingsSection({
   }, [])
 
   useEffect(() => {
-    form.reset({ LogConsumeEnabled: defaultEnabled })
-  }, [defaultEnabled, form])
+    form.reset({
+      LogConsumeEnabled: defaultEnabled,
+      UserLogQueryLimitDays: defaultQueryLimitDays,
+    })
+  }, [defaultEnabled, defaultQueryLimitDays, form])
 
   useEffect(() => {
     fetchServerLogInfo()
@@ -257,11 +264,24 @@ export function LogSettingsSection({
   }, [logCleanupActive, logCleanupTaskId, t])
 
   const onSubmit = async (values: LogSettingsFormValues) => {
-    if (values.LogConsumeEnabled === defaultEnabled) return
-    await updateOption.mutateAsync({
-      key: 'LogConsumeEnabled',
-      value: values.LogConsumeEnabled,
-    })
+    const updates = []
+    if (values.LogConsumeEnabled !== defaultEnabled) {
+      updates.push(
+        updateOption.mutateAsync({
+          key: 'LogConsumeEnabled',
+          value: values.LogConsumeEnabled,
+        })
+      )
+    }
+    if (values.UserLogQueryLimitDays !== defaultQueryLimitDays) {
+      updates.push(
+        updateOption.mutateAsync({
+          key: 'UserLogQueryLimitDays',
+          value: values.UserLogQueryLimitDays,
+        })
+      )
+    }
+    await Promise.all(updates)
   }
 
   const handleRequestCleanLogs = () => {
@@ -366,6 +386,42 @@ export function LogSettingsSection({
               </SettingsSwitchItem>
             )}
           />
+
+          <SettingsControlGroup>
+            <FormField
+              control={form.control}
+              name='UserLogQueryLimitDays'
+              render={({ field }) => (
+                <div className='space-y-2'>
+                  <FormLabel>{t('User log query range')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Non-admin users can query only logs from the most recent configured number of days.'
+                    )}
+                  </FormDescription>
+                  <div className='flex items-center gap-2'>
+                    <FormControl>
+                      <Input
+                        className='w-32'
+                        type='number'
+                        min={1}
+                        max={3650}
+                        step={1}
+                        value={field.value}
+                        onChange={(event) =>
+                          field.onChange(Number(event.target.value))
+                        }
+                      />
+                    </FormControl>
+                    <span className='text-muted-foreground text-sm'>
+                      {t('days')}
+                    </span>
+                  </div>
+                  <FormMessage />
+                </div>
+              )}
+            />
+          </SettingsControlGroup>
 
           <SettingsControlGroup className='space-y-3'>
             <div>

@@ -223,11 +223,27 @@ func isAdmin(c *gin.Context) bool {
 	return c.GetInt("role") >= common.RoleAdminUser
 }
 
+func limitUserLogStartTimestamp(role int, startTimestamp, now int64) int64 {
+	if role >= common.RoleAdminUser {
+		return startTimestamp
+	}
+	days := common.UserLogQueryLimitDays
+	if days < 1 {
+		days = common.DefaultUserLogQueryLimitDays
+	}
+	cutoff := now - int64(days)*24*60*60
+	if startTimestamp == 0 || startTimestamp < cutoff {
+		return cutoff
+	}
+	return startTimestamp
+}
+
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	userId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
@@ -364,6 +380,7 @@ func GetLogsSelfStat(c *gin.Context) {
 	userId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ExternalLink, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -39,28 +40,17 @@ import {
   deleteModelPricing,
   getExchangeRate,
   getPricingOptions,
-  saveTieredPriceMap,
+  migrateTieredModelPricing,
   updateModelPricing,
 } from '../api'
 import {
   BILLING_MODES,
   DEFAULT_EXCHANGE_RATE,
-  DEFAULT_FIRST_TIER_MAX_TOKENS,
   getBillingModeLabel,
 } from '../constants'
-import {
-  buildOfficialPriceRows,
-  formatTokens,
-  parseTieredPriceMap,
-} from '../lib'
-import type { BillingMode, OfficialPriceRow, PriceTier } from '../types'
+import { buildOfficialPriceRows, formatTokens } from '../lib'
+import type { BillingMode, OfficialPriceRow } from '../types'
 import { DualPriceInput } from './dual-price-input'
-import { TierEditorDialog } from './tier-editor-dialog'
-
-type TierEditorState = {
-  model: string
-  tierIndex: number
-}
 
 export function OfficialPricesTab() {
   const { t } = useTranslation()
@@ -68,8 +58,11 @@ export function OfficialPricesTab() {
   const [keyword, setKeyword] = useState('')
   const [newModelName, setNewModelName] = useState('')
   const [newBillingMode, setNewBillingMode] = useState<BillingMode>('token')
-  const [tierEditor, setTierEditor] = useState<TierEditorState | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<OfficialPriceRow | null>(null)
+  const [migrationTarget, setMigrationTarget] =
+    useState<OfficialPriceRow | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<OfficialPriceRow | null>(
+    null
+  )
 
   const optionsQuery = useQuery({
     queryKey: ['pricing-center', 'options'],
@@ -137,64 +130,32 @@ export function OfficialPricesTab() {
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const saveTiers = useMutation({
-    mutationFn: async (input: { model: string; tiers: PriceTier[] }) => {
-      const map = parseTieredPriceMap(options)
-      if (input.tiers.length > 0) {
-        map[input.model] = [...input.tiers].sort(
-          (a, b) => a.max_tokens - b.max_tokens
-        )
-      } else {
-        delete map[input.model]
-      }
-      const res = await saveTieredPriceMap(map)
+  const migrateTiers = useMutation({
+    mutationFn: async (modelName: string) => {
+      const res = await migrateTieredModelPricing(modelName)
       if (!res.success) throw new Error(res.message || t('Operation failed'))
     },
     onSuccess: async () => {
-      toast.success(t('Saved'))
+      setMigrationTarget(null)
+      toast.success(t('Legacy tiers migrated successfully'))
       await invalidateOptions()
     },
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const isSaving = savePrice.isPending || saveTiers.isPending
+  const isSaving = savePrice.isPending || migrateTiers.isPending
 
-  /**
-   * Billing modes are mutually exclusive in storage, so switching clears the
-   * other shape first — otherwise a model would carry both a ratio and a tier
-   * list and the reader would pick the wrong one.
-   */
-  const switchBillingMode = async (row: OfficialPriceRow, mode: BillingMode) => {
+  // The backend commits the selected normal mode and clears stale pricing
+  // shapes in one transaction. Expression and legacy rows stay read-only here.
+  const switchBillingMode = async (
+    row: OfficialPriceRow,
+    mode: BillingMode
+  ) => {
     if (mode === row.billingMode) return
-    if (mode === 'tiered') {
-      await deleteModelPricing(row.model)
-      await saveTiers.mutateAsync({
-        model: row.model,
-        tiers: row.tiers.length
-          ? row.tiers
-          : [
-              {
-                max_tokens: DEFAULT_FIRST_TIER_MAX_TOKENS,
-                input_price: 0,
-                output_price: 0,
-              },
-            ],
-      })
-      return
-    }
-    if (row.billingMode === 'tiered') {
-      await saveTiers.mutateAsync({ model: row.model, tiers: [] })
-      await savePrice.mutateAsync({
-        row: {
-          model: row.model,
-          billingMode: mode,
-          inputUSD: 0,
-          outputUSD: 0,
-          perCallUSD: 0,
-          cacheReadUSD: 0,
-          cacheCreateUSD: 0,
-        },
-      })
+    if (
+      row.billingMode === 'legacy-tiered' ||
+      row.billingMode === 'expression'
+    ) {
       return
     }
     await savePrice.mutateAsync({ row, patch: { billingMode: mode } })
@@ -206,39 +167,22 @@ export function OfficialPricesTab() {
       toast.error(t('Model name is required'))
       return
     }
-    if (newBillingMode === 'tiered') {
-      await saveTiers.mutateAsync({
+    await savePrice.mutateAsync({
+      row: {
         model: name,
-        tiers: [
-          {
-            max_tokens: DEFAULT_FIRST_TIER_MAX_TOKENS,
-            input_price: 0,
-            output_price: 0,
-          },
-        ],
-      })
-    } else {
-      await savePrice.mutateAsync({
-        row: {
-          model: name,
-          billingMode: newBillingMode,
-          inputUSD: 0,
-          outputUSD: 0,
-          perCallUSD: 0,
-          cacheReadUSD: 0,
-          cacheCreateUSD: 0,
-        },
-      })
-    }
+        billingMode: newBillingMode,
+        inputUSD: 0,
+        outputUSD: 0,
+        perCallUSD: 0,
+        cacheReadUSD: 0,
+        cacheCreateUSD: 0,
+      },
+    })
     setNewModelName('')
   }
 
   const handleDeleteModel = async (row: OfficialPriceRow) => {
     setDeleteTarget(null)
-    if (row.billingMode === 'tiered') {
-      await saveTiers.mutateAsync({ model: row.model, tiers: [] })
-      return
-    }
     const res = await deleteModelPricing(row.model)
     if (res.success) {
       toast.success(t('Deleted successfully'))
@@ -247,10 +191,6 @@ export function OfficialPricesTab() {
     }
     toast.error(res.message || t('Operation failed'))
   }
-
-  const editorRow = tierEditor
-    ? rows.find((row) => row.model === tierEditor.model)
-    : undefined
 
   return (
     <div className='flex h-full min-h-0 flex-col gap-4'>
@@ -295,19 +235,27 @@ export function OfficialPricesTab() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {BILLING_MODES.map((mode) => (
-              <SelectItem key={mode} value={mode}>
-                {getBillingModeLabel(mode, t)}
-              </SelectItem>
-            ))}
+            <SelectGroup>
+              {BILLING_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {getBillingModeLabel(mode, t)}
+                </SelectItem>
+              ))}
+            </SelectGroup>
           </SelectContent>
         </Select>
-        <Button size='sm' onClick={() => void handleAddModel()} disabled={isSaving}>
+        <Button
+          size='sm'
+          onClick={() => void handleAddModel()}
+          disabled={isSaving}
+        >
           <Plus className='h-4 w-4' />
           {t('Add')}
         </Button>
         <span className='text-muted-foreground text-xs'>
-          {t('Prices can be edited inline after adding; changes apply immediately')}
+          {t(
+            'Prices can be edited inline after adding; changes apply immediately'
+          )}
         </span>
       </div>
 
@@ -328,42 +276,65 @@ export function OfficialPricesTab() {
             {
               id: 'billing-mode',
               header: t('Billing mode'),
-              cell: (row) => (
-                <Select
-                  items={billingModeItems}
-                  value={row.billingMode}
-                  onValueChange={(value) =>
-                    void switchBillingMode(row, value as BillingMode)
-                  }
-                >
-                  <SelectTrigger className='h-8 w-32 text-xs'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BILLING_MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {getBillingModeLabel(mode, t)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ),
+              cell: (row) =>
+                row.billingMode === 'legacy-tiered' ||
+                row.billingMode === 'expression' ? (
+                  <Badge variant='secondary'>
+                    {getBillingModeLabel(row.billingMode, t)}
+                  </Badge>
+                ) : (
+                  <Select
+                    items={billingModeItems}
+                    value={row.billingMode}
+                    onValueChange={(value) =>
+                      void switchBillingMode(row, value as BillingMode)
+                    }
+                  >
+                    <SelectTrigger className='h-8 w-32 text-xs'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {BILLING_MODES.map((mode) => (
+                          <SelectItem key={mode} value={mode}>
+                            {getBillingModeLabel(mode, t)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                ),
             },
             {
               id: 'input-price',
               header: `${t('Input price')} ($/¥ /1M)`,
-              cell: (row) =>
-                row.billingMode === 'tiered' ? (
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() =>
-                      setTierEditor({ model: row.model, tierIndex: -1 })
-                    }
-                  >
-                    {t('Edit tiers')} ({row.tiers.length})
-                  </Button>
-                ) : (
+              cell: (row) => {
+                if (row.billingMode === 'legacy-tiered') {
+                  return (
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => setMigrationTarget(row)}
+                    >
+                      {t('Migrate to expression pricing')}
+                    </Button>
+                  )
+                }
+                if (row.billingMode === 'expression') {
+                  return (
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      render={
+                        <a href='/system-settings/billing/model-pricing' />
+                      }
+                    >
+                      <ExternalLink className='h-4 w-4' />
+                      {t('Advanced pricing')}
+                    </Button>
+                  )
+                }
+                return (
                   <DualPriceInput
                     value={row.inputUSD}
                     rate={rate}
@@ -372,55 +343,47 @@ export function OfficialPricesTab() {
                       savePrice.mutate({ row, patch: { inputUSD: usd } })
                     }
                   />
-                ),
+                )
+              },
             },
             {
               id: 'output-price',
               header: `${t('Output price')} ($/¥ /1M)`,
-              cell: (row) =>
-                row.billingMode === 'tiered' ? (
-                  <div className='flex flex-wrap items-center gap-1'>
-                    {row.tiers.map((tier, index) => (
-                      <Badge
-                        key={tier.max_tokens}
-                        variant='secondary'
-                        className='cursor-pointer gap-1'
-                        onClick={() =>
-                          setTierEditor({ model: row.model, tierIndex: index })
-                        }
-                      >
-                        ≤{formatTokens(tier.max_tokens)}: ${tier.input_price}/$
-                        {tier.output_price}
-                        {tier.cached_input_price
-                          ? ` ${t('Cache read')} $${tier.cached_input_price}`
-                          : ''}
-                        {tier.cache_write_price
-                          ? ` ${t('Cache write')} $${tier.cache_write_price}`
-                          : ''}
-                        <X
-                          className='h-3 w-3'
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            saveTiers.mutate({
-                              model: row.model,
-                              tiers: row.tiers.filter((_, i) => i !== index),
-                            })
-                          }}
-                        />
-                      </Badge>
-                    ))}
-                    <Button
-                      variant='ghost'
-                      size='icon'
-                      className='h-6 w-6'
-                      onClick={() =>
-                        setTierEditor({ model: row.model, tierIndex: -1 })
-                      }
+              cell: (row) => {
+                if (row.billingMode === 'legacy-tiered') {
+                  return (
+                    <div className='flex flex-wrap items-center gap-1'>
+                      {row.tiers.map((tier) => (
+                        <Badge
+                          key={tier.max_tokens}
+                          variant='secondary'
+                          className='gap-1'
+                        >
+                          ≤{formatTokens(tier.max_tokens)}: ${tier.input_price}
+                          /$
+                          {tier.output_price}
+                          {tier.cached_input_price
+                            ? ` ${t('Cache read')} $${tier.cached_input_price}`
+                            : ''}
+                          {tier.cache_write_price
+                            ? ` ${t('Cache write')} $${tier.cache_write_price}`
+                            : ''}
+                        </Badge>
+                      ))}
+                    </div>
+                  )
+                }
+                if (row.billingMode === 'expression') {
+                  return (
+                    <code
+                      className='block max-w-96 truncate text-xs'
+                      title={row.billingExpr || ''}
                     >
-                      <Plus className='h-3 w-3' />
-                    </Button>
-                  </div>
-                ) : (
+                      {row.billingExpr}
+                    </code>
+                  )
+                }
+                return (
                   <DualPriceInput
                     value={row.outputUSD}
                     rate={rate}
@@ -429,7 +392,8 @@ export function OfficialPricesTab() {
                       savePrice.mutate({ row, patch: { outputUSD: usd } })
                     }
                   />
-                ),
+                )
+              },
             },
             {
               id: 'cache-read-price',
@@ -499,26 +463,17 @@ export function OfficialPricesTab() {
         />
       </div>
 
-      {tierEditor && editorRow && (
-        <TierEditorDialog
-          open
-          onOpenChange={(open) => !open && setTierEditor(null)}
-          modelName={tierEditor.model}
-          tier={
-            tierEditor.tierIndex >= 0
-              ? editorRow.tiers[tierEditor.tierIndex]
-              : undefined
-          }
-          usedMaxTokens={editorRow.tiers.map((tier) => tier.max_tokens)}
-          onSave={(tier) => {
-            const tiers = [...editorRow.tiers]
-            if (tierEditor.tierIndex >= 0) tiers[tierEditor.tierIndex] = tier
-            else tiers.push(tier)
-            saveTiers.mutate({ model: editorRow.model, tiers })
-          }}
-        />
-      )}
-
+      <ConfirmDialog
+        open={migrationTarget !== null}
+        onOpenChange={(open) => !open && setMigrationTarget(null)}
+        title={t('Migrate to expression pricing')}
+        desc={t(
+          'This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.'
+        )}
+        handleConfirm={() => {
+          if (migrationTarget) migrateTiers.mutate(migrationTarget.model)
+        }}
+      />
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}

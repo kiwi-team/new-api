@@ -107,6 +107,10 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 
+const DefaultUserLogQueryLimitDays = 14
+
+var UserLogQueryLimitDays = DefaultUserLogQueryLimitDays
+
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 

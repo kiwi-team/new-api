@@ -256,6 +256,7 @@ func GetUserTask(c *gin.Context) {
 	userId := c.GetInt("id")
 
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 
 	queryParams := model.SyncTaskQueryParams{

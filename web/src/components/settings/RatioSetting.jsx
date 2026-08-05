@@ -27,14 +27,13 @@ import ModelSettingsVisualEditor from '../../pages/Setting/Ratio/ModelSettingsVi
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 import HumanReadablePriceEditor from '../../pages/Setting/Ratio/HumanReadablePriceEditor';
-import TieredPriceSettings from '../../pages/Setting/Ratio/TieredPriceSettings';
 
 import { API, showError, toBoolean } from '../../helpers';
 
 const RatioSetting = () => {
   const { t } = useTranslation();
 
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     ModelPrice: '',
     ModelRatio: '',
     CacheRatio: '',
@@ -58,12 +57,12 @@ const RatioSetting = () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.value.startsWith('{') || item.value.startsWith('[')) {
           try {
             item.value = JSON.stringify(JSON.parse(item.value), null, 2);
-          } catch (e) {
+          } catch {
             // 如果后端返回的不是合法 JSON，直接展示
           }
         }
@@ -83,7 +82,7 @@ const RatioSetting = () => {
     try {
       setLoading(true);
       await getOptions();
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);
@@ -102,9 +101,6 @@ const RatioSetting = () => {
         <Tabs type='card'>
           <Tabs.TabPane tab={t('人性化价格配置')} itemKey='human-price'>
             <HumanReadablePriceEditor options={inputs} refresh={onRefresh} />
-          </Tabs.TabPane>
-          <Tabs.TabPane tab={t('模型阶梯价格')} itemKey='tiered-price'>
-            <TieredPriceSettings options={inputs} refresh={onRefresh} />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('模型倍率设置')} itemKey='model'>
             <ModelRatioSettings options={inputs} refresh={onRefresh} />

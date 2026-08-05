@@ -5728,6 +5728,13 @@
     "Duration (s)": "时长(秒)",
     "Size": "尺寸",
     "Count": "数量",
-    "Resolution ({{value}})": "分辨率({{value}})"
+    "Resolution ({{value}})": "分辨率({{value}})",
+    "Advanced pricing": "進階定價",
+    "Legacy tiered pricing": "舊版階梯定價",
+    "Legacy tiers migrated successfully": "舊版階梯價格遷移成功",
+    "Migrate to expression pricing": "遷移至表達式定價",
+    "Non-admin users can query only logs from the most recent configured number of days.": "非管理員使用者只能查詢最近所設定天數內的日誌。",
+    "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.": "此操作會將舊版階梯價格轉換至目前的表達式計費引擎，並移除舊設定。",
+    "User log query range": "使用者日誌查詢範圍"
   }
 }
