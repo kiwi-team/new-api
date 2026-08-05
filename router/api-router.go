@@ -371,7 +371,7 @@ func SetApiRouter(router *gin.Engine) {
 		usageAdjustmentRoute := dataRoute.Group("/model-usage-analysis/adjustments")
 		usageAdjustmentRoute.Use(middleware.AdminAuth())
 		{
-			usageAdjustmentRoute.GET("/hour", controller.GetUsageHourAdjustmentSnapshot)
+			usageAdjustmentRoute.GET("/day", controller.GetUsageDayAdjustmentSnapshot)
 			usageAdjustmentRoute.POST("", controller.CreateUsageAdjustment)
 			usageAdjustmentRoute.POST("/:id/revert", controller.RevertUsageAdjustment)
 		}

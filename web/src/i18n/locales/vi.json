@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "Điều chỉnh mức sử dụng hằng ngày",
+    "No adjustments for this day": "Không có điều chỉnh nào trong ngày này",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "Các bản ghi sử dụng gốc không thay đổi. Báo cáo và dữ liệu xuất sẽ áp dụng phần chênh lệch hằng ngày đã lưu.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

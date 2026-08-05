@@ -65,7 +65,7 @@ await i18n.use(initReactI18next).init({
     en: {
       translation: {
         Correct: 'Correct',
-        'Correct hourly usage': 'Correct hourly usage',
+        'Correct daily usage': 'Correct daily usage',
       },
     },
   },
@@ -93,7 +93,6 @@ async function renderForRole(role: number) {
         token_id: 7,
         token_name: 'key',
         model_name: 'model',
-        active_hours: [9, 11],
         total_requests: 1,
         cache_write_requests: 0,
         cache_write_5m_requests: 0,
@@ -112,6 +111,35 @@ async function renderForRole(role: number) {
   queryClient.setQueryData(
     ['model-usage-analysis', 'user-options', ''],
     [{ value: 8, label: 'customer (ID: 8)' }]
+  )
+  queryClient.setQueryData(
+    ['model-usage-adjustment-day', dates.end, 7, 'model'],
+    {
+      date: dates.end,
+      user_id: 8,
+      token_id: 7,
+      token_name: 'key',
+      model_name: 'model',
+      original: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_tokens: 0,
+        cache_write_5m_tokens: 0,
+        cache_write_1h_tokens: 0,
+        quota: 5000,
+        cost_usd: 0.01,
+      },
+      effective: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_tokens: 0,
+        cache_write_5m_tokens: 0,
+        cache_write_1h_tokens: 0,
+        quota: 5000,
+        cost_usd: 0.01,
+      },
+      adjustments: [],
+    }
   )
   const container = document.createElement('div')
   document.body.append(container)
@@ -177,15 +205,13 @@ describe('usage correction visibility', () => {
     await act(async () => button.click())
 
     assert.ok(
-      document.body.textContent?.includes('Correct hourly usage'),
+      document.body.textContent?.includes('Correct daily usage'),
       'clicking the correction action should open the dialog'
     )
     await cleanup(rendered)
   })
 
-  // Offering all 24 hours made the dialog 404 on open, because a daily row only
-  // holds raw usage for the few hours the backend reports in active_hours.
-  test('offers only the hours that carry correctable usage', async () => {
+  test('corrects the aggregate day without rendering an hour picker', async () => {
     const rendered = await renderForRole(10)
     const button = [...rendered.container.querySelectorAll('button')].find(
       (candidate) => candidate.textContent?.includes('Correct')
@@ -193,15 +219,11 @@ describe('usage correction visibility', () => {
     assert.ok(button)
     await act(async () => button.click())
 
-    const select = document.querySelector<HTMLSelectElement>(
-      '#usage-adjustment-hour'
+    assert.equal(document.querySelector('#usage-adjustment-hour'), null)
+    assert.ok(
+      document.body.textContent?.includes(getDefaultUsageDateRange().end)
     )
-    assert.ok(select, 'the hour picker should render')
-    assert.deepEqual(
-      [...select.querySelectorAll('option')].map((option) => option.value),
-      ['9', '11']
-    )
-    assert.equal(select.value, '9', 'the first active hour is preselected')
+    assert.ok(document.body.textContent?.includes('$0.01'))
     await cleanup(rendered)
   })
 })

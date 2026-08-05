@@ -22,7 +22,6 @@ import { describe, it } from 'node:test'
 import {
   getDefaultUsageDateRange,
   usageDateRangeTimestamps,
-  usageHourTimestamp,
   usageRowKey,
 } from '../lib'
 import type { ModelUsageRow } from '../types'
@@ -44,13 +43,6 @@ describe('model usage date boundaries', () => {
     assert.equal(
       range.end_timestamp,
       Date.parse('2026-08-02T23:59:59+08:00') / 1000
-    )
-  })
-
-  it('targets the exact selected UTC+8 hour', () => {
-    assert.equal(
-      usageHourTimestamp('2026-08-01', 13),
-      Date.parse('2026-08-01T13:00:00+08:00') / 1000
     )
   })
 

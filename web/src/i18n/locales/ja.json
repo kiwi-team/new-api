@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "日次使用量を修正",
+    "No adjustments for this day": "この日の調整はありません",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "元の使用量レコードは変更されません。レポートとエクスポートには保存された日次差分が適用されます。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

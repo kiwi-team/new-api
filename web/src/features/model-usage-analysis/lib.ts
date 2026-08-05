@@ -124,10 +124,6 @@ export function usageDateRangeTimestamps(
   }
 }
 
-export function usageHourTimestamp(date: string, hour: number): number {
-  return Math.floor(Date.parse(`${date}T${pad2(hour)}:00:00+08:00`) / 1000)
-}
-
 /**
  * Build the CSV client-side — this report has no export endpoint, and the
  * rows are already fully aggregated by the time they reach the browser.

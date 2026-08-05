@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "修正當日用量",
+    "No adjustments for this day": "當日暫無調整記錄",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "原始用量記錄保持不變，頁面與匯出會自動套用儲存的當日差額。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

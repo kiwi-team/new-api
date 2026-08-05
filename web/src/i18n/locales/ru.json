@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "Исправить использование за день",
+    "No adjustments for this day": "За этот день корректировок нет",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "Исходные записи об использовании остаются без изменений. В отчетах и экспорте применяется сохраненная разница за день.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

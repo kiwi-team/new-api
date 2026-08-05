@@ -26,16 +26,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 
 import {
   createUsageAdjustment,
-  getUsageHourSnapshot,
+  getUsageDaySnapshot,
   revertUsageAdjustment,
 } from './api'
-import { formatCount, formatUsd, usageHourTimestamp } from './lib'
-import type { ModelUsageRow, UsageHourValues } from './types'
+import { formatCount, formatUsd } from './lib'
+import type { ModelUsageRow, UsageDayValues } from './types'
 
 type CorrectedValues = {
   input_tokens: string
@@ -55,7 +54,7 @@ const EMPTY_VALUES: CorrectedValues = {
   cost_usd: '0',
 }
 
-function valuesForForm(values: UsageHourValues): CorrectedValues {
+function valuesForForm(values: UsageDayValues): CorrectedValues {
   return {
     input_tokens: String(values.input_tokens),
     output_tokens: String(values.output_tokens),
@@ -80,37 +79,27 @@ type UsageAdjustmentDialogProps = {
 export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [hour, setHour] = useState(0)
   const [values, setValues] = useState<CorrectedValues>(EMPTY_VALUES)
   const [reason, setReason] = useState('')
   const [ticket, setTicket] = useState('')
   const [revertReason, setRevertReason] = useState('')
 
-  // Only hours that hold raw usage can be corrected, so the picker falls back to
-  // the row's first active hour whenever the hour carried over from a previous
-  // row is not one of them.
-  const activeHours = props.row?.active_hours ?? []
-  const selectedHour = activeHours.includes(hour) ? hour : (activeHours[0] ?? 0)
-  const hourStart = props.row
-    ? usageHourTimestamp(props.row.date, selectedHour)
-    : 0
   const snapshotQuery = useQuery({
     queryKey: [
-      'model-usage-adjustment-hour',
-      hourStart,
+      'model-usage-adjustment-day',
+      props.row?.date,
       props.row?.token_id,
       props.row?.model_name,
     ],
     queryFn: () =>
-      getUsageHourSnapshot({
-        hour_start: hourStart,
+      getUsageDaySnapshot({
+        date: props.row?.date ?? '',
         token_id: props.row?.token_id ?? 0,
         model_name: props.row?.model_name ?? '',
       }),
     enabled:
       props.open &&
-      hourStart > 0 &&
-      activeHours.length > 0 &&
+      !!props.row?.date &&
       !!props.row?.token_id &&
       !!props.row?.model_name,
     retry: false,
@@ -134,8 +123,8 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
     onSuccess: (snapshot) => {
       queryClient.setQueryData(
         [
-          'model-usage-adjustment-hour',
-          snapshot.hour_start,
+          'model-usage-adjustment-day',
+          snapshot.date,
           snapshot.token_id,
           snapshot.model_name,
         ],
@@ -182,7 +171,7 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
       return
     }
     createMutation.mutate({
-      hour_start: hourStart,
+      date: props.row.date,
       token_id: props.row.token_id,
       model_name: props.row.model_name,
       correct_input_tokens: parsed.input_tokens,
@@ -221,9 +210,9 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
     <Dialog
       open={props.open}
       onOpenChange={props.onOpenChange}
-      title={t('Correct hourly usage')}
+      title={t('Correct daily usage')}
       description={t(
-        'The original hourly data remains unchanged. Reports and exports apply the saved difference.'
+        'The original usage records remain unchanged. Reports and exports apply the saved daily difference.'
       )}
       contentClassName='sm:max-w-3xl'
       contentHeight='min(70vh, 720px)'
@@ -242,7 +231,7 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
       }
     >
       <div className='space-y-5'>
-        <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-5'>
+        <div className='grid gap-3 rounded-lg border p-3 sm:grid-cols-4'>
           <div>
             <div className='text-muted-foreground text-xs'>{t('User')}</div>
             <div className='font-medium'>
@@ -262,28 +251,6 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
               {t('Model name')}
             </div>
             <div className='font-medium'>{props.row?.model_name ?? '-'}</div>
-          </div>
-          <div className='grid gap-1'>
-            <Label htmlFor='usage-adjustment-hour'>{t('Hour (UTC+8)')}</Label>
-            {activeHours.length === 0 ? (
-              <p className='text-muted-foreground text-sm'>
-                {t('No hourly usage recorded on this day')}
-              </p>
-            ) : (
-              <NativeSelect
-                id='usage-adjustment-hour'
-                className='w-full'
-                value={selectedHour}
-                onChange={(event) => setHour(Number(event.target.value))}
-              >
-                {activeHours.map((value) => (
-                  <NativeSelectOption key={value} value={value}>
-                    {String(value).padStart(2, '0')}:00–
-                    {String(value).padStart(2, '0')}:59
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
           </div>
         </div>
 
@@ -356,7 +323,7 @@ export function UsageAdjustmentDialog(props: UsageAdjustmentDialogProps) {
               <h3 className='font-medium'>{t('Adjustment history')}</h3>
               {snapshotQuery.data.adjustments.length === 0 ? (
                 <p className='text-muted-foreground text-sm'>
-                  {t('No adjustments for this hour')}
+                  {t('No adjustments for this day')}
                 </p>
               ) : (
                 <div className='space-y-2'>
