@@ -17,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/gin-gonic/gin"
@@ -298,7 +297,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
-
+	fmt.Printf("6666 resTask: %#v", resTask)
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
 	}
@@ -316,10 +315,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Url = resTask.ResultUrl
 		} else if len(resTask.Url) > 0 {
 			taskResult.Url = resTask.Url
-		} else {
-			taskResult.Url = fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, resTask.ID)
 		}
-		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
+		// 上游没给地址时 Url 留空：由调用方用本机的 public task ID 拼内容代理地址。
+		// 这里不能拿 resTask.ID 去拼——那是上游的任务 ID，本机 task 表里查不到，
+		// 拼出来的代理地址一访问就是 404。
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
@@ -342,15 +341,15 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
 		return nil, errors.Wrap(err, "set id failed")
 	}
-	// 任务成功且 FailReason 存的是 S3 直链时，把地址合并进上游原始数据再返回。
-	// 否则 OpenAI 原生 /v1/videos/{id} 端点不会吐出视频地址，级联的下游渠道
-	// （同款代码互相代理时）拿不到 url，只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
-	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
+	// 把视频直链合并进上游原始数据再返回。否则 OpenAI 原生 /v1/videos/{id} 端点不会
+	// 吐出视频地址，级联的下游渠道（同款代码互相代理时）拿不到 url，只能退回拼接自身
+	// /v1/videos/{id}/content 的兜底地址。
+	if resultURL := taskcommon.ExternalResultURL(task); resultURL != "" {
 		for _, key := range []string{"video_url", "url"} {
 			if gjson.GetBytes(data, key).String() != "" {
 				continue
 			}
-			if data, err = sjson.SetBytes(data, key, task.FailReason); err != nil {
+			if data, err = sjson.SetBytes(data, key, resultURL); err != nil {
 				return nil, errors.Wrap(err, "set "+key+" failed")
 			}
 		}

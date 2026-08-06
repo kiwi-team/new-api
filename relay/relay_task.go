@@ -598,8 +598,19 @@ func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (
 	if ti.Progress != "" {
 		task.Progress = ti.Progress
 	}
+	if task.Status == model.TaskStatusSuccess && ti.Url == "" && ti.RemoteUrl != "" {
+		// 上游地址需要凭 API key 才能访问（Gemini files download），先转存再对外给出。
+		// 任务提交时用的可能是多 key 渠道里的某一把，优先用任务上存的那一把。
+		videoKey := task.PrivateData.Key
+		if videoKey == "" {
+			videoKey = channelModel.Key
+		}
+		ti.Url = service.MaterializeRemoteTaskVideo(c, ti.RemoteUrl, videoKey)
+	}
 	if strings.HasPrefix(ti.Url, "data:") {
-		// data: URI — kept in Data, not ResultURL
+		// data: URI（如 Vertex 转存 S3 失败时的内联视频）留在 Data 里，
+		// 结果地址退回内容代理地址，由 /content 端点解码后返回。
+		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 	} else if ti.Url != "" {
 		task.PrivateData.ResultURL = ti.Url
 	} else if task.Status == model.TaskStatusSuccess {
@@ -609,7 +620,7 @@ func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (
 	if task.Status == model.TaskStatusFailure && ti.Reason != "" {
 		task.FailReason = ti.Reason
 	}
-	task.Data = body
+	task.Data = service.RedactVideoResponseBody(body)
 
 	// 与轮询循环保持一致：终态一律补齐进度和完成时间，否则任务会以
 	// SUCCESS + "20%" + finish_time=0 的形态留在库里。

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -493,7 +494,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
 
-	task.Data = redactVideoResponseBody(responseBody)
+	task.Data = RedactVideoResponseBody(responseBody)
 
 	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
 
@@ -539,6 +540,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
 			task.FinishTime = now
+		}
+		if taskResult.Url == "" && taskResult.RemoteUrl != "" {
+			taskResult.Url = MaterializeRemoteTaskVideo(ctx, taskResult.RemoteUrl, key)
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
@@ -602,7 +606,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	return nil
 }
 
-func redactVideoResponseBody(body []byte) []byte {
+// MaterializeRemoteTaskVideo 把只有携带 API key 才能访问的上游视频地址转存到对象存储，
+// 返回一个可以直接交给客户端或级联下游的直链。
+//
+// Gemini 的 files download 地址属于这一类：把它原样外发一定是 401，所以 adaptor 只把它
+// 放在 TaskInfo.RemoteUrl 而不是 Url。没有这一步，任务结果地址只能退回本机的
+// /v1/videos/{id}/content 代理地址——级联场景下下游拿到的是自己的代理地址，永远解析不到视频。
+//
+// 转存失败（未配置 S3、上游 4xx 等）返回空串，由调用方回退到内容代理地址。
+func MaterializeRemoteTaskVideo(ctx context.Context, remoteURL, apiKey string) string {
+	fetchURL := strings.TrimSpace(remoteURL)
+	if fetchURL == "" {
+		return ""
+	}
+	if apiKey != "" && !strings.Contains(fetchURL, "key=") {
+		separator := "?"
+		if strings.Contains(fetchURL, "?") {
+			separator = "&"
+		}
+		fetchURL += separator + "key=" + url.QueryEscape(apiKey)
+	}
+	s3URL, err := UploadOnceToS3(ctx, fetchURL)
+	if err != nil {
+		logger.LogWarn(ctx, "转存任务视频到对象存储失败，回退到内容代理地址: "+err.Error())
+		return ""
+	}
+	return s3URL
+}
+
+func RedactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
 	if err := common.Unmarshal(body, &m); err != nil {
 		return body

@@ -376,11 +376,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		if err != nil {
 			upstreamName = ""
 		}
-		modelName := extractModelFromOperationName(upstreamName)
+		modelName = extractModelFromOperationName(upstreamName)
 		if strings.TrimSpace(modelName) == "" {
 			modelName = "veo-3.0-generate-001"
 		}
-
 	}
 
 	video := dto.NewOpenAIVideo()
@@ -393,6 +392,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		video.CompletedAt = task.FinishTime
 	} else if task.UpdatedAt > 0 {
 		video.CompletedAt = task.UpdatedAt
+	}
+	// 输出顶层 video_url/url，供级联下游（openai/sora 类型渠道，其 ParseTaskResult
+	// 读顶层 video_url/url/result_url）取到真实地址。
+	if resultURL := taskcommon.ExternalResultURL(task); resultURL != "" {
+		video.VideoUrl = resultURL
+		video.Url = resultURL
 	}
 	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
 	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {

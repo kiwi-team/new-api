@@ -541,12 +541,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if resultURL := task.GetResultURL(); strings.HasPrefix(resultURL, "data:") && len(resultURL) > 0 {
 		v.SetMetadata("url", resultURL)
 	}
-	// 成功且 FailReason 存的是 S3 直链时，输出顶层 video_url/url，供级联下游
-	// （openai/sora 类型渠道，其 ParseTaskResult 读顶层 video_url/url/result_url）取到真实地址，
-	// 否则下游只能退回拼接自身 /v1/videos/{id}/content 的兜底地址。
-	if task.Status == model.TaskStatusSuccess && strings.HasPrefix(task.FailReason, "https://") {
-		v.VideoUrl = task.FailReason
-		v.Url = task.FailReason
+	// 输出顶层 video_url/url，供级联下游（openai/sora 类型渠道，其 ParseTaskResult
+	// 读顶层 video_url/url/result_url）取到真实地址，否则下游只能退回拼接自身
+	// /v1/videos/{id}/content 的兜底地址。
+	if resultURL := taskcommon.ExternalResultURL(task); resultURL != "" {
+		v.VideoUrl = resultURL
+		v.Url = resultURL
 	}
 	// 失败时把失败原因带上，便于级联下游（如 OpenAI 类型渠道）取到真实错误信息。
 	if task.Status == model.TaskStatusFailure && strings.TrimSpace(task.FailReason) != "" {

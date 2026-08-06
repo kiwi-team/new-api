@@ -3,6 +3,7 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -64,6 +65,30 @@ func DecodeLocalTaskID(id string) (string, error) {
 // e.g., "https://your-server.com/v1/videos/task_xxxx/content"
 func BuildProxyURL(taskID string) string {
 	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+}
+
+// ExternalResultURL 返回可以直接交给客户端或级联下游的视频直链，没有则返回空串。
+//
+// 级联部署（本实例作为另一台 new-api 的 openai 类型上游）时，下游只从 /v1/videos/{id}
+// 响应的顶层 video_url / url / result_url 读取地址，所以每个 ConvertToOpenAIVideo 都要
+// 用它来决定是否输出这几个字段。
+//
+// 两种情况必须返回空串：结果地址仍是 BuildProxyURL 拼出的本机代理地址时，下游拿去只会
+// 当成自己的地址存下来，既丢掉"上游还没给出直链"的信息、访问时也解析不到视频；地址存在
+// 历史数据的 FailReason 里时由 GetResultURL 兜底，但失败任务的 FailReason 是错误原因，
+// 所以只在成功态取值。
+func ExternalResultURL(task *model.Task) string {
+	if task == nil || task.Status != model.TaskStatusSuccess {
+		return ""
+	}
+	resultURL := strings.TrimSpace(task.GetResultURL())
+	if !strings.HasPrefix(resultURL, "https://") {
+		return ""
+	}
+	if strings.Contains(resultURL, "/v1/videos/"+task.TaskID+"/content") {
+		return ""
+	}
+	return resultURL
 }
 
 // Status-to-progress mapping constants for polling updates.
