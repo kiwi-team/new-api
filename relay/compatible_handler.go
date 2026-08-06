@@ -133,7 +133,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				logger.LogDebug(c, "requestBody: %s", debugBytes)
 			}
 		}
-		requestBody = common.ReaderOnly(storage)
+		requestBody = common.NewReplayableBodyReader(storage)
 	} else {
 		convertedRequest, err1 := adaptor.ConvertOpenAIRequest(c, info, request)
 		//common.PrintJson("\n 66666 convertedRequest:\n", convertedRequest)
@@ -205,13 +205,12 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 		logger.LogDebug(c, "text request body: %s", jsonData)
 
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
 		requestBody = body
 	}
 

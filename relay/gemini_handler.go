@@ -148,7 +148,8 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		//requestBody = bytes.NewReader(body)
-		requestBody = common.ReaderOnly(storage)
+		//requestBody = common.ReaderOnly(storage)
+		requestBody = common.NewReplayableBodyReader(storage)
 		// 序列化 textRequest 为 JSON 字符串
 		if saveRequestResponse {
 			val, _ := io.ReadAll(requestBody)
@@ -179,13 +180,13 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if saveRequestResponse {
 			requestStr = string(jsonData)
 		}
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		//body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
 		requestBody = body
 	}
 
@@ -303,13 +304,12 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		}
 	}
 	logger.LogDebug(c, "Gemini embedding request body: %s", jsonData)
-	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	defer closer.Close()
 	jsonData = nil
-	info.UpstreamRequestBodySize = size
 	requestBody = body
 
 	resp, err := adaptor.DoRequest(c, info, requestBody)
