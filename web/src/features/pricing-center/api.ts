@@ -20,7 +20,6 @@ import { api } from '@/lib/api'
 
 import type {
   ApiResponse,
-  PriceTier,
   PricingOptions,
   UpdateModelPricingPayload,
 } from './types'
@@ -59,16 +58,11 @@ export async function deleteModelPricing(
   return res.data
 }
 
-/**
- * Tiered prices live in the `TieredPrice` option as `{model: tiers[]}`, so a
- * single model's tiers are written by rewriting the whole map.
- */
-export async function saveTieredPriceMap(
-  map: Record<string, PriceTier[]>
-): Promise<ApiResponse> {
-  const res = await api.put('/api/option/', {
-    key: 'TieredPrice',
-    value: JSON.stringify(map, null, 2),
+export async function migrateTieredModelPricing(
+  modelName: string
+): Promise<ApiResponse<{ billing_expr: string; updated_at: number }>> {
+  const res = await api.post('/api/pricing/model/migrate-tiered', {
+    model_name: modelName,
   })
   return res.data
 }

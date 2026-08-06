@@ -54,9 +54,8 @@ const { createRoot } = await import('react-dom/client')
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { ModelUsageAnalysisPage } = await import('../index')
-const { getDefaultUsageDateRange, usageDateRangeTimestamps } = await import(
-  '../lib'
-)
+const { getDefaultUsageDateRange, usageDateRangeTimestamps } =
+  await import('../lib')
 const { api } = await import('@/lib/http-client')
 const { useAuthStore } = await import('@/stores/auth-store')
 
@@ -80,7 +79,6 @@ function usageRow(costUsd: number) {
     token_id: 7,
     token_name: 'key',
     model_name: 'model',
-    active_hours: [9],
     total_requests: 1,
     cache_write_requests: 0,
     cache_write_5m_requests: 0,
@@ -102,15 +100,20 @@ function usageRow(costUsd: number) {
  * path stays real so a missing request shows up as a missing call.
  */
 async function render() {
-  useAuthStore
-    .getState()
-    .auth.setUser({ id: 1, username: 'tester', role: 100 })
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'tester', role: 100 })
   const requestedRanges: string[] = []
   const originalAdapter = api.defaults.adapter
   api.defaults.adapter = async (config) => {
-    requestedRanges.push(String(config.params?.start_timestamp))
+    const isUsageRequest = config.url?.includes(
+      '/api/data/model-usage-analysis'
+    )
+    if (isUsageRequest) {
+      requestedRanges.push(String(config.params?.start_timestamp))
+    }
     return {
-      data: { success: true, data: [usageRow(0.02)] },
+      data: isUsageRequest
+        ? { success: true, data: [usageRow(0.02)] }
+        : { success: true, data: { items: [] } },
       status: 200,
       statusText: 'OK',
       headers: {},

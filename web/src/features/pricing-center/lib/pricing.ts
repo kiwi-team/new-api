@@ -141,6 +141,12 @@ export function buildOfficialPriceRows(
   const cacheRatio = parseJsonObject<number>(options.CacheRatio)
   const createCacheRatio = parseJsonObject<number>(options.CreateCacheRatio)
   const tieredPrice = parseTieredPriceMap(options)
+  const billingModeMap = parseJsonObject<string>(
+    options['billing_setting.billing_mode']
+  )
+  const billingExprMap = parseJsonObject<string>(
+    options['billing_setting.billing_expr']
+  )
   const updateTime = parseJsonObject<number>(options.ModelPriceUpdateTime)
 
   const names = new Set([
@@ -148,11 +154,18 @@ export function buildOfficialPriceRows(
     ...Object.keys(completionRatio),
     ...Object.keys(modelPrice),
     ...Object.keys(tieredPrice),
+    ...Object.keys(billingModeMap),
+    ...Object.keys(billingExprMap),
   ])
 
   const rows = [...names].map((model) => {
     let billingMode: BillingMode = 'token'
-    if (Array.isArray(tieredPrice[model])) billingMode = 'tiered'
+    if (
+      billingModeMap[model] === 'tiered_expr' &&
+      billingExprMap[model]?.trim()
+    ) {
+      billingMode = 'expression'
+    } else if (Array.isArray(tieredPrice[model])) billingMode = 'legacy-tiered'
     else if (modelPrice[model] !== undefined) billingMode = 'call'
 
     const ratio = modelRatio[model]
@@ -173,12 +186,15 @@ export function buildOfficialPriceRows(
       outputUSD,
       perCallUSD: billingMode === 'call' ? (modelPrice[model] ?? null) : null,
       cacheReadUSD:
-        readRatio !== undefined && inputUSD ? round6(readRatio * inputUSD) : null,
+        readRatio !== undefined && inputUSD
+          ? round6(readRatio * inputUSD)
+          : null,
       cacheCreateUSD:
         createRatio !== undefined && inputUSD
           ? round6(createRatio * inputUSD)
           : null,
       tiers: tieredPrice[model] ?? [],
+      billingExpr: billingExprMap[model]?.trim() || null,
       updatedAt: updateTime[model] ?? null,
     } satisfies OfficialPriceRow
   })
@@ -197,7 +213,8 @@ export function buildOfficialPriceRows(
 export function buildOfficialPriceMap(
   options: PricingOptions
 ): Record<string, { input: number | null; output: number | null }> {
-  const map: Record<string, { input: number | null; output: number | null }> = {}
+  const map: Record<string, { input: number | null; output: number | null }> =
+    {}
   for (const row of buildOfficialPriceRows(options)) {
     map[row.model] = { input: row.inputUSD, output: row.outputUSD }
   }

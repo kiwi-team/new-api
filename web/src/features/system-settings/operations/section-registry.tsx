@@ -98,6 +98,7 @@ const OPERATIONS_SECTIONS = [
     build: (settings: OperationsSettings) => (
       <LogSettingsSection
         defaultEnabled={Boolean(settings.LogConsumeEnabled)}
+        defaultQueryLimitDays={Number(settings.UserLogQueryLimitDays) || 14}
       />
     ),
   },

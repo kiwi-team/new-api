@@ -22,7 +22,7 @@ import { api } from '@/lib/api'
 import type {
   CreateUsageAdjustmentPayload,
   ModelUsageRow,
-  UsageHourSnapshot,
+  UsageDaySnapshot,
 } from './types'
 
 export async function getModelUsageAnalysis(params: {
@@ -55,23 +55,23 @@ export async function getUsageUserOptions(
   }))
 }
 
-export async function getUsageHourSnapshot(params: {
-  hour_start: number
+export async function getUsageDaySnapshot(params: {
+  date: string
   token_id: number
   model_name: string
-}): Promise<UsageHourSnapshot> {
-  const res = await api.get('/api/data/model-usage-analysis/adjustments/hour', {
+}): Promise<UsageDaySnapshot> {
+  const res = await api.get('/api/data/model-usage-analysis/adjustments/day', {
     params,
   })
   if (!res.data?.success) {
-    throw new Error(res.data?.message || 'Failed to load usage hour')
+    throw new Error(res.data?.message || 'Failed to load daily usage')
   }
-  return res.data.data as UsageHourSnapshot
+  return res.data.data as UsageDaySnapshot
 }
 
 export async function createUsageAdjustment(
   payload: CreateUsageAdjustmentPayload
-): Promise<UsageHourSnapshot> {
+): Promise<UsageDaySnapshot> {
   const res = await api.post(
     '/api/data/model-usage-analysis/adjustments',
     payload
@@ -79,7 +79,7 @@ export async function createUsageAdjustment(
   if (!res.data?.success) {
     throw new Error(res.data?.message || 'Failed to create adjustment')
   }
-  return res.data.data as UsageHourSnapshot
+  return res.data.data as UsageDaySnapshot
 }
 
 export async function revertUsageAdjustment(

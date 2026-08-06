@@ -734,9 +734,6 @@ type ModelUsageAnalysisRow struct {
 	AvgFirstTokenMs int64 `json:"avg_first_token_ms" gorm:"-"`
 	// 平均请求耗时（毫秒，统计所有请求）。
 	AvgUseTimeMs int64 `json:"avg_use_time_ms" gorm:"-"`
-	// 该行（日期 + Token + 模型）下真正落有 quota_data 的 +8 时区整点小时，升序去重。
-	// 小时账单修正只能针对这些小时，其余小时没有可修正的原始数据。
-	ActiveHours []int `json:"active_hours" gorm:"-"`
 }
 
 // usageAnalysisDateExpr 返回把 quota_data.created_at 渲染成 +8 时区日历日期的 SQL 表达式，
@@ -752,21 +749,6 @@ func usageAnalysisDateExpr() string {
 		return "TO_CHAR(TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
 	}
 	return "DATE(created_at)"
-}
-
-// usageAnalysisHourExpr 返回把 quota_data.created_at 渲染成 +8 时区整点小时（0-23 整数）
-// 的 SQL 表达式，与 usageAnalysisDateExpr 同一时区口径。
-func usageAnalysisHourExpr() string {
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		return "CAST(strftime('%H', datetime(created_at, 'unixepoch', '+8 hours')) AS INTEGER)"
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		return "HOUR(FROM_UNIXTIME(created_at))"
-	}
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		return "CAST(EXTRACT(HOUR FROM TO_TIMESTAMP(created_at) AT TIME ZONE 'Asia/Shanghai') AS INTEGER)"
-	}
-	return "HOUR(created_at)"
 }
 
 // GetModelUsageAnalysis 返回用量分析页数据，按 日期 + 用户 + Token + 模型聚合。
@@ -805,10 +787,6 @@ func GetModelUsageAnalysis(userId int, startTime int64, endTime int64) ([]*Model
 	if err != nil {
 		return rows, err
 	}
-	if err = attachUsageActiveHours(rows, userId, startTime, endTime); err != nil {
-		return rows, err
-	}
-
 	// quota 转换为美元单位；写请求总数 = 5m + 1h；耗时均值由聚合后的求和列计算。
 	// 耗时口径（写入时已埋点到 quota_data，避免读取时扫描明细 logs 表）：
 	//   - 平均请求耗时(ms) = sum(request_time_sum) / sum(count)（所有请求）

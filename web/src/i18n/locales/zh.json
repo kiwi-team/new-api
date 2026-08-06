@@ -5,12 +5,12 @@
     "Cache write 1h tokens": "缓存写入 1h Token",
     "Cache write 5m tokens": "缓存写入 5m Token",
     "Correct": "修正",
-    "Correct hourly usage": "修正小时用量",
+    "Correct daily usage": "修正当日用量",
     "Corrected values": "修正后的数值",
     "Corrected values must be non-negative numbers": "修正后的数值必须是非负数",
     "Correction reason": "修正原因",
     "Hour (UTC+8)": "小时（UTC+8）",
-    "No adjustments for this hour": "该小时暂无调整记录",
+    "No adjustments for this day": "当日暂无调整记录",
     "No hourly usage recorded on this day": "该行当天没有可修正的小时用量",
     "Original": "原始值",
     "Please select a date range": "请选择日期范围",
@@ -19,7 +19,7 @@
     "Revert reason": "撤销原因",
     "Reverted": "已撤销",
     "Save correction": "保存修正",
-    "The original hourly data remains unchanged. Reports and exports apply the saved difference.": "原始小时数据保持不变，页面与导出会自动应用保存的差额。",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "原始用量记录保持不变，页面与导出会自动应用保存的当日差额。",
     "The start date cannot be later than the end date": "开始日期不能晚于结束日期",
     "Usage correction reverted": "用量修正已撤销",
     "Usage correction saved": "用量修正已保存",
@@ -5750,6 +5750,13 @@
     "Duration (s)": "时长(秒)",
     "Size": "尺寸",
     "Count": "数量",
-    "Resolution ({{value}})": "分辨率({{value}})"
+    "Resolution ({{value}})": "分辨率({{value}})",
+    "Advanced pricing": "高级定价",
+    "Legacy tiered pricing": "旧版阶梯定价",
+    "Legacy tiers migrated successfully": "旧版阶梯价格迁移成功",
+    "Migrate to expression pricing": "迁移到表达式定价",
+    "Non-admin users can query only logs from the most recent configured number of days.": "非管理员用户只能查询最近所配置天数内的日志。",
+    "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.": "此操作会将旧版阶梯价格转换到当前表达式计费引擎，并移除旧配置。",
+    "User log query range": "用户日志查询范围"
   }
 }

@@ -29,7 +29,43 @@ export function parseUserSettings(settingsJson?: string): UserSettings {
   if (!settingsJson) return {}
 
   try {
-    return JSON.parse(settingsJson) as UserSettings
+    const parsed: unknown = JSON.parse(settingsJson)
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return {}
+    }
+
+    const settings = { ...parsed } as Record<string, unknown>
+    const rawModelLimits = settings.model_limits
+    if (Array.isArray(rawModelLimits)) {
+      settings.model_limits = [
+        ...new Set(
+          rawModelLimits
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim())
+            .filter(Boolean)
+        ),
+      ]
+    } else if (typeof rawModelLimits === 'string') {
+      settings.model_limits = [
+        ...new Set(
+          rawModelLimits
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
+        ),
+      ]
+    } else if (typeof rawModelLimits === 'object' && rawModelLimits !== null) {
+      settings.model_limits = Object.entries(rawModelLimits)
+        .filter(([, enabled]) => enabled === true)
+        .map(([model]) => model)
+    } else {
+      settings.model_limits = []
+    }
+    return settings as UserSettings
   } catch {
     return {}
   }

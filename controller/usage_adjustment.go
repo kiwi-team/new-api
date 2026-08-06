@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -12,7 +13,7 @@ import (
 )
 
 type createUsageAdjustmentRequest struct {
-	HourStart                    int64    `json:"hour_start"`
+	Date                         string   `json:"date"`
 	TokenId                      int      `json:"token_id"`
 	ModelName                    string   `json:"model_name"`
 	CorrectPromptTokens          *int64   `json:"correct_input_tokens"`
@@ -29,18 +30,13 @@ type revertUsageAdjustmentRequest struct {
 	Reason string `json:"reason"`
 }
 
-func GetUsageHourAdjustmentSnapshot(c *gin.Context) {
-	hourStart, err := strconv.ParseInt(c.Query("hour_start"), 10, 64)
-	if err != nil {
-		usageAdjustmentError(c, http.StatusBadRequest, errors.New("hour_start parameter is invalid"))
-		return
-	}
+func GetUsageDayAdjustmentSnapshot(c *gin.Context) {
 	tokenId, err := strconv.Atoi(c.Query("token_id"))
 	if err != nil {
 		usageAdjustmentError(c, http.StatusBadRequest, errors.New("token_id parameter is invalid"))
 		return
 	}
-	snapshot, err := model.GetUsageHourSnapshot(hourStart, tokenId, c.Query("model_name"))
+	snapshot, err := model.GetUsageDaySnapshot(c.Query("date"), tokenId, c.Query("model_name"))
 	if err != nil {
 		usageAdjustmentError(c, usageAdjustmentStatus(err), err)
 		return
@@ -63,7 +59,7 @@ func CreateUsageAdjustment(c *gin.Context) {
 		usageAdjustmentError(c, http.StatusBadRequest, errors.New("all corrected usage values are required"))
 		return
 	}
-	snapshot, err := model.GetUsageHourSnapshot(req.HourStart, req.TokenId, req.ModelName)
+	snapshot, err := model.GetUsageDaySnapshot(req.Date, req.TokenId, req.ModelName)
 	if err != nil {
 		usageAdjustmentError(c, usageAdjustmentStatus(err), err)
 		return
@@ -74,7 +70,7 @@ func CreateUsageAdjustment(c *gin.Context) {
 	}
 
 	adjustment, err := model.CreateUsageAdjustment(
-		req.HourStart,
+		req.Date,
 		req.TokenId,
 		req.ModelName,
 		model.UsageCorrectionTarget{
@@ -96,14 +92,14 @@ func CreateUsageAdjustment(c *gin.Context) {
 	}
 	recordManageAuditFor(c, snapshot.UserId, "usage.adjustment_create", map[string]interface{}{
 		"adjustment_id": adjustment.Id,
-		"hour_start":    adjustment.HourStart,
+		"date":          snapshot.Date,
 		"token_id":      adjustment.TokenId,
 		"model_name":    adjustment.ModelName,
 		"quota_delta":   adjustment.QuotaDelta,
 		"reason":        adjustment.Reason,
 		"ticket":        adjustment.Ticket,
 	})
-	updated, err := model.GetUsageHourSnapshot(req.HourStart, req.TokenId, req.ModelName)
+	updated, err := model.GetUsageDaySnapshot(req.Date, req.TokenId, req.ModelName)
 	if err != nil {
 		usageAdjustmentError(c, http.StatusInternalServerError, err)
 		return
@@ -137,7 +133,7 @@ func RevertUsageAdjustment(c *gin.Context) {
 	}
 	recordManageAuditFor(c, adjustment.UserId, "usage.adjustment_revert", map[string]interface{}{
 		"adjustment_id": id,
-		"hour_start":    adjustment.HourStart,
+		"date":          time.Unix(adjustment.HourStart, 0).In(time.FixedZone("UTC+8", 8*60*60)).Format("2006-01-02"),
 		"token_id":      adjustment.TokenId,
 		"model_name":    adjustment.ModelName,
 		"reason":        req.Reason,
@@ -150,7 +146,7 @@ func canManageUsageAdjustment(c *gin.Context) bool {
 }
 
 func usageAdjustmentStatus(err error) int {
-	if errors.Is(err, model.ErrUsageHourNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, model.ErrUsageDayNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest

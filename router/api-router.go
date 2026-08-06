@@ -35,6 +35,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
 		apiRouter.PUT("/pricing/model", middleware.RootAuth(), controller.UpdateModelPricing)
 		apiRouter.DELETE("/pricing/model", middleware.RootAuth(), controller.DeleteModelPricing)
+		apiRouter.POST("/pricing/model/migrate-tiered", middleware.RootAuth(), controller.MigrateTieredModelPricing)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
 		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
 		{
@@ -371,7 +372,7 @@ func SetApiRouter(router *gin.Engine) {
 		usageAdjustmentRoute := dataRoute.Group("/model-usage-analysis/adjustments")
 		usageAdjustmentRoute.Use(middleware.AdminAuth())
 		{
-			usageAdjustmentRoute.GET("/hour", controller.GetUsageHourAdjustmentSnapshot)
+			usageAdjustmentRoute.GET("/day", controller.GetUsageDayAdjustmentSnapshot)
 			usageAdjustmentRoute.POST("", controller.CreateUsageAdjustment)
 			usageAdjustmentRoute.POST("/:id/revert", controller.RevertUsageAdjustment)
 		}

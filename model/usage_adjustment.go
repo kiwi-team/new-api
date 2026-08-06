@@ -12,10 +12,13 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrUsageHourNotFound = errors.New("usage hour not found")
+var ErrUsageDayNotFound = errors.New("usage day not found")
 
 // UsageAdjustment records an admin-only correction without mutating quota_data.
-// Deltas are applied to the matching hour, key and model when reports are read.
+// Deltas are applied to the matching day, key and model when reports are read.
+// HourStart is retained as the database column name for compatibility. New
+// records store the UTC+8 day start; legacy hourly records are folded into the
+// same day snapshot.
 type UsageAdjustment struct {
 	Id                               int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserId                           int    `json:"user_id" gorm:"index;not null"`
@@ -40,7 +43,7 @@ type UsageAdjustment struct {
 	RevertReason                     string `json:"revert_reason" gorm:"type:text;not null"`
 }
 
-type UsageHourValues struct {
+type UsageDayValues struct {
 	PromptTokens                int64   `json:"input_tokens"`
 	CompletionTokens            int64   `json:"output_tokens"`
 	CachedTokens                int64   `json:"cache_read_tokens"`
@@ -50,15 +53,14 @@ type UsageHourValues struct {
 	CostUsd                     float64 `json:"cost_usd"`
 }
 
-type UsageHourSnapshot struct {
-	HourStart   int64              `json:"hour_start"`
-	HourEnd     int64              `json:"hour_end"`
+type UsageDaySnapshot struct {
+	Date        string             `json:"date"`
 	UserId      int                `json:"user_id"`
 	TokenId     int                `json:"token_id"`
 	TokenName   string             `json:"token_name"`
 	ModelName   string             `json:"model_name"`
-	Original    UsageHourValues    `json:"original"`
-	Effective   UsageHourValues    `json:"effective"`
+	Original    UsageDayValues     `json:"original"`
+	Effective   UsageDayValues     `json:"effective"`
 	Adjustments []*UsageAdjustment `json:"adjustments"`
 }
 
@@ -71,7 +73,7 @@ type UsageCorrectionTarget struct {
 	CostUsd                     float64
 }
 
-type usageHourAggregate struct {
+type usageDayAggregate struct {
 	RowCount                    int64  `gorm:"column:row_count"`
 	UserId                      int    `gorm:"column:user_id"`
 	TokenName                   string `gorm:"column:token_name"`
@@ -88,51 +90,6 @@ type usageAdjustmentRowKey struct {
 	UserId    int
 	TokenId   int
 	ModelName string
-}
-
-// attachUsageActiveHours 为每个日聚合行填上当天真正落有 quota_data 的 +8 时区整点小时。
-// GetUsageHourSnapshot 对没有原始明细的小时返回 ErrUsageHourNotFound，所以修正弹窗只应
-// 让管理员选择这里列出的小时；纯粹由调整记录补出来的行没有可修正的小时，保持空列表。
-func attachUsageActiveHours(rows []*ModelUsageAnalysisRow, userId int, startTime int64, endTime int64) error {
-	for _, row := range rows {
-		row.ActiveHours = make([]int, 0)
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-
-	activeHours := make([]struct {
-		Date       string `gorm:"column:date"`
-		UserId     int    `gorm:"column:user_id"`
-		TokenId    int    `gorm:"column:token_id"`
-		ModelName  string `gorm:"column:model_name"`
-		ActiveHour int    `gorm:"column:active_hour"`
-	}, 0)
-	query := DB.Model(&QuotaData{}).
-		Select(usageAnalysisDateExpr()+" as date, user_id, token_id, model_name, "+usageAnalysisHourExpr()+" as active_hour").
-		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
-	if userId > 0 {
-		query = query.Where("user_id = ?", userId)
-	}
-	if err := query.
-		Group("date, user_id, token_id, model_name, active_hour").
-		Order("date, user_id, token_id, model_name, active_hour").
-		Scan(&activeHours).Error; err != nil {
-		return err
-	}
-
-	rowByKey := make(map[usageAdjustmentRowKey]*ModelUsageAnalysisRow, len(rows))
-	for _, row := range rows {
-		rowByKey[usageAdjustmentRowKey{Date: row.Date, UserId: row.UserId, TokenId: row.TokenId, ModelName: row.ModelName}] = row
-	}
-	for _, hour := range activeHours {
-		row := rowByKey[usageAdjustmentRowKey{Date: hour.Date, UserId: hour.UserId, TokenId: hour.TokenId, ModelName: hour.ModelName}]
-		if row == nil {
-			continue
-		}
-		row.ActiveHours = append(row.ActiveHours, hour.ActiveHour)
-	}
-	return nil
 }
 
 func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int, startTime int64, endTime int64) ([]*ModelUsageAnalysisRow, error) {
@@ -191,33 +148,43 @@ func applyUsageAdjustmentsToDailyRows(rows []*ModelUsageAnalysisRow, userId int,
 	return rows, nil
 }
 
-func GetUsageHourSnapshot(hourStart int64, tokenId int, modelName string) (*UsageHourSnapshot, error) {
-	if hourStart <= 0 || hourStart%3600 != 0 || tokenId <= 0 || strings.TrimSpace(modelName) == "" {
-		return nil, errors.New("invalid usage hour target")
+func usageDayBounds(date string) (int64, int64, error) {
+	date = strings.TrimSpace(date)
+	dayStart, err := time.ParseInLocation("2006-01-02", date, time.FixedZone("UTC+8", 8*60*60))
+	if err != nil || dayStart.Format("2006-01-02") != date {
+		return 0, 0, errors.New("invalid usage day target")
+	}
+	return dayStart.Unix(), dayStart.AddDate(0, 0, 1).Unix(), nil
+}
+
+func GetUsageDaySnapshot(date string, tokenId int, modelName string) (*UsageDaySnapshot, error) {
+	dayStart, dayEnd, err := usageDayBounds(date)
+	if err != nil || tokenId <= 0 || strings.TrimSpace(modelName) == "" {
+		return nil, errors.New("invalid usage day target")
 	}
 
-	var raw usageHourAggregate
-	err := DB.Model(&QuotaData{}).
+	var raw usageDayAggregate
+	err = DB.Model(&QuotaData{}).
 		Select("COUNT(*) as row_count, MAX(user_id) as user_id, MAX(token_name) as token_name, "+
 			"SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, "+
 			"SUM(cached_tokens) as cached_tokens, SUM(claude_cache_creation5m_tokens) as claude_cache_creation5m_tokens, "+
 			"SUM(claude_cache_creation1h_tokens) as claude_cache_creation1h_tokens, SUM(quota) as quota").
-		Where("created_at >= ? AND created_at < ? AND token_id = ? AND model_name = ?", hourStart, hourStart+3600, tokenId, modelName).
+		Where("created_at >= ? AND created_at < ? AND token_id = ? AND model_name = ?", dayStart, dayEnd, tokenId, modelName).
 		Scan(&raw).Error
 	if err != nil {
 		return nil, err
 	}
 	if raw.RowCount == 0 {
-		return nil, ErrUsageHourNotFound
+		return nil, ErrUsageDayNotFound
 	}
 
 	adjustments := make([]*UsageAdjustment, 0)
-	if err := DB.Where("hour_start = ? AND token_id = ? AND model_name = ?", hourStart, tokenId, modelName).
+	if err := DB.Where("hour_start >= ? AND hour_start < ? AND token_id = ? AND model_name = ?", dayStart, dayEnd, tokenId, modelName).
 		Order("id DESC").Find(&adjustments).Error; err != nil {
 		return nil, err
 	}
 
-	original := UsageHourValues{
+	original := UsageDayValues{
 		PromptTokens:                raw.PromptTokens,
 		CompletionTokens:            raw.CompletionTokens,
 		CachedTokens:                raw.CachedTokens,
@@ -234,9 +201,8 @@ func GetUsageHourSnapshot(hourStart int64, tokenId int, modelName string) (*Usag
 	}
 	effective.CostUsd = float64(effective.Quota) / common.QuotaPerUnit
 
-	return &UsageHourSnapshot{
-		HourStart:   hourStart,
-		HourEnd:     hourStart + 3599,
+	return &UsageDaySnapshot{
+		Date:        strings.TrimSpace(date),
 		UserId:      raw.UserId,
 		TokenId:     tokenId,
 		TokenName:   raw.TokenName,
@@ -247,7 +213,7 @@ func GetUsageHourSnapshot(hourStart int64, tokenId int, modelName string) (*Usag
 	}, nil
 }
 
-func CreateUsageAdjustment(hourStart int64, tokenId int, modelName string, target UsageCorrectionTarget, reason string, ticket string, operatorId int, operatorName string) (*UsageAdjustment, error) {
+func CreateUsageAdjustment(date string, tokenId int, modelName string, target UsageCorrectionTarget, reason string, ticket string, operatorId int, operatorName string) (*UsageAdjustment, error) {
 	reason = strings.TrimSpace(reason)
 	ticket = strings.TrimSpace(ticket)
 	if reason == "" || len(reason) > 2000 {
@@ -265,7 +231,11 @@ func CreateUsageAdjustment(hourStart int64, tokenId int, modelName string, targe
 		return nil, errors.New("corrected usage values must be non-negative")
 	}
 
-	snapshot, err := GetUsageHourSnapshot(hourStart, tokenId, modelName)
+	dayStart, _, err := usageDayBounds(date)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := GetUsageDaySnapshot(date, tokenId, modelName)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +245,7 @@ func CreateUsageAdjustment(hourStart int64, tokenId int, modelName string, targe
 	}
 	adjustment := &UsageAdjustment{
 		UserId:                           snapshot.UserId,
-		HourStart:                        hourStart,
+		HourStart:                        dayStart,
 		TokenId:                          tokenId,
 		TokenName:                        snapshot.TokenName,
 		ModelName:                        modelName,
@@ -336,7 +306,7 @@ func RevertUsageAdjustment(id int, operatorId int, operatorName string, reason s
 	return nil
 }
 
-func applyUsageAdjustment(values *UsageHourValues, adjustment *UsageAdjustment) {
+func applyUsageAdjustment(values *UsageDayValues, adjustment *UsageAdjustment) {
 	values.PromptTokens += adjustment.PromptTokensDelta
 	values.CompletionTokens += adjustment.CompletionTokensDelta
 	values.CachedTokens += adjustment.CachedTokensDelta

@@ -19,7 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { formatPrice, nearlyEqual, round6 } from '../pricing'
+import {
+  buildOfficialPriceRows,
+  formatPrice,
+  nearlyEqual,
+  round6,
+} from '../pricing'
 
 // 汇率 6.8 下 ¥1 存成 $0.147059，后端再把倍率吸附成 0.07353，反显回来就是
 // ¥1.000008。展示与提交判定都必须挡住这个往返噪声，否则页面显示 1.000008，
@@ -62,5 +67,30 @@ describe('nearlyEqual', () => {
 
   test('treats zero and empty as the same price', () => {
     assert.equal(nearlyEqual(0, 0), true)
+  })
+})
+
+describe('buildOfficialPriceRows', () => {
+  test('shows expression pricing ahead of legacy tiers', () => {
+    const [row] = buildOfficialPriceRows({
+      ModelRatio: '{"model-a":1}',
+      TieredPrice:
+        '{"model-a":[{"max_tokens":1000,"input_price":2,"output_price":4}]}',
+      'billing_setting.billing_mode': '{"model-a":"tiered_expr"}',
+      'billing_setting.billing_expr': '{"model-a":"p * 3 + c * 6"}',
+    })
+
+    assert.equal(row.billingMode, 'expression')
+    assert.equal(row.billingExpr, 'p * 3 + c * 6')
+  })
+
+  test('marks unmigrated TieredPrice entries as legacy', () => {
+    const [row] = buildOfficialPriceRows({
+      TieredPrice:
+        '{"model-a":[{"max_tokens":1000,"input_price":2,"output_price":4}]}',
+    })
+
+    assert.equal(row.billingMode, 'legacy-tiered')
+    assert.equal(row.tiers.length, 1)
   })
 })

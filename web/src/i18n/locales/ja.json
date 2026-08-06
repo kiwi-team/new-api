@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "日次使用量を修正",
+    "No adjustments for this day": "この日の調整はありません",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "元の使用量レコードは変更されません。レポートとエクスポートには保存された日次差分が適用されます。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
@@ -5725,6 +5728,13 @@
     "Duration (s)": "Duration (s)",
     "Size": "Size",
     "Count": "Count",
-    "Resolution ({{value}})": "Resolution ({{value}})"
+    "Resolution ({{value}})": "Resolution ({{value}})",
+    "Advanced pricing": "高度な料金設定",
+    "Legacy tiered pricing": "旧式の段階料金",
+    "Legacy tiers migrated successfully": "旧式の段階料金を移行しました",
+    "Migrate to expression pricing": "式による料金設定へ移行",
+    "Non-admin users can query only logs from the most recent configured number of days.": "管理者以外のユーザーは、設定された直近の日数分のログのみ照会できます。",
+    "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.": "旧式の段階料金を現在の式による課金エンジンへ変換し、旧設定を削除します。",
+    "User log query range": "ユーザーログの照会期間"
   }
 }

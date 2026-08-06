@@ -5,12 +5,12 @@
     "Cache write 1h tokens": "Cache write 1h tokens",
     "Cache write 5m tokens": "Cache write 5m tokens",
     "Correct": "Correct",
-    "Correct hourly usage": "Correct hourly usage",
+    "Correct daily usage": "Correct daily usage",
     "Corrected values": "Corrected values",
     "Corrected values must be non-negative numbers": "Corrected values must be non-negative numbers",
     "Correction reason": "Correction reason",
     "Hour (UTC+8)": "Hour (UTC+8)",
-    "No adjustments for this hour": "No adjustments for this hour",
+    "No adjustments for this day": "No adjustments for this day",
     "No hourly usage recorded on this day": "No hourly usage recorded on this day",
     "Original": "Original",
     "Please select a date range": "Please select a date range",
@@ -19,7 +19,7 @@
     "Revert reason": "Revert reason",
     "Reverted": "Reverted",
     "Save correction": "Save correction",
-    "The original hourly data remains unchanged. Reports and exports apply the saved difference.": "The original hourly data remains unchanged. Reports and exports apply the saved difference.",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "The original usage records remain unchanged. Reports and exports apply the saved daily difference.",
     "The start date cannot be later than the end date": "The start date cannot be later than the end date",
     "Usage correction reverted": "Usage correction reverted",
     "Usage correction saved": "Usage correction saved",
@@ -5750,6 +5750,13 @@
     "Duration (s)": "Duration (s)",
     "Size": "Size",
     "Count": "Count",
-    "Resolution ({{value}})": "Resolution ({{value}})"
+    "Resolution ({{value}})": "Resolution ({{value}})",
+    "Advanced pricing": "Advanced pricing",
+    "Legacy tiered pricing": "Legacy tiered pricing",
+    "Legacy tiers migrated successfully": "Legacy tiers migrated successfully",
+    "Migrate to expression pricing": "Migrate to expression pricing",
+    "Non-admin users can query only logs from the most recent configured number of days.": "Non-admin users can query only logs from the most recent configured number of days.",
+    "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.": "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.",
+    "User log query range": "User log query range"
   }
 }

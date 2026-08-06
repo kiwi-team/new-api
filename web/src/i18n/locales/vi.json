@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Correct daily usage": "Điều chỉnh mức sử dụng hằng ngày",
+    "No adjustments for this day": "Không có điều chỉnh nào trong ngày này",
+    "The original usage records remain unchanged. Reports and exports apply the saved daily difference.": "Các bản ghi sử dụng gốc không thay đổi. Báo cáo và dữ liệu xuất sẽ áp dụng phần chênh lệch hằng ngày đã lưu.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
@@ -5725,6 +5728,13 @@
     "Duration (s)": "Duration (s)",
     "Size": "Size",
     "Count": "Count",
-    "Resolution ({{value}})": "Resolution ({{value}})"
+    "Resolution ({{value}})": "Resolution ({{value}})",
+    "Advanced pricing": "Định giá nâng cao",
+    "Legacy tiered pricing": "Định giá theo bậc cũ",
+    "Legacy tiers migrated successfully": "Đã chuyển các bậc giá cũ thành công",
+    "Migrate to expression pricing": "Chuyển sang định giá bằng biểu thức",
+    "Non-admin users can query only logs from the most recent configured number of days.": "Người dùng không phải quản trị viên chỉ có thể truy vấn nhật ký trong số ngày gần nhất đã cấu hình.",
+    "This converts the legacy tiers to the active expression billing engine and removes the legacy configuration.": "Thao tác này chuyển các bậc giá cũ sang công cụ tính phí bằng biểu thức đang hoạt động và xóa cấu hình cũ.",
+    "User log query range": "Phạm vi truy vấn nhật ký người dùng"
   }
 }

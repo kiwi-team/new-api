@@ -2,6 +2,7 @@ package billing_setting
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -39,12 +40,34 @@ func GetBillingMode(model string) string {
 	if mode, ok := billingSetting.BillingMode[model]; ok {
 		return mode
 	}
+	if key := longestWildcardMatch(model, billingSetting.BillingMode); key != "" {
+		return billingSetting.BillingMode[key]
+	}
 	return BillingModeRatio
 }
 
 func GetBillingExpr(model string) (string, bool) {
 	expr, ok := billingSetting.BillingExpr[model]
+	if !ok {
+		if key := longestWildcardMatch(model, billingSetting.BillingExpr); key != "" {
+			return billingSetting.BillingExpr[key], true
+		}
+	}
 	return expr, ok
+}
+
+func longestWildcardMatch[T any](model string, values map[string]T) string {
+	best := ""
+	for key := range values {
+		if !strings.HasSuffix(key, "*") {
+			continue
+		}
+		prefix := strings.TrimSuffix(key, "*")
+		if strings.HasPrefix(model, prefix) && len(prefix) > len(strings.TrimSuffix(best, "*")) {
+			best = key
+		}
+	}
+	return best
 }
 
 func GetBillingModeCopy() map[string]string {

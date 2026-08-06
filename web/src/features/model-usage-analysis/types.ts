@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/** One aggregate row: date × key × model. */
+/** One aggregate row: date × user × key × model. */
 export type ModelUsageRow = {
   date: string
   user_id?: number
@@ -36,11 +36,6 @@ export type ModelUsageRow = {
   avg_first_token_ms: number
   avg_use_time_ms: number
   cost_usd: number
-  /**
-   * UTC+8 hours of this day that hold raw hourly usage, ascending. Only these
-   * hours can be corrected; the snapshot endpoint 404s on any other hour.
-   */
-  active_hours?: number[]
 }
 
 /** Totals across the rows currently in view. */
@@ -55,7 +50,7 @@ export type ModelUsageSummary = {
   outputTokens: number
 }
 
-export type UsageHourValues = {
+export type UsageDayValues = {
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -89,20 +84,19 @@ export type UsageAdjustment = {
   revert_reason: string
 }
 
-export type UsageHourSnapshot = {
-  hour_start: number
-  hour_end: number
+export type UsageDaySnapshot = {
+  date: string
   user_id: number
   token_id: number
   token_name: string
   model_name: string
-  original: UsageHourValues
-  effective: UsageHourValues
+  original: UsageDayValues
+  effective: UsageDayValues
   adjustments: UsageAdjustment[]
 }
 
 export type CreateUsageAdjustmentPayload = {
-  hour_start: number
+  date: string
   token_id: number
   model_name: string
   correct_input_tokens: number

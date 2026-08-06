@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/** How a model is charged. A model holds exactly one of these three shapes. */
-export type BillingMode = 'token' | 'call' | 'tiered'
+/** How a model is charged. Legacy tiers are shown only until migrated. */
+export type BillingMode = 'token' | 'call' | 'legacy-tiered' | 'expression'
 
 /** One step of a tiered price, keyed by the input-token ceiling it applies to. */
 export type PriceTier = {
@@ -39,6 +39,7 @@ export type OfficialPriceRow = {
   cacheReadUSD: number | null
   cacheCreateUSD: number | null
   tiers: PriceTier[]
+  billingExpr: string | null
   /** Unix seconds of the last price edit, from `ModelPriceUpdateTime` */
   updatedAt: number | null
 }
@@ -51,6 +52,8 @@ export type PricingOptions = {
   CacheRatio?: string
   CreateCacheRatio?: string
   TieredPrice?: string
+  'billing_setting.billing_mode'?: string
+  'billing_setting.billing_expr'?: string
   ModelPriceUpdateTime?: string
 }
 

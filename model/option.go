@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,7 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
+	common.OptionMap["UserLogQueryLimitDays"] = strconv.Itoa(common.UserLogQueryLimitDays)
 	// LogHeaderRedactEnabled: 写 logs/error_logs.header 列时是否对 Authorization/Cookie/X-Api-Key 等敏感头脱敏。
 	// 默认 true；运行时读取按 != "false" 判定，老库未写入此 key 也按 true 处理（默认安全）。
 	common.OptionMap["LogHeaderRedactEnabled"] = strconv.FormatBool(true)
@@ -225,6 +227,12 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "UserLogQueryLimitDays" {
+		days, err := strconv.Atoi(value)
+		if err != nil || days < 1 || days > 3650 {
+			return fmt.Errorf("UserLogQueryLimitDays must be an integer between 1 and 3650")
+		}
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
@@ -411,6 +419,9 @@ func updateOptionMap(key string, value string) (err error) {
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
 		}
+	}
+	if key == "UserLogQueryLimitDays" {
+		common.UserLogQueryLimitDays, _ = strconv.Atoi(value)
 	}
 	switch key {
 	case "EmailDomainWhitelist":
