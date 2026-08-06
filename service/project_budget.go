@@ -73,7 +73,7 @@ func ValidateProjectRequest(projectName string, clientUserId string) (*model.Pro
 	}
 
 	// Step 4: Check if user has remaining quota
-	if allocation.UsedQuota/500000 >= allocation.AllocatedQuota {
+	if float64(allocation.UsedQuota) >= float64(allocation.AllocatedQuota)*common.QuotaPerUnit {
 		return nil, ErrProjectQuotaExceeded
 	}
 

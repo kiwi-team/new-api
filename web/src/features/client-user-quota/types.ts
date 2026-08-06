@@ -78,8 +78,10 @@ export type ProjectBudgetSummary = {
   total_allocated: number
   total_used_usd: number
   total_remaining_usd: number
-  /** Project-attributed spend this month, used to derive non-project spend */
+  /** Project-attributed spend this month */
   monthly_project_used_usd: number
+  /** Spend this month with no project tag — the figure the non-project budget gate compares against */
+  monthly_non_project_used_usd: number
   project_count: number
   projects: ProjectAllocation[]
 }

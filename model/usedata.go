@@ -212,6 +212,9 @@ func SaveQuotaDataCache() {
 	// 1. 先查询数据库中是否有数据
 	// 2. 如果有数据，就更新数据
 	// 3. 如果没有数据，就插入数据
+	// 本轮涉及的非项目消耗 uid：落库后要让准入闸门的月度非项目消耗缓存失效，
+	// 否则新写入的消耗要等 TTL 到期才会被看到。
+	nonProjectUsers := make(map[string]struct{})
 	for _, quotaData := range CacheQuotaData {
 		quotaDataDB := &QuotaData{}
 		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
@@ -223,9 +226,30 @@ func SaveQuotaDataCache() {
 			DB.Table("quota_data").Create(quotaData)
 			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
 		}
+		if quotaData.ProjectName == "" && quotaData.ClientUserId != "" {
+			nonProjectUsers[quotaData.ClientUserId] = struct{}{}
+		}
 	}
+	invalidateMonthlyNonProjectQuotaCache(nonProjectUsers)
 	CacheQuotaData = make(map[string]*QuotaData)
 	common.SysLog(fmt.Sprintf("保存数据看板数据成功，共保存%d条数据\n", size))
+}
+
+// GetMonthlyNonProjectQuota 返回某 uid 自 monthStart 起未打项目标签的消耗（原始 quota 单位）。
+// 与 GetBatchProjectBudgetSummary 中 `project_name <> ''` 的项目侧口径互补，两者相加等于总消耗。
+//
+// project_name 为空串即非项目请求；`IS NULL` 是对历史数据的防御——正常写入路径与 AutoMigrate
+// 加列（带 DEFAULT ''）都不会留 NULL，但手工执行过 ALTER TABLE 的环境可能有。
+func GetMonthlyNonProjectQuota(clientUserId string, monthStart int64) (int64, error) {
+	if clientUserId == "" {
+		return 0, nil
+	}
+	var quota int64
+	err := DB.Model(&QuotaData{}).
+		Where("client_user_id = ? AND created_at >= ? AND (project_name = '' OR project_name IS NULL)", clientUserId, monthStart).
+		Select("COALESCE(SUM(quota), 0)").
+		Scan(&quota).Error
+	return quota, err
 }
 
 type QuotaDataStatistics struct {

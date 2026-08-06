@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 		&Project{},
 		&ProjectAllocationPlan{},
 		&ProjectAllocation{},
+		&CliendUserQuota{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -97,6 +98,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM project_allocations")
 		DB.Exec("DELETE FROM project_allocation_plans")
 		DB.Exec("DELETE FROM projects")
+		DB.Exec("DELETE FROM cliend_user_quota")
 	})
 }
 

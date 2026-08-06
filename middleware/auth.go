@@ -625,15 +625,14 @@ func TokenAuth() func(c *gin.Context) {
 			projectName = c.GetHeader("project")
 		}
 
-		// Validate project if provided
-		projectQuota := 0
+		// 带项目头的请求由项目额度独家把关：ValidateProjectRequest 已覆盖
+		// 项目存在、未暂停、有生效方案、方案内额度未用尽。
 		if projectName != "" {
 			allocation, err := service.ValidateProjectRequest(projectName, clientUserId)
 			if err != nil {
 				abortWithOpenAiMessage(c, http.StatusForbidden, err.Error())
 				return
 			}
-			projectQuota = allocation.AllocatedQuota
 			common.SetContextKey(c, constant.ContextKeyProjectName, projectName)
 			common.SetContextKey(c, constant.ContextKeyProjectId, allocation.ProjectId)
 			common.SetContextKey(c, constant.ContextKeyProjectPlanId, allocation.PlanId)
@@ -646,14 +645,21 @@ func TokenAuth() func(c *gin.Context) {
 		if !requireUidCheck && common.OptionMap["CKECK_CLIENT_USER_ID"] == "true" {
 			requireUidCheck = true
 		}
-		if requireUidCheck {
-			if len(clientUserId) <= 8 && !isAiceKey {
+		if requireUidCheck && !isAiceKey {
+			if len(clientUserId) <= 8 {
 				abortWithOpenAiMessage(c, http.StatusForbidden, "uid鉴权失败")
 				return
 			}
-			if !isAiceKey {
-				if ok, err1 := model.CheckCliendUserQuota(clientUserId, projectQuota); !ok || err1 != nil {
-					abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，预算不足，请联系管理员")
+			// 只有非项目请求才查非项目预算池。项目请求已由上面的项目额度闸门裁决，
+			// 两个预算池互不透支。
+			if projectName == "" {
+				ok, err := model.CheckClientUserNonProjectBudget(clientUserId)
+				if err != nil {
+					common.SysError(fmt.Sprintf("check non-project budget failed for uid %s: %s", clientUserId, err.Error()))
+				}
+				if !ok || err != nil {
+					common.SysLog(fmt.Sprintf("uid %s 非项目预算不足，请求被拒绝", clientUserId))
+					abortWithOpenAiMessage(c, http.StatusForbidden, "请求失败，本月非项目预算已用尽，请联系管理员")
 					return
 				}
 			}

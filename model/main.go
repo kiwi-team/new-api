@@ -352,6 +352,9 @@ func migrateDB() error {
 	if err := createProjectAllocationUniqueIndex(); err != nil {
 		common.SysLog("Warning: failed to create project allocation unique index: " + err.Error())
 	}
+	if err := createQuotaDataClientUserCreatedAtIndex(); err != nil {
+		common.SysLog("Warning: failed to create quota data client user index: " + err.Error())
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -444,6 +447,14 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	// 索引建在 AutoMigrate 之后：这两个索引在 migrateDB 里已经建了，
+	// 走 fast 路径的部署同样需要，否则项目分配没有唯一约束、UID 预算聚合会全表扫描。
+	if err := createProjectAllocationUniqueIndex(); err != nil {
+		common.SysLog("Warning: failed to create project allocation unique index: " + err.Error())
+	}
+	if err := createQuotaDataClientUserCreatedAtIndex(); err != nil {
+		common.SysLog("Warning: failed to create quota data client user index: " + err.Error())
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
@@ -879,6 +890,48 @@ func createProjectAllocationUniqueIndex() error {
 	}
 
 	common.SysLog("Successfully created unique index " + newIndexName + " on " + tableName)
+	return nil
+}
+
+// createQuotaDataClientUserCreatedAtIndex creates a composite index on quota_data
+// for (client_user_id, created_at). The UID budget gate aggregates a month of
+// non-project spend on every request, and quota_data has no TTL or archiving, so
+// without this index that aggregation degrades into a full table scan.
+// This function is idempotent and handles cross-database compatibility (SQLite, MySQL, PostgreSQL).
+func createQuotaDataClientUserCreatedAtIndex() error {
+	tableName := "quota_data"
+	indexName := "idx_quota_data_client_user_created_at"
+
+	if !DB.Migrator().HasTable(tableName) {
+		return nil
+	}
+	if DB.Migrator().HasIndex(&QuotaData{}, indexName) {
+		return nil
+	}
+
+	// Equality column first, range column second — matches the gate's query shape.
+	var createIndexSQL string
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		createIndexSQL = `CREATE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(client_user_id, created_at)`
+	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		// MySQL 5.7 has no CREATE INDEX IF NOT EXISTS.
+		var count int64
+		DB.Raw(`SELECT COUNT(*) FROM information_schema.statistics
+			WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+			tableName, indexName).Scan(&count)
+		if count > 0 {
+			return nil
+		}
+		createIndexSQL = "CREATE INDEX `" + indexName + "` ON `" + tableName + "`(client_user_id, created_at)"
+	} else {
+		createIndexSQL = `CREATE INDEX IF NOT EXISTS ` + indexName + ` ON ` + tableName + `(client_user_id, created_at)`
+	}
+
+	if err := DB.Exec(createIndexSQL).Error; err != nil {
+		return fmt.Errorf("failed to create index %s: %v", indexName, err)
+	}
+
+	common.SysLog("Successfully created index " + indexName + " on " + tableName)
 	return nil
 }
 

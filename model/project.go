@@ -870,13 +870,14 @@ func GetProjectAllocationDetails(clientUserId string) ([]*ProjectAllocationDetai
 
 // ProjectBudgetSummary 某个UID的项目预算汇总
 type ProjectBudgetSummary struct {
-	ClientUserId          string                     `json:"client_user_id"`
-	TotalAllocated        int                        `json:"total_allocated"`
-	TotalUsedUSD          float64                    `json:"total_used_usd"`
-	TotalRemainingUSD     float64                    `json:"total_remaining_usd"`
-	MonthlyProjectUsedUSD float64                    `json:"monthly_project_used_usd"`
-	ProjectCount          int                        `json:"project_count"`
-	Projects              []*ProjectAllocationDetail `json:"projects"`
+	ClientUserId             string                     `json:"client_user_id"`
+	TotalAllocated           int                        `json:"total_allocated"`
+	TotalUsedUSD             float64                    `json:"total_used_usd"`
+	TotalRemainingUSD        float64                    `json:"total_remaining_usd"`
+	MonthlyProjectUsedUSD    float64                    `json:"monthly_project_used_usd"`
+	MonthlyNonProjectUsedUSD float64                    `json:"monthly_non_project_used_usd"`
+	ProjectCount             int                        `json:"project_count"`
+	Projects                 []*ProjectAllocationDetail `json:"projects"`
 }
 
 // GetBatchProjectBudgetSummary 批量获取多个UID当前生效的项目预算汇总。
@@ -909,20 +910,15 @@ func GetBatchProjectBudgetSummary(clientUserIds []string) (map[string]*ProjectBu
 		summary.ProjectCount = len(projectIds)
 	}
 
-	// The UID table's total used quota is monthly. Track all project-tagged
-	// usage for the same month so the UI can separate project consumption from
-	// the shared fixed/temp pool. Current-plan usage above remains plan-scoped.
-	type monthlyProjectUsage struct {
+	// 项目消耗与非项目消耗按同一个计费月分别聚合，与准入闸门口径一致：
+	// 非项目消耗受 fixed+temp 约束，项目消耗受各自的项目额度约束，两者互不透支。
+	// 这里必须用 common.BillingMonthStartUnix，否则看板与闸门会用不同的月起点。
+	type monthlyUsage struct {
 		ClientUserId string `gorm:"column:client_user_id"`
 		UsedQuota    int64  `gorm:"column:used_quota"`
 	}
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.Local
-	}
-	now := time.Now().In(location)
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location).Unix()
-	var monthlyUsageRows []monthlyProjectUsage
+	monthStart := common.BillingMonthStartUnix(common.GetTimestamp())
+	var monthlyUsageRows []monthlyUsage
 	if err := DB.Model(&QuotaData{}).
 		Where("client_user_id IN ? AND created_at >= ? AND project_name <> ?", clientUserIds, monthStart, "").
 		Select("client_user_id, COALESCE(SUM(quota), 0) AS used_quota").
@@ -933,6 +929,20 @@ func GetBatchProjectBudgetSummary(clientUserIds []string) (map[string]*ProjectBu
 	for _, usage := range monthlyUsageRows {
 		if summary := result[usage.ClientUserId]; summary != nil && usage.UsedQuota > 0 {
 			summary.MonthlyProjectUsedUSD = float64(usage.UsedQuota) / common.QuotaPerUnit
+		}
+	}
+
+	var monthlyNonProjectRows []monthlyUsage
+	if err := DB.Model(&QuotaData{}).
+		Where("client_user_id IN ? AND created_at >= ? AND (project_name = '' OR project_name IS NULL)", clientUserIds, monthStart).
+		Select("client_user_id, COALESCE(SUM(quota), 0) AS used_quota").
+		Group("client_user_id").
+		Scan(&monthlyNonProjectRows).Error; err != nil {
+		return nil, err
+	}
+	for _, usage := range monthlyNonProjectRows {
+		if summary := result[usage.ClientUserId]; summary != nil && usage.UsedQuota > 0 {
+			summary.MonthlyNonProjectUsedUSD = float64(usage.UsedQuota) / common.QuotaPerUnit
 		}
 	}
 	return result, nil

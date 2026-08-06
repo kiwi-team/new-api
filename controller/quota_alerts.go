@@ -78,7 +78,7 @@ func FeishuQuotaAlerts() {
 		}
 		secret := "" // optional: if you want signature, add another option key
 
-		loc, _ := time.LoadLocation("Asia/Shanghai")
+		loc := time.FixedZone("CST", 8*60*60)
 		now := time.Now().In(loc)
 
 		// natural hour window
@@ -88,10 +88,8 @@ func FeishuQuotaAlerts() {
 		// natural day window
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Unix()
 		dayEnd := dayStart + 86400 - 1
-		// natural month window
-		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).Unix()
-		nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, loc).Unix()
-		monthEnd := nextMonth - 1
+		// natural month window：与 UID 预算闸门共用同一个计费月定义
+		monthStart, monthEnd := common.BillingMonthRangeUnix(now.Unix())
 
 		// platform hour alert: > $5000
 		if lastHourAlerted != hourStart {
@@ -175,8 +173,10 @@ func FeishuQuotaAlerts() {
 			if totalBudget <= 0 {
 				continue
 			}
+			// 固定+临时预算只覆盖非项目消耗，项目消耗由各自的项目额度约束，
+			// 所以这里必须排除带项目标签的流水，否则项目消耗大的 uid 会持续误报预算耗尽。
 			var monthSum int
-			err := model.DB.Table("quota_data").Select("COALESCE(sum(quota),0)").Where("client_user_id = ? AND created_at >= ? AND created_at <= ?", cu.ClientUserId, monthStart, monthEnd).Scan(&monthSum).Error
+			err := model.DB.Table("quota_data").Select("COALESCE(sum(quota),0)").Where("client_user_id = ? AND created_at >= ? AND created_at <= ? AND (project_name = '' OR project_name IS NULL)", cu.ClientUserId, monthStart, monthEnd).Scan(&monthSum).Error
 			if err != nil {
 				continue
 			}
@@ -196,7 +196,7 @@ func FeishuQuotaAlerts() {
 					entry = uidMonthThresholdMap[cu.ClientUserId]
 				}
 				if remainPct <= th && entry[key] != monthStart {
-					content := fmt.Sprintf("UID预算预警：UID=%s 本月已消耗 %f，剩余预算 %d（总预算 %d，<=%s%%）", cu.ClientUserId, float64(monthSum)/common.QuotaPerUnit, remain, totalBudget, key)
+					content := fmt.Sprintf("UID预算预警：UID=%s 本月非项目消耗 %f，剩余非项目预算 %d（总预算 %d，<=%s%%）", cu.ClientUserId, float64(monthSum)/common.QuotaPerUnit, remain, totalBudget, key)
 					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
 						MsgType: "text",
 						Content: dto.FeishuContent{Text: content},

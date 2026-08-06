@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatTimestampToDate, quotaUnitsToDollars } from '@/lib/format'
+import { formatTimestampToDate } from '@/lib/format'
 
 import type { ClientUserQuota, ProjectBudgetSummary } from '../types'
 
@@ -47,10 +47,11 @@ function BudgetRow({
 /**
  * Non-project budget for one client UID.
  *
- * The UID's `used_quota` counts *all* spend this month, project and otherwise.
- * Project spend is tracked separately per allocation, so the non-project figure
- * is the difference — without subtracting it, a UID that spent everything
- * through projects would still look like it had burned its fixed budget.
+ * The fixed and temporary budgets only ever cover untagged spend — project spend
+ * is charged against each project's own allocation, and the two pools never draw
+ * on each other. `monthly_non_project_used_usd` is the same figure the backend
+ * admission gate compares against, so what this cell shows as available is
+ * exactly what the next untagged request will be allowed to spend.
  */
 export function NonProjectBudgetCell({
   quota,
@@ -61,20 +62,29 @@ export function NonProjectBudgetCell({
 }) {
   const { t } = useTranslation()
 
-  const totalUsed = quotaUnitsToDollars(quota.used_quota ?? 0)
-  const nonProjectUsed = Math.max(
-    totalUsed - (summary?.monthly_project_used_usd ?? 0),
-    0
-  )
+  // Without the rollup we cannot know how much of the budget is already spent.
+  // Showing $0 spent would read as "full budget available" — the one wrong
+  // answer to give about a budget — so both derived rows fall back to a dash.
+  const nonProjectUsed = summary?.monthly_non_project_used_usd
   const fixedBudget = quota.fixed_quota || 0
   const tempBudget = quota.temp_quota || 0
   const tempExpired = Boolean(
     quota.expired_at && quota.expired_at <= Date.now() / 1000
   )
-  const available = Math.max(
-    fixedBudget + (tempExpired ? 0 : tempBudget) - nonProjectUsed,
-    0
-  )
+
+  let usedText = '—'
+  let availableText = '—'
+  let availableClassName: string | undefined
+  if (nonProjectUsed !== undefined) {
+    const available = Math.max(
+      fixedBudget + (tempExpired ? 0 : tempBudget) - nonProjectUsed,
+      0
+    )
+    usedText = formatCurrencyFromUSD(nonProjectUsed, budgetFormat)
+    availableText = formatCurrencyFromUSD(available, budgetFormat)
+    availableClassName =
+      available > 0 ? 'font-medium text-success' : 'font-medium text-destructive'
+  }
 
   return (
     <div className='space-y-0.5 text-sm'>
@@ -96,16 +106,11 @@ export function NonProjectBudgetCell({
         )}
         {tempExpired && <Badge variant='destructive'>{t('Expired')}</Badge>}
       </div>
-      <BudgetRow
-        label={t('Non-project spend this month:')}
-        value={formatCurrencyFromUSD(nonProjectUsed, budgetFormat)}
-      />
+      <BudgetRow label={t('Non-project spend this month:')} value={usedText} />
       <BudgetRow
         label={t('Available:')}
-        value={formatCurrencyFromUSD(available, budgetFormat)}
-        className={
-          available > 0 ? 'font-medium text-success' : 'font-medium text-destructive'
-        }
+        value={availableText}
+        className={availableClassName}
       />
     </div>
   )
