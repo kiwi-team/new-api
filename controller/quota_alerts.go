@@ -2,7 +2,9 @@ package controller
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,10 +18,11 @@ var lastDayAlerted int64
 var uidDayAlerted = make(map[string]int64)
 
 const (
-	optKeyLastHour = "quota_alert_last_hour"
-	optKeyLastDay  = "quota_alert_last_day"
-	optKeyUidMap   = "quota_alert_uid_day_map"
-	optKeyUidMonth = "quota_alert_uid_month_threshold_map"
+	optKeyLastHour   = "quota_alert_last_hour"
+	optKeyLastDay    = "quota_alert_last_day"
+	optKeyUidMap     = "quota_alert_uid_day_map"
+	optKeyUidMonth   = "quota_alert_uid_month_threshold_map"
+	optKeyUidProject = "quota_alert_uid_project_threshold_map"
 )
 
 func initQuotaAlertStateFromOptions() {
@@ -48,6 +51,13 @@ func initQuotaAlertStateFromOptions() {
 			uidMonthThresholdMap = tmp
 		}
 	}
+	if v := common.OptionMap[optKeyUidProject]; v != "" {
+		tmp := make(map[string]map[string]int64)
+		_ = common.Unmarshal([]byte(v), &tmp)
+		if len(tmp) > 0 {
+			uidProjectThresholdMap = tmp
+		}
+	}
 }
 
 func persistLastHour(hourStart int64) {
@@ -62,10 +72,117 @@ func persistUidMap() {
 }
 
 var uidMonthThresholdMap = make(map[string]map[string]int64)
+var uidProjectThresholdMap = make(map[string]map[string]int64)
 
 func persistUidMonthMap() {
 	b, _ := common.Marshal(uidMonthThresholdMap)
 	_ = model.UpdateOption(optKeyUidMonth, string(b))
+}
+
+func persistUidProjectMap() {
+	b, _ := common.Marshal(uidProjectThresholdMap)
+	_ = model.UpdateOption(optKeyUidProject, string(b))
+}
+
+type uidBudgetAlertPool struct {
+	Name      string
+	StateKey  string
+	PeriodKey string
+	PeriodID  int64
+	TotalUSD  float64
+	UsedUSD   float64
+	IsProject bool
+}
+
+type uidBudgetAlertMarker struct {
+	StateKey  string
+	PeriodKey string
+	PeriodID  int64
+	Threshold string
+	IsProject bool
+}
+
+func buildUIDBudgetAlert(clientUserId string, pools []uidBudgetAlertPool) (string, []uidBudgetAlertMarker) {
+	var lines []string
+	var triggers []string
+	var markers []uidBudgetAlertMarker
+	thresholds := []int{50, 20, 10, 5}
+
+	for _, pool := range pools {
+		if pool.TotalUSD <= 0 {
+			lines = append(lines, fmt.Sprintf("- %s：未配置预算，已用 $%.2f", pool.Name, pool.UsedUSD))
+			continue
+		}
+
+		remainingUSD := pool.TotalUSD - pool.UsedUSD
+		if remainingUSD < 0 {
+			remainingUSD = 0
+		}
+		usedPct := pool.UsedUSD / pool.TotalUSD * 100
+		remainingPct := remainingUSD / pool.TotalUSD * 100
+		lines = append(lines, fmt.Sprintf("- %s：已用 $%.2f / $%.2f（%.1f%%），剩余 $%.2f（%.1f%%）", pool.Name, pool.UsedUSD, pool.TotalUSD, usedPct, remainingUSD, remainingPct))
+
+		if pool.StateKey == "" {
+			continue
+		}
+		state := uidMonthThresholdMap
+		if pool.IsProject {
+			state = uidProjectThresholdMap
+		}
+		entry := state[pool.StateKey]
+		periodMatches := entry != nil && entry[pool.PeriodKey] == pool.PeriodID
+		lowestNewThreshold := 101
+		for _, threshold := range thresholds {
+			thresholdKey := strconv.Itoa(threshold)
+			if remainingPct <= float64(threshold) && (!periodMatches || entry[thresholdKey] != pool.PeriodID) {
+				markers = append(markers, uidBudgetAlertMarker{
+					StateKey:  pool.StateKey,
+					PeriodKey: pool.PeriodKey,
+					PeriodID:  pool.PeriodID,
+					Threshold: thresholdKey,
+					IsProject: pool.IsProject,
+				})
+				if threshold < lowestNewThreshold {
+					lowestNewThreshold = threshold
+				}
+			}
+		}
+		if lowestNewThreshold <= 100 {
+			triggers = append(triggers, fmt.Sprintf("%s 剩余 %.1f%%（达到 <=%d%%）", pool.Name, remainingPct, lowestNewThreshold))
+		}
+	}
+
+	if len(markers) == 0 {
+		return "", nil
+	}
+	content := fmt.Sprintf(
+		"UID预算预警：UID=%s\n触发：%s\n预算使用情况：\n%s",
+		clientUserId,
+		strings.Join(triggers, "；"),
+		strings.Join(lines, "\n"),
+	)
+	return content, markers
+}
+
+func markUIDBudgetAlerted(markers []uidBudgetAlertMarker) (bool, bool) {
+	nonProjectDirty := false
+	projectDirty := false
+	for _, marker := range markers {
+		state := uidMonthThresholdMap
+		if marker.IsProject {
+			state = uidProjectThresholdMap
+			projectDirty = true
+		} else {
+			nonProjectDirty = true
+		}
+		entry := state[marker.StateKey]
+		if entry == nil || entry[marker.PeriodKey] != marker.PeriodID {
+			entry = map[string]int64{marker.PeriodKey: marker.PeriodID}
+			state[marker.StateKey] = entry
+		}
+		entry[marker.Threshold] = marker.PeriodID
+	}
+	return nonProjectDirty, projectDirty
 }
 
 func FeishuQuotaAlerts() {
@@ -88,9 +205,6 @@ func FeishuQuotaAlerts() {
 		// natural day window
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Unix()
 		dayEnd := dayStart + 86400 - 1
-		// natural month window：与 UID 预算闸门共用同一个计费月定义
-		monthStart, monthEnd := common.BillingMonthRangeUnix(now.Unix())
-
 		// platform hour alert: > $5000
 		if lastHourAlerted != hourStart {
 			var hourSum int
@@ -157,61 +271,134 @@ func FeishuQuotaAlerts() {
 			}
 		}
 
-		// uid month threshold alerts: remaining percentage below 50/20/10/5
-		var cuRows []struct {
-			ClientUserId string
-			FixedQuota   int
-			TempQuota    int
-		}
-		_ = model.DB.Table("cliend_user_quota").Select("client_user_id, fixed_quota, temp_quota").Scan(&cuRows).Error
-		emailRecipients := common.OptionMap["uid_quota_warning_email"] // optional, semicolon-separated
-		for _, cu := range cuRows {
-			if cu.ClientUserId == "" {
-				continue
-			}
-			totalBudget := cu.FixedQuota + cu.TempQuota
-			if totalBudget <= 0 {
-				continue
-			}
-			// 固定+临时预算只覆盖非项目消耗，项目消耗由各自的项目额度约束，
-			// 所以这里必须排除带项目标签的流水，否则项目消耗大的 uid 会持续误报预算耗尽。
-			var monthSum int
-			err := model.DB.Table("quota_data").Select("COALESCE(sum(quota),0)").Where("client_user_id = ? AND created_at >= ? AND created_at <= ? AND (project_name = '' OR project_name IS NULL)", cu.ClientUserId, monthStart, monthEnd).Scan(&monthSum).Error
-			if err != nil {
-				continue
-			}
-			remain := totalBudget - int(float64(monthSum)/common.QuotaPerUnit)
-			if remain < 0 {
-				remain = 0
-			}
-			remainPct := float64(remain) / float64(totalBudget)
-			thresholds := []float64{0.5, 0.2, 0.1, 0.05}
-			for _, th := range thresholds {
-				key := fmt.Sprintf("%.0f", th*100)
-				entry, ok := uidMonthThresholdMap[cu.ClientUserId]
-				if !ok || entry["month_start"] != monthStart {
-					uidMonthThresholdMap[cu.ClientUserId] = map[string]int64{
-						"month_start": monthStart,
-					}
-					entry = uidMonthThresholdMap[cu.ClientUserId]
-				}
-				if remainPct <= th && entry[key] != monthStart {
-					content := fmt.Sprintf("UID预算预警：UID=%s 本月非项目消耗 %f，剩余非项目预算 %d（总预算 %d，<=%s%%）", cu.ClientUserId, float64(monthSum)/common.QuotaPerUnit, remain, totalBudget, key)
-					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
-						MsgType: "text",
-						Content: dto.FeishuContent{Text: content},
-					})
-					// optional email
-					if emailRecipients != "" {
-						_ = common.SendEmail(emailRecipients, "UID预算预警", content)
-					}
-					uidMonthThresholdMap[cu.ClientUserId][key] = monthStart
-					persistUidMonthMap()
-				}
-			}
-		}
+		sendUIDBudgetAlerts(webhook, secret, now)
 
 		time.Sleep(time.Minute * 5)
+	}
+}
+
+func sendUIDBudgetAlerts(webhook string, secret string, now time.Time) {
+	type clientQuotaRow struct {
+		ClientUserId string
+		FixedQuota   int
+		TempQuota    int
+		ExpiredAt    int64
+	}
+	var quotaRows []clientQuotaRow
+	if err := model.DB.Model(&model.CliendUserQuota{}).
+		Select("client_user_id, fixed_quota, temp_quota, expired_at").
+		Scan(&quotaRows).Error; err != nil {
+		common.SysError(fmt.Sprintf("sendUIDBudgetAlerts: failed to query UID budgets: %s", err.Error()))
+		return
+	}
+
+	clientUserIdSet := make(map[string]struct{}, len(quotaRows))
+	quotaByClientUserId := make(map[string]clientQuotaRow, len(quotaRows))
+	for _, row := range quotaRows {
+		if row.ClientUserId == "" {
+			continue
+		}
+		clientUserIdSet[row.ClientUserId] = struct{}{}
+		quotaByClientUserId[row.ClientUserId] = row
+	}
+	var projectClientUserIds []string
+	if err := model.DB.Model(&model.ProjectAllocation{}).
+		Where("client_user_id <> ?", "").
+		Distinct("client_user_id").
+		Pluck("client_user_id", &projectClientUserIds).Error; err != nil {
+		common.SysError(fmt.Sprintf("sendUIDBudgetAlerts: failed to query project UID allocations: %s", err.Error()))
+		return
+	}
+	for _, clientUserId := range projectClientUserIds {
+		clientUserIdSet[clientUserId] = struct{}{}
+	}
+	clientUserIds := make([]string, 0, len(clientUserIdSet))
+	for clientUserId := range clientUserIdSet {
+		clientUserIds = append(clientUserIds, clientUserId)
+	}
+	if len(clientUserIds) == 0 {
+		return
+	}
+	sort.Strings(clientUserIds)
+
+	const summaryBatchSize = 500
+	summaries := make(map[string]*model.ProjectBudgetSummary, len(clientUserIds))
+	for start := 0; start < len(clientUserIds); start += summaryBatchSize {
+		end := min(start+summaryBatchSize, len(clientUserIds))
+		batchSummaries, err := model.GetBatchProjectBudgetSummary(clientUserIds[start:end])
+		if err != nil {
+			common.SysError(fmt.Sprintf("sendUIDBudgetAlerts: failed to query UID budget usage: %s", err.Error()))
+			return
+		}
+		for clientUserId, summary := range batchSummaries {
+			summaries[clientUserId] = summary
+		}
+	}
+	monthStart := common.BillingMonthStartUnix(now.Unix())
+	emailRecipients := common.OptionMap["uid_quota_warning_email"]
+	nonProjectDirty := false
+	projectDirty := false
+	for _, clientUserId := range clientUserIds {
+		summary := summaries[clientUserId]
+		if summary == nil {
+			continue
+		}
+
+		quotaRow, hasNonProjectBudget := quotaByClientUserId[clientUserId]
+		nonProjectBudgetUSD := quotaRow.FixedQuota
+		if quotaRow.ExpiredAt == 0 || quotaRow.ExpiredAt > now.Unix() {
+			nonProjectBudgetUSD += quotaRow.TempQuota
+		}
+		nonProjectStateKey := ""
+		if hasNonProjectBudget && nonProjectBudgetUSD > 0 {
+			nonProjectStateKey = clientUserId
+		}
+		pools := []uidBudgetAlertPool{{
+			Name:      "非项目预算（本月）",
+			StateKey:  nonProjectStateKey,
+			PeriodKey: "month_start",
+			PeriodID:  monthStart,
+			TotalUSD:  float64(nonProjectBudgetUSD),
+			UsedUSD:   summary.MonthlyNonProjectUsedUSD,
+		}}
+		for _, project := range summary.Projects {
+			pools = append(pools, uidBudgetAlertPool{
+				Name:      fmt.Sprintf("项目「%s」/ 方案「%s」（%s-%s）", project.ProjectName, project.PlanName, project.StartDate, project.EndDate),
+				StateKey:  fmt.Sprintf("%s|%d", clientUserId, project.ProjectId),
+				PeriodKey: "plan_id",
+				PeriodID:  int64(project.PlanId),
+				TotalUSD:  float64(project.AllocatedQuota),
+				UsedUSD:   project.UsedQuotaUSD,
+				IsProject: true,
+			})
+		}
+		if len(summary.Projects) == 0 {
+			pools = append(pools, uidBudgetAlertPool{Name: "项目预算（当前无生效分配）"})
+		}
+
+		content, markers := buildUIDBudgetAlert(clientUserId, pools)
+		if content == "" {
+			continue
+		}
+		if err := service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
+			MsgType: "text",
+			Content: dto.FeishuContent{Text: content},
+		}); err != nil {
+			common.SysError(fmt.Sprintf("sendUIDBudgetAlerts: failed to notify UID %s: %s", clientUserId, err.Error()))
+			continue
+		}
+		if emailRecipients != "" {
+			_ = common.SendEmail(emailRecipients, "UID预算预警", content)
+		}
+		uidDirty, uidProjectDirty := markUIDBudgetAlerted(markers)
+		nonProjectDirty = nonProjectDirty || uidDirty
+		projectDirty = projectDirty || uidProjectDirty
+	}
+	if nonProjectDirty {
+		persistUidMonthMap()
+	}
+	if projectDirty {
+		persistUidProjectMap()
 	}
 }
 
