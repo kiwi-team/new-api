@@ -36,6 +36,8 @@ type QueryTaskTatus struct {
 }
 
 type QueryTaskResponse struct {
+	Status string `json:"status,omitempty"`
+	Error  string `json:"error,omitempty"`
 	Images []struct {
 		URL         string      `json:"url"`
 		ContentType string      `json:"content_type"`

@@ -2,6 +2,8 @@ package fal
 
 import (
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,8 +11,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 )
+
+type falRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f falRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestFlux3BilledSecondsIsBoundedToUpstreamEnum(t *testing.T) {
 	cases := []struct {
@@ -143,4 +153,49 @@ func TestFalQueueStatusURLBuildsFromModelName(t *testing.T) {
 			assert.Equal(t, tc.want, falQueueStatusURL(tc.modelName, upstreamID))
 		})
 	}
+}
+
+func TestFetchTaskMapsContentPolicyViolationToFailure(t *testing.T) {
+	const upstreamID = "019fe964-bdd1-7c32-a0e2-a077fed90c28"
+	const message = "The content could not be processed because it contained material flagged by a content checker."
+
+	service.InitHttpClient()
+	client := service.GetHttpClient()
+	originalTransport := client.Transport
+	client.Transport = falRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Equal(t, "https://queue.fal.run/blackforestlabs/flux-3/requests/"+upstreamID, req.URL.String())
+		assert.Equal(t, "Key fal-test-key", req.Header.Get("Authorization"))
+		return &http.Response{
+			StatusCode: http.StatusUnprocessableEntity,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"detail": [{
+					"loc": ["body", "prompt"],
+					"msg": "The content could not be processed because it contained material flagged by a content checker.",
+					"type": "content_policy_violation"
+				}]
+			}`)),
+		}, nil
+	})
+	t.Cleanup(func() { client.Transport = originalTransport })
+
+	adaptor := &TaskAdaptor{}
+	resp, err := adaptor.FetchTask("", "fal-test-key", map[string]any{
+		"task_id": upstreamID,
+		"model":   Flux3VideoModel,
+	}, "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	taskInfo, err := adaptor.ParseTaskResult(responseBody)
+	require.NoError(t, err)
+
+	assert.Equal(t, upstreamID, taskInfo.TaskID)
+	assert.Equal(t, model.TaskStatusFailure, taskInfo.Status)
+	assert.Equal(t, "100%", taskInfo.Progress)
+	assert.Equal(t, message, taskInfo.Reason)
 }

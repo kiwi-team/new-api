@@ -228,6 +228,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, err
 	}
 	respBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +237,39 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("unmarshal operation response failed: %w", err)
 	}
 	op.RequestID = taskID
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		var errorResponse struct {
+			Detail []struct {
+				Message string `json:"msg"`
+				Type    string `json:"type"`
+			} `json:"detail"`
+		}
+		reason := ""
+		if err := common.Unmarshal(respBody, &errorResponse); err == nil {
+			for _, detail := range errorResponse.Detail {
+				if strings.TrimSpace(detail.Message) != "" {
+					reason = detail.Message
+					break
+				}
+				if strings.TrimSpace(detail.Type) != "" {
+					reason = detail.Type
+				}
+			}
+		}
+		if reason == "" {
+			var errorResponse struct {
+				Detail string `json:"detail"`
+			}
+			if err := common.Unmarshal(respBody, &errorResponse); err == nil {
+				reason = strings.TrimSpace(errorResponse.Detail)
+			}
+		}
+		if reason == "" {
+			reason = "FAL task failed with status 422"
+		}
+		op.Status = string(model.TaskStatusFailure)
+		op.Error = reason
+	}
 
 	data, err := common.Marshal(op)
 	if err != nil {
@@ -253,6 +287,15 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	ti := &relaycommon.TaskInfo{}
 	taskId := op.RequestID
 	ti.TaskID = taskId
+	if op.Status == string(model.TaskStatusFailure) || strings.TrimSpace(op.Error) != "" {
+		ti.Status = model.TaskStatusFailure
+		ti.Progress = taskbilling.ProgressComplete
+		ti.Reason = strings.TrimSpace(op.Error)
+		if ti.Reason == "" {
+			ti.Reason = "FAL task failed"
+		}
+		return ti, nil
+	}
 	ti.Status = model.TaskStatusInProgress
 	ti.Progress = fmt.Sprintf("%d%%", 10)
 	if len(op.Images) == 0 && op.Video.URL == "" {
