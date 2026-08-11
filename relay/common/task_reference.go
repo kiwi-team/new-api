@@ -194,7 +194,7 @@ func IsKlingOmniModel(model string) bool {
 // isSeedance2Model 判断是否为 Seedance 2.0 系列。
 func isSeedance2Model(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(m, "seedance-2-0") || strings.Contains(m, "seedance-2.0")
+	return strings.Contains(m, "seedance-2")
 }
 
 // IsSeedance2Model 导出版本，供 doubao adaptor 复用。
