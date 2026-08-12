@@ -180,7 +180,19 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		Resolution:     formData.Get("resolution"),
 		AspectRatio:    formData.Get("aspect_ratio"),
 		Audio:          formData.Get("audio"),
+		CameraMotion:   formData.Get("camera_motion"),
+		LastFrameURI:   formData.Get("last_frame_uri"),
 		Metadata:       make(map[string]interface{}),
+	}
+	if fpsStr := formData.Get("fps"); fpsStr != "" {
+		if fps, err := strconv.Atoi(fpsStr); err == nil {
+			req.FPS = &fps
+		}
+	}
+	if generateAudioStr := formData.Get("generate_audio"); generateAudioStr != "" {
+		if generateAudio, err := strconv.ParseBool(generateAudioStr); err == nil {
+			req.GenerateAudio = &generateAudio
+		}
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -312,6 +324,10 @@ func isKnownTaskField(field string) bool {
 		"resolution":      true,
 		"aspect_ratio":    true,
 		"audio":           true,
+		"fps":             true,
+		"camera_motion":   true,
+		"generate_audio":  true,
+		"last_frame_uri":  true,
 	}
 	return knownFields[field]
 }

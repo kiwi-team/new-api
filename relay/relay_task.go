@@ -21,6 +21,8 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -222,9 +224,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*dto.TaskSubm
 		info.PublicTaskID = model.GenerateTaskID()
 	}
 
-	// 4. 价格计算：基础模型价格
+	// 4. 价格计算：基础模型价格。适配器动态价格已经是完整的每秒/每次单价，
+	// 不依赖全局模型价格配置，必须直接建立 PriceData；否则新模型会在动态价格
+	// 应用前被 ModelPriceHelperPerCall 以“价格未配置”拒绝。
 	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
+	priceData, err := resolveTaskBasePrice(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 	}
@@ -234,16 +238,6 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*dto.TaskSubm
 	info.PriceData = priceData
 	for k, v := range inheritedRatios {
 		info.PriceData.AddOtherRatio(k, v)
-	}
-
-	// 4.5 适配器动态定价：部分渠道按请求参数计价（如 LTX 按分辨率），
-	//     配置里的模型价格不适用，此处覆盖并按同一公式重算基础额度。
-	if info.DynamicModelPrice > 0 {
-		info.PriceData.ModelPrice = info.DynamicModelPrice
-		info.PriceData.UsePrice = true
-		baseQuota, clamp := common.QuotaFromFloatChecked(info.DynamicModelPrice * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio)
-		info.PriceData.Quota = baseQuota
-		noteTaskQuotaClamp(info, clamp)
 	}
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
@@ -281,7 +275,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*dto.TaskSubm
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && !isSuccessfulTaskSubmitStatus(resp.StatusCode) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
@@ -317,6 +311,31 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*dto.TaskSubm
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func isSuccessfulTaskSubmitStatus(statusCode int) bool {
+	return statusCode == http.StatusOK || statusCode == http.StatusAccepted
+}
+
+func resolveTaskBasePrice(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
+	if info.DynamicModelPrice <= 0 {
+		return helper.ModelPriceHelperPerCall(c, info)
+	}
+
+	groupRatioInfo := helper.HandleGroupRatio(c, info)
+	baseQuota, clamp := common.QuotaFromFloatChecked(
+		info.DynamicModelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+	noteTaskQuotaClamp(info, clamp)
+	priceData := hosttypes.PriceData{
+		ModelPrice:     info.DynamicModelPrice,
+		UsePrice:       true,
+		Quota:          baseQuota,
+		GroupRatioInfo: groupRatioInfo,
+	}
+	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume && groupRatioInfo.GroupRatio == 0 {
+		priceData.FreeModel = true
+	}
+	return priceData, nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

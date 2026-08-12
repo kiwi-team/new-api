@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/samber/lo"
@@ -19,20 +20,15 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	hostdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 )
 
-// 任务行由 controller 在 DoResponse 返回之后才落库，后台生成 goroutine
-// 需要等它出现才能写回结果。
-const (
-	taskInsertWaitAttempts = 10
-	taskInsertWaitInterval = time.Second
-)
-
-// https://docs.ltx.video/api-documentation/api-reference/video-generation/image-to-video
+// https://docs.ltx.io/api-documentation/api-reference/async-video-generation/submit-text-to-video
+// https://docs.ltx.io/api-documentation/api-reference/async-video-generation/submit-image-to-video
 // Adaptor implementation
 // ============================
 
@@ -41,6 +37,7 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	uploadVideo func(context.Context, string) (string, error)
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -51,35 +48,78 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *hostdto.TaskError) {
-	// Use the standard validation method for TaskSubmitReq
-	var taskReq relaycommon.TaskSubmitReq
-	if err := common.UnmarshalBodyReusable(c, &taskReq); err != nil {
-		return service.TaskErrorWrapper(err, "unmarshal_task_request_failed", http.StatusBadRequest)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
 	}
-	taskType := "t2v"
-	if taskReq.HasImage() {
-		taskType = "i2v"
+	taskReq, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "task_request_missing", http.StatusInternalServerError)
 	}
-	size := taskReq.Size
-	if len(size) == 0 {
-		size = "1920x1080"
+	payload, err := a.convertToRequestPayload(&taskReq)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_ltx_request", http.StatusBadRequest)
 	}
-	// LTX 按「任务类型 × 模型 × 分辨率」定价，配置里的模型价格不适用。
-	// 这里给出按次单价，RelayTaskSubmit 会用它覆盖配置价格。
-	info.DynamicModelPrice = getModelPrice(taskType, taskReq.Model, size)
-	if info.DynamicModelPrice == 0 {
-		return service.TaskErrorWrapper(errors.New("model price not found"), "model_price_not_found", http.StatusBadRequest)
+	if err := validateLtxRequest(payload); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_ltx_parameters", http.StatusBadRequest)
+	}
+	if payload.Model == "ltx-2-5-fast" || payload.Model == "ltx-2-5-pro" {
+		// LTX 2.5 uses the configured model price as its 720p per-second base.
+		// Duration and resolution are applied by EstimateBilling.
+		info.DynamicModelPrice = 0
+		return nil
 	}
 
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	taskType := "t2v"
+	if payload.ImageURI != "" {
+		taskType = "i2v"
+	}
+	// Legacy LTX models retain their adaptor-owned prices.
+	info.DynamicModelPrice = getLegacyModelPrice(taskType, payload.Model, payload.Resolution)
+	if info.DynamicModelPrice == 0 {
+		return service.TaskErrorWrapperLocal(errors.New("model price not found"), "model_price_not_found", http.StatusBadRequest)
+	}
+	return nil
 }
 
 // EstimateBilling prices the request per second of generated video.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	return taskcommon.SecondsRatio(c, 6)
+	ratios := taskcommon.SecondsRatio(c, 6)
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil || (req.Model != "ltx-2-5-fast" && req.Model != "ltx-2-5-pro") {
+		return ratios
+	}
+	resolutionRatio := getLtx25ResolutionRatio(req.Model, resolveLtxResolution(&req))
+	if resolutionRatio > 0 {
+		ratios["resolution"] = resolutionRatio
+	}
+	return ratios
 }
 
-func getModelPrice(taskType string, modelName, Resolution string) float64 {
+func getLtx25ResolutionRatio(modelName, resolution string) float64 {
+	switch modelName {
+	case "ltx-2-5-fast":
+		switch resolution {
+		case "1280x720", "720x1280":
+			return 1
+		case "1920x1080", "1080x1920":
+			return 0.13 / 0.09
+		case "2560x1440", "1440x2560":
+			return 0.19 / 0.09
+		case "3840x2160", "2160x3840":
+			return 0.30 / 0.09
+		}
+	case "ltx-2-5-pro":
+		switch resolution {
+		case "1280x720", "720x1280":
+			return 1
+		case "1920x1080", "1080x1920":
+			return 0.17 / 0.12
+		}
+	}
+	return 0
+}
+
+func getLegacyModelPrice(taskType string, modelName, resolution string) float64 {
 	priceMap := map[string]map[string]map[string]float64{
 		"t2v": {
 			"ltx-2-fast": {
@@ -138,18 +178,25 @@ func getModelPrice(taskType string, modelName, Resolution string) float64 {
 			},
 		},
 	}
-	if priceMap[taskType][modelName] == nil {
+	if priceMap[taskType] == nil || priceMap[taskType][modelName] == nil {
 		return 0
 	}
-	if priceMap[taskType][modelName][Resolution] == 0 {
+	if priceMap[taskType][modelName][resolution] == 0 {
 		return 0
 	}
-	return priceMap[taskType][modelName][Resolution] * 1.5 // 国外模型计费1.5 cover成本
+	return priceMap[taskType][modelName][resolution] * 1.5 // 国外模型计费1.5 cover成本
 }
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	return a.baseURL, nil
+	return fmt.Sprintf("%s/v2/%s", strings.TrimRight(a.baseURL, "/"), ltxEndpointForAction(info.Action)), nil
+}
+
+func ltxEndpointForAction(action string) string {
+	if action == constant.TaskActionTextGenerate {
+		return "text-to-video"
+	}
+	return "image-to-video"
 }
 
 // BuildRequestHeader sets required headers.
@@ -160,7 +207,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	return nil
 }
 
-// BuildRequestBody converts request into Kling specific format.
+// BuildRequestBody converts the unified task request into the LTX payload.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	v, exists := c.Get("task_request")
 	if !exists {
@@ -185,31 +232,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(data), nil
 }
 
-// DoRequest 不发起上游请求：LTX 的生成接口是同步的，直接返回视频字节，
-// 耗时远超一次提交请求的生命周期。这里返回一个已提交的 mock 响应，真正的
-// 调用由 DoResponse 起的后台 goroutine 完成。
-// mock 的 task_id 必须用预生成的公开 ID，否则它会被当成「上游 ID」存进
-// PrivateData.UpstreamTaskID，与落库的 task_id 对不上，轮询和后台写回都会失败。
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	if action := c.GetString("action"); action != "" {
 		info.Action = action
 	}
-	return getMockResponse(LtxTaskResponse{
-		TaskID: info.PublicTaskID,
-		Status: string(model.TaskStatusSubmitted),
-	})
-}
-
-func getMockResponse(resp LtxTaskResponse) (*http.Response, error) {
-	data, err := common.Marshal(resp)
-	if err != nil {
-		return nil, errors.Wrap(err, "marshal mock response failed")
-	}
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(bytes.NewBuffer(data)),
-	}, nil
+	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
 // DoResponse handles upstream response, returns taskID etc.
@@ -220,27 +247,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	var kResp LtxTaskResponse
-	if err = common.Unmarshal(responseBody, &kResp); err != nil {
+	_ = resp.Body.Close()
+
+	var ltxResp LtxJobCreatedResponse
+	if err = common.Unmarshal(responseBody, &ltxResp); err != nil {
 		taskErr = service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
 		return
 	}
-	// DoRequest 造的 mock 里 task_id 就是公开 ID，两者不一致说明链路被改坏了。
-	if kResp.TaskID != info.PublicTaskID {
-		taskErr = service.TaskErrorWrapper(errors.New("mock task id mismatch"), "task_id_mismatch", http.StatusInternalServerError)
-		return
-	}
-
-	// 后台 goroutine 不能再碰 gin.Context（handler 返回后它会被放回池中复用），
-	// 所以在响应前把需要的值取成副本。
-	v, exists := c.Get("task_request")
-	if !exists {
-		taskErr = service.TaskErrorWrapper(errors.New("request not found in context"), "task_request_missing", http.StatusInternalServerError)
-		return
-	}
-	req, ok := v.(relaycommon.TaskSubmitReq)
-	if !ok {
-		taskErr = service.TaskErrorWrapper(errors.New("unexpected task request type in context"), "task_request_invalid", http.StatusInternalServerError)
+	if strings.TrimSpace(ltxResp.ID) == "" {
+		taskErr = service.TaskErrorWrapper(errors.New("job id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
 	}
 
@@ -251,119 +266,42 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
 
-	go a.runBackgroundGeneration(info.PublicTaskID, info.Action, req)
-
-	return info.PublicTaskID, responseBody, nil
+	return ltxResp.ID, responseBody, nil
 }
 
-// runBackgroundGeneration 在提交响应返回之后补齐真正的生成结果。
-//
-// 只写 video_url / fail_reason，不把任务置为终态：终态流转、退款和差额结算
-// 统一由轮询（service.updateVideoSingleTask）通过 CAS 完成。若在此直接写
-// SUCCESS/FAILURE，未完成任务查询会跳过该行，失败任务永远拿不到退款。
-func (a *TaskAdaptor) runBackgroundGeneration(publicTaskID, action string, req relaycommon.TaskSubmitReq) {
-	ctx := context.Background()
-
-	var task *model.Task
-	for i := 0; i < taskInsertWaitAttempts; i++ {
-		time.Sleep(taskInsertWaitInterval)
-		t, exists, err := model.GetByOnlyTaskId(publicTaskID)
-		if err == nil && exists {
-			task = t
-			break
-		}
-	}
-	if task == nil {
-		logger.LogError(ctx, fmt.Sprintf("ltx: task %s not persisted, generation skipped", publicTaskID))
-		return
-	}
-
-	update := map[string]any{}
-	videoURL, err := a.generateVideo(ctx, action, req)
-	if err != nil {
-		logger.LogError(ctx, fmt.Sprintf("ltx: task %s generation failed: %s", publicTaskID, err.Error()))
-		update["fail_reason"] = err.Error()
-	} else {
-		update["video_url"] = videoURL
-	}
-	if err := model.TaskBulkUpdate([]string{publicTaskID}, update); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("ltx: write back result for task %s failed: %s", publicTaskID, err.Error()))
-	}
-}
-
-// generateVideo 调用 LTX 同步生成接口，并把返回的视频流转存到 S3。
-func (a *TaskAdaptor) generateVideo(ctx context.Context, action string, req relaycommon.TaskSubmitReq) (string, error) {
-	body, err := a.convertToRequestPayload(&req)
-	if err != nil {
-		return "", err
-	}
-	jsonBody, err := common.Marshal(body)
-	if err != nil {
-		return "", err
-	}
-
-	path := lo.Ternary(action == constant.TaskActionImageGenerate, "/v1/image-to-video", "/v1/text-to-video")
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s%s", a.baseURL, path), bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+a.apiKey)
-
-	resp, err := service.GetHttpClient().Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("ltx upstream returned %d: %s", resp.StatusCode, string(errBody))
-	}
-
-	videoURL, err := service.UploadIOReaderToS3(ctx, resp)
-	if err != nil {
-		return "", errors.Wrap(err, "upload video to s3 failed")
-	}
-	if videoURL == "" {
-		return "", errors.New("upload video to s3 returned empty url")
-	}
-	return videoURL, nil
-}
-
-//	fetch task status
-//
-// 发起请求，获取视频数据，然后上传s3，更新tasks数据,最后返回mock的数据(taskId videoUrl)
+// FetchTask polls the same endpoint family used to submit the LTX job.
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, ok := body["task_id"].(string)
-	if !ok {
+	if !ok || strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	task, exists, err := model.GetByOnlyTaskId(taskID)
+	action, _ := body["action"].(string)
+	uri := ltxJobStatusURL(baseUrl, action, taskID)
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, fmt.Errorf("task not found")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	// 后台生成只写结果字段、不写终态，这里据结果推导对外状态；两者都为空表示仍在生成中。
-	var status model.TaskStatus = model.TaskStatusInProgress
-	switch {
-	case task.VideoUrl != "":
-		status = model.TaskStatusSuccess
-	case task.FailReason != "":
-		status = model.TaskStatusFailure
-	}
-	return getMockResponse(LtxTaskResponse{
-		TaskID:     taskID,
-		Status:     string(status),
-		VideoURL:   task.VideoUrl,
-		FailReason: task.FailReason,
-	})
+	return client.Do(req)
+}
+
+func ltxJobStatusURL(baseURL, action, taskID string) string {
+	return fmt.Sprintf("%s/v2/%s/%s",
+		strings.TrimRight(baseURL, "/"), ltxEndpointForAction(action), url.PathEscape(taskID))
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"ltx-2-fast", "ltx-2-pro", "ltx-2-3-pro", "ltx-2-3-fast"}
+	return []string{
+		"ltx-2-5-fast", "ltx-2-5-pro",
+		"ltx-2-3-fast", "ltx-2-3-pro",
+		"ltx-2-fast", "ltx-2-pro",
+	}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -373,31 +311,131 @@ func (a *TaskAdaptor) GetChannelName() string {
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*LtxTaskRequest, error) {
 	seconds := common.String2Int(req.Seconds)
 	if seconds <= 0 {
-		seconds = 5
+		seconds = 6
 	}
 	if req.Duration > 0 {
 		seconds = req.Duration
 	}
+
+	imageURI := strings.TrimSpace(req.Image)
+	if firstFrame, ok := req.FirstRefByRole(relaycommon.RefRoleFirstFrame); ok {
+		imageURI = strings.TrimSpace(firstFrame.URL)
+	} else if imageURI == "" && len(req.Images) > 0 {
+		imageURI = strings.TrimSpace(req.Images[0])
+	}
+	lastFrameURI := strings.TrimSpace(req.LastFrameURI)
+	if lastFrame, ok := req.FirstRefByRole(relaycommon.RefRoleLastFrame); ok {
+		lastFrameURI = strings.TrimSpace(lastFrame.URL)
+	}
+
+	options := struct {
+		FPS           *int   `json:"fps,omitempty"`
+		CameraMotion  string `json:"camera_motion,omitempty"`
+		GenerateAudio *bool  `json:"generate_audio,omitempty"`
+		LastFrameURI  string `json:"last_frame_uri,omitempty"`
+	}{}
+	if req.Metadata != nil {
+		metadataBytes, err := common.Marshal(req.Metadata)
+		if err != nil {
+			return nil, errors.Wrap(err, "metadata marshal metadata failed")
+		}
+		if err := common.Unmarshal(metadataBytes, &options); err != nil {
+			return nil, errors.Wrap(err, "unmarshal metadata failed")
+		}
+	}
+	if req.FPS != nil {
+		options.FPS = req.FPS
+	}
+	if req.CameraMotion != "" {
+		options.CameraMotion = req.CameraMotion
+	}
+	if req.GenerateAudio != nil {
+		options.GenerateAudio = req.GenerateAudio
+	}
+	if lastFrameURI != "" {
+		options.LastFrameURI = lastFrameURI
+	}
+
 	r := LtxTaskRequest{
-		Prompt:     req.Prompt,
-		Model:      req.Model, // Keep consistent with model_name, double writing improves compatibility
-		Duration:   seconds,
-		ImageURI:   req.Image,
-		Resolution: req.Size,
-	}
-	metadata := req.Metadata
-	medaBytes, err := common.Marshal(metadata)
-	if err != nil {
-		return nil, errors.Wrap(err, "metadata marshal metadata failed")
-	}
-	err = common.Unmarshal(medaBytes, &r)
-	if err != nil {
-		return nil, errors.Wrap(err, "unmarshal metadata failed")
-	}
-	if r.Resolution == "" {
-		r.Resolution = "1920x1080"
+		Prompt:        req.Prompt,
+		Model:         req.Model,
+		Duration:      seconds,
+		ImageURI:      imageURI,
+		LastFrameURI:  options.LastFrameURI,
+		Resolution:    resolveLtxResolution(req),
+		FPS:           options.FPS,
+		CameraMotion:  options.CameraMotion,
+		GenerateAudio: options.GenerateAudio,
 	}
 	return &r, nil
+}
+
+func resolveLtxResolution(req *relaycommon.TaskSubmitReq) string {
+	if resolution := strings.TrimSpace(req.Size); resolution != "" {
+		return resolution
+	}
+	if resolution := strings.TrimSpace(req.Resolution); resolution != "" {
+		return resolution
+	}
+	return "1920x1080"
+}
+
+func validateLtxRequest(req *LtxTaskRequest) error {
+	if req == nil {
+		return errors.New("request is required")
+	}
+	if req.LastFrameURI != "" && req.ImageURI == "" {
+		return errors.New("last_frame_uri requires image_uri")
+	}
+	if req.LastFrameURI != "" && (req.Model == "ltx-2-fast" || req.Model == "ltx-2-pro") {
+		return fmt.Errorf("model %s does not support last_frame_uri", req.Model)
+	}
+	if req.CameraMotion != "" && !lo.Contains([]string{
+		"dolly_in", "dolly_out", "dolly_left", "dolly_right",
+		"jib_up", "jib_down", "static", "focus_shift",
+	}, req.CameraMotion) {
+		return fmt.Errorf("camera_motion %q is not supported", req.CameraMotion)
+	}
+	if req.Model != "ltx-2-5-fast" && req.Model != "ltx-2-5-pro" {
+		return nil
+	}
+
+	fps := 24
+	if req.FPS != nil {
+		fps = *req.FPS
+	}
+	shortDuration := lo.Contains([]int{6, 8, 10}, req.Duration)
+	longDuration := lo.Contains([]int{6, 8, 10, 12, 14, 16, 18, 20}, req.Duration)
+	is720Or1080 := lo.Contains([]string{
+		"1280x720", "720x1280", "1920x1080", "1080x1920",
+	}, req.Resolution)
+
+	if req.Model == "ltx-2-5-pro" {
+		if !is720Or1080 || !lo.Contains([]int{24, 25, 50}, fps) || !shortDuration {
+			return fmt.Errorf("model %s does not support resolution=%s, fps=%d, duration=%d",
+				req.Model, req.Resolution, fps, req.Duration)
+		}
+		return nil
+	}
+
+	if !lo.Contains([]string{
+		"1280x720", "720x1280", "1920x1080", "1080x1920",
+		"2560x1440", "1440x2560", "3840x2160", "2160x3840",
+	}, req.Resolution) {
+		return fmt.Errorf("model %s does not support resolution=%s", req.Model, req.Resolution)
+	}
+	if !lo.Contains([]int{24, 25, 48, 50}, fps) {
+		return fmt.Errorf("model %s does not support fps=%d", req.Model, fps)
+	}
+	if is720Or1080 && lo.Contains([]int{24, 25}, fps) {
+		if longDuration {
+			return nil
+		}
+	} else if shortDuration {
+		return nil
+	}
+	return fmt.Errorf("model %s does not support resolution=%s, fps=%d, duration=%d",
+		req.Model, req.Resolution, fps, req.Duration)
 }
 
 func (a *TaskAdaptor) getAspectRatio(size string) string {
@@ -414,17 +452,52 @@ func (a *TaskAdaptor) getAspectRatio(size string) string {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	taskInfo := &relaycommon.TaskInfo{}
-	resPayload := LtxTaskResponse{}
-	err := common.Unmarshal(respBody, &resPayload)
-	if err != nil {
+	var response LtxJobStatusResponse
+	if err := common.Unmarshal(respBody, &response); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal response body")
 	}
-	taskInfo.Code = 0
-	taskInfo.TaskID = resPayload.TaskID
-	taskInfo.Reason = resPayload.FailReason
-	taskInfo.Url = resPayload.VideoURL
-	taskInfo.Status = resPayload.Status
+
+	taskInfo := &relaycommon.TaskInfo{Code: 0, TaskID: response.ID}
+	switch response.Status {
+	case "pending":
+		taskInfo.Status = model.TaskStatusQueued
+		taskInfo.Progress = taskcommon.ProgressQueued
+	case "processing":
+		taskInfo.Status = model.TaskStatusInProgress
+		taskInfo.Progress = taskcommon.ProgressInProgress
+	case "completed":
+		if strings.TrimSpace(response.Result.VideoURL) == "" {
+			return nil, errors.New("completed LTX job has no result.video_url")
+		}
+		uploadVideo := service.UploadOnceToS3
+		if a.uploadVideo != nil {
+			uploadVideo = a.uploadVideo
+		}
+		videoURL, err := uploadVideo(context.Background(), response.Result.VideoURL)
+		if err != nil {
+			return nil, errors.Wrap(err, "upload completed LTX video to S3")
+		}
+		if strings.TrimSpace(videoURL) == "" {
+			return nil, errors.New("upload completed LTX video to S3 returned empty URL")
+		}
+		taskInfo.Status = model.TaskStatusSuccess
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Url = videoURL
+	case "failed":
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		if response.Error != nil {
+			taskInfo.Reason = strings.TrimSpace(response.Error.Message)
+			if taskInfo.Reason == "" {
+				taskInfo.Reason = strings.TrimSpace(response.Error.Type)
+			}
+		}
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "task failed"
+		}
+	default:
+		return nil, fmt.Errorf("unknown LTX job status: %s", response.Status)
+	}
 	return taskInfo, nil
 }
 
@@ -436,8 +509,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 
-	if originTask.Status == model.TaskStatusSuccess {
-		openAIVideo.SetMetadata("url", originTask.VideoUrl)
+	if resultURL := taskcommon.ExternalResultURL(originTask); resultURL != "" {
+		openAIVideo.VideoUrl = resultURL
+		openAIVideo.Url = resultURL
+		openAIVideo.SetMetadata("url", resultURL)
 	}
 
 	if originTask.Status == model.TaskStatusFailure {

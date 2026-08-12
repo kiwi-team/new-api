@@ -145,7 +145,7 @@ var ChannelBaseURLs = []string{
 	"https://queue.fal.run",                //61
 	"https://api.replicate.com",            //62
 	"https://app-api.pixverse.ai",          //63
-	"https://api.ltx.video",                //64
+	"https://api.ltx.io",                   //64
 	"",                                     //65 awsv2
 	"https://api.worldlabs.ai",             //66 worldlabs
 	"https://queue.fal.run",                //67 fal_sync

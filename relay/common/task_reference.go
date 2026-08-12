@@ -176,6 +176,21 @@ func getReferenceCapability(channelType int, model string) *referenceCapability 
 			}
 		}
 		return nil
+
+	case constant.ChannelTypeLtx:
+		if m == "ltx-2-fast" || m == "ltx-2-pro" {
+			return &referenceCapability{
+				name:          "ltx image-to-video",
+				roles:         capRoles(RefRoleFirstFrame),
+				maxFirstFrame: 1,
+			}
+		}
+		return &referenceCapability{
+			name:          "ltx image-to-video",
+			roles:         capRoles(RefRoleFirstFrame, RefRoleLastFrame),
+			maxFirstFrame: 1,
+			maxLastFrame:  1,
+		}
 	}
 	return nil
 }

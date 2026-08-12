@@ -860,10 +860,9 @@ type TaskRelayInfo struct {
 	// to avoid an import cycle with model; callers type-assert to *model.Channel.
 	LockedChannel any
 
-	// DynamicModelPrice lets an adaptor price a request from its own parameters
-	// (e.g. LTX charges per task type × model × resolution) when the configured
-	// model price does not apply. Set from ValidateRequestAndSetAction; a value
-	// greater than zero overrides the price resolved by ModelPriceHelperPerCall.
+	// DynamicModelPrice lets an adaptor own a request's base price when the
+	// configured model price does not apply. Legacy LTX models use this path;
+	// LTX 2.5 uses configured prices plus request billing ratios instead.
 	DynamicModelPrice float64
 
 	// AssumedSeconds 由 adaptor 在 ValidateRequestAndSetAction 中设置：
@@ -920,6 +919,10 @@ type TaskSubmitReq struct {
 	Resolution     string                 `json:"resolution,omitempty"`
 	AspectRatio    string                 `json:"aspect_ratio,omitempty"`
 	Audio          string                 `json:"audio,omitempty"`
+	FPS            *int                   `json:"fps,omitempty"`
+	CameraMotion   string                 `json:"camera_motion,omitempty"`
+	GenerateAudio  *bool                  `json:"generate_audio,omitempty"`
+	LastFrameURI   string                 `json:"last_frame_uri,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 

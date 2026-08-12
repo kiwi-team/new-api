@@ -80,13 +80,26 @@ func init() {
 			OwnedBy: minimax.ChannelName,
 		})
 	}
-	for modelName, _ := range constant.MidjourneyModel2Action {
+	for modelName := range constant.MidjourneyModel2Action {
 		openAIModels = append(openAIModels, dto.OpenAIModels{
 			Id:      modelName,
 			Object:  "model",
 			Created: 1626777600,
 			OwnedBy: "midjourney",
 		})
+	}
+	// LTX is task-only and has no regular API adaptor, so register its models
+	// explicitly for the channel editor and model catalog.
+	ltxAdaptor := relay.GetTaskAdaptor(constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeLtx)))
+	if ltxAdaptor != nil {
+		for _, modelName := range ltxAdaptor.GetModelList() {
+			openAIModels = append(openAIModels, dto.OpenAIModels{
+				Id:      modelName,
+				Object:  "model",
+				Created: 1626777600,
+				OwnedBy: ltxAdaptor.GetChannelName(),
+			})
+		}
 	}
 	openAIModelsMap = make(map[string]dto.OpenAIModels)
 	for _, aiModel := range openAIModels {
@@ -104,6 +117,9 @@ func init() {
 		adaptor := relay.GetAdaptor(apiType)
 		adaptor.Init(meta)
 		channelId2Models[i] = adaptor.GetModelList()
+	}
+	if ltxAdaptor != nil {
+		channelId2Models[constant.ChannelTypeLtx] = ltxAdaptor.GetModelList()
 	}
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
