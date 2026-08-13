@@ -78,6 +78,10 @@ type LogQuotaDataCache struct {
 	// UseTimeSeconds 请求总耗时（秒）。用于累加 stream_request_count / frt_sum / request_time_sum。
 	FirstTokenMs   int
 	UseTimeSeconds int
+	// IsSettlementAdjustment 标记这条记录是对「已经统计过的请求」的事后金额修正
+	// （异步任务的退款、差额补扣），而不是一次新请求。请求次数在提交时就已经记过，
+	// 这里只调整 quota，不能再累加 count，否则统计页的请求数会被结算过程重复放大。
+	IsSettlementAdjustment bool
 }
 
 func UpdateQuotaData() {
@@ -121,9 +125,14 @@ func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
 		frtSum = params.FirstTokenMs
 	}
 	requestTimeSum := params.UseTimeSeconds * 1000
+	// 事后结算调整（退款/补扣）修正的是已计数请求的金额，不是新请求。
+	requestCount := 1
+	if params.IsSettlementAdjustment {
+		requestCount = 0
+	}
 	quotaData, ok := CacheQuotaData[key]
 	if ok {
-		quotaData.Count += 1
+		quotaData.Count += requestCount
 		quotaData.Quota += params.Quota
 		quotaData.TokenUsed += params.TokenUsed
 		quotaData.PromptTokens += params.PromptTokens
@@ -143,7 +152,7 @@ func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
 			Username:                    params.Username,
 			ModelName:                   params.ModelName,
 			CreatedAt:                   createdAt,
-			Count:                       1,
+			Count:                       requestCount,
 			Quota:                       params.Quota,
 			TokenUsed:                   params.TokenUsed,
 			TokenName:                   params.TokenName,
@@ -201,6 +210,8 @@ func RefundQuotaData(task *Task) {
 		ClientScenairo: p.ClientScenairo,
 		ProjectName:    p.ProjectName,
 		PlanId:         p.PlanId,
+		// 冲减的是提交时那次请求的金额，请求数不能再加一次。
+		IsSettlementAdjustment: true,
 	})
 }
 

@@ -326,7 +326,8 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	// 退款以负值落库，SUM(quota) 才能把它和消费日志自然抵消。
+	assert.Equal(t, -preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
 	assert.Zero(t, task.Quota)
 	assert.Zero(t, getTaskQuota(t, task.ID))
@@ -489,7 +490,8 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	// 差额退款同样以负值落库（见 model.normalizeRefundQuota）。
+	assert.Equal(t, -(preConsumed - actualQuota), log.Quota)
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {

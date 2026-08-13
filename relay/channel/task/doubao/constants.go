@@ -9,6 +9,7 @@ var ModelList = []string{
 	"doubao-seedance-1-5-pro-251215",
 	"doubao-seedance-2-0-260128",
 	"doubao-seedance-2-0-fast-260128",
+	"doubao-seedance-2-5-260628",
 }
 
 var ChannelName = "doubao-video"
@@ -35,6 +36,13 @@ var videoPriceTable = map[string]map[videoPriceKey]float64{
 	"doubao-seedance-2-0-fast-260128": {
 		{hasVideo: false}: 37.0,
 		{hasVideo: true}:  22.0,
+	},
+	// Seedance 2.5 只支持 480p / 720p 输出，两档共用同一 token 单价——
+	// 分辨率、宽高比、输出时长的差异全部体现在 token 数量上（token = 宽×高×帧率×秒数/1024），
+	// 不影响单价，因此这里只需要区分输入是否含视频。
+	"doubao-seedance-2-5-260628": {
+		{hasVideo: false}: 70.0,
+		{hasVideo: true}:  42.0,
 	},
 }
 

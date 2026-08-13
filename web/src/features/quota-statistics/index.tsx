@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { Download, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { Download, Loader2, Search } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -81,6 +81,16 @@ export function QuotaStatisticsPage() {
   const [tokenIds, setTokenIds] = useState<string[]>([])
   const [userKeyword, setUserKeyword] = useState('')
   const debouncedUserKeyword = useDebounce(userKeyword, 300)
+  // Typed filters reach the query only once typing settles, so that a request
+  // is not fired per keystroke. The Query button commits them immediately.
+  const [committedText, setCommittedText] = useState({ model: '', uid: '' })
+  useEffect(() => {
+    const handler = setTimeout(
+      () => setCommittedText({ model: modelName, uid: clientUserId }),
+      400
+    )
+    return () => clearTimeout(handler)
+  }, [modelName, clientUserId])
 
   const tokensQuery = useQuery({
     queryKey: ['quota-statistics', 'tokens'],
@@ -96,16 +106,15 @@ export function QuotaStatisticsPage() {
     enabled: isRoot,
   })
 
-  const buildQuery = (): QuotaStatisticsQuery | null => {
-    if (!startTime || !endTime) {
-      toast.warning(t('Please select a time range'))
-      return null
-    }
+  // Every filter change re-derives the query, so the table refreshes on its
+  // own. `null` means the range is incomplete and nothing can be asked.
+  const query = useMemo<QuotaStatisticsQuery | null>(() => {
+    if (!startTime || !endTime) return null
     return {
       start_timestamp: Math.floor(startTime.getTime() / 1000),
       end_timestamp: Math.floor(endTime.getTime() / 1000),
-      model_name: modelName,
-      client_user_id: clientUserId,
+      model_name: committedText.model,
+      client_user_id: committedText.uid,
       client_scenairos: scenarios.join(','),
       expand_models: expandModels,
       expand_dates: expandDates,
@@ -116,41 +125,57 @@ export function QuotaStatisticsPage() {
       ...(projectName === ALL_PROJECTS ? {} : { project_name: projectName }),
       ...(tokenIds.length > 0 ? { token_ids: tokenIds.join(',') } : {}),
     }
-  }
-
-  // The filters are applied as one committed query so that toggling several
-  // of them does not fire a request per change.
-  const [query, setQuery] = useState<QuotaStatisticsQuery | null>(() => ({
-    start_timestamp: Math.floor(defaultRange.start.getTime() / 1000),
-    end_timestamp: Math.floor(defaultRange.end.getTime() / 1000),
-    expand_models: false,
-    expand_dates: false,
-    expand_tokens: false,
-  }))
+  }, [
+    startTime,
+    endTime,
+    committedText,
+    scenarios,
+    expandModels,
+    expandDates,
+    expandTokens,
+    isRoot,
+    userId,
+    projectName,
+    tokenIds,
+  ])
 
   const statisticsQuery = useQuery({
     queryKey: ['quota-statistics', 'rows', query],
-    queryFn: () => getQuotaStatistics(query as QuotaStatisticsQuery),
+    // The params travel with the result so that the rendered columns always
+    // describe the rows on screen, not a newer filter that is still loading.
+    queryFn: async () => {
+      const params = query as QuotaStatisticsQuery
+      return { params, rows: await getQuotaStatistics(params) }
+    },
     enabled: query !== null,
+    placeholderData: keepPreviousData,
   })
 
-  const rows = statisticsQuery.data ?? []
+  const rows = statisticsQuery.data?.rows ?? []
   const totalUSD = rows.reduce(
     (total, row) => total + (Number(row.total_quota) || 0),
     0
   )
 
   const columns = useQuotaStatisticsColumns({
-    models: query?.expand_models ?? false,
-    dates: query?.expand_dates ?? false,
-    tokens: query?.expand_tokens ?? false,
+    models: statisticsQuery.data?.params.expand_models ?? false,
+    dates: statisticsQuery.data?.params.expand_dates ?? false,
+    tokens: statisticsQuery.data?.params.expand_tokens ?? false,
   })
 
   const handleExport = async () => {
-    const params = buildQuery()
-    if (!params) return
+    if (!query) {
+      toast.warning(t('Please select a time range'))
+      return
+    }
     try {
-      const blob = await exportQuotaStatisticsCsv(params)
+      // Export follows the form as displayed, including text still inside its
+      // debounce window.
+      const blob = await exportQuotaStatisticsCsv({
+        ...query,
+        model_name: modelName,
+        client_user_id: clientUserId,
+      })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -303,12 +328,30 @@ export function QuotaStatisticsPage() {
               className='mb-0.5'
               size='sm'
               onClick={() => {
-                const next = buildQuery()
-                if (next) setQuery(next)
+                if (!startTime || !endTime) {
+                  toast.warning(t('Please select a time range'))
+                  return
+                }
+                // Filters already refresh on their own, so the button only has
+                // to flush text still sitting in its debounce window. If that
+                // text is already committed the query key is unchanged and
+                // nothing would reload, so refetch forces the request instead.
+                if (
+                  modelName !== committedText.model ||
+                  clientUserId !== committedText.uid
+                ) {
+                  setCommittedText({ model: modelName, uid: clientUserId })
+                  return
+                }
+                void statisticsQuery.refetch()
               }}
               disabled={statisticsQuery.isFetching}
             >
-              <Search className='h-4 w-4' />
+              {statisticsQuery.isFetching ? (
+                <Loader2 className='h-4 w-4 animate-spin' />
+              ) : (
+                <Search className='h-4 w-4' />
+              )}
               {t('Query')}
             </Button>
             <Button

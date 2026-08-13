@@ -176,3 +176,62 @@ func TestParseTaskResultReportsActualDuration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, float64(12), info.ActualSeconds)
 }
+
+// Seedance 2.5 的 videoPriceTable 必须能还原方舟官方公布的整单价格，否则含视频输入的
+// 请求会被按不含视频的单价多收 1/0.6 ≈ 1.67 倍。
+//
+// 官方计费：token = 宽 × 高 × 帧率 × 秒数 / 1024，单价按输入是否含视频区分
+// （不含 70.00 元/百万 token，含 42.00）。输入视频的 token 用同一公式计入总量。
+// 下面的期望值取自官方价格表（480p/720p 16:9，输出 5 秒）。
+func TestSeedance25PriceTableMatchesOfficialQuote(t *testing.T) {
+	const (
+		basePricePerMillionToken = 70.0
+		fps                      = 24
+		outputSeconds            = 5
+	)
+	videoTokens := func(width, height, seconds int) float64 {
+		return float64(width) * float64(height) * fps * float64(seconds) / 1024
+	}
+
+	cases := []struct {
+		name             string
+		resolution       string
+		width, height    int
+		inputVideoSecond int // 0 表示输入不含视频
+		wantYuan         float64
+	}{
+		{name: "480p no video", resolution: "480p", width: 854, height: 480, wantYuan: 3.36},
+		{name: "720p no video", resolution: "720p", width: 1280, height: 720, wantYuan: 7.56},
+		{name: "480p with 4s video", resolution: "480p", width: 854, height: 480, inputVideoSecond: 4, wantYuan: 3.63},
+		{name: "720p with 4s video", resolution: "720p", width: 1280, height: 720, inputVideoSecond: 4, wantYuan: 8.16},
+		{name: "480p with 30s video", resolution: "480p", width: 854, height: 480, inputVideoSecond: 30, wantYuan: 14.12},
+		{name: "720p with 30s video", resolution: "720p", width: 1280, height: 720, inputVideoSecond: 30, wantYuan: 31.75},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hasVideo := tc.inputVideoSecond > 0
+			ratio, ok := GetVideoInputRatio("doubao-seedance-2-5-260628", tc.resolution, hasVideo)
+			require.True(t, ok, "seedance 2.5 必须配置在 videoPriceTable 中")
+			if hasVideo {
+				assert.InDelta(t, 0.6, ratio, 1e-9)
+			} else {
+				assert.InDelta(t, 1.0, ratio, 1e-9)
+			}
+
+			totalTokens := videoTokens(tc.width, tc.height, outputSeconds)
+			if hasVideo {
+				totalTokens += videoTokens(tc.width, tc.height, tc.inputVideoSecond)
+			}
+			gotYuan := totalTokens * basePricePerMillionToken * ratio / 1e6
+			assert.InDelta(t, tc.wantYuan, gotYuan, 0.01)
+		})
+	}
+}
+
+// 未配置的模型不能凭空产生倍率：GetVideoInputRatio 的第二个返回值是调用方
+// 判断“要不要加 video_input 这个 OtherRatio”的唯一依据。
+func TestGetVideoInputRatioUnknownModel(t *testing.T) {
+	_, ok := GetVideoInputRatio("doubao-seedance-1-0-pro-250528", "720p", true)
+	assert.False(t, ok)
+}

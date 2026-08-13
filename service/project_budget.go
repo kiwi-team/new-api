@@ -546,7 +546,7 @@ func GetProjectStatistics(projectId int, startTime, endTime int64, clientUserId,
 // Supports filtering by project name, client user ID, and scenario.
 func getHistoricalConsumption(startTime, endTime int64, projectName, clientUserId, scenario string) (int64, error) {
 	tx := model.LOG_DB.Table("logs").Select("COALESCE(SUM(quota), 0)")
-	tx = tx.Where("type = ?", model.LogTypeConsume)
+	tx = tx.Where("type = ? or type = ?", model.LogTypeConsume, model.LogTypeRefund)
 
 	if startTime > 0 {
 		tx = tx.Where("created_at >= ?", startTime)
