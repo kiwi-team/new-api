@@ -585,6 +585,20 @@ func BatchSetTokenGroup(ids []int, group string, userId int) (int, error) {
 		return 0, errors.New("ids 不能为空！")
 	}
 
+	if common.RedisEnabled {
+		var tokens []Token
+		selectQuery := DB.Model(&Token{}).Select("id", commonKeyCol).Where("id IN (?)", ids)
+		if userId > 0 {
+			selectQuery = selectQuery.Where("user_id = ?", userId)
+		}
+		if err := selectQuery.Find(&tokens).Error; err != nil {
+			return 0, err
+		}
+		if err := invalidateTokensCache(tokens); err != nil {
+			common.SysLog("failed to invalidate token cache before batch set group: " + err.Error())
+		}
+	}
+
 	query := DB.Model(&Token{}).Where("id IN (?)", ids)
 	if userId > 0 {
 		query = query.Where("user_id = ?", userId)
@@ -592,21 +606,6 @@ func BatchSetTokenGroup(ids []int, group string, userId int) (int, error) {
 	result := query.Update(commonGroupCol, group)
 	if result.Error != nil {
 		return 0, result.Error
-	}
-
-	if common.RedisEnabled {
-		var tokens []Token
-		q := DB.Where("id IN (?)", ids)
-		if userId > 0 {
-			q = q.Where("user_id = ?", userId)
-		}
-		if err := q.Find(&tokens).Error; err == nil {
-			gopool.Go(func() {
-				for _, t := range tokens {
-					_ = cacheDeleteToken(t.Key)
-				}
-			})
-		}
 	}
 
 	return int(result.RowsAffected), nil
@@ -650,14 +649,13 @@ func BatchAppendTokenModelsByGroup(group string, newModels []string) (int, error
 			"model_limits":         newLimits,
 			"model_limits_enabled": true,
 		}
+		if err := invalidateTokenCacheForMutation(token.Key); err != nil {
+			common.SysLog("failed to invalidate token cache before appending models: " + err.Error())
+		}
 		if err := DB.Model(&Token{}).Where("id = ?", token.Id).Updates(updates).Error; err != nil {
 			return updated, err
 		}
 		updated++
-
-		if common.RedisEnabled {
-			_ = cacheDeleteToken(token.Key)
-		}
 	}
 
 	return updated, nil

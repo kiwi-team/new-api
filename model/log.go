@@ -504,16 +504,20 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     map[string]interface{}
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	UserId         int
+	LogType        int
+	Content        string
+	ChannelId      int
+	ModelName      string
+	Quota          int
+	TokenId        int
+	Group          string
+	Other          map[string]interface{}
+	NodeName       string // 任务发起节点；为空时回退当前节点
+	ClientUserId   string
+	ClientScenairo string
+	ProjectName    string
+	PlanId         int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -529,18 +533,22 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		UserId:         params.UserId,
+		Username:       username,
+		CreatedAt:      createdAt,
+		Type:           params.LogType,
+		Content:        params.Content,
+		TokenName:      tokenName,
+		ModelName:      params.ModelName,
+		Quota:          params.Quota,
+		ChannelId:      params.ChannelId,
+		TokenId:        params.TokenId,
+		Group:          params.Group,
+		Other:          common.MapToJsonStr(params.Other),
+		ClientUserId:   params.ClientUserId,
+		ClientScenairo: params.ClientScenairo,
+		ProjectName:    params.ProjectName,
+		PlanId:         params.PlanId,
 	}
 	err := createLog(log)
 	if err != nil {
@@ -552,16 +560,20 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			nodeName = common.NodeName
 		}
 		LogQuotaData(&LogQuotaDataCache{
-			UserId:    params.UserId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			TokenName: tokenName,
-			TokenId:   params.TokenId,
-			ChannelId: params.ChannelId,
-			UseGroup:  params.Group,
-			NodeName:  nodeName,
+			UserId:         params.UserId,
+			Username:       username,
+			ModelName:      params.ModelName,
+			Quota:          params.Quota,
+			CreatedAt:      createdAt,
+			TokenName:      tokenName,
+			TokenId:        params.TokenId,
+			ChannelId:      params.ChannelId,
+			UseGroup:       params.Group,
+			NodeName:       nodeName,
+			ClientUserId:   params.ClientUserId,
+			ClientScenairo: params.ClientScenairo,
+			ProjectName:    params.ProjectName,
+			PlanId:         params.PlanId,
 		})
 	}
 }
@@ -962,7 +974,6 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		common.SysError("failed to query rpm/tpm stat: " + err.Error())
 		return stat, errors.New("查询统计数据失败")
 	}
-	//fmt.Printf("666666 %#v", quotaResult)
 	stat.Quota = quotaResult.Quota
 	stat.Rpm = rpmTpmResult.Rpm
 	stat.Tpm = rpmTpmResult.Tpm

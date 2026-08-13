@@ -92,6 +92,7 @@ type Properties struct {
 	ClientUserId   string `json:"client_user_id,omitempty"`
 	ClientScenairo string `json:"client_scenairo,omitempty"`
 	ProjectName    string `json:"project_name,omitempty"`
+	ProjectId      int    `json:"project_id,omitempty"`
 	PlanId         int    `json:"plan_id,omitempty"`
 }
 

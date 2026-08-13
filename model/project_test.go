@@ -1251,6 +1251,55 @@ func TestIncreaseUsedQuotaByProjectAndUser_ExceedsAllocated(t *testing.T) {
 	assert.Contains(t, err.Error(), "project quota exceeded")
 }
 
+// ==================== DecreaseUsedQuotaByProjectAndUser Tests ====================
+
+// 异步任务提交时按预扣额记 used_quota，完成后可能退款或结算出更低的实际额度，
+// 项目预算必须跟着退回去，否则预算被永久占住。
+func TestDecreaseUsedQuotaByProjectAndUser(t *testing.T) {
+	cases := []struct {
+		name         string
+		initialUsed  int
+		delta        int
+		expectedUsed int
+	}{
+		{name: "partial refund", initialUsed: 1000, delta: 400, expectedUsed: 600},
+		{name: "full refund", initialUsed: 1000, delta: 1000, expectedUsed: 0},
+		{name: "zero delta is a no-op", initialUsed: 1000, delta: 0, expectedUsed: 1000},
+		// 重复退款/并发结算会让退还额超过已记账额，此时钳到 0 而不是转成负数——
+		// 负的 used_quota 会被读成凭空多出来的预算。
+		{name: "over refund clamps at zero", initialUsed: 300, delta: 1000, expectedUsed: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupProjectTestDB(t)
+			defer cleanupProjectTestDB(t, db)
+
+			project, plan := createProjectWithActivePlan(t, "test-project", 10000)
+			allocation := &ProjectAllocation{
+				ProjectId:      project.Id,
+				PlanId:         plan.Id,
+				ClientUserId:   "user-123",
+				AllocatedQuota: 5000,
+			}
+			require.NoError(t, CreateOrUpdateAllocation(allocation))
+			require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, "user-123", tc.initialUsed))
+
+			require.NoError(t, DecreaseUsedQuotaByProjectAndUser(project.Id, "user-123", tc.delta))
+			assert.Equal(t, tc.expectedUsed, storedAllocation(t, allocation.Id).UsedQuota)
+		})
+	}
+}
+
+func TestDecreaseUsedQuotaByProjectAndUser_RejectsInvalidInput(t *testing.T) {
+	db := setupProjectTestDB(t)
+	defer cleanupProjectTestDB(t, db)
+
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(0, "user-123", 100), "project id is empty")
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, "", 100), "client user id is empty")
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, "user-123", -1), "delta cannot be negative")
+}
+
 // ==================== GetUserProjectRemainingQuota Tests ====================
 
 func TestGetUserProjectRemainingQuota_Success(t *testing.T) {

@@ -601,15 +601,15 @@ func BatchDeleteUsers(ids []int) (int, error) {
 	}
 
 	// 清理缓存（用户状态缓存 + token 缓存）
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			for _, u := range users {
-				_ = invalidateUserCache(u.Id)
-			}
-			for _, tk := range tokens {
-				_ = cacheDeleteToken(tk.Key)
-			}
-		})
+	// 同步执行：invalidateTokenCacheForMutation 会竖起 fence,晚一步竖起就给并发读者
+	// 留下把已删除 token 的快照重新写回缓存的窗口。
+	if err := invalidateTokensCache(tokens); err != nil {
+		common.SysError("failed to invalidate token cache after batch deleting users: " + err.Error())
+	}
+	for _, u := range users {
+		if err := invalidateUserCache(u.Id); err != nil {
+			common.SysError(fmt.Sprintf("failed to invalidate user cache after batch deleting user %d: %v", u.Id, err))
+		}
 	}
 
 	return len(users), nil

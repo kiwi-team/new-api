@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -161,6 +162,9 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		IsStream:       relayInfo.IsStream,
 		Group:          relayInfo.UsingGroup,
 		Other:          other,
+		ClientUserId:   common.GetContextKeyString(ctx, constant.ContextKeyClientUserId),
+		ClientScenairo: common.GetContextKeyString(ctx, constant.ContextKeyClientScenairo),
+		RequestId:      ctx.GetString(common.RequestIdKey),
 		ProjectName:    projectName,
 		PlanId:         planId,
 	})

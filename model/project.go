@@ -600,6 +600,54 @@ func IncreaseUsedQuotaByProjectAndUser(projectId int, clientUserId string, delta
 	return nil
 }
 
+// DecreaseUsedQuotaByProjectAndUser atomically returns quota to an allocation
+// identified by project ID and client user ID. Async tasks pre-consume at submit
+// time and settle later, so a refund or a below-estimate settlement has to give
+// the project budget back.
+//
+// used_quota is clamped at 0: a duplicate refund or a settlement racing a manual
+// budget reset would otherwise drive it negative, which reads as free budget.
+// Clamping is reported so the accounting anomaly stays visible.
+func DecreaseUsedQuotaByProjectAndUser(projectId int, clientUserId string, delta int) error {
+	if projectId == 0 {
+		return errors.New("project id is empty")
+	}
+	if clientUserId == "" {
+		return errors.New("client user id is empty")
+	}
+	if delta < 0 {
+		return errors.New("delta cannot be negative")
+	}
+	if delta == 0 {
+		return nil // No-op for zero delta
+	}
+
+	result := DB.Model(&ProjectAllocation{}).
+		Where("project_id = ? AND client_user_id = ? AND used_quota >= ?", projectId, clientUserId, delta).
+		UpdateColumn("used_quota", DB.Raw("used_quota - ?", delta))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+
+	// 到这里说明 used_quota < delta（或分配记录不存在）。退不回去会永久占住项目预算，
+	// 所以退到 0 为止，并把这次异常写进系统日志。
+	clamped := DB.Model(&ProjectAllocation{}).
+		Where("project_id = ? AND client_user_id = ? AND used_quota > 0", projectId, clientUserId).
+		UpdateColumn("used_quota", 0)
+	if clamped.Error != nil {
+		return clamped.Error
+	}
+	if clamped.RowsAffected > 0 {
+		common.SysError(fmt.Sprintf(
+			"project allocation used_quota clamped to 0 on refund: project_id=%d client_user_id=%s delta=%d",
+			projectId, clientUserId, delta))
+	}
+	return nil
+}
+
 // GetAllocationCount returns the total number of allocations for a project
 func GetAllocationCount(projectId int) (int64, error) {
 	if projectId == 0 {

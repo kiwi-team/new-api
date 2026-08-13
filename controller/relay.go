@@ -858,11 +858,26 @@ func RelayTask(c *gin.Context) {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
+		// 项目预算与钱包/订阅是两个独立的池子：SettleBilling 只动后者。
+		// 带 X-Project 的请求在鉴权时只做了额度闸门校验，真正的 used_quota 记账
+		// 在这里发生，与同步链路（text_quota、mjproxy 等）保持一致。
+		if _, _, err := service.TrackProjectConsumption(c, result.Quota); err != nil {
+			common.SysError("track task project consumption error: " + err.Error())
+		}
 		taskRequestBody := service.TaskRequestLogBody(c)
 		service.LogTaskConsumption(c, relayInfo, taskRequestBody)
 
 		task := model.InitTask(result.Platform, relayInfo)
 		task.Request = taskRequestBody
+		// 提交时留档计费归属：任务完成后的差额结算/退款是异步的，那时请求上下文
+		// 已经不在了，只能从任务记录里取 uid / 场景 / 项目。
+		task.Properties.TokenId = relayInfo.TokenId
+		task.Properties.TokenName = c.GetString("token_name")
+		task.Properties.ClientUserId = common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+		task.Properties.ClientScenairo = common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
+		task.Properties.ProjectName = common.GetContextKeyString(c, constant.ContextKeyProjectName)
+		task.Properties.ProjectId = common.GetContextKeyInt(c, constant.ContextKeyProjectId)
+		task.Properties.PlanId = common.GetContextKeyInt(c, constant.ContextKeyProjectPlanId)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId

@@ -68,16 +68,23 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, requestBody
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
 	attachQuotaSaturation(c, info, other)
+	// uid / 场景 / 项目归属与同步链路（text_quota、mjproxy）保持一致：不带这些列，
+	// 日志页按 uid 过滤和 UID 消耗预警（按 client_user_id 聚合 logs）都会漏掉任务消费。
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
-		TokenName: tokenName,
-		Quota:     info.PriceData.Quota,
-		Content:   logContent,
-		TokenId:   info.TokenId,
-		Group:     info.UsingGroup,
-		Other:     other,
-		Request:   requestBody,
+		ChannelId:      info.ChannelId,
+		ModelName:      info.OriginModelName,
+		TokenName:      tokenName,
+		Quota:          info.PriceData.Quota,
+		Content:        logContent,
+		TokenId:        info.TokenId,
+		Group:          info.UsingGroup,
+		Other:          other,
+		Request:        requestBody,
+		ClientUserId:   common.GetContextKeyString(c, constant.ContextKeyClientUserId),
+		ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo),
+		RequestId:      c.GetString(common.RequestIdKey),
+		ProjectName:    common.GetContextKeyString(c, constant.ContextKeyProjectName),
+		PlanId:         common.GetContextKeyInt(c, constant.ContextKeyProjectPlanId),
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -170,6 +177,26 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 	}
 }
 
+// taskAdjustProjectQuota 调整任务所属项目分配的 used_quota，delta > 0 表示补扣，
+// delta < 0 表示退还。项目预算与钱包/订阅是独立的池子，提交时由
+// TrackProjectConsumption 按预扣额记账，这里负责异步结算后的补差。
+// 归属信息取自提交时留档的 Properties——异步结算时请求上下文已不存在。
+func taskAdjustProjectQuota(ctx context.Context, task *model.Task, delta int) {
+	props := task.Properties
+	if props.ProjectId == 0 || props.ClientUserId == "" || delta == 0 {
+		return
+	}
+	var err error
+	if delta > 0 {
+		err = model.IncreaseUsedQuotaByProjectAndUser(props.ProjectId, props.ClientUserId, delta)
+	} else {
+		err = model.DecreaseUsedQuotaByProjectAndUser(props.ProjectId, props.ClientUserId, -delta)
+	}
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("调整项目预算失败 (delta=%d, task=%s): %s", delta, task.TaskID, err.Error()))
+	}
+}
+
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
 func taskBillingOther(task *model.Task) map[string]interface{} {
 	other := make(map[string]interface{})
@@ -230,23 +257,30 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	// 2. 退还令牌额度
 	taskAdjustTokenQuota(ctx, task, -quota)
 
-	// 3. 记录日志
+	// 3. 退还项目预算
+	taskAdjustProjectQuota(ctx, task, -quota)
+
+	// 4. 记录日志
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		Content:   "",
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     quota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
+		UserId:         task.UserId,
+		LogType:        model.LogTypeRefund,
+		Content:        "",
+		ChannelId:      task.ChannelId,
+		ModelName:      taskModelName(task),
+		Quota:          quota,
+		TokenId:        task.PrivateData.TokenId,
+		Group:          task.Group,
+		Other:          other,
+		ClientUserId:   task.Properties.ClientUserId,
+		ClientScenairo: task.Properties.ClientScenairo,
+		ProjectName:    task.Properties.ProjectName,
+		PlanId:         task.Properties.PlanId,
 	})
 
-	// 4. 资金退款完成后再清除持久化标记。
+	// 5. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
 	task.Quota = 0
 	if err := task.UpdateQuota(); err != nil {
@@ -289,6 +323,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	// 调整令牌额度
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
+	// 调整项目预算
+	taskAdjustProjectQuota(ctx, task, quotaDelta)
+
 	task.Quota = actualQuota
 	if err := task.UpdateQuota(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算回写 quota 失败 task %s: %s", task.TaskID, err.Error()))
@@ -313,16 +350,20 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   reason,
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
+		UserId:         task.UserId,
+		LogType:        logType,
+		Content:        reason,
+		ChannelId:      task.ChannelId,
+		ModelName:      taskModelName(task),
+		Quota:          logQuota,
+		TokenId:        task.PrivateData.TokenId,
+		Group:          task.Group,
+		Other:          other,
+		NodeName:       task.PrivateData.NodeName,
+		ClientUserId:   task.Properties.ClientUserId,
+		ClientScenairo: task.Properties.ClientScenairo,
+		ProjectName:    task.Properties.ProjectName,
+		PlanId:         task.Properties.PlanId,
 	})
 }
 
