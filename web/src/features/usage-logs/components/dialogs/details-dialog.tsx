@@ -79,6 +79,7 @@ import {
   formatRetryChain,
   getFirstResponseTimeColor,
   getResponseTimeColor,
+  getReasoningEffortVariant,
   renderAuditContent,
 } from '../../lib/format'
 import { formatOtherRatios } from '../../lib/other-ratios'
@@ -635,16 +636,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
     props.log.type !== 6 &&
     (other?.request_path || conversionChain.length > 0)
 
-  const channelChain = formatRetryChain(
-    other?.admin_info?.use_channel,
-    other?.admin_info?.use_channel_time
+  const useChannel = other?.admin_info?.use_channel
+  const channelChain =
+    useChannel && useChannel.length > 0 ? useChannel.join(' → ') : undefined
+  const reasoningEffortVariant = getReasoningEffortVariant(
+    other?.reasoning_effort
   )
-  let reasoningEffortVariant: StatusBadgeProps['variant'] = 'green'
-  if (other?.reasoning_effort === 'high') {
-    reasoningEffortVariant = 'orange'
-  } else if (other?.reasoning_effort === 'medium') {
-    reasoningEffortVariant = 'yellow'
-  }
 
   return (
     <Dialog
@@ -1130,6 +1127,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               compact
               billingExpr={decodeBillingExprB64(other.expr_b64)}
               matchedTierLabel={other.matched_tier}
+              requestRules={other.request_rules}
               hideCacheColumns={!hasAnyCacheTokens(other)}
             />
           </DetailSection>

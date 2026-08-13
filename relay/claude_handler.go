@@ -139,6 +139,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		info.UpstreamModelName = request.Model
 	}
+	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
+		if effort := request.GetEfforts(); effort != "" {
+			info.SetReasoningEffort(effort)
+		}
+	}
 
 	// claude-opus-4-7 / claude-opus-4-8 breaking changes:
 	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}

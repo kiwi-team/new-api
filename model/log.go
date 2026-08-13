@@ -944,16 +944,28 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
 
-	// 执行查询
-	if err := tx.Scan(&stat).Error; err != nil {
+	// 两个查询必须 Scan 到各自独立的结构体:GORM v2 的 Scan 走 ScanRows(ScanInitialized),
+	// 每次都会先把目标 struct 整体清零再写入本次 SELECT 的列。若共用同一个 Stat,
+	// 第二次 Scan 会把第一次查出的 Quota 抹成 0(表现为用量恒为 $0)。
+	var quotaResult struct {
+		Quota int
+	}
+	var rpmTpmResult struct {
+		Rpm int
+		Tpm int
+	}
+	if err := tx.Scan(&quotaResult).Error; err != nil {
 		common.SysError("failed to query log stat: " + err.Error())
 		return stat, errors.New("查询统计数据失败")
 	}
-	if err := rpmTpmQuery.Scan(&stat).Error; err != nil {
+	if err := rpmTpmQuery.Scan(&rpmTpmResult).Error; err != nil {
 		common.SysError("failed to query rpm/tpm stat: " + err.Error())
 		return stat, errors.New("查询统计数据失败")
 	}
-
+	//fmt.Printf("666666 %#v", quotaResult)
+	stat.Quota = quotaResult.Quota
+	stat.Rpm = rpmTpmResult.Rpm
+	stat.Tpm = rpmTpmResult.Tpm
 	return stat, nil
 }
 
