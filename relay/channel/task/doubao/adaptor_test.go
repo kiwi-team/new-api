@@ -229,6 +229,19 @@ func TestSeedance25PriceTableMatchesOfficialQuote(t *testing.T) {
 	}
 }
 
+// Seedance 2.5 的 1080p 是独立价格档（不含视频 77.00、含视频 46.00 元/百万 token），
+// 基准价仍是 480p/720p 不含视频的 70.00，因此倍率必须分别是 77/70 与 46/70。
+// 缺了这两行会让 1080p 请求回落到基准价：不含视频少收，含视频多收 70/46 ≈ 1.52 倍。
+func TestSeedance25Resolution1080pRatio(t *testing.T) {
+	noVideo, ok := GetVideoInputRatio("doubao-seedance-2-5-260628", "1080p", false)
+	require.True(t, ok)
+	assert.InDelta(t, 77.0/70.0, noVideo, 1e-9)
+
+	withVideo, ok := GetVideoInputRatio("doubao-seedance-2-5-260628", "1080p", true)
+	require.True(t, ok)
+	assert.InDelta(t, 46.0/70.0, withVideo, 1e-9)
+}
+
 // 未配置的模型不能凭空产生倍率：GetVideoInputRatio 的第二个返回值是调用方
 // 判断“要不要加 video_input 这个 OtherRatio”的唯一依据。
 func TestGetVideoInputRatioUnknownModel(t *testing.T) {

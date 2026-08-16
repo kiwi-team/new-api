@@ -37,12 +37,14 @@ var videoPriceTable = map[string]map[videoPriceKey]float64{
 		{hasVideo: false}: 37.0,
 		{hasVideo: true}:  22.0,
 	},
-	// Seedance 2.5 只支持 480p / 720p 输出，两档共用同一 token 单价——
-	// 分辨率、宽高比、输出时长的差异全部体现在 token 数量上（token = 宽×高×帧率×秒数/1024），
-	// 不影响单价，因此这里只需要区分输入是否含视频。
+	// Seedance 2.5 的 480p / 720p 共用同一 token 单价，1080p 单独一档，暂不支持 4K。
+	// 同一档内宽高比、输出时长的差异全部体现在 token 数量上
+	//（token = 宽×高×帧率×秒数/1024），不影响单价。
 	"doubao-seedance-2-5-260628": {
-		{hasVideo: false}: 70.0,
-		{hasVideo: true}:  42.0,
+		{hasVideo: false}:                70.0,
+		{hasVideo: true}:                 42.0,
+		{is1080p: true, hasVideo: false}: 77.0,
+		{is1080p: true, hasVideo: true}:  46.0,
 	},
 }
 
