@@ -109,7 +109,7 @@ func TestBuildUIDBudgetAlertResetsDeduplicationForNewMonthAndPlan(t *testing.T) 
 	assert.Contains(t, content, "方案「new-plan」")
 }
 
-func TestPendingPlatformQuotaMilestone(t *testing.T) {
+func TestPendingUserQuotaMilestone(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -136,29 +136,39 @@ func TestPendingPlatformQuotaMilestone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			state := platformQuotaMilestoneState{
+			state := userQuotaMilestoneState{
 				Initialized:      tt.initialized,
 				WindowQuota:      1_000,
 				AccumulatedQuota: tt.accumulatedQuota,
 				MilestoneUSD:     tt.alertedUSD,
 			}
-			actual := pendingPlatformQuotaMilestone(tt.deltaQuota+1_000, 1, state)
+			actual := pendingUserQuotaMilestone(tt.deltaQuota+1_000, 1, state)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
 
-func TestPendingPlatformQuotaMilestoneRejectsInvalidQuotaPerUnit(t *testing.T) {
+func TestPendingUserQuotaMilestoneRejectsInvalidQuotaPerUnit(t *testing.T) {
 	t.Parallel()
 
-	state := platformQuotaMilestoneState{Initialized: true}
-	assert.Zero(t, pendingPlatformQuotaMilestone(10_000, 0, state))
+	state := userQuotaMilestoneState{Initialized: true}
+	assert.Zero(t, pendingUserQuotaMilestone(10_000, 0, state))
 }
 
-func TestPendingPlatformQuotaMilestoneUsesConfiguredQuotaPerUnit(t *testing.T) {
+func TestPendingUserQuotaMilestoneUsesConfiguredQuotaPerUnit(t *testing.T) {
 	t.Parallel()
 
-	state := platformQuotaMilestoneState{Initialized: true}
-	assert.Zero(t, pendingPlatformQuotaMilestone(499_999_999, 500_000, state))
-	assert.Equal(t, int64(1_000), pendingPlatformQuotaMilestone(500_000_000, 500_000, state))
+	state := userQuotaMilestoneState{Initialized: true}
+	assert.Zero(t, pendingUserQuotaMilestone(499_999_999, 500_000, state))
+	assert.Equal(t, int64(1_000), pendingUserQuotaMilestone(500_000_000, 500_000, state))
+}
+
+func TestPendingUserQuotaMilestoneKeepsUsersIndependent(t *testing.T) {
+	t.Parallel()
+
+	user3 := userQuotaMilestoneState{Initialized: true, WindowQuota: 100, MilestoneUSD: 1_000}
+	user27 := userQuotaMilestoneState{Initialized: true, WindowQuota: 100}
+
+	assert.Zero(t, pendingUserQuotaMilestone(1_600, 1, user3))
+	assert.Equal(t, int64(1_000), pendingUserQuotaMilestone(1_100, 1, user27))
 }
