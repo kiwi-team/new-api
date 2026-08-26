@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"context"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
@@ -226,7 +227,7 @@ func responsesContentPartToGeminiParts(c context.Context, part map[string]any) (
 		}
 		base64Data, mimeType, err := relaymedia.ResolveBase64Data(c, source, "formatting Responses input for Gemini")
 		if err != nil {
-			return nil, fmt.Errorf("get file data from '%s' failed: %w", source.GetIdentifier(), err)
+			return nil, fmt.Errorf("get file data from 3 '%s' failed: %w", source.GetIdentifier(), err)
 		}
 		if _, ok := sharedgemini.SupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
 			return nil, fmt.Errorf("mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", mimeType, source.GetIdentifier(), sharedgemini.SupportedMimeTypesList())

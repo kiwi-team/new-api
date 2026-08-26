@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient, useIsFetching } from '@tanstack/react-query'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
@@ -37,13 +37,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useDebounce } from '@/hooks/use-debounce'
+import { useAuthStore } from '@/stores/auth-store'
 
+import {
+  getLogChannelOptions,
+  getLogClientUidOptions,
+  getLogTokenOptions,
+  getLogUsernameOptions,
+} from '../api'
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
+import { LogFilterCombobox } from './log-filter-combobox'
 import {
   LogsFilterField,
   LogsFilterInput,
@@ -169,6 +178,59 @@ export function CommonLogsFilterBar<TData>(
     draft.sourceKey === searchState.sourceKey ? draft : searchState
   const filters = activeDraft.filters
   const logType = activeDraft.logType
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const usernameKeyword = useDebounce(filters.username?.trim() ?? '', 300)
+  const clientUidKeyword = useDebounce(filters.clientUserId?.trim() ?? '', 300)
+
+  const { data: tokenOptions = [] } = useQuery({
+    queryKey: ['usage-logs', 'filter-options', 'tokens'],
+    queryFn: getLogTokenOptions,
+    staleTime: 5 * 60 * 1000,
+  })
+  const { data: channelOptions = [] } = useQuery({
+    queryKey: ['usage-logs', 'filter-options', 'channels'],
+    queryFn: getLogChannelOptions,
+    enabled: isAdmin,
+    staleTime: 5 * 60 * 1000,
+  })
+  const { data: usernameOptions = [] } = useQuery({
+    queryKey: ['usage-logs', 'filter-options', 'usernames', usernameKeyword],
+    queryFn: () => getLogUsernameOptions(usernameKeyword),
+    enabled: isAdmin,
+    placeholderData: (previousData) => previousData,
+  })
+  const { data: adminClientUidOptions = [] } = useQuery({
+    queryKey: ['usage-logs', 'filter-options', 'client-uids', clientUidKeyword],
+    queryFn: () => getLogClientUidOptions(clientUidKeyword),
+    enabled: isAdmin,
+    placeholderData: (previousData) => previousData,
+  })
+  const selfClientUidOptions = useMemo(() => {
+    const values = new Set<string>()
+    const uid = currentUser?.uid?.trim()
+    if (uid) values.add(uid)
+
+    const relatedUids = currentUser?.related_uids?.trim()
+    if (relatedUids) {
+      try {
+        const parsed: unknown = JSON.parse(relatedUids)
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (typeof item !== 'string') continue
+            const value = item.trim()
+            if (value) values.add(value)
+          }
+        }
+      } catch {
+        // The API stores related_uids as JSON; an invalid legacy value is ignored.
+      }
+    }
+
+    return [...values].map((value) => ({ value, label: value }))
+  }, [currentUser?.related_uids, currentUser?.uid])
+  const clientUidOptions = isAdmin
+    ? adminClientUidOptions
+    : selfClientUidOptions
 
   const handleChange = useCallback(
     (field: keyof CommonLogFilters, value: Date | string | undefined) => {
@@ -371,32 +433,36 @@ export function CommonLogsFilterBar<TData>(
   const advancedFilters = (
     <>
       <LogsFilterField>
-        <LogsFilterInput
+        <LogFilterCombobox
           placeholder={t('Token Name')}
           type={sensitiveType}
+          options={tokenOptions}
           value={filters.token || ''}
-          onChange={(e) => handleChange('token', e.target.value)}
-          onKeyDown={handleKeyDown}
+          onValueChange={(value) => handleChange('token', value || undefined)}
         />
       </LogsFilterField>
       {isAdmin && (
         <LogsFilterField>
-          <LogsFilterInput
+          <LogFilterCombobox
             placeholder={t('Username')}
             type={sensitiveType}
+            options={usernameOptions}
             value={filters.username || ''}
-            onChange={(e) => handleChange('username', e.target.value)}
-            onKeyDown={handleKeyDown}
+            onValueChange={(value) =>
+              handleChange('username', value || undefined)
+            }
           />
         </LogsFilterField>
       )}
       {isAdmin && (
         <LogsFilterField>
-          <LogsFilterInput
+          <LogFilterCombobox
             placeholder={t('Channel ID')}
+            options={channelOptions}
             value={filters.channel || ''}
-            onChange={(e) => handleChange('channel', e.target.value)}
-            onKeyDown={handleKeyDown}
+            onValueChange={(value) =>
+              handleChange('channel', value || undefined)
+            }
           />
         </LogsFilterField>
       )}
@@ -417,11 +483,13 @@ export function CommonLogsFilterBar<TData>(
         />
       </LogsFilterField>
       <LogsFilterField>
-        <LogsFilterInput
+        <LogFilterCombobox
           placeholder={t('Client UID')}
+          options={clientUidOptions}
           value={filters.clientUserId || ''}
-          onChange={(e) => handleChange('clientUserId', e.target.value)}
-          onKeyDown={handleKeyDown}
+          onValueChange={(value) =>
+            handleChange('clientUserId', value || undefined)
+          }
         />
       </LogsFilterField>
       <LogsFilterField>

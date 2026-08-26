@@ -718,7 +718,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 				base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Gemini")
 				if err != nil {
-					return nil, fmt.Errorf("get file data from '%s' failed: %w", source.GetIdentifier(), err)
+					return nil, fmt.Errorf("get file data from 1'%s' failed: %w", source.GetIdentifier(), err)
 				}
 
 				// 校验 MimeType 是否在 Gemini 支持的白名单中

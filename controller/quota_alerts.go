@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,28 +14,38 @@ import (
 	"github.com/QuantumNous/new-api/service"
 )
 
-var lastHourAlerted int64
-var lastDayAlerted int64
+var lastDaySummary int64
 var uidDayAlerted = make(map[string]int64)
 
+type platformQuotaMilestoneState struct {
+	Initialized      bool  `json:"initialized"`
+	BaselineAt       int64 `json:"baseline_at"`
+	WindowStart      int64 `json:"window_start"`
+	WindowQuota      int64 `json:"window_quota"`
+	AccumulatedQuota int64 `json:"accumulated_quota"`
+	MilestoneUSD     int64 `json:"milestone_usd"`
+}
+
+var platformMilestoneAlerted platformQuotaMilestoneState
+
 const (
-	optKeyLastHour   = "quota_alert_last_hour"
-	optKeyLastDay    = "quota_alert_last_day"
-	optKeyUidMap     = "quota_alert_uid_day_map"
-	optKeyUidMonth   = "quota_alert_uid_month_threshold_map"
-	optKeyUidProject = "quota_alert_uid_project_threshold_map"
+	optKeyLastDaySummary    = "quota_alert_last_day_summary"
+	optKeyPlatformMilestone = "quota_alert_platform_cumulative_milestone"
+	optKeyUidMap            = "quota_alert_uid_day_map"
+	optKeyUidMonth          = "quota_alert_uid_month_threshold_map"
+	optKeyUidProject        = "quota_alert_uid_project_threshold_map"
+	platformMilestoneUSD    = int64(1000)
+	previousDaySummaryDelay = 10 * time.Minute
 )
 
 func initQuotaAlertStateFromOptions() {
-	if v := common.OptionMap[optKeyLastHour]; v != "" {
+	if v := common.OptionMap[optKeyLastDaySummary]; v != "" {
 		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			lastHourAlerted = i
+			lastDaySummary = i
 		}
 	}
-	if v := common.OptionMap[optKeyLastDay]; v != "" {
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			lastDayAlerted = i
-		}
+	if v := common.OptionMap[optKeyPlatformMilestone]; v != "" {
+		_ = common.Unmarshal([]byte(v), &platformMilestoneAlerted)
 	}
 	if v := common.OptionMap[optKeyUidMap]; v != "" {
 		tmp := make(map[string]int64)
@@ -60,12 +71,18 @@ func initQuotaAlertStateFromOptions() {
 	}
 }
 
-func persistLastHour(hourStart int64) {
-	_ = model.UpdateOption(optKeyLastHour, strconv.FormatInt(hourStart, 10))
+func persistLastDaySummary(dayStart int64) error {
+	return model.UpdateOption(optKeyLastDaySummary, strconv.FormatInt(dayStart, 10))
 }
-func persistLastDay(dayStart int64) {
-	_ = model.UpdateOption(optKeyLastDay, strconv.FormatInt(dayStart, 10))
+
+func persistPlatformMilestone(state platformQuotaMilestoneState) error {
+	b, err := common.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return model.UpdateOption(optKeyPlatformMilestone, string(b))
 }
+
 func persistUidMap() {
 	b, _ := common.Marshal(uidDayAlerted)
 	_ = model.UpdateOption(optKeyUidMap, string(b))
@@ -73,6 +90,34 @@ func persistUidMap() {
 
 var uidMonthThresholdMap = make(map[string]map[string]int64)
 var uidProjectThresholdMap = make(map[string]map[string]int64)
+
+func pendingPlatformQuotaMilestone(windowQuota int64, quotaPerUnit float64, alerted platformQuotaMilestoneState) int64 {
+	if !alerted.Initialized || quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return 0
+	}
+	deltaQuota := alerted.AccumulatedQuota + windowQuota - alerted.WindowQuota
+	if deltaQuota <= 0 {
+		return 0
+	}
+
+	milestoneQuotaValue := quotaPerUnit * float64(platformMilestoneUSD)
+	if milestoneQuotaValue <= 0 || milestoneQuotaValue > float64(math.MaxInt64) {
+		return 0
+	}
+	milestoneQuota := int64(math.Ceil(milestoneQuotaValue))
+	milestoneCount := deltaQuota / milestoneQuota
+	if milestoneCount == 0 {
+		return 0
+	}
+	if milestoneCount > math.MaxInt64/platformMilestoneUSD {
+		return math.MaxInt64
+	}
+	milestoneUSD := milestoneCount * platformMilestoneUSD
+	if milestoneUSD > alerted.MilestoneUSD {
+		return milestoneUSD
+	}
+	return 0
+}
 
 func persistUidMonthMap() {
 	b, _ := common.Marshal(uidMonthThresholdMap)
@@ -198,45 +243,109 @@ func FeishuQuotaAlerts() {
 		loc := time.FixedZone("CST", 8*60*60)
 		now := time.Now().In(loc)
 
-		// natural hour window
-		hourStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, loc).Unix()
-		hourEnd := hourStart + 3600 - 1
-
 		// natural day window
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Unix()
 		dayEnd := dayStart + 86400 - 1
-		// platform hour alert: > $5000
-		if lastHourAlerted != hourStart {
-			var hourSum int
-			err := model.DB.Table("quota_data").Select("COALESCE(sum(quota),0)").Where("created_at >= ? AND created_at <= ?", hourStart, hourEnd).Scan(&hourSum).Error
-			if err == nil {
-				usd := float64(hourSum) / common.QuotaPerUnit
-				if usd >= 5000 {
-					content := fmt.Sprintf("平台整体消耗预警：%s 内消耗约 $%.0f，阈值 $5000，@管理员", now.Format("2006-01-02 15"), usd)
-					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
+
+		// Platform cumulative alert: notify once for every additional $1,000.
+		// The two-hour database window is periodically compacted into AccumulatedQuota;
+		// it bounds query cost without resetting the cumulative alert thresholds.
+		hourStart := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, loc).Unix()
+		windowStart := hourStart - 3600
+		if platformMilestoneAlerted.Initialized && platformMilestoneAlerted.WindowStart > 0 {
+			windowStart = platformMilestoneAlerted.WindowStart
+		}
+		var platformWindowQuota int64
+		platformErr := model.DB.Table("quota_data").
+			Select("COALESCE(sum(quota),0)").
+			Where("created_at >= ?", windowStart).
+			Scan(&platformWindowQuota).Error
+		if platformErr != nil {
+			common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to query platform quota: %s", platformErr.Error()))
+		} else if !platformMilestoneAlerted.Initialized || platformMilestoneAlerted.WindowStart <= 0 {
+			platformMilestoneAlerted = platformQuotaMilestoneState{
+				Initialized: true,
+				BaselineAt:  now.Unix(),
+				WindowStart: windowStart,
+				WindowQuota: platformWindowQuota,
+			}
+			if err := persistPlatformMilestone(platformMilestoneAlerted); err != nil {
+				common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to persist platform quota baseline: %s", err.Error()))
+			}
+		} else {
+			compactWindowStart := hourStart - 3600
+			if platformMilestoneAlerted.WindowStart < compactWindowStart {
+				accumulatedQuota := platformMilestoneAlerted.AccumulatedQuota + platformWindowQuota - platformMilestoneAlerted.WindowQuota
+				var compactedWindowQuota int64
+				platformErr = model.DB.Table("quota_data").
+					Select("COALESCE(sum(quota),0)").
+					Where("created_at >= ?", compactWindowStart).
+					Scan(&compactedWindowQuota).Error
+				if platformErr != nil {
+					common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to compact platform quota window: %s", platformErr.Error()))
+				} else {
+					platformMilestoneAlerted.AccumulatedQuota = accumulatedQuota
+					platformMilestoneAlerted.WindowStart = compactWindowStart
+					platformMilestoneAlerted.WindowQuota = compactedWindowQuota
+					platformWindowQuota = compactedWindowQuota
+					if err := persistPlatformMilestone(platformMilestoneAlerted); err != nil {
+						common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to persist platform quota window: %s", err.Error()))
+					}
+				}
+			}
+
+			if platformErr == nil {
+				milestoneUSD := pendingPlatformQuotaMilestone(platformWindowQuota, common.QuotaPerUnit, platformMilestoneAlerted)
+				if milestoneUSD > 0 {
+					addedQuota := platformMilestoneAlerted.AccumulatedQuota + platformWindowQuota - platformMilestoneAlerted.WindowQuota
+					addedUSD := float64(addedQuota) / common.QuotaPerUnit
+					content := fmt.Sprintf(
+						"平台整体消耗预警：自 %s 起累计新增消耗约 $%.0f，达到 $%d 累计档位（每新增 $1000 告警一次），@管理员",
+						time.Unix(platformMilestoneAlerted.BaselineAt, 0).In(loc).Format("2006-01-02 15:04:05"),
+						addedUSD,
+						milestoneUSD,
+					)
+					if err := service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
 						MsgType: "text",
 						Content: dto.FeishuContent{Text: content},
-					})
-					lastHourAlerted = hourStart
-					persistLastHour(hourStart)
+					}); err != nil {
+						common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to notify platform quota milestone: %s", err.Error()))
+					} else {
+						platformMilestoneAlerted.MilestoneUSD = milestoneUSD
+						if err := persistPlatformMilestone(platformMilestoneAlerted); err != nil {
+							common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to persist platform quota milestone: %s", err.Error()))
+						}
+					}
 				}
 			}
 		}
 
-		// platform day alert: > $20000
-		if lastDayAlerted != dayStart {
-			var daySum int
-			err := model.DB.Table("quota_data").Select("COALESCE(sum(quota),0)").Where("created_at >= ? AND created_at <= ?", dayStart, dayEnd).Scan(&daySum).Error
-			if err == nil {
-				usd := float64(daySum) / common.QuotaPerUnit
-				if usd >= 20000 {
-					content := fmt.Sprintf("平台整体消耗预警：%s 当日消耗约 $%.0f，阈值 $20000，@管理员", now.Format("2006-01-02"), usd)
-					_ = service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
-						MsgType: "text",
-						Content: dto.FeishuContent{Text: content},
-					})
-					lastDayAlerted = dayStart
-					persistLastDay(dayStart)
+		// Push the previous natural day's total once.
+		previousDayStart := dayStart - 86400
+		if now.Unix() >= dayStart+int64(previousDaySummaryDelay/time.Second) && lastDaySummary != previousDayStart {
+			var previousDayQuota int64
+			err := model.DB.Table("quota_data").
+				Select("COALESCE(sum(quota),0)").
+				Where("created_at >= ? AND created_at < ?", previousDayStart, dayStart).
+				Scan(&previousDayQuota).Error
+			if err != nil {
+				common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to query previous day quota: %s", err.Error()))
+			} else {
+				content := fmt.Sprintf(
+					"平台昨日消耗汇总：%s 总消耗约 $%.2f",
+					time.Unix(previousDayStart, 0).In(loc).Format("2006-01-02"),
+					float64(previousDayQuota)/common.QuotaPerUnit,
+				)
+				if err := service.SendFeishuNotify(webhook, secret, dto.FeishuNotify{
+					MsgType: "text",
+					Content: dto.FeishuContent{Text: content},
+				}); err != nil {
+					common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to notify previous day quota: %s", err.Error()))
+				} else {
+					lastDaySummary = previousDayStart
+					if err := persistLastDaySummary(previousDayStart); err != nil {
+						common.SysError(fmt.Sprintf("FeishuQuotaAlerts: failed to persist previous day summary: %s", err.Error()))
+					}
 				}
 			}
 		}

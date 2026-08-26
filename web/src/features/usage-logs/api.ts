@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import { buildQueryParams } from './lib/utils'
+import { buildQueryParams } from './lib/build-query-params'
 import type {
   GetLogsParams,
   GetLogsResponse,
@@ -28,6 +28,40 @@ import type {
   GetTaskLogsParams,
   UserInfo,
 } from './types'
+
+export type LogFilterOption = {
+  value: string
+  label: string
+}
+
+type FilterOptionApiResponse<T> = {
+  success: boolean
+  data?: T
+}
+
+type TokenOptionSource = {
+  id?: number
+  name?: string
+}
+
+type ChannelOptionSource = {
+  id?: number
+  name?: string
+}
+
+type UserOptionSource = {
+  id?: number
+  username?: string
+}
+
+type ClientUidOptionSource = {
+  client_user_id?: string
+  client_name?: string
+}
+
+type FilterOptionPage<T> = {
+  items?: T[]
+}
 
 // ============================================================================
 // Generic API Helpers
@@ -83,6 +117,105 @@ export const getLogStats = (params: GetLogStatsParams = {}) =>
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
 ) => fetchLogStats('/api/log', params, false)
+
+export async function getLogTokenOptions(): Promise<LogFilterOption[]> {
+  const res = await api.get<FilterOptionApiResponse<TokenOptionSource[]>>(
+    '/api/data/token-list'
+  )
+  if (!res.data.success || !Array.isArray(res.data.data)) return []
+
+  const names = new Set<string>()
+  for (const token of res.data.data) {
+    const name = token.name?.trim()
+    if (name) names.add(name)
+  }
+  return [...names].map((name) => ({ value: name, label: name }))
+}
+
+export async function getLogTokenIdOptions(): Promise<LogFilterOption[]> {
+  const res = await api.get<FilterOptionApiResponse<TokenOptionSource[]>>(
+    '/api/data/token-list'
+  )
+  if (!res.data.success || !Array.isArray(res.data.data)) return []
+
+  return res.data.data.flatMap((token) => {
+    if (token.id == null) return []
+    const value = String(token.id)
+    const name = token.name?.trim()
+    return [{ value, label: name ? `${name} (ID: ${value})` : `#${value}` }]
+  })
+}
+
+export async function getLogChannelOptions(): Promise<LogFilterOption[]> {
+  const res = await api.get<FilterOptionApiResponse<ChannelOptionSource[]>>(
+    '/api/channel/channel-name-list'
+  )
+  if (!res.data.success || !Array.isArray(res.data.data)) return []
+
+  return res.data.data.flatMap((channel) => {
+    if (channel.id == null) return []
+    const value = String(channel.id)
+    const name = channel.name?.trim()
+    return [{ value, label: name ? `${name} (ID: ${value})` : `#${value}` }]
+  })
+}
+
+export async function getLogUsernameOptions(
+  keyword: string
+): Promise<LogFilterOption[]> {
+  const trimmed = keyword.trim()
+  const path = trimmed ? '/api/user/search' : '/api/user/'
+  const res = await api.get<
+    FilterOptionApiResponse<FilterOptionPage<UserOptionSource>>
+  >(path, {
+    params: {
+      p: 1,
+      page_size: 20,
+      ...(trimmed ? { keyword: trimmed } : {}),
+    },
+  })
+  const items = res.data.data?.items
+  if (!res.data.success || !Array.isArray(items)) return []
+
+  return items.flatMap((user) => {
+    const username = user.username?.trim()
+    if (!username) return []
+    const idSuffix = user.id == null ? '' : ` (ID: ${user.id})`
+    return [{ value: username, label: `${username}${idSuffix}` }]
+  })
+}
+
+export async function getLogClientUidOptions(
+  keyword: string
+): Promise<LogFilterOption[]> {
+  const trimmed = keyword.trim()
+  const path = trimmed
+    ? '/api/cliend_user_quota/search'
+    : '/api/cliend_user_quota/'
+  const res = await api.get<
+    FilterOptionApiResponse<FilterOptionPage<ClientUidOptionSource>>
+  >(path, {
+    params: {
+      p: 1,
+      page_size: 50,
+      ...(trimmed ? { keyword: trimmed } : {}),
+    },
+  })
+  const items = res.data.data?.items
+  if (!res.data.success || !Array.isArray(items)) return []
+
+  return items.flatMap((item) => {
+    const clientUserId = item.client_user_id?.trim()
+    if (!clientUserId) return []
+    const clientName = item.client_name?.trim()
+    return [
+      {
+        value: clientUserId,
+        label: clientName ? `${clientUserId} (${clientName})` : clientUserId,
+      },
+    ]
+  })
+}
 
 export async function getUserInfo(
   userId: number

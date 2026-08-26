@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Cancel01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -39,6 +41,8 @@ interface ComboboxInputProps {
   id?: string
   allowCustomValue?: boolean
   openOnFocus?: boolean
+  type?: React.HTMLInputTypeAttribute
+  clearable?: boolean
 }
 
 export function ComboboxInput({
@@ -51,6 +55,8 @@ export function ComboboxInput({
   id,
   allowCustomValue = false,
   openOnFocus = true,
+  type = 'text',
+  clearable = false,
 }: ComboboxInputProps) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
@@ -103,7 +109,6 @@ export function ComboboxInput({
     onValueChange(selectedValue)
     setOpen(false)
     setSearchValue('')
-    inputRef.current?.focus()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -163,8 +168,9 @@ export function ComboboxInput({
       <Input
         ref={inputRef}
         id={id}
-        type='text'
+        type={type}
         role='combobox'
+        aria-label={placeholder}
         aria-expanded={open}
         aria-haspopup='listbox'
         aria-autocomplete='list'
@@ -193,9 +199,28 @@ export function ComboboxInput({
           pointerFocusRef.current = false
         }}
         onKeyDown={handleKeyDown}
-        className={cn('pr-9', className)}
+        className={cn(clearable && value ? 'pr-14' : 'pr-9', className)}
       />
-      <ChevronsUpDown className='pointer-events-none absolute top-1/2 right-3 size-4 shrink-0 -translate-y-1/2 opacity-50' />
+      {clearable && value && (
+        <button
+          type='button'
+          aria-label={t('Clear')}
+          className='text-muted-foreground hover:text-foreground absolute top-1/2 right-7 flex size-6 -translate-y-1/2 items-center justify-center rounded-sm outline-none focus-visible:ring-2'
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onValueChange('')
+            setSearchValue('')
+            setOpen(false)
+          }}
+        >
+          <HugeiconsIcon
+            icon={Cancel01Icon}
+            strokeWidth={2}
+            className='pointer-events-none size-3.5'
+          />
+        </button>
+      )}
+      <ChevronsUpDown className='pointer-events-none absolute top-1/2 right-2 size-4 shrink-0 -translate-y-1/2 opacity-50' />
 
       {showDropdown && (
         <div className='bg-popover text-popover-foreground absolute top-full z-100 mt-1 w-full rounded-md border shadow-md'>

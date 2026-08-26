@@ -108,3 +108,57 @@ func TestBuildUIDBudgetAlertResetsDeduplicationForNewMonthAndPlan(t *testing.T) 
 	assert.Contains(t, content, "非项目预算（本月） 剩余 40.0%")
 	assert.Contains(t, content, "方案「new-plan」")
 }
+
+func TestPendingPlatformQuotaMilestone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		deltaQuota       int64
+		accumulatedQuota int64
+		alertedUSD       int64
+		initialized      bool
+		expected         int64
+	}{
+		{name: "uninitialized state does not alert on historical usage", deltaQuota: 20_000, expected: 0},
+		{name: "below first threshold", initialized: true, deltaQuota: 999, expected: 0},
+		{name: "first threshold", initialized: true, deltaQuota: 1_000, expected: 1_000},
+		{name: "does not repeat current milestone", initialized: true, deltaQuota: 1_999, alertedUSD: 1_000, expected: 0},
+		{name: "next thousand milestone", initialized: true, deltaQuota: 2_000, alertedUSD: 1_000, expected: 2_000},
+		{name: "compacted usage contributes to threshold", initialized: true, deltaQuota: 100, accumulatedQuota: 1_900, alertedUSD: 1_000, expected: 2_000},
+		{name: "highest crossed milestone only", initialized: true, deltaQuota: 12_500, expected: 12_000},
+		{name: "does not repeat highest milestone", initialized: true, deltaQuota: 12_999, alertedUSD: 12_000, expected: 0},
+		{name: "repeats at next thousand", initialized: true, deltaQuota: 13_000, alertedUSD: 12_000, expected: 13_000},
+		{name: "baseline is excluded", initialized: true, deltaQuota: 21_000, alertedUSD: 20_000, expected: 21_000},
+		{name: "refund below baseline does not alert", initialized: true, deltaQuota: -500, expected: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := platformQuotaMilestoneState{
+				Initialized:      tt.initialized,
+				WindowQuota:      1_000,
+				AccumulatedQuota: tt.accumulatedQuota,
+				MilestoneUSD:     tt.alertedUSD,
+			}
+			actual := pendingPlatformQuotaMilestone(tt.deltaQuota+1_000, 1, state)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}
+
+func TestPendingPlatformQuotaMilestoneRejectsInvalidQuotaPerUnit(t *testing.T) {
+	t.Parallel()
+
+	state := platformQuotaMilestoneState{Initialized: true}
+	assert.Zero(t, pendingPlatformQuotaMilestone(10_000, 0, state))
+}
+
+func TestPendingPlatformQuotaMilestoneUsesConfiguredQuotaPerUnit(t *testing.T) {
+	t.Parallel()
+
+	state := platformQuotaMilestoneState{Initialized: true}
+	assert.Zero(t, pendingPlatformQuotaMilestone(499_999_999, 500_000, state))
+	assert.Equal(t, int64(1_000), pendingPlatformQuotaMilestone(500_000_000, 500_000, state))
+}

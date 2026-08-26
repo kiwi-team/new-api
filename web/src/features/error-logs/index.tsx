@@ -35,6 +35,13 @@ import {
   PaginationContent,
   PaginationItem,
 } from '@/components/ui/pagination'
+import {
+  getLogChannelOptions,
+  getLogClientUidOptions,
+  getLogTokenIdOptions,
+} from '@/features/usage-logs/api'
+import { LogFilterCombobox } from '@/features/usage-logs/components/log-filter-combobox'
+import { useDebounce } from '@/hooks/use-debounce'
 import { formatTimestampToDate } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -66,7 +73,9 @@ export function ErrorLogsPage() {
   )
 
   const page = search.page ?? 1
-  const [startTime, setStartTime] = useState<Date | undefined>(() => hoursAgo(24))
+  const [startTime, setStartTime] = useState<Date | undefined>(() =>
+    hoursAgo(24)
+  )
   const [endTime, setEndTime] = useState<Date | undefined>(() => new Date())
   const [modelName, setModelName] = useState('')
   const [requestId, setRequestId] = useState('')
@@ -78,6 +87,7 @@ export function ErrorLogsPage() {
   const [trajId, setTrajId] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [selected, setSelected] = useState<ErrorLog | null>(null)
+  const clientUidKeyword = useDebounce(clientUserId.trim(), 300)
 
   // Filters apply on submit so typing an id does not fire a query per key.
   const [filters, setFilters] = useState<ErrorLogFilters>(() => ({
@@ -88,7 +98,11 @@ export function ErrorLogsPage() {
   const logsQuery = useQuery({
     queryKey: ['error-logs', 'list', page, filters],
     queryFn: async () => {
-      const result = await getErrorLogs({ ...filters, p: page, page_size: PAGE_SIZE })
+      const result = await getErrorLogs({
+        ...filters,
+        p: page,
+        page_size: PAGE_SIZE,
+      })
       if (!result.success) {
         toast.error(result.message || t('Failed to load'))
         return { items: [], total: 0 }
@@ -100,9 +114,26 @@ export function ErrorLogsPage() {
     },
     placeholderData: (previous) => previous,
   })
+  const { data: channelOptions = [] } = useQuery({
+    queryKey: ['error-logs', 'filter-options', 'channels'],
+    queryFn: getLogChannelOptions,
+    staleTime: 5 * 60 * 1000,
+  })
+  const { data: tokenOptions = [] } = useQuery({
+    queryKey: ['error-logs', 'filter-options', 'token-ids'],
+    queryFn: getLogTokenIdOptions,
+    staleTime: 5 * 60 * 1000,
+  })
+  const { data: clientUidOptions = [] } = useQuery({
+    queryKey: ['error-logs', 'filter-options', 'client-uids', clientUidKeyword],
+    queryFn: () => getLogClientUidOptions(clientUidKeyword),
+    placeholderData: (previousData) => previousData,
+  })
 
   const buildFilters = (): ErrorLogFilters => ({
-    start_timestamp: startTime ? Math.floor(startTime.getTime() / 1000) : undefined,
+    start_timestamp: startTime
+      ? Math.floor(startTime.getTime() / 1000)
+      : undefined,
     end_timestamp: endTime ? Math.floor(endTime.getTime() / 1000) : undefined,
     model_name: modelName.trim(),
     request_id: requestId.trim(),
@@ -192,33 +223,34 @@ export function ErrorLogsPage() {
                   onChange={(event) => setRequestId(event.target.value)}
                 />
               </div>
-              <div className='grid gap-1.5'>
+              <div className='grid w-48 gap-1.5'>
                 <Label htmlFor='el-channel'>{t('Channel ID')}</Label>
-                <Input
+                <LogFilterCombobox
                   id='el-channel'
-                  className='w-28'
-                  inputMode='numeric'
+                  placeholder={t('Channel ID')}
+                  options={channelOptions}
                   value={channelId}
-                  onChange={(event) => setChannelId(event.target.value)}
+                  onValueChange={setChannelId}
                 />
               </div>
-              <div className='grid gap-1.5'>
+              <div className='grid w-48 gap-1.5'>
                 <Label htmlFor='el-token'>{t('Key ID')}</Label>
-                <Input
+                <LogFilterCombobox
                   id='el-token'
-                  className='w-28'
-                  inputMode='numeric'
+                  placeholder={t('Key ID')}
+                  options={tokenOptions}
                   value={tokenId}
-                  onChange={(event) => setTokenId(event.target.value)}
+                  onValueChange={setTokenId}
                 />
               </div>
-              <div className='grid gap-1.5'>
+              <div className='grid w-48 gap-1.5'>
                 <Label htmlFor='el-uid'>{t('Client UID')}</Label>
-                <Input
+                <LogFilterCombobox
                   id='el-uid'
-                  className='w-40'
+                  placeholder={t('Client UID')}
+                  options={clientUidOptions}
                   value={clientUserId}
-                  onChange={(event) => setClientUserId(event.target.value)}
+                  onValueChange={setClientUserId}
                 />
               </div>
               <div className='grid gap-1.5'>
@@ -292,7 +324,9 @@ export function ErrorLogsPage() {
                     id: 'channel',
                     header: t('Channel'),
                     cell: (log) =>
-                      log.channel_name ? `${log.channel_name} (#${log.channel_id})` : '-',
+                      log.channel_name
+                        ? `${log.channel_name} (#${log.channel_id})`
+                        : '-',
                   },
                   {
                     id: 'token',
@@ -373,7 +407,9 @@ export function ErrorLogsPage() {
                       variant='outline'
                       size='sm'
                       disabled={page <= 1}
-                      onClick={() => void navigate({ search: { page: page - 1 } })}
+                      onClick={() =>
+                        void navigate({ search: { page: page - 1 } })
+                      }
                     >
                       {t('Previous')}
                     </Button>
@@ -388,7 +424,9 @@ export function ErrorLogsPage() {
                       variant='outline'
                       size='sm'
                       disabled={page >= pageCount}
-                      onClick={() => void navigate({ search: { page: page + 1 } })}
+                      onClick={() =>
+                        void navigate({ search: { page: page + 1 } })
+                      }
                     >
                       {t('Next')}
                     </Button>
