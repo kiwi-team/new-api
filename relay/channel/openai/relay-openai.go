@@ -132,7 +132,7 @@ func remapResponseModelName(info *relaycommon.RelayInfo, model string) string {
 	if strings.Contains(model, "glm-4.7") {
 		return "glm-4.7"
 	}
-	if strings.Contains(model, "glm-5") {
+	if strings.Contains(model, "glm-5") && !strings.Contains(model, "glm-5.") {
 		return "glm-5"
 	}
 	return model
