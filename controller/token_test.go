@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -577,4 +579,29 @@ func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 	if strings.Contains(unauthorizedRecorder.Body.String(), token.Key) {
 		t.Fatalf("unauthorized key response leaked raw token key: %s", unauthorizedRecorder.Body.String())
 	}
+}
+
+func TestGetTokenKeyAllowsOnlyRootToReadAnotherUsersKey(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "root-visible-token", "rootvisible123456")
+
+	rootCtx, rootRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/"+strconv.Itoa(token.Id)+"/key", nil, 2)
+	rootCtx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	rootCtx.Set("role", common.RoleRootUser)
+	GetTokenKey(rootCtx)
+
+	rootResponse := decodeAPIResponse(t, rootRecorder)
+	require.True(t, rootResponse.Success, rootResponse.Message)
+	var keyData tokenKeyResponse
+	require.NoError(t, common.Unmarshal(rootResponse.Data, &keyData))
+	assert.Equal(t, token.GetFullKey(), keyData.Key)
+
+	adminCtx, adminRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/"+strconv.Itoa(token.Id)+"/key", nil, 2)
+	adminCtx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	adminCtx.Set("role", common.RoleAdminUser)
+	GetTokenKey(adminCtx)
+
+	adminResponse := decodeAPIResponse(t, adminRecorder)
+	assert.False(t, adminResponse.Success)
+	assert.NotContains(t, adminRecorder.Body.String(), token.Key)
 }

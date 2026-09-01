@@ -258,7 +258,11 @@ func GetTokenKey(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	token, err := model.GetTokenByIds(id, userId)
+	queryUserId := userId
+	if c.GetInt("role") == common.RoleRootUser {
+		queryUserId = 0
+	}
+	token, err := model.GetTokenByIds(id, queryUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

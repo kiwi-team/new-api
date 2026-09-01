@@ -1,10 +1,17 @@
 package ali
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +39,122 @@ func TestConvertToAliRequestReferenceToVideoBuildsMediaInOrder(t *testing.T) {
 		{Type: "first_frame", URL: "https://x/f.jpg", ReferenceVoice: "https://x/voice.mp3"},
 	}, aliReq.Input.Media)
 	assert.Empty(t, aliReq.Input.ImgURL)
+}
+
+func TestConvertToAliRequestWan3AllInOneMedia(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	req := relaycommon.TaskSubmitReq{
+		Model:  "wan3.0-video",
+		Prompt: "use all references",
+		References: []relaycommon.TaskReference{
+			{Type: relaycommon.RefTypeImage, Role: relaycommon.RefRoleFirstFrame, URL: "https://x/first.jpg"},
+			{Type: relaycommon.RefTypeVideo, Role: relaycommon.RefRoleReferenceVideo, URL: "https://x/ref.mp4"},
+			{Type: relaycommon.RefTypeAudio, Role: relaycommon.RefRoleReferenceAudio, URL: "https://x/ref.mp3"},
+		},
+		Resolution: "720p",
+		Duration:   -1,
+	}
+
+	aliReq, err := adaptor.convertToAliRequest(testRelayInfo(), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, "720P", aliReq.Parameters.Resolution)
+	assert.Equal(t, -1, aliReq.Parameters.Duration)
+	assert.Equal(t, []AliVideoMedia{
+		{Type: "first_frame", URL: "https://x/first.jpg"},
+		{Type: "reference_video", URL: "https://x/ref.mp4"},
+		{Type: "reference_audio", URL: "https://x/ref.mp3"},
+	}, aliReq.Input.Media)
+}
+
+func TestConvertToAliRequestWan3TextToVideoDoesNotRequireMedia(t *testing.T) {
+	aliReq, err := (&TaskAdaptor{}).convertToAliRequest(testRelayInfo(), relaycommon.TaskSubmitReq{
+		Model:  "wan3.0-video-prime",
+		Prompt: "generate a video",
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, aliReq.Input.Media)
+	assert.Equal(t, "1080P", aliReq.Parameters.Resolution)
+	assert.Equal(t, 5, aliReq.Parameters.Duration)
+}
+
+func TestProcessAliOtherRatiosWan3Pricing(t *testing.T) {
+	for _, modelName := range []string{"wan3.0-video", "wan3.0-video-prime"} {
+		for resolution, want := range map[string]float64{"480P": 1, "720P": 2, "1080P": 4} {
+			t.Run(modelName+"/"+resolution, func(t *testing.T) {
+				ratios, err := ProcessAliOtherRatios(&AliVideoRequest{
+					Model: modelName, Parameters: &AliVideoParameters{Resolution: resolution},
+				})
+				require.NoError(t, err)
+				assert.Equal(t, want, ratios["resolution-"+resolution])
+			})
+		}
+	}
+}
+
+func TestWan3CompletionBillingUsesReportedResolutionAndDuration(t *testing.T) {
+	task := &model.Task{
+		Properties: model.Properties{UpstreamModelName: "wan3.0-video"},
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			ModelPrice: 0.3,
+			GroupRatio: 1.5,
+			OtherRatios: map[string]float64{
+				"seconds":          30,
+				"resolution-1080P": 4,
+			},
+		}},
+	}
+	result := &relaycommon.TaskInfo{ActualSeconds: 8, ActualResolution: "720P"}
+
+	quota := (&TaskAdaptor{}).AdjustBillingOnComplete(task, result)
+
+	want := common.QuotaFromFloat(0.3 * common.QuotaPerUnit * 1.5 * 8 * 2)
+	assert.Equal(t, want, quota)
+	assert.Equal(t, map[string]float64{"seconds": 8, "resolution-720P": 2},
+		task.PrivateData.BillingContext.OtherRatios)
+}
+
+func TestParseTaskResultWan3Usage(t *testing.T) {
+	body := []byte(`{"output":{"task_status":"SUCCEEDED","video_url":"https://x/out.mp4"},"usage":{"duration":12,"SR":1080}}`)
+
+	result, err := (&TaskAdaptor{}).ParseTaskResult(body)
+
+	require.NoError(t, err)
+	assert.Equal(t, float64(12), result.ActualSeconds)
+	assert.Equal(t, "1080P", result.ActualResolution)
+}
+
+func TestValidateWan3RejectsBillingMultiplierOutsideModelBounds(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "duration", body: `{"model":"wan3.0-video","prompt":"x","duration":31}`, code: "invalid_duration"},
+		{name: "metadata duration", body: `{"model":"wan3.0-video","prompt":"x","metadata":{"parameters":{"duration":31}}}`, code: "invalid_duration"},
+		{name: "resolution", body: `{"model":"wan3.0-video-prime","prompt":"x","resolution":"4k"}`, code: "invalid_resolution"},
+	}
+
+	gin.SetMode(gin.TestMode)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = request
+			info := &relaycommon.RelayInfo{
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+				ChannelMeta:   &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeAli},
+			}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info)
+
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
 }
 
 // HappyHorse 的 r2v 接口没有 prompt_extend 参数，传了会被上游判 InvalidParameter。

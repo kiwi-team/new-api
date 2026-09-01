@@ -260,6 +260,17 @@ func TestValidateReferenceCapability(t *testing.T) {
 			wantErr: true, wantCode: "too_many_references",
 		},
 		{
+			name: "wan3 allows all multimodal reference roles", channelType: constant.ChannelTypeAli, model: "wan3.0-video",
+			refs: []TaskReference{img(RefRoleFirstFrame), img(RefRoleLastFrame), img(RefRoleReferenceImage),
+				vid(RefRoleReferenceVideo), aud},
+		},
+		{
+			name: "wan3 rejects more than 5 reference videos", channelType: constant.ChannelTypeAli, model: "wan3.0-video-prime",
+			refs: []TaskReference{vid(RefRoleReferenceVideo), vid(RefRoleReferenceVideo), vid(RefRoleReferenceVideo),
+				vid(RefRoleReferenceVideo), vid(RefRoleReferenceVideo), vid(RefRoleReferenceVideo)},
+			wantErr: true, wantCode: "too_many_references",
+		},
+		{
 			name: "happyhorse r2v rejects first_frame", channelType: constant.ChannelTypeAli, model: "happyhorse-1.1-r2v",
 			refs: []TaskReference{img(RefRoleFirstFrame)}, wantErr: true, wantCode: "unsupported_reference_role",
 		},

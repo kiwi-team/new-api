@@ -32,6 +32,7 @@ type referenceCapability struct {
 	maxRefVideo   int
 	maxRefAudio   int
 	maxElement    int
+	maxTotal      int
 
 	// maxImagePlusVideo 为“参考图 + 参考视频”的合计上限，0 表示不限制。
 	maxImagePlusVideo int
@@ -65,6 +66,18 @@ func getReferenceCapability(channelType int, model string) *referenceCapability 
 	switch channelType {
 	case constant.ChannelTypeAli:
 		switch {
+		case IsWan3VideoModel(m):
+			return &referenceCapability{
+				name: "wan3.0 video",
+				roles: capRoles(RefRoleFirstFrame, RefRoleLastFrame, RefRoleReferenceImage,
+					RefRoleReferenceVideo, RefRoleReferenceAudio),
+				maxFirstFrame: 1,
+				maxLastFrame:  1,
+				maxRefImage:   10,
+				maxRefVideo:   5,
+				maxRefAudio:   5,
+				maxTotal:      20,
+			}
 		case strings.HasPrefix(m, "happyhorse") && strings.Contains(m, "r2v"):
 			// HappyHorse 参考生视频：只支持 reference_image，1~9 张。
 			return &referenceCapability{
@@ -215,6 +228,13 @@ func isSeedance2Model(model string) bool {
 // IsSeedance2Model 导出版本，供 doubao adaptor 复用。
 func IsSeedance2Model(model string) bool {
 	return isSeedance2Model(model)
+}
+
+// IsWan3VideoModel reports whether model is a Wan 3.0 All-in-One video model.
+func IsWan3VideoModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return m == "wan3.0-video" || m == "wan3.0-video-prime" ||
+		strings.HasPrefix(m, "wan3.0-video-")
 }
 
 // normalizeReferences 归一化素材：
@@ -397,6 +417,11 @@ func ValidateReferenceCapability(channelType int, model string, req *TaskSubmitR
 				fmt.Errorf("model %s supports at most %d %s reference(s), got %d", model, c.limit, c.role, n),
 				"too_many_references", http.StatusBadRequest, true)
 		}
+	}
+	if cap.maxTotal > 0 && len(req.References) > cap.maxTotal {
+		return createTaskError(
+			fmt.Errorf("model %s supports at most %d references, got %d", model, cap.maxTotal, len(req.References)),
+			"too_many_references", http.StatusBadRequest, true)
 	}
 
 	// 3. 参考图 + 参考视频 合计上限（wan2.7-r2v ≤ 5）

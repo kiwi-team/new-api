@@ -1101,6 +1101,10 @@ type TaskInfo struct {
 	// ActualSeconds 是上游返回的实际生成时长（秒）。仅当提交时时长未知
 	// （如 Seedance 2.0 传 duration=-1 由模型自选）才需要，用于按实际时长重算计费。
 	ActualSeconds float64 `json:"actual_seconds,omitempty"`
+	// ActualResolution is the output resolution reported by the provider (for example, 720P).
+	ActualResolution string `json:"actual_resolution,omitempty"`
+	// QuotaClamp carries a completion-time saturation marker into the task log.
+	QuotaClamp *common.QuotaClamp `json:"-"`
 
 	// World Labs specific fields
 	ColliderMeshUrl string `json:"collider_mesh_url,omitempty"`

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// duration=-1 是「由模型自选时长」的约定值，只对 Seedance 2.0 系列放行；
+// duration=-1 是「由模型自选时长」的约定值，只对支持它的模型系列放行；
 // 其余负值与超上限值必须仍被 400 拦截，避免负数/超大时长进入计费倍率。
 func TestValidateTaskDurationBounds(t *testing.T) {
 	cases := []struct {
@@ -21,6 +21,7 @@ func TestValidateTaskDurationBounds(t *testing.T) {
 		{name: "unset duration", req: TaskSubmitReq{Model: "doubao-seedance-1-0-pro"}},
 		{name: "seconds string", req: TaskSubmitReq{Model: "doubao-seedance-1-0-pro", Seconds: "10"}},
 		{name: "seedance2 model-chosen duration", req: TaskSubmitReq{Model: "doubao-seedance-2-0-pro", Duration: -1}},
+		{name: "wan3 model-chosen duration", req: TaskSubmitReq{Model: "wan3.0-video", Duration: -1}},
 		{
 			name:     "model-chosen duration rejected for other models",
 			req:      TaskSubmitReq{Model: "doubao-seedance-1-0-pro", Duration: -1},

@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
@@ -137,7 +138,32 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
 	// ValidateMultipartDirect 负责解析并将原始 TaskSubmitReq 存入 context
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if relaycommon.IsWan3VideoModel(req.Model) {
+		aliReq, err := a.convertToAliRequest(info, req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		resolution := strings.ToUpper(strings.TrimSpace(aliReq.Parameters.Resolution))
+		if !lo.Contains([]string{"480P", "720P", "1080P"}, resolution) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("model %s does not support resolution %q", req.Model, aliReq.Parameters.Resolution),
+				"invalid_resolution", http.StatusBadRequest)
+		}
+		duration := aliReq.Parameters.Duration
+		if duration != -1 && (duration < 2 || duration > 30) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("model %s duration must be -1 or between 2 and 30 seconds", req.Model),
+				"invalid_duration", http.StatusBadRequest)
+		}
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -204,9 +230,9 @@ func sizeToResolution(size string) (string, error) {
 	return "", fmt.Errorf("invalid size: %s", size)
 }
 
-// isResolutionRatioModel: 是否使用 resolution+ratio+media 协议（wan2.7 / happyhorse 系列）
+// isResolutionRatioModel: 是否使用 resolution+ratio+media 协议。
 func isResolutionRatioModel(model string) bool {
-	return strings.HasPrefix(model, "wan2.7") || strings.HasPrefix(model, "happyhorse")
+	return relaycommon.IsWan3VideoModel(model) || strings.HasPrefix(model, "wan2.7") || strings.HasPrefix(model, "happyhorse")
 }
 
 // isReferenceToVideoModel: 是否为参考生视频（r2v）模型。
@@ -232,6 +258,8 @@ func aliMediaTypeForRole(role string) (string, bool) {
 		return "reference_image", true
 	case relaycommon.RefRoleReferenceVideo:
 		return "reference_video", true
+	case relaycommon.RefRoleReferenceAudio:
+		return "reference_audio", true
 	default:
 		return "", false
 	}
@@ -269,6 +297,16 @@ func lookupAliRatios(table map[string]map[string]float64, model string) (map[str
 func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) {
 	otherRatios := make(map[string]float64)
 	aliRatios := map[string]map[string]float64{
+		"wan3.0-video": {
+			"480P":  1,
+			"720P":  2,
+			"1080P": 4,
+		},
+		"wan3.0-video-prime": {
+			"480P":  1,
+			"720P":  2,
+			"1080P": 4,
+		},
 		"wan2.7-r2v": {
 			"720P":  1,
 			"1080P": 1 / 0.6,
@@ -362,7 +400,7 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 // 这些模型不再接受 img_url / first_frame_url / last_frame_url 等旧字段；
 // r2v 端点更是完全不认 img_url，只认 media 数组。t2v 无素材，不走该协议。
 func isMediaProtocolI2VModel(model string) bool {
-	return isResolutionRatioModel(model) &&
+	return relaycommon.IsWan3VideoModel(model) || isResolutionRatioModel(model) &&
 		(strings.Contains(model, "i2v") || isReferenceToVideoModel(model))
 }
 
@@ -456,7 +494,7 @@ func normalizeMediaProtocolInput(aliReq *AliVideoRequest, req relaycommon.TaskSu
 		}
 	}
 
-	if len(aliReq.Input.Media) == 0 {
+	if len(aliReq.Input.Media) == 0 && !relaycommon.IsWan3VideoModel(aliReq.Model) {
 		return fmt.Errorf("%s requires image, images, input_reference, or input.media", aliReq.Model)
 	}
 
@@ -557,8 +595,8 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		}
 	}
 
-	// 处理时长
-	if req.Duration > 0 {
+	// 处理时长。Wan 3.0 的 -1 表示由模型决定时长，需原样透传。
+	if req.Duration > 0 || (req.Duration == -1 && relaycommon.IsWan3VideoModel(req.Model)) {
 		aliReq.Parameters.Duration = req.Duration
 	} else if req.Seconds != "" {
 		seconds, err := strconv.Atoi(req.Seconds)
@@ -568,7 +606,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 			aliReq.Parameters.Duration = seconds
 		}
 	}
-	if aliReq.Parameters.Duration <= 0 {
+	if aliReq.Parameters.Duration == 0 {
 		aliReq.Parameters.Duration = 5 // 默认5秒
 	}
 
@@ -682,8 +720,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 
 	// metadata can override Duration past standard request validation;
 	// cap it because it is used as a billing multiplier.
+	duration := aliReq.Parameters.Duration
+	if duration == -1 && relaycommon.IsWan3VideoModel(aliReq.Model) {
+		duration = 30 // 智能时长按最大可能时长预扣，完成后按 usage.duration 退补。
+	}
 	otherRatios := map[string]float64{
-		"seconds": float64(min(aliReq.Parameters.Duration, relaycommon.MaxTaskDurationSeconds)),
+		"seconds": float64(min(duration, relaycommon.MaxTaskDurationSeconds)),
 	}
 	ratios, err := ProcessAliOtherRatios(aliReq)
 	if err != nil {
@@ -798,6 +840,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusSuccess
 		// 阿里直接返回视频URL，不需要额外的代理端点
 		taskResult.Url = aliResp.Output.VideoURL
+		if aliResp.Usage != nil && aliResp.Usage.Duration > 0 {
+			taskResult.ActualSeconds = float64(aliResp.Usage.Duration)
+		}
+		if aliResp.Usage != nil && aliResp.Usage.SR > 0 {
+			taskResult.ActualResolution = fmt.Sprintf("%dP", aliResp.Usage.SR)
+		}
 	case "FAILED", "CANCELED", "UNKNOWN":
 		taskResult.Status = model.TaskStatusFailure
 		if aliResp.Message != "" {
@@ -812,6 +860,40 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	return &taskResult, nil
+}
+
+// AdjustBillingOnComplete uses Wan 3.0's reported output duration to settle
+// intelligent-duration requests and to keep the final charge tied to output seconds.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || taskResult.ActualSeconds <= 0 ||
+		task.PrivateData.BillingContext == nil || !relaycommon.IsWan3VideoModel(task.Properties.UpstreamModelName) {
+		return 0
+	}
+
+	actualSeconds := min(taskResult.ActualSeconds, 30)
+	bc := task.PrivateData.BillingContext
+	priceData := &hosttypes.PriceData{}
+	ratios := make(map[string]float64, len(bc.OtherRatios))
+	for key, ratio := range bc.OtherRatios {
+		ratios[key] = ratio
+	}
+	ratios["seconds"] = actualSeconds
+	if resolutionRatio, ok := map[string]float64{"480P": 1, "720P": 2, "1080P": 4}[taskResult.ActualResolution]; ok {
+		for key := range ratios {
+			if strings.HasPrefix(key, "resolution-") {
+				delete(ratios, key)
+			}
+		}
+		ratios["resolution-"+taskResult.ActualResolution] = resolutionRatio
+	}
+	if !priceData.ReplaceOtherRatios(ratios) {
+		return 0
+	}
+	bc.OtherRatios = ratios
+	quota, clamp := common.QuotaFromFloatChecked(
+		priceData.ApplyOtherRatiosToFloat(bc.ModelPrice * common.QuotaPerUnit * bc.GroupRatio))
+	taskResult.QuotaClamp = clamp
+	return quota
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {

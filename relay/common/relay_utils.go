@@ -151,10 +151,10 @@ func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
 	if seconds == 0 && req.Seconds != "" {
 		seconds, _ = strconv.Atoi(req.Seconds)
 	}
-	// duration=-1 是「由模型自选时长」的约定值，只有 Seedance 2.0 系列支持。
+	// duration=-1 是「由模型自选时长」的约定值，Seedance 2.0 与 Wan 3.0 系列支持。
 	// 它不会直接进入计费：adaptor 会按该系列的时长上限预扣，任务完成后再按
 	// 上游返回的实际时长等比重算，因此这里放行，但仍然只放行 -1 这一个负值。
-	if seconds == -1 && IsSeedance2Model(req.Model) {
+	if seconds == -1 && (IsSeedance2Model(req.Model) || IsWan3VideoModel(req.Model)) {
 		return nil
 	}
 	if seconds < 0 || seconds > MaxTaskDurationSeconds {

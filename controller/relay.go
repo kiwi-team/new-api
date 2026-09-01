@@ -889,7 +889,10 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios(),
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			// Wan 3.0 的固定价是 480P 每秒基价，任务完成后还要用
+			// 上游 usage.duration 做差额结算，不能当成普通“按次固定价”跳过。
+			PerCallBilling: common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
+				(relayInfo.PriceData.UsePrice && !relaycommon.IsWan3VideoModel(relayInfo.UpstreamModelName)),
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
