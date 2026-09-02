@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { GitBranch, Sparkles, KeyRound } from 'lucide-react'
+import { Sparkles, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,11 +26,6 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import {
   Tooltip,
   TooltipContent,
@@ -39,8 +35,11 @@ import {
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { getLogChannelOptions } from '../../api'
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
@@ -63,6 +62,7 @@ import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
+import { RetryChainDisplay } from '../retry-chain-display'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
 
@@ -300,6 +300,22 @@ function buildTypeDetailSegments(
 
 export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
+  const isRoot = useAuthStore(
+    (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
+  )
+  const { data: channelNameById } = useQuery({
+    queryKey: ['usage-logs', 'filter-options', 'channels'],
+    queryFn: getLogChannelOptions,
+    enabled: isRoot,
+    staleTime: 5 * 60 * 1000,
+    select: (options) => {
+      const names = new Map<string, string>()
+      for (const option of options) {
+        if (option.name) names.set(option.value, option.name)
+      }
+      return names
+    },
+  })
   const columns: ColumnDef<UsageLog>[] = [
     {
       accessorKey: 'id',
@@ -361,13 +377,21 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           const useChannel = Array.isArray(rawUseChannel)
             ? rawUseChannel.map(String).filter(Boolean)
             : []
-          const hasRetryChain = useChannel.length > 1
+          const hasRetryChain = isRoot && useChannel.length > 1
           const channelChain = hasRetryChain
             ? formatRetryChain(
                 other?.admin_info?.use_channel,
                 other?.admin_info?.use_channel_time
               )
             : undefined
+          const namedChannelChain =
+            hasRetryChain && sensitiveVisible
+              ? formatRetryChain(
+                  other?.admin_info?.use_channel,
+                  other?.admin_info?.use_channel_time,
+                  channelNameById
+                )
+              : channelChain
           const channelDisplay = log.channel_name
             ? `${log.channel_name} #${log.channel}`
             : `#${log.channel}`
@@ -384,7 +408,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <div className='flex max-w-[160px] flex-col gap-0.5' />
+                    <div className='flex max-w-[280px] flex-col gap-0.5' />
                   }
                 >
                   <div className='relative inline-flex w-fit items-center gap-1'>
@@ -407,37 +431,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                         aria-label={`${t('Key')} ${multiKeyIndex}`}
                       />
                     )}
-                    {hasRetryChain && (
-                      <Popover>
-                        <PopoverTrigger
-                          render={
-                            <button
-                              type='button'
-                              className='text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-5 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:outline-none'
-                              aria-label={t('Retry Chain')}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          }
-                        >
-                          <GitBranch
-                            className='size-3.5 text-amber-500'
-                            aria-hidden='true'
-                          />
-                        </PopoverTrigger>
-                        <PopoverContent
-                          side='top'
-                          align='start'
-                          className='w-64 text-xs'
-                        >
-                          <div className='flex flex-col gap-1'>
-                            <p className='font-medium'>{t('Retry Chain')}</p>
-                            <p className='text-muted-foreground font-mono break-all'>
-                              {channelChain}
-                            </p>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    )}
+                    {channelChain && <RetryChainDisplay chain={channelChain} />}
                     {affinity && (
                       <button
                         type='button'
@@ -471,9 +465,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     <p>
                       {sensitiveVisible ? channelDisplay : channelIdDisplay}
                     </p>
-                    {channelChain && (
+                    {namedChannelChain && (
                       <p className='text-muted-foreground text-xs'>
-                        {t('Chain')}: {channelChain}
+                        {t('Chain')}: {namedChannelChain}
                       </p>
                     )}
                     {showMultiKeyIndex && (
@@ -503,6 +497,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             </TooltipProvider>
           )
         },
+        size: 280,
       },
       {
         id: 'user',

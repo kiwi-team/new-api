@@ -76,7 +76,6 @@ import {
   getTieredBillingSummary,
   hasAnyCacheTokens,
   isViolationFeeLog,
-  formatRetryChain,
   getFirstResponseTimeColor,
   getResponseTimeColor,
   getReasoningEffortVariant,
@@ -721,7 +720,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {channelChain && props.isAdmin && (
+          {channelChain && isRoot && (
             <DetailRow label={t('Retry Chain')} value={channelChain} mono />
           )}
 

@@ -23,10 +23,7 @@ import { formatRetryChain } from '../format'
 
 describe('formatRetryChain', () => {
   test('annotates each attempt with its elapsed time', () => {
-    assert.equal(
-      formatRetryChain([3, 16], [1200, 340]),
-      '3(1.20s) → 16(340ms)'
-    )
+    assert.equal(formatRetryChain([3, 16], [1200, 340]), '3(1.20s) → 16(340ms)')
   })
 
   test('switches to seconds at one second', () => {
@@ -45,6 +42,15 @@ describe('formatRetryChain', () => {
     assert.equal(formatRetryChain([3, 16, 7], [1200]), '3(1.20s) → 16 → 7')
     assert.equal(formatRetryChain([3, 16], [1200, 0]), '3(1.20s) → 16')
     assert.equal(formatRetryChain([3, 16], [1200, -5]), '3(1.20s) → 16')
+  })
+
+  test('shows current channel names and falls back to ids for deleted channels', () => {
+    const channelNames = new Map([['3', 'primary-deepseek']])
+
+    assert.equal(
+      formatRetryChain([3, 16], [343], channelNames),
+      'primary-deepseek #3(343ms) → 16'
+    )
   })
 
   test('returns undefined when there is no chain to show', () => {

@@ -34,6 +34,10 @@ export type LogFilterOption = {
   label: string
 }
 
+export type LogChannelOption = LogFilterOption & {
+  name?: string
+}
+
 type FilterOptionApiResponse<T> = {
   success: boolean
   data?: T
@@ -146,7 +150,7 @@ export async function getLogTokenIdOptions(): Promise<LogFilterOption[]> {
   })
 }
 
-export async function getLogChannelOptions(): Promise<LogFilterOption[]> {
+export async function getLogChannelOptions(): Promise<LogChannelOption[]> {
   const res = await api.get<FilterOptionApiResponse<ChannelOptionSource[]>>(
     '/api/channel/channel-name-list'
   )
@@ -156,7 +160,13 @@ export async function getLogChannelOptions(): Promise<LogFilterOption[]> {
     if (channel.id == null) return []
     const value = String(channel.id)
     const name = channel.name?.trim()
-    return [{ value, label: name ? `${name} (ID: ${value})` : `#${value}` }]
+    return [
+      {
+        value,
+        label: name ? `${name} (ID: ${value})` : `#${value}`,
+        ...(name ? { name } : {}),
+      },
+    ]
   })
 }
 

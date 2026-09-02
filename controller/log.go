@@ -70,14 +70,9 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// 渠道信息仅 root 可见;其他用户(包括 admin / 组织 admin)无论列表/导出都清掉渠道 ID 与名称,
-	// 避免普通 admin 透过响应体或 CSV 看到上游渠道归属。
-	if c.GetInt("role") < common.RoleRootUser {
-		for i := range logs {
-			logs[i].ChannelId = 0
-			logs[i].ChannelName = ""
-		}
-	}
+	// 渠道与重试链信息仅 root 可见；列表和导出响应都执行同一套清理，
+	// 避免普通 admin 直接从响应体或 CSV 的 Other 字段读取渠道链路。
+	sanitizeLogChannelInfoForRole(logs, c.GetInt("role"))
 	if export {
 		csvData := "ID\tUserID\tCreatedAt\tType\tContent\tUsername\tTokenName\tModelName\tQuota\tPromptTokens\tCompletionTokens\tUseTime\tIsStream\tChannelId\tChannelName\tTokenId\tGroup\tIP\tOther\tRequest\tResponse\n"
 		lc, _ := time.LoadLocation("Asia/Shanghai")
@@ -221,6 +216,38 @@ func GetLogResponse(c *gin.Context) {
 // 不再挂 gin-contrib/sessions 中间件，读 session 会 panic。
 func isAdmin(c *gin.Context) bool {
 	return c.GetInt("role") >= common.RoleAdminUser
+}
+
+// sanitizeLogChannelInfoForRole removes root-only channel routing details from
+// responses returned to every lower role while preserving unrelated admin_info
+// diagnostics that those roles are otherwise allowed to inspect.
+func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
+	if role >= common.RoleRootUser {
+		return
+	}
+
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		log.ChannelId = 0
+		log.ChannelName = ""
+
+		other, _ := common.StrToMap(log.Other)
+		if other == nil {
+			continue
+		}
+		adminInfo, ok := other["admin_info"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		delete(adminInfo, "use_channel")
+		delete(adminInfo, "use_channel_time")
+		if len(adminInfo) == 0 {
+			delete(other, "admin_info")
+		}
+		log.Other = common.MapToJsonStr(other)
+	}
 }
 
 func limitUserLogStartTimestamp(role int, startTimestamp, now int64) int64 {

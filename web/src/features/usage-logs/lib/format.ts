@@ -499,16 +499,21 @@ export function renderAuditContent(
  */
 export function formatRetryChain(
   useChannel: number[] | undefined,
-  useChannelTime: number[] | undefined
+  useChannelTime: number[] | undefined,
+  channelNames?: ReadonlyMap<string, string>
 ): string | undefined {
   if (!useChannel || useChannel.length === 0) return undefined
 
   return useChannel
     .map((channelId, index) => {
+      const channelName = channelNames?.get(String(channelId))?.trim()
+      const channelDisplay = channelName
+        ? `${channelName} #${channelId}`
+        : String(channelId)
       const ms = Number(useChannelTime?.[index])
-      if (!Number.isFinite(ms) || ms <= 0) return String(channelId)
+      if (!Number.isFinite(ms) || ms <= 0) return channelDisplay
       const elapsed = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
-      return `${channelId}(${elapsed})`
+      return `${channelDisplay}(${elapsed})`
     })
     .join(' → ')
 }
