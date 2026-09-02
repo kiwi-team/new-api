@@ -117,22 +117,23 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 }
 
 // remapResponseModelName 计算返回给用户的模型名称。
-// 优先使用渠道配置的「输出模型重命名」(ModelOutputMapping，按完整模型名精确匹配)，
+// 优先使用渠道配置的「输出模型重命名」(ModelOutputMapping，上游模型名转为小写后精确匹配)，
 // 未命中时回退到内置的 glm 重命名逻辑以保持向后兼容。
 func remapResponseModelName(info *relaycommon.RelayInfo, model string) string {
+	normalizedModel := strings.ToLower(model)
 	if mapping := info.ChannelSetting.ModelOutputMapping; mapping != "" && mapping != "{}" {
 		modelMap := make(map[string]string)
 		if err := common.UnmarshalJsonStr(mapping, &modelMap); err != nil {
 			common.SysError("error unmarshalling model_output_mapping: " + err.Error())
-		} else if mapped, ok := modelMap[model]; ok && mapped != "" {
+		} else if mapped, ok := modelMap[normalizedModel]; ok && mapped != "" {
 			return mapped
 		}
 	}
 	// 内置兼容逻辑
-	if strings.Contains(model, "glm-4.7") {
+	if strings.Contains(normalizedModel, "glm-4.7") {
 		return "glm-4.7"
 	}
-	if strings.Contains(model, "glm-5") && !strings.Contains(model, "glm-5.") {
+	if strings.Contains(normalizedModel, "glm-5") && !strings.Contains(normalizedModel, "glm-5.") {
 		return "glm-5"
 	}
 	return model
@@ -140,7 +141,8 @@ func remapResponseModelName(info *relaycommon.RelayInfo, model string) string {
 
 func setResponseModel(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string) string {
 	hasOutputMapping := info.ChannelSetting.ModelOutputMapping != "" && info.ChannelSetting.ModelOutputMapping != "{}"
-	isBuiltinRemap := strings.Contains(info.UpstreamModelName, "glm-4.7") || strings.Contains(info.UpstreamModelName, "glm-5")
+	normalizedUpstreamModel := strings.ToLower(info.UpstreamModelName)
+	isBuiltinRemap := strings.Contains(normalizedUpstreamModel, "glm-4.7") || strings.Contains(normalizedUpstreamModel, "glm-5")
 	// 无配置且非内置场景时跳过解析，避免逐个流式分片的额外开销
 	if !hasOutputMapping && !isBuiltinRemap {
 		return lastStreamData
