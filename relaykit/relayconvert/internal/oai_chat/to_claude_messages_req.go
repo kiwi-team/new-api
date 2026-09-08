@@ -168,7 +168,29 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if textRequest.ReasoningEffort != "" {
+	adaptiveThinking := false
+	if textRequest.THINKING != nil {
+		var thinkingConfig dto.Thinking
+		if err := kitutil.Unmarshal(textRequest.THINKING, &thinkingConfig); err != nil {
+			return nil, fmt.Errorf("invalid thinking configuration: %w", err)
+		}
+		if thinkingConfig.Type == "adaptive" {
+			adaptiveThinking = true
+			claudeRequest.Thinking = &dto.Thinking{
+				Type:    "adaptive",
+				Display: thinkingConfig.Display,
+			}
+			if textRequest.ReasoningEffort != "" {
+				outputConfig, err := kitutil.Marshal(dto.OutputConfigForEffort{Effort: textRequest.ReasoningEffort})
+				if err != nil {
+					return nil, fmt.Errorf("marshal Claude output config: %w", err)
+				}
+				claudeRequest.OutputConfig = outputConfig
+			}
+		}
+	}
+
+	if textRequest.ReasoningEffort != "" && !adaptiveThinking {
 		switch textRequest.ReasoningEffort {
 		case "low":
 			claudeRequest.Thinking = &dto.Thinking{
@@ -188,7 +210,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if textRequest.Reasoning != nil {
+	if textRequest.Reasoning != nil && !adaptiveThinking {
 		var reasoningConfig openRouterRequestReasoning
 		if err := kitutil.Unmarshal(textRequest.Reasoning, &reasoningConfig); err != nil {
 			return nil, err
