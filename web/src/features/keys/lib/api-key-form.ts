@@ -47,6 +47,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       alert_threshold: z.number().min(0).optional(),
       channel_ratios: z.string().optional(),
       channel_rules: z.string().optional(),
+      channel_rules_high_priority: z.boolean(),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -120,6 +121,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   alert_threshold: 0,
   channel_ratios: '',
   channel_rules: '',
+  channel_rules_high_priority: false,
   tokenCount: 1,
 }
 
@@ -168,6 +170,7 @@ export function transformFormDataToPayload(
     // may change them, but every update must echo them back or they are reset.
     channel_ratios: data.channel_ratios ?? '',
     channel_rules: data.channel_rules ?? '',
+    channel_rules_high_priority: data.channel_rules_high_priority,
   }
 }
 
@@ -207,6 +210,7 @@ export function transformApiKeyToFormDefaults(
     alert_threshold: apiKey.alert_threshold ?? 0,
     channel_ratios: apiKey.channel_ratios ?? '',
     channel_rules: apiKey.channel_rules ?? '',
+    channel_rules_high_priority: !!apiKey.channel_rules_high_priority,
     tokenCount: 1,
   }
 }

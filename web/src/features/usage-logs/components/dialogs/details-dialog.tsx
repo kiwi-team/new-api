@@ -702,6 +702,15 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
+          {props.log.race_result && (
+            <DetailRow
+              label={t('Race result')}
+              value={
+                props.log.race_result === 'winner' ? t('Winner') : t('Loser')
+              }
+            />
+          )}
+
           {props.isAdmin && props.log.channel > 0 && (
             <DetailRow
               label={t('Channel')}

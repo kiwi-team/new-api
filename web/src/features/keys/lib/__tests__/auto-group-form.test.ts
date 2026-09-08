@@ -54,6 +54,7 @@ const baseApiKey: ApiKey = {
   alert_threshold: 0,
   channel_ratios: '',
   channel_rules: '',
+  channel_rules_high_priority: false,
 }
 
 describe('API key Auto group form mapping', () => {
@@ -71,6 +72,24 @@ describe('API key Auto group form mapping', () => {
     expect(defaults.auto_groups_mode).toBe('inherit')
     expect(defaults.auto_groups).toEqual([])
     expect(transformFormDataToPayload(defaults).auto_groups).toEqual([])
+  })
+
+  test('keeps the legacy channel-rule priority unless explicitly enabled', () => {
+    const legacyApiKey: Record<string, unknown> = { ...baseApiKey }
+    delete legacyApiKey.channel_rules_high_priority
+
+    expect(apiKeySchema.parse(legacyApiKey).channel_rules_high_priority).toBe(
+      false
+    )
+
+    const enabled = transformApiKeyToFormDefaults({
+      ...baseApiKey,
+      channel_rules_high_priority: true,
+    })
+    expect(enabled.channel_rules_high_priority).toBe(true)
+    expect(
+      transformFormDataToPayload(enabled).channel_rules_high_priority
+    ).toBe(true)
   })
 
   test('maps omitted, null, and empty snapshots to inheritance on edit', () => {

@@ -30,8 +30,8 @@ For commercial licensing, please contact support@quantumnous.com
  * concatenates tiers in order, so tier order is the fallback priority.
  * `model_name` is matched exactly first, then as a regular expression.
  *
- * These rules OVERRIDE a key's own `channel_rules` when they match — see
- * `getSpecialChannels` in `middleware/distributor.go`.
+ * These rules override a key's own `channel_rules` by default. A key can opt
+ * into higher-priority channel rules; see `middleware/distributor.go`.
  */
 
 /** The four option keys, in the order the distributor checks them. */

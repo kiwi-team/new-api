@@ -5,7 +5,20 @@ type ChannelRulesItem struct {
 	Retry           int           `json:"retry,omitempty"`
 	DisableChannels []int         `json:"disable_channels,omitempty"`
 	Channels        []ChannelItem `json:"channels,omitempty"`
-	RandomType      string        `json:"random_type,omitempty"` // random,order
+	RandomType      string        `json:"random_type,omitempty"` // random,order,race
+	RaceTimeout     int           `json:"race_timeout,omitempty"`
+}
+
+const (
+	ChannelRuleModeRace       = "race"
+	DefaultRaceTimeoutSeconds = 25
+	MinRaceTimeoutSeconds     = 1
+	MaxRaceTimeoutSeconds     = 300
+)
+
+type ChannelRacePlan struct {
+	Groups         [][]int
+	TimeoutSeconds int
 }
 
 type ChannelItem struct {

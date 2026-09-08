@@ -44,6 +44,7 @@ export const usageLogSchema = z.object({
   ip: z.string().default(''),
   other: z.string().default(''),
   request_id: z.string().default(''),
+  race_result: z.enum(['', 'winner', 'loser']).default(''),
   upstream_request_id: z.string().default(''),
 })
 

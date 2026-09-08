@@ -71,6 +71,29 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	if !c.GetBool(common.KeyChannelRaceAttempt) {
+		if rawPlan, ok := c.Get(common.KeyChannelRacePlan); ok && rawPlan != nil {
+			if plan, valid := rawPlan.(taskdto.ChannelRacePlan); valid {
+				if isRaceSupported(c, relayFormat) {
+					relayRace(c, relayFormat, plan)
+					return
+				}
+				logger.LogWarn(c, "channel race mode is unsupported for this protocol; falling back to serial routing")
+				channelIds := make([]int, 0)
+				for _, configured := range plan.Groups {
+					group := append([]int(nil), configured...)
+					common.ShuffleSlice(group)
+					channelIds = append(channelIds, group...)
+				}
+				c.Set("token_channel_ids", channelIds)
+				c.Set("new_retry_times", len(channelIds))
+			}
+		}
+	}
+	RelayWithoutRace(c, relayFormat)
+}
+
+func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -408,6 +431,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
+	if c.GetBool(common.KeyChannelRaceChannelPrepared) && retryParam.GetRetry() == 0 && len(retryParam.ChannelIds) == 1 {
+		channel, err := model.CacheGetChannel(retryParam.ChannelIds[0])
+		if err != nil || channel == nil {
+			return nil, types.NewError(fmt.Errorf("竞速渠道 %d 不可用", retryParam.ChannelIds[0]), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		return channel, nil
+	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -514,7 +544,15 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	contentType := c.Request.Header.Get("Content-Type")
 	if common.SaveErrorLog {
-		model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, contentType, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, extra, header, sessionId, useTimeMs, includeBody)
+		if rawState, ok := c.Get(raceLogStateKey); ok {
+			state := rawState.(*raceLogState)
+			state.mu.Lock()
+			includeBody = c.GetBool(raceTerminalKey) && !state.success
+			_ = model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, contentType, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, extra, header, sessionId, useTimeMs, includeBody)
+			state.mu.Unlock()
+		} else {
+			_ = model.SaveErrorLog(c.GetInt("id"), channelError.ChannelId, channelError.ChannelName, originModelName, openaiError, body, contentType, requestId, c.ClientIP(), tokenId, clientUserId, clientScenairo, extra, header, sessionId, useTimeMs, includeBody)
+		}
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况

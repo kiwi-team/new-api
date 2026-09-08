@@ -51,6 +51,7 @@ describe('parseChannelRules', () => {
       modelKey: 'claude',
       retry: 0,
       randomType: 'order',
+      raceTimeout: 25,
       disableChannels: [],
       tiers: [],
     })
@@ -94,6 +95,7 @@ describe('serializeChannelRules', () => {
           modelKey: '   ',
           retry: 0,
           randomType: 'order',
+          raceTimeout: 25,
           disableChannels: [],
           tiers: [],
         },
@@ -109,6 +111,7 @@ describe('serializeChannelRules', () => {
         modelKey: 'gpt-4o',
         retry: 0,
         randomType: 'order',
+        raceTimeout: 25,
         disableChannels: [],
         tiers: [
           { uid: 't1', ids: [], extra: {} },
@@ -127,6 +130,7 @@ describe('serializeChannelRules', () => {
         modelKey: 'gpt-4o',
         retry: 0,
         randomType: 'order',
+        raceTimeout: 25,
         disableChannels: [],
         tiers: [
           { uid: 't1', ids: [3], extra: {} },
@@ -141,6 +145,26 @@ describe('serializeChannelRules', () => {
       { ids: [1] },
       { ids: [2] },
     ])
+  })
+})
+
+describe('race channel rules', () => {
+  test('round-trips race mode and its launch delay', () => {
+    const original =
+      '{"gpt-4o":{"retry":9,"random_type":"race","race_timeout":17,"disable_channels":[],"channels":[{"ids":[1,2]},{"ids":[3]}]}}'
+
+    const rules = parseChannelRules(original)
+    assert.equal(rules[0].randomType, 'race')
+    assert.equal(rules[0].raceTimeout, 17)
+    assert.deepEqual(JSON.parse(serializeChannelRules(rules)), JSON.parse(original))
+  })
+
+  test('uses the 25 second default for a missing race timeout', () => {
+    const rules = parseChannelRules(
+      '{"gpt-4o":{"random_type":"race","channels":[{"ids":[1]}]}}'
+    )
+
+    assert.equal(rules[0].raceTimeout, 25)
   })
 })
 

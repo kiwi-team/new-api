@@ -15,6 +15,7 @@ import (
 func newTokenAutoGroupsContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	return ctx
 }
 
@@ -45,4 +46,12 @@ func TestSetupContextForTokenMalformedAutoGroupsFailsClosed(t *testing.T) {
 	value, ok := common.GetContextKey(ctx, constant.ContextKeyTokenAutoGroups)
 	require.True(t, ok)
 	assert.Equal(t, []string{}, value)
+}
+
+func TestSetupContextForTokenPreservesChannelRulesPriority(t *testing.T) {
+	ctx := newTokenAutoGroupsContext()
+	token := &model.Token{Id: 1, UserId: 2, ChannelRulesHighPriority: true}
+
+	require.NoError(t, SetupContextForToken(ctx, token))
+	assert.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyTokenChannelRulesHighPriority))
 }

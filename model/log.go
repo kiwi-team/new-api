@@ -41,6 +41,7 @@ type Log struct {
 	Group        string `json:"group" gorm:"index"`
 	Ip           string `json:"ip" gorm:"index;default:''"`
 	RequestId    string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	RaceResult   string `json:"race_result,omitempty" gorm:"type:varchar(10);default:''"`
 	// UpstreamRequestId 记录上游返回的 request id，便于按上游工单追踪。
 	UpstreamRequestId string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string  `json:"other"`
@@ -478,6 +479,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ClientScenairo:    params.ClientScenairo,
 		SessionId:         params.SessionId,
 		RequestId:         params.RequestId,
+		RaceResult:        c.GetString(common.KeyChannelRaceResult),
 		ProjectName:       params.ProjectName,
 		PlanId:            params.PlanId,
 		Usage:             params.Usage,

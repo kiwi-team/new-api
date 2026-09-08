@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -38,6 +39,28 @@ type tokenRequest struct {
 type tokenResponse struct {
 	*model.Token
 	AutoGroups []string `json:"auto_groups"`
+}
+
+func validateTokenChannelRules(raw string) error {
+	if raw == "" || raw == "{}" {
+		return nil
+	}
+	var rules map[string]hostdto.ChannelRulesItem
+	if err := common.UnmarshalJsonStr(raw, &rules); err != nil {
+		return fmt.Errorf("渠道规则格式无效: %w", err)
+	}
+	for modelName, rule := range rules {
+		switch rule.RandomType {
+		case "", "order", "random":
+		case hostdto.ChannelRuleModeRace:
+			if rule.RaceTimeout != 0 && (rule.RaceTimeout < hostdto.MinRaceTimeoutSeconds || rule.RaceTimeout > hostdto.MaxRaceTimeoutSeconds) {
+				return fmt.Errorf("模型 %s 的竞速等待时间必须在 %d 到 %d 秒之间", modelName, hostdto.MinRaceTimeoutSeconds, hostdto.MaxRaceTimeoutSeconds)
+			}
+		default:
+			return fmt.Errorf("模型 %s 的渠道选择模式无效", modelName)
+		}
+	}
+	return nil
 }
 
 func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
@@ -168,11 +191,12 @@ func GetAllTokens(c *gin.Context) {
 }
 
 func clearTokenInfo(c *gin.Context, token *model.Token) {
-	// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段对**非 root** 不可见
+	// org.md 全系统级约束:token 上的渠道规则、优先级和倍率字段对**非 root** 不可见
 	// (原来是非 admin 不可见，现在收紧到非 root)
 	role := c.GetInt("role")
 	if role < common.RoleRootUser {
 		token.ChannelRules = ""
+		token.ChannelRulesHighPriority = false
 		token.ChannelRatios = ""
 	}
 }
@@ -414,9 +438,14 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 		AlertThreshold:     token.AlertThreshold,
 	}
-	// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段只 root 可写
+	// org.md 全系统级约束:token 上的渠道规则、优先级和倍率字段只 root 可写
 	if c.GetInt("role") >= common.RoleRootUser {
+		if err := validateTokenChannelRules(token.ChannelRules); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		cleanToken.ChannelRules = token.ChannelRules
+		cleanToken.ChannelRulesHighPriority = token.ChannelRulesHighPriority
 		cleanToken.ChannelRatios = token.ChannelRatios
 	}
 	err = cleanToken.Insert()
@@ -507,9 +536,14 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
-		// org.md 全系统级约束:token 上 channel_rules / channel_ratios 字段只 root 可写
+		// org.md 全系统级约束:token 上的渠道规则、优先级和倍率字段只 root 可写
 		if role >= common.RoleRootUser {
+			if err := validateTokenChannelRules(token.ChannelRules); err != nil {
+				common.ApiError(c, err)
+				return
+			}
 			cleanToken.ChannelRules = token.ChannelRules
+			cleanToken.ChannelRulesHighPriority = token.ChannelRulesHighPriority
 			cleanToken.ChannelRatios = token.ChannelRatios
 		}
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry

@@ -1,6 +1,6 @@
 {
-  "Please select a date range": "Please select a date range",
-  "The start date cannot be later than the end date": "The start date cannot be later than the end date",
   "\"Currently effective\" requires all three: the project is enabled, the plan is selected as active, and today falls inside the budget period.": "\"Currently effective\" requires all three: the project is enabled, the plan is selected as active, and today falls inside the budget period.",
-  "Click to view all project budgets, including history": "Click to view all project budgets, including history"
+  "Click to view all project budgets, including history": "Click to view all project budgets, including history",
+  "Please select a date range": "Please select a date range",
+  "The start date cannot be later than the end date": "The start date cannot be later than the end date"
 }

@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,53 @@ type ReplayableBody interface {
 	Size() int64
 	NewReader() (io.ReadCloser, error)
 }
+
+type bodyStorageView struct {
+	source BodyStorage
+	reader io.ReadSeeker
+	closer io.Closer
+}
+
+// NewBodyStorageView creates an independent cursor over an existing storage.
+// The caller must keep source open until all views have been closed.
+func NewBodyStorageView(source BodyStorage) (BodyStorage, error) {
+	if source == nil {
+		return nil, errors.New("body storage is nil")
+	}
+	var reader io.ReadSeeker
+	var closer io.Closer
+	switch storage := source.(type) {
+	case *memoryStorage:
+		if atomic.LoadInt32(&storage.closed) == 1 {
+			return nil, ErrStorageClosed
+		}
+		reader = bytes.NewReader(storage.data)
+		closer = io.NopCloser(bytes.NewReader(nil))
+	default:
+		independent, err := source.NewReader()
+		if err != nil {
+			return nil, err
+		}
+		seeker, ok := independent.(io.ReadSeeker)
+		if !ok {
+			_ = independent.Close()
+			return nil, errors.New("body storage reader is not seekable")
+		}
+		reader = seeker
+		closer = independent
+	}
+	return &bodyStorageView{source: source, reader: reader, closer: closer}, nil
+}
+
+func (v *bodyStorageView) Read(p []byte) (int, error) { return v.reader.Read(p) }
+func (v *bodyStorageView) Seek(offset int64, whence int) (int64, error) {
+	return v.reader.Seek(offset, whence)
+}
+func (v *bodyStorageView) Close() error                      { return v.closer.Close() }
+func (v *bodyStorageView) Bytes() ([]byte, error)            { return v.source.Bytes() }
+func (v *bodyStorageView) Size() int64                       { return v.source.Size() }
+func (v *bodyStorageView) IsDisk() bool                      { return v.source.IsDisk() }
+func (v *bodyStorageView) NewReader() (io.ReadCloser, error) { return v.source.NewReader() }
 
 // ErrStorageClosed 存储已关闭错误
 var ErrStorageClosed = fmt.Errorf("body storage is closed")

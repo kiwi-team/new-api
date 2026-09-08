@@ -56,12 +56,14 @@ export type ChannelRule = {
   /** Model name or prefix this rule matches. */
   modelKey: string
   retry: number
-  randomType: 'order' | 'random'
+  randomType: 'order' | 'random' | 'race'
+  raceTimeout: number
   disableChannels: number[]
   tiers: ChannelRuleTier[]
 }
 
-export const RANDOM_TYPES = ['order', 'random'] as const
+export const RANDOM_TYPES = ['order', 'random', 'race'] as const
+export const DEFAULT_RACE_TIMEOUT = 25
 
 /** Fields the visual editor owns; anything else on a tier is passthrough. */
 const TIER_OWNED_KEYS = new Set(['id', 'ids'])
@@ -106,13 +108,22 @@ export function parseChannelRules(raw: string | null | undefined): ChannelRule[]
   return Object.entries(parsed as Record<string, unknown>).map(
     ([modelKey, value]) => {
       const rule = (value ?? {}) as Record<string, unknown>
-      const randomType = rule.random_type === 'random' ? 'random' : 'order'
+      const randomType = RANDOM_TYPES.includes(
+        rule.random_type as (typeof RANDOM_TYPES)[number]
+      )
+        ? (rule.random_type as ChannelRule['randomType'])
+        : 'order'
       const retry = Number(rule.retry ?? 0)
+      const raceTimeout = Number(rule.race_timeout ?? DEFAULT_RACE_TIMEOUT)
       return {
         uid: nextUid(),
         modelKey,
         retry: Number.isFinite(retry) && retry > 0 ? Math.floor(retry) : 0,
         randomType,
+        raceTimeout:
+          Number.isInteger(raceTimeout) && raceTimeout >= 1 && raceTimeout <= 300
+            ? raceTimeout
+            : DEFAULT_RACE_TIMEOUT,
         disableChannels: toIntList(rule.disable_channels),
         tiers: Array.isArray(rule.channels)
           ? rule.channels
@@ -153,6 +164,9 @@ export function serializeChannelRules(rules: ChannelRule[]): string {
     output[modelKey] = {
       retry: rule.retry,
       random_type: rule.randomType,
+      ...(rule.randomType === 'race'
+        ? { race_timeout: rule.raceTimeout }
+        : {}),
       disable_channels: rule.disableChannels,
       channels,
     }
@@ -167,6 +181,7 @@ export function createEmptyRule(): ChannelRule {
     modelKey: '',
     retry: 0,
     randomType: 'order',
+    raceTimeout: DEFAULT_RACE_TIMEOUT,
     disableChannels: [],
     tiers: [],
   }

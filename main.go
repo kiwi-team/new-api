@@ -283,6 +283,12 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysLog("server forced to shutdown: " + err.Error())
 	}
+	if !controller.WaitChannelRaceAttempts(ctx) {
+		common.SysLog("channel race attempts did not finish before shutdown timeout")
+	} else {
+		// Race losers can settle after the first shutdown flush.
+		model.SaveQuotaDataCache()
+	}
 
 	// quit := make(chan os.Signal, 1)
 	// signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

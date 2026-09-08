@@ -14,16 +14,17 @@ const (
 	ContextKeyUseChannelTime ContextKey = "use_channel_time"
 
 	/* token related keys */
-	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
-	ContextKeyTokenKey               ContextKey = "token_key"
-	ContextKeyTokenId                ContextKey = "token_id"
-	ContextKeyTokenGroup             ContextKey = "token_group"
-	ContextKeyTokenSpecificChannelId ContextKey = "specific_channel_id"
-	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
-	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
-	ContextKeyTokenAllowIps          ContextKey = "token_allow_ips"
-	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
-	ContextKeyTokenAutoGroups        ContextKey = "token_auto_groups"
+	ContextKeyTokenUnlimited                ContextKey = "token_unlimited_quota"
+	ContextKeyTokenKey                      ContextKey = "token_key"
+	ContextKeyTokenId                       ContextKey = "token_id"
+	ContextKeyTokenGroup                    ContextKey = "token_group"
+	ContextKeyTokenSpecificChannelId        ContextKey = "specific_channel_id"
+	ContextKeyTokenModelLimitEnabled        ContextKey = "token_model_limit_enabled"
+	ContextKeyTokenModelLimit               ContextKey = "token_model_limit"
+	ContextKeyTokenAllowIps                 ContextKey = "token_allow_ips"
+	ContextKeyTokenCrossGroupRetry          ContextKey = "token_cross_group_retry"
+	ContextKeyTokenAutoGroups               ContextKey = "token_auto_groups"
+	ContextKeyTokenChannelRulesHighPriority ContextKey = "token_channel_rules_high_priority"
 
 	/* channel related keys */
 	ContextKeyChannelRatio                      ContextKey = "channel_ratio"

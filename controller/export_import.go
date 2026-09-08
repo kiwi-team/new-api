@@ -95,7 +95,7 @@ func ExportTokensCSV(c *gin.Context) {
 		"id", "user_id", "key", "status", "name", "created_time", "accessed_time",
 		"expired_time", "remain_quota", "unlimited_quota", "model_limits_enabled",
 		"model_limits", "allow_ips", "used_quota", "channel_rules", "channel_ratios",
-		"group", "cross_group_retry",
+		"group", "cross_group_retry", "channel_rules_high_priority",
 	})
 	for _, t := range tokens {
 		allowIps := ""
@@ -121,6 +121,7 @@ func ExportTokensCSV(c *gin.Context) {
 			t.ChannelRatios,
 			t.Group,
 			strconv.FormatBool(t.CrossGroupRetry),
+			strconv.FormatBool(t.ChannelRulesHighPriority),
 		})
 	}
 	w.Flush()
@@ -437,25 +438,30 @@ func ImportTokensCSV(c *gin.Context) {
 		if strings.TrimSpace(allowIps) != "" {
 			allowIpsPtr = &allowIps
 		}
+		channelRulesHighPriority := false
+		if column := idx("channel_rules_high_priority"); column >= 0 && column < len(record) {
+			channelRulesHighPriority = record[column] == "true"
+		}
 		t := model.Token{
-			Id:                 id,
-			UserId:             common.String2Int(record[idx("user_id")]),
-			Key:                record[idx("key")],
-			Status:             common.String2Int(record[idx("status")]),
-			Name:               record[idx("name")],
-			CreatedTime:        int64(common.String2Int(record[idx("created_time")])),
-			AccessedTime:       int64(common.String2Int(record[idx("accessed_time")])),
-			ExpiredTime:        int64(common.String2Int(record[idx("expired_time")])),
-			RemainQuota:        common.String2Int(record[idx("remain_quota")]),
-			UnlimitedQuota:     record[idx("unlimited_quota")] == "true",
-			ModelLimitsEnabled: record[idx("model_limits_enabled")] == "true",
-			ModelLimits:        record[idx("model_limits")],
-			AllowIps:           allowIpsPtr,
-			UsedQuota:          common.String2Int(record[idx("used_quota")]),
-			ChannelRules:       record[idx("channel_rules")],
-			ChannelRatios:      record[idx("channel_ratios")],
-			Group:              record[idx("group")],
-			CrossGroupRetry:    record[idx("cross_group_retry")] == "true",
+			Id:                       id,
+			UserId:                   common.String2Int(record[idx("user_id")]),
+			Key:                      record[idx("key")],
+			Status:                   common.String2Int(record[idx("status")]),
+			Name:                     record[idx("name")],
+			CreatedTime:              int64(common.String2Int(record[idx("created_time")])),
+			AccessedTime:             int64(common.String2Int(record[idx("accessed_time")])),
+			ExpiredTime:              int64(common.String2Int(record[idx("expired_time")])),
+			RemainQuota:              common.String2Int(record[idx("remain_quota")]),
+			UnlimitedQuota:           record[idx("unlimited_quota")] == "true",
+			ModelLimitsEnabled:       record[idx("model_limits_enabled")] == "true",
+			ModelLimits:              record[idx("model_limits")],
+			AllowIps:                 allowIpsPtr,
+			UsedQuota:                common.String2Int(record[idx("used_quota")]),
+			ChannelRules:             record[idx("channel_rules")],
+			ChannelRatios:            record[idx("channel_ratios")],
+			Group:                    record[idx("group")],
+			CrossGroupRetry:          record[idx("cross_group_retry")] == "true",
+			ChannelRulesHighPriority: channelRulesHighPriority,
 		}
 		if err := model.DB.Create(&t).Error; err == nil {
 			count++

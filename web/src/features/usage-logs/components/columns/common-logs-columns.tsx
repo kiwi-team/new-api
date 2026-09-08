@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ChampionIcon, MinusSignCircleIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Sparkles, KeyRound } from 'lucide-react'
@@ -402,6 +404,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             other?.admin_info?.is_multi_key === true &&
             typeof multiKeyIndex === 'number' &&
             Number.isFinite(multiKeyIndex)
+          let raceResultLabel: string | null = null
+          if (log.race_result === 'winner') raceResultLabel = t('Winner')
+          if (log.race_result === 'loser') raceResultLabel = t('Loser')
 
           return (
             <TooltipProvider>
@@ -420,6 +425,29 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                       showDot={false}
                       className='font-mono'
                     />
+                    {raceResultLabel && (
+                      <span
+                        className={cn(
+                          'inline-flex size-4 shrink-0 items-center justify-center rounded-full',
+                          log.race_result === 'winner'
+                            ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400'
+                            : 'bg-muted text-muted-foreground'
+                        )}
+                        role='img'
+                        aria-label={`${t('Race result')}: ${raceResultLabel}`}
+                      >
+                        <HugeiconsIcon
+                          icon={
+                            log.race_result === 'winner'
+                              ? ChampionIcon
+                              : MinusSignCircleIcon
+                          }
+                          className='size-3'
+                          strokeWidth={2}
+                          aria-hidden='true'
+                        />
+                      </span>
+                    )}
                     {showMultiKeyIndex && (
                       <StatusBadge
                         label={String(multiKeyIndex)}
@@ -473,6 +501,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     {showMultiKeyIndex && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Key')}: {multiKeyIndex}
+                      </p>
+                    )}
+                    {raceResultLabel && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Race result')}: {raceResultLabel}
                       </p>
                     )}
                     {affinity && (

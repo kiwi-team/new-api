@@ -120,6 +120,12 @@ export function ChannelRulesEditorDialog({
     setDrag(null)
   }
 
+  const selectionLabel = (type: (typeof RANDOM_TYPES)[number]) => {
+    if (type === 'order') return t('In order')
+    if (type === 'random') return t('Random')
+    return t('Random race')
+  }
+
   return (
     <Dialog
       open={open}
@@ -171,7 +177,7 @@ export function ChannelRulesEditorDialog({
             key={rule.uid}
             className='space-y-3 rounded-lg border p-3'
           >
-            <div className='grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto_auto]'>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto_auto_auto]'>
               <div className='grid gap-1.5'>
                 <Label htmlFor={`rule-model-${ruleIndex}`}>
                   {t('Model name or prefix')}
@@ -199,6 +205,7 @@ export function ChannelRulesEditorDialog({
                   className='w-24'
                   inputMode='numeric'
                   value={String(rule.retry)}
+                  disabled={rule.randomType === 'race'}
                   onChange={(event) =>
                     patchRule(ruleIndex, {
                       retry: Math.max(
@@ -218,12 +225,13 @@ export function ChannelRulesEditorDialog({
                   value={rule.randomType}
                   onValueChange={(next) =>
                     patchRule(ruleIndex, {
-                      randomType: next === 'random' ? 'random' : 'order',
+                      randomType:
+                        next === 'random' || next === 'race' ? next : 'order',
                     })
                   }
                   items={RANDOM_TYPES.map((type) => ({
                     value: type,
-                    label: type === 'order' ? t('In order') : t('Random'),
+                    label: selectionLabel(type),
                   }))}
                 >
                   <SelectTrigger
@@ -235,12 +243,39 @@ export function ChannelRulesEditorDialog({
                   <SelectContent>
                     {RANDOM_TYPES.map((type) => (
                       <SelectItem key={type} value={type}>
-                        {type === 'order' ? t('In order') : t('Random')}
+                        {selectionLabel(type)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
+
+              {rule.randomType === 'race' && (
+                <div className='grid gap-1.5'>
+                  <Label htmlFor={`rule-race-timeout-${ruleIndex}`}>
+                    {t('Race delay (seconds)')}
+                  </Label>
+                  <Input
+                    id={`rule-race-timeout-${ruleIndex}`}
+                    className='w-28'
+                    type='number'
+                    min={1}
+                    max={300}
+                    value={String(rule.raceTimeout)}
+                    onChange={(event) =>
+                      patchRule(ruleIndex, {
+                        raceTimeout: Math.min(
+                          300,
+                          Math.max(
+                            1,
+                            Number.parseInt(event.target.value, 10) || 25
+                          )
+                        ),
+                      })
+                    }
+                  />
+                </div>
+              )}
 
               <div className='flex items-end'>
                 <Button
@@ -258,6 +293,21 @@ export function ChannelRulesEditorDialog({
                 </Button>
               </div>
             </div>
+
+            {rule.randomType === 'race' && (
+              <div className='text-muted-foreground space-y-1 text-xs'>
+                <p>
+                  {t(
+                    'Race mode uses every configured channel as a candidate; retry count is ignored'
+                  )}
+                </p>
+                <p>
+                  {t(
+                    'Every successful race attempt is billed, including attempts that do not win'
+                  )}
+                </p>
+              </div>
+            )}
 
             <div className='grid gap-1.5'>
               <Label>{t('Disabled channels')}</Label>

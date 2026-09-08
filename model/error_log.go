@@ -421,6 +421,16 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 	//return nil
 }
 
+func ClearErrorLogBodiesByRequestID(requestId string) error {
+	if requestId == "" {
+		return nil
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return LOG_DB.Exec("ALTER TABLE error_logs UPDATE body = '' WHERE request_id = ?", requestId).Error
+	}
+	return LOG_DB.Model(&ErrorLog{}).Where("request_id = ? AND body <> ?", requestId, "").Update("body", "").Error
+}
+
 type ErrorLogStatistics struct {
 	ChannelId   int    `json:"channel_id"`
 	ChannelName string `json:"channel_name"`

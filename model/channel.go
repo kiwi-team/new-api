@@ -597,6 +597,38 @@ func GetChannelIdsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) 
 	return channelIds
 }
 
+// GetChannelGroupsByRule preserves configured group boundaries for race mode.
+// Unlike GetChannelIdsByRule it deliberately does not shuffle any IDs.
+func GetChannelGroupsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) (groups [][]int) {
+	disabledChannels := channelRules.DisableChannels
+	seen := make(map[int]struct{})
+	for _, item := range channelRules.Channels {
+		ids := item.Ids
+		if item.Id > 0 {
+			ids = []int{item.Id}
+		}
+		group := make([]int, 0, len(ids))
+		for _, id := range ids {
+			if id <= 0 || slices.Contains(disabledChannels, id) {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			channel, err := GetChannelById(id, true)
+			if err != nil || !CheckMultiTags(tags, channel.GetTag()) {
+				continue
+			}
+			seen[id] = struct{}{}
+			group = append(group, id)
+		}
+		if len(group) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
 func BatchInsertChannels(channels []Channel) error {
 	if len(channels) == 0 {
 		return nil

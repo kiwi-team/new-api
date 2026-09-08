@@ -347,6 +347,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	if !db.Migrator().HasColumn(&model.Token{}, "auto_groups") {
 		t.Fatal("expected migration to add auto_groups column")
 	}
+	if !db.Migrator().HasColumn(&model.Token{}, "channel_rules_high_priority") {
+		t.Fatal("expected migration to add channel_rules_high_priority column")
+	}
 	if got := getTokenAutoGroupsColumnType(t, db, dialect); got != "text" {
 		t.Fatalf("expected migrated auto_groups column type text, got %q", got)
 	}
@@ -363,6 +366,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	}
 	if migratedToken.AutoGroups != "" {
 		t.Fatalf("expected legacy token to inherit global Auto groups, got %q", migratedToken.AutoGroups)
+	}
+	if migratedToken.ChannelRulesHighPriority {
+		t.Fatal("expected legacy token to keep special channel rules at the default higher priority")
 	}
 
 	inserted := model.Token{
@@ -545,6 +551,34 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
 	}
+}
+
+func TestRootCanEnableHighPriorityChannelRules(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "priority-token", "priority1234token5678")
+	body := map[string]any{
+		"id":                          token.Id,
+		"name":                        token.Name,
+		"expired_time":                -1,
+		"remain_quota":                100,
+		"unlimited_quota":             true,
+		"model_limits_enabled":        false,
+		"model_limits":                "",
+		"group":                       "default",
+		"cross_group_retry":           false,
+		"channel_rules":               "{}",
+		"channel_rules_high_priority": true,
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	ctx.Set("role", common.RoleRootUser)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var updated model.Token
+	require.NoError(t, db.First(&updated, token.Id).Error)
+	assert.True(t, updated.ChannelRulesHighPriority)
 }
 
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {

@@ -31,6 +31,10 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+func shouldSpecialChannelsOverrideKeyRules(specialChannelIds, keyChannelIds []int, keyRulesHighPriority bool) bool {
+	return len(specialChannelIds) > 0 && (!keyRulesHighPriority || len(keyChannelIds) == 0)
+}
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		allowIpsMap := common.GetContextKeyStringMap(c, constant.ContextKeyTokenAllowIps)
@@ -76,13 +80,21 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		var channelIds []int
+		var raceGroups [][]int
 		tags := make([]string, 0)
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
 			tags = tagsAny.([]string)
 		}
 		if channelRules != nil {
-			c.Set("new_retry_times", channelRules.Retry)
-			channelIds = model.GetChannelIdsByRule(channelRules, tags)
+			if channelRules.RandomType == taskdto.ChannelRuleModeRace {
+				raceGroups = model.GetChannelGroupsByRule(channelRules, tags)
+				for _, group := range raceGroups {
+					channelIds = append(channelIds, group...)
+				}
+			} else {
+				c.Set("new_retry_times", channelRules.Retry)
+				channelIds = model.GetChannelIdsByRule(channelRules, tags)
+			}
 		}
 		var specialChannelIds = make([]int, 0)
 		if len(tags) > 0 {
@@ -99,8 +111,10 @@ func Distribute() func(c *gin.Context) {
 			// 如果是存文本，且设置了全局的文本渠道，那么就使用全局的文本渠道
 			specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyTextChannels")
 		}
-		if len(specialChannelIds) > 0 {
+		keyRulesHighPriority := common.GetContextKeyBool(c, constant.ContextKeyTokenChannelRulesHighPriority)
+		if shouldSpecialChannelsOverrideKeyRules(specialChannelIds, channelIds, keyRulesHighPriority) {
 			channelIds = specialChannelIds
+			raceGroups = nil
 			c.Set("new_retry_times", len(specialChannelIds))
 		} else if len(channelIds) == 0 {
 			// 获取全局模型渠道路由（仅在 Token 渠道规则未匹配时生效）
@@ -122,6 +136,32 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 			channelIds = filteredChannelIds
+		}
+		if len(raceGroups) > 0 {
+			allowed := make(map[int]struct{}, len(channelIds))
+			for _, id := range channelIds {
+				allowed[id] = struct{}{}
+			}
+			filteredGroups := make([][]int, 0, len(raceGroups))
+			for _, group := range raceGroups {
+				filtered := make([]int, 0, len(group))
+				for _, id := range group {
+					if _, ok := allowed[id]; ok {
+						filtered = append(filtered, id)
+					}
+				}
+				if len(filtered) > 0 {
+					filteredGroups = append(filteredGroups, filtered)
+				}
+			}
+			if len(filteredGroups) > 0 {
+				timeout := channelRules.RaceTimeout
+				if timeout == 0 {
+					timeout = taskdto.DefaultRaceTimeoutSeconds
+				}
+				c.Set(common.KeyChannelRacePlan, taskdto.ChannelRacePlan{Groups: filteredGroups, TimeoutSeconds: timeout})
+				c.Set("new_retry_times", len(channelIds))
+			}
 		}
 		c.Set("token_channel_ids", channelIds)
 
@@ -298,7 +338,11 @@ func Distribute() func(c *gin.Context) {
 		// }
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+			if winnerChannelId := c.GetInt(common.KeyChannelRaceWinnerChannelId); winnerChannelId > 0 {
+				service.RecordChannelAffinity(c, winnerChannelId)
+			} else {
+				service.RecordChannelAffinity(c, channel.Id)
+			}
 		}
 	}
 }

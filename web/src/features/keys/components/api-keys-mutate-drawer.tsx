@@ -69,11 +69,11 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
-import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   createApiKey,
@@ -95,8 +95,8 @@ import {
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
-import { ChannelRulesEditorDialog } from './channel-rules-editor-dialog'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
+import { ChannelRulesEditorDialog } from './channel-rules-editor-dialog'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -752,7 +752,9 @@ export function ApiKeysMutateDrawer({
                                 const parsed = Number.parseFloat(
                                   event.target.value
                                 )
-                                field.onChange(Number.isNaN(parsed) ? 0 : parsed)
+                                field.onChange(
+                                  Number.isNaN(parsed) ? 0 : parsed
+                                )
                               }}
                               placeholder='0'
                             />
@@ -825,6 +827,33 @@ export function ApiKeysMutateDrawer({
                               )}
                             </FormDescription>
                             <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {isRoot && (
+                      <FormField
+                        control={form.control}
+                        name='channel_rules_high_priority'
+                        render={({ field }) => (
+                          <FormItem className={sideDrawerSwitchItemClassName()}>
+                            <div className='flex flex-col gap-0.5'>
+                              <FormLabel className='text-sm'>
+                                {t('Prioritize key channel rules')}
+                              </FormLabel>
+                              <FormDescription className='text-xs'>
+                                {t(
+                                  'When enabled, matching channel rules on this key override special channel rules.'
+                                )}
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
                           </FormItem>
                         )}
                       />

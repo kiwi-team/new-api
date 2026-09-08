@@ -82,6 +82,7 @@ func TestClickHouseLogCreateTableSQL(t *testing.T) {
 	assert.Contains(t, withoutTTL, "CREATE TABLE IF NOT EXISTS logs")
 	assert.Contains(t, withoutTTL, "ENGINE = MergeTree()")
 	assert.Contains(t, withoutTTL, "PARTITION BY toYYYYMM(toDateTime(created_at))")
+	assert.Contains(t, withoutTTL, "race_result String DEFAULT ''")
 	assert.Contains(t, withoutTTL, "ORDER BY (created_at, request_id)")
 	assert.NotContains(t, withoutTTL, "TTL ")
 

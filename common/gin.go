@@ -20,6 +20,12 @@ import (
 
 const KeyRequestBody = "key_request_body"
 const KeyBodyStorage = "key_body_storage"
+const KeyChannelRacePlan = "key_channel_race_plan"
+const KeyChannelRaceAttempt = "key_channel_race_attempt"
+const KeyChannelRaceChannelPrepared = "key_channel_race_channel_prepared"
+const KeyChannelRaceResult = "key_channel_race_result"
+const KeyChannelRaceBillingRequestId = "key_channel_race_billing_request_id"
+const KeyChannelRaceWinnerChannelId = "key_channel_race_winner_channel_id"
 
 var ErrRequestBodyTooLarge = errors.New("request body too large")
 

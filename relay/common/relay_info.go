@@ -533,6 +533,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		//reqId = common.GetTimeString() + common.GetRandomString(8)
 		reqId = common.NewRequestId()
 	}
+	if billingRequestId := c.GetString(common.KeyChannelRaceBillingRequestId); billingRequestId != "" {
+		reqId = billingRequestId
+	}
 	reasoningEffort := reasoningEffortFromRequest(request)
 	info := &RelayInfo{
 		Request:         request,

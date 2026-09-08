@@ -758,6 +758,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 		}
 	}
 	c.Set("token_channel_rules", token.GetChannelRules())
+	common.SetContextKey(c, constant.ContextKeyTokenChannelRulesHighPriority, token.ChannelRulesHighPriority)
 	c.Set("token_channel_ratios", token.GetChannelRatios())
 	return nil
 }

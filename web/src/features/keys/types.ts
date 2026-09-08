@@ -52,6 +52,8 @@ export const apiKeySchema = z.object({
   channel_ratios: z.string().nullish().default(''),
   /** JSON routing rules for this key; root-writable only */
   channel_rules: z.string().nullish().default(''),
+  /** Whether matching key routing rules override special channel rules */
+  channel_rules_high_priority: z.boolean().optional().default(false),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -107,6 +109,7 @@ export interface ApiKeyFormData {
   alert_threshold: number
   channel_ratios: string
   channel_rules: string
+  channel_rules_high_priority: boolean
 }
 
 export interface TokenAutoGroupsConfig {

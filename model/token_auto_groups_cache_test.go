@@ -28,6 +28,24 @@ func TestTokenAutoGroupsRoundTripThroughRedisHashCache(t *testing.T) {
 	assert.Equal(t, []string{"vip", "default"}, groups)
 }
 
+func TestTokenChannelRulesPriorityRoundTripsThroughRedisHashCache(t *testing.T) {
+	useUserCacheMiniRedis(t)
+	token := Token{
+		Id:                       43,
+		UserId:                   7,
+		Key:                      "token-channel-rules-priority-cache-key",
+		Name:                     "channel-rules-cache",
+		ChannelRules:             `{"gpt-4o":{"channels":{"1":1}}}`,
+		ChannelRulesHighPriority: true,
+	}
+
+	require.NoError(t, cacheSetTokenForTest(token))
+	cached, err := cacheGetTokenByKey(token.Key)
+	require.NoError(t, err)
+	assert.Equal(t, token.ChannelRules, cached.ChannelRules)
+	assert.True(t, cached.ChannelRulesHighPriority)
+}
+
 func TestTokenUpdateSynchronouslyNarrowsPreheatedAutoGroupsCache(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)
