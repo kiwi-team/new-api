@@ -80,7 +80,7 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		var channelIds []int
-		var raceGroups [][]int
+		var raceGroups []taskdto.ChannelRaceGroup
 		tags := make([]string, 0)
 		if tagsAny, okTags := c.Get("multi_model_tags"); okTags {
 			tags = tagsAny.([]string)
@@ -89,7 +89,7 @@ func Distribute() func(c *gin.Context) {
 			if channelRules.RandomType == taskdto.ChannelRuleModeRace {
 				raceGroups = model.GetChannelGroupsByRule(channelRules, tags)
 				for _, group := range raceGroups {
-					channelIds = append(channelIds, group...)
+					channelIds = append(channelIds, group.ChannelIds...)
 				}
 			} else {
 				c.Set("new_retry_times", channelRules.Retry)
@@ -142,16 +142,17 @@ func Distribute() func(c *gin.Context) {
 			for _, id := range channelIds {
 				allowed[id] = struct{}{}
 			}
-			filteredGroups := make([][]int, 0, len(raceGroups))
+			filteredGroups := make([]taskdto.ChannelRaceGroup, 0, len(raceGroups))
 			for _, group := range raceGroups {
-				filtered := make([]int, 0, len(group))
-				for _, id := range group {
+				filtered := make([]int, 0, len(group.ChannelIds))
+				for _, id := range group.ChannelIds {
 					if _, ok := allowed[id]; ok {
 						filtered = append(filtered, id)
 					}
 				}
 				if len(filtered) > 0 {
-					filteredGroups = append(filteredGroups, filtered)
+					group.ChannelIds = filtered
+					filteredGroups = append(filteredGroups, group)
 				}
 			}
 			if len(filteredGroups) > 0 {

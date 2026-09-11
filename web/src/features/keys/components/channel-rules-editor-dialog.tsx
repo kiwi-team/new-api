@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -39,7 +40,11 @@ import { getUserModels } from '@/lib/api'
 
 import {
   type ChannelRule,
+  type RaceGroupMode,
+  DEFAULT_RACE_GROUP_COUNT,
+  DEFAULT_RACE_GROUP_MODE,
   RANDOM_TYPES,
+  RACE_GROUP_MODES,
   createEmptyRule,
   createEmptyTier,
   parseChannelRules,
@@ -79,7 +84,9 @@ export function ChannelRulesEditorDialog({
     // An unparseable value would silently become "no rules" on save, so keep
     // the raw JSON and let the user fix it in the textarea instead.
     if (value.trim() && parsed.length === 0) {
-      toast.warning(t('Existing rules could not be parsed; edit the JSON directly'))
+      toast.warning(
+        t('Existing rules could not be parsed; edit the JSON directly')
+      )
       onOpenChange(false)
       return
     }
@@ -124,6 +131,12 @@ export function ChannelRulesEditorDialog({
     if (type === 'order') return t('In order')
     if (type === 'random') return t('Random')
     return t('Random race')
+  }
+
+  const raceGroupModeLabel = (mode: RaceGroupMode) => {
+    if (mode === 'order') return t('Ordered polling')
+    if (mode === 'random_n') return t('Random N channels')
+    return t('Random polling')
   }
 
   return (
@@ -173,10 +186,7 @@ export function ChannelRulesEditorDialog({
         )}
 
         {rules.map((rule, ruleIndex) => (
-          <div
-            key={rule.uid}
-            className='space-y-3 rounded-lg border p-3'
-          >
+          <div key={rule.uid} className='space-y-3 rounded-lg border p-3'>
             <div className='grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto_auto_auto]'>
               <div className='grid gap-1.5'>
                 <Label htmlFor={`rule-model-${ruleIndex}`}>
@@ -241,11 +251,13 @@ export function ChannelRulesEditorDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {RANDOM_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {selectionLabel(type)}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      {RANDOM_TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {selectionLabel(type)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
@@ -298,7 +310,7 @@ export function ChannelRulesEditorDialog({
               <div className='text-muted-foreground space-y-1 text-xs'>
                 <p>
                   {t(
-                    'Race mode uses every configured channel as a candidate; retry count is ignored'
+                    "Race mode follows each tier's strategy; retry count is ignored"
                   )}
                 </p>
                 <p>
@@ -343,7 +355,7 @@ export function ChannelRulesEditorDialog({
               {rule.tiers.map((tier, tierIndex) => (
                 <div
                   key={tier.uid}
-                  className='bg-muted/30 flex items-center gap-2 rounded-md p-2'
+                  className='bg-muted/30 flex flex-wrap items-center gap-2 rounded-md p-2'
                   draggable
                   onDragStart={() =>
                     setDrag({ rule: ruleIndex, tier: tierIndex })
@@ -356,7 +368,7 @@ export function ChannelRulesEditorDialog({
                   <span className='text-muted-foreground w-6 shrink-0 text-xs'>
                     #{tierIndex + 1}
                   </span>
-                  <div className='min-w-0 flex-1'>
+                  <div className='min-w-48 flex-1'>
                     <MultiSelect
                       options={channelOptions}
                       selected={tier.ids.map(String)}
@@ -367,6 +379,10 @@ export function ChannelRulesEditorDialog({
                               ? {
                                   ...item,
                                   ids: values.map(Number).filter(Boolean),
+                                  raceCount: Math.min(
+                                    item.raceCount,
+                                    Math.max(1, values.length)
+                                  ),
                                 }
                               : item
                           ),
@@ -375,6 +391,74 @@ export function ChannelRulesEditorDialog({
                       placeholder={t('Select channels')}
                     />
                   </div>
+                  <Select
+                    value={tier.raceMode}
+                    onValueChange={(next) =>
+                      patchRule(ruleIndex, {
+                        tiers: rule.tiers.map((item, i) =>
+                          i === tierIndex
+                            ? {
+                                ...item,
+                                raceMode: RACE_GROUP_MODES.includes(
+                                  next as RaceGroupMode
+                                )
+                                  ? (next as RaceGroupMode)
+                                  : DEFAULT_RACE_GROUP_MODE,
+                              }
+                            : item
+                        ),
+                      })
+                    }
+                    items={RACE_GROUP_MODES.map((mode) => ({
+                      value: mode,
+                      label: raceGroupModeLabel(mode),
+                    }))}
+                  >
+                    <SelectTrigger
+                      className='w-36'
+                      aria-label={t('Within-group strategy')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {RACE_GROUP_MODES.map((mode) => (
+                          <SelectItem key={mode} value={mode}>
+                            {raceGroupModeLabel(mode)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  {tier.raceMode === 'random_n' && (
+                    <Input
+                      className='w-20'
+                      type='number'
+                      min={1}
+                      max={Math.max(1, tier.ids.length)}
+                      value={String(tier.raceCount)}
+                      aria-label={t('Random channel count')}
+                      onChange={(event) =>
+                        patchRule(ruleIndex, {
+                          tiers: rule.tiers.map((item, i) =>
+                            i === tierIndex
+                              ? {
+                                  ...item,
+                                  raceCount: Math.min(
+                                    Math.max(1, tier.ids.length),
+                                    Math.max(
+                                      DEFAULT_RACE_GROUP_COUNT,
+                                      Number.parseInt(event.target.value, 10) ||
+                                        DEFAULT_RACE_GROUP_COUNT
+                                    )
+                                  ),
+                                }
+                              : item
+                          ),
+                        })
+                      }
+                    />
+                  )}
                   <Button
                     variant='ghost'
                     size='icon'

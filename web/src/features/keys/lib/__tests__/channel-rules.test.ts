@@ -40,6 +40,10 @@ describe('parseChannelRules', () => {
       rules[0].tiers.map((tier) => tier.ids),
       [[3, 4], [5]]
     )
+    assert.deepEqual(
+      rules[0].tiers.map((tier) => tier.raceMode),
+      ['random', 'random']
+    )
   })
 
   test('defaults missing fields instead of producing NaN or undefined', () => {
@@ -114,8 +118,8 @@ describe('serializeChannelRules', () => {
         raceTimeout: 25,
         disableChannels: [],
         tiers: [
-          { uid: 't1', ids: [], extra: {} },
-          { uid: 't2', ids: [9], extra: {} },
+          { uid: 't1', ids: [], raceMode: 'random', raceCount: 1, extra: {} },
+          { uid: 't2', ids: [9], raceMode: 'random', raceCount: 1, extra: {} },
         ],
       },
     ])
@@ -133,9 +137,9 @@ describe('serializeChannelRules', () => {
         raceTimeout: 25,
         disableChannels: [],
         tiers: [
-          { uid: 't1', ids: [3], extra: {} },
-          { uid: 't2', ids: [1], extra: {} },
-          { uid: 't3', ids: [2], extra: {} },
+          { uid: 't1', ids: [3], raceMode: 'random', raceCount: 1, extra: {} },
+          { uid: 't2', ids: [1], raceMode: 'random', raceCount: 1, extra: {} },
+          { uid: 't3', ids: [2], raceMode: 'random', raceCount: 1, extra: {} },
         ],
       },
     ])
@@ -145,6 +149,42 @@ describe('serializeChannelRules', () => {
       { ids: [1] },
       { ids: [2] },
     ])
+  })
+
+  test('preserves group strategies in sequential and random routing modes', () => {
+    for (const randomType of ['order', 'random'] as const) {
+      const json = serializeChannelRules([
+        {
+          uid: `rule-${randomType}`,
+          modelKey: 'gpt-4o',
+          retry: 2,
+          randomType,
+          raceTimeout: 25,
+          disableChannels: [],
+          tiers: [
+            {
+              uid: 'ordered',
+              ids: [1, 2],
+              raceMode: 'order',
+              raceCount: 1,
+              extra: {},
+            },
+            {
+              uid: 'sampled',
+              ids: [3, 4, 5],
+              raceMode: 'random_n',
+              raceCount: 2,
+              extra: {},
+            },
+          ],
+        },
+      ])
+
+      assert.deepEqual(JSON.parse(json)['gpt-4o'].channels, [
+        { ids: [1, 2], race_mode: 'order' },
+        { ids: [3, 4, 5], race_mode: 'random_n', race_count: 2 },
+      ])
+    }
   })
 })
 
@@ -156,7 +196,10 @@ describe('race channel rules', () => {
     const rules = parseChannelRules(original)
     assert.equal(rules[0].randomType, 'race')
     assert.equal(rules[0].raceTimeout, 17)
-    assert.deepEqual(JSON.parse(serializeChannelRules(rules)), JSON.parse(original))
+    assert.deepEqual(
+      JSON.parse(serializeChannelRules(rules)),
+      JSON.parse(original)
+    )
   })
 
   test('uses the 25 second default for a missing race timeout', () => {
@@ -166,13 +209,56 @@ describe('race channel rules', () => {
 
     assert.equal(rules[0].raceTimeout, 25)
   })
+
+  test('defaults legacy tiers to random polling', () => {
+    const rules = parseChannelRules(
+      '{"gpt-4o":{"random_type":"race","channels":[{"ids":[1,2]}]}}'
+    )
+
+    assert.equal(rules[0].tiers[0].raceMode, 'random')
+    assert.equal(rules[0].tiers[0].raceCount, 1)
+    assert.deepEqual(
+      JSON.parse(serializeChannelRules(rules))['gpt-4o'].channels,
+      [{ ids: [1, 2] }]
+    )
+  })
+
+  test('round-trips ordered polling and random channel count', () => {
+    const original =
+      '{"gpt-4o":{"random_type":"race","channels":[{"ids":[1,2],"race_mode":"order"},{"ids":[3,4,5],"race_mode":"random_n","race_count":2}]}}'
+
+    const restored = serializeChannelRules(parseChannelRules(original))
+
+    assert.deepEqual(JSON.parse(restored)['gpt-4o'].channels, [
+      { ids: [1, 2], race_mode: 'order' },
+      { ids: [3, 4, 5], race_mode: 'random_n', race_count: 2 },
+    ])
+  })
 })
 
 describe('reorderTiers', () => {
   const tiers = [
-    { uid: 't1', ids: [1], extra: {} },
-    { uid: 't2', ids: [2], extra: {} },
-    { uid: 't3', ids: [3], extra: {} },
+    {
+      uid: 't1',
+      ids: [1],
+      raceMode: 'random' as const,
+      raceCount: 1,
+      extra: {},
+    },
+    {
+      uid: 't2',
+      ids: [2],
+      raceMode: 'random' as const,
+      raceCount: 1,
+      extra: {},
+    },
+    {
+      uid: 't3',
+      ids: [3],
+      raceMode: 'random' as const,
+      raceCount: 1,
+      extra: {},
+    },
   ]
 
   test('moves a tier to the target index', () => {

@@ -45,6 +45,12 @@ func GetAllLogs(c *gin.Context) {
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
 	export := c.Query("export") == "true"
+	// 旧版导出会包含原始上游响应，其中也可能出现映射后的实际模型名称。
+	// 新版导出已有 RootAuth 路由；这里阻止普通管理员绕过该限制。
+	if export && c.GetInt("role") < common.RoleRootUser {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	clientUserId := c.Query("client_user_id")
@@ -70,8 +76,8 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// 渠道与重试链信息仅 root 可见；列表和导出响应都执行同一套清理，
-	// 避免普通 admin 直接从响应体或 CSV 的 Other 字段读取渠道链路。
+	// 渠道、重试链与映射后的实际模型仅 root 可见；列表和导出响应都执行同一套清理，
+	// 避免普通 admin 直接从响应体或 CSV 的 Other 字段读取这些内部路由信息。
 	sanitizeLogChannelInfoForRole(logs, c.GetInt("role"))
 	if export {
 		csvData := "ID\tUserID\tCreatedAt\tType\tContent\tUsername\tTokenName\tModelName\tQuota\tPromptTokens\tCompletionTokens\tUseTime\tIsStream\tChannelId\tChannelName\tTokenId\tGroup\tIP\tOther\tRequest\tResponse\n"
@@ -218,7 +224,7 @@ func isAdmin(c *gin.Context) bool {
 	return c.GetInt("role") >= common.RoleAdminUser
 }
 
-// sanitizeLogChannelInfoForRole removes root-only channel routing details from
+// sanitizeLogChannelInfoForRole removes root-only upstream routing details from
 // responses returned to every lower role while preserving unrelated admin_info
 // diagnostics that those roles are otherwise allowed to inspect.
 func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
@@ -237,12 +243,17 @@ func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
 		if other == nil {
 			continue
 		}
+		delete(other, "is_model_mapped")
+		delete(other, "upstream_model_name")
 		adminInfo, ok := other["admin_info"].(map[string]interface{})
 		if !ok {
+			log.Other = common.MapToJsonStr(other)
 			continue
 		}
 		delete(adminInfo, "use_channel")
 		delete(adminInfo, "use_channel_time")
+		delete(adminInfo, "is_model_mapped")
+		delete(adminInfo, "upstream_model_name")
 		if len(adminInfo) == 0 {
 			delete(other, "admin_info")
 		}
@@ -303,14 +314,12 @@ func GetUserLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// header 与渠道信息仅 root 可见;其他用户(自助视图)的列表响应里清掉。
-	// ChannelName 已由 formatUserLogs 清空,这里补清 ChannelId(json:"channel"),避免渠道 ID 泄露。
+	// header、渠道信息与映射后的实际模型仅 root 可见。
 	if c.GetInt("role") < common.RoleRootUser {
 		for i := range logs {
 			logs[i].Header = nil
-			logs[i].ChannelId = 0
-			logs[i].ChannelName = ""
 		}
+		sanitizeLogChannelInfoForRole(logs, c.GetInt("role"))
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
@@ -366,6 +375,8 @@ func GetLogByKey(c *gin.Context) {
 		})
 		return
 	}
+	// Token 鉴权接口没有 root 用户身份语义，绝不返回内部实际模型或渠道路由信息。
+	sanitizeLogChannelInfoForRole(logs, common.RoleCommonUser)
 	c.JSON(200, gin.H{
 		"success": true,
 		"message": "",

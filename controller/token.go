@@ -59,6 +59,16 @@ func validateTokenChannelRules(raw string) error {
 		default:
 			return fmt.Errorf("模型 %s 的渠道选择模式无效", modelName)
 		}
+		for groupIndex, group := range rule.Channels {
+			switch group.RaceMode {
+			case "", hostdto.ChannelRaceGroupModeRandom, hostdto.ChannelRaceGroupModeOrder, hostdto.ChannelRaceGroupModeRandomN:
+			default:
+				return fmt.Errorf("模型 %s 的第 %d 个分组策略无效", modelName, groupIndex+1)
+			}
+			if group.RaceMode == hostdto.ChannelRaceGroupModeRandomN && group.RaceCount < 0 {
+				return fmt.Errorf("模型 %s 的第 %d 个分组随机渠道数不能为负数", modelName, groupIndex+1)
+			}
+		}
 	}
 	return nil
 }

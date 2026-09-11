@@ -39,10 +39,17 @@ For commercial licensing, please contact support@quantumnous.com
 let uidCounter = 0
 const nextUid = () => `cr-${(uidCounter += 1)}`
 
+export const RACE_GROUP_MODES = ['random', 'order', 'random_n'] as const
+export type RaceGroupMode = (typeof RACE_GROUP_MODES)[number]
+export const DEFAULT_RACE_GROUP_MODE: RaceGroupMode = 'random'
+export const DEFAULT_RACE_GROUP_COUNT = 1
+
 /** A tier within a rule. `extra` carries fields this editor does not surface. */
 export type ChannelRuleTier = {
   uid: string
   ids: number[]
+  raceMode: RaceGroupMode
+  raceCount: number
   /**
    * Fields the backend understands but the editor does not expose
    * (`group_ratio`, `name`, `weight`). Preserved verbatim so editing a rule
@@ -66,7 +73,7 @@ export const RANDOM_TYPES = ['order', 'random', 'race'] as const
 export const DEFAULT_RACE_TIMEOUT = 25
 
 /** Fields the visual editor owns; anything else on a tier is passthrough. */
-const TIER_OWNED_KEYS = new Set(['id', 'ids'])
+const TIER_OWNED_KEYS = new Set(['id', 'ids', 'race_mode', 'race_count'])
 
 function toIntList(value: unknown): number[] {
   if (!Array.isArray(value)) return []
@@ -87,15 +94,26 @@ function tierFromJson(raw: unknown): ChannelRuleTier | null {
   }
   if (ids.length === 0) return null
 
+  const raceMode = RACE_GROUP_MODES.includes(record.race_mode as RaceGroupMode)
+    ? (record.race_mode as RaceGroupMode)
+    : DEFAULT_RACE_GROUP_MODE
+  const rawRaceCount = Number(record.race_count ?? DEFAULT_RACE_GROUP_COUNT)
+  const raceCount =
+    Number.isInteger(rawRaceCount) && rawRaceCount > 0
+      ? rawRaceCount
+      : DEFAULT_RACE_GROUP_COUNT
+
   const extra: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(record)) {
     if (!TIER_OWNED_KEYS.has(key)) extra[key] = value
   }
-  return { uid: nextUid(), ids, extra }
+  return { uid: nextUid(), ids, raceMode, raceCount, extra }
 }
 
 /** Parse the stored JSON into editable rules. Invalid input yields `[]`. */
-export function parseChannelRules(raw: string | null | undefined): ChannelRule[] {
+export function parseChannelRules(
+  raw: string | null | undefined
+): ChannelRule[] {
   if (!raw || !raw.trim()) return []
   let parsed: unknown
   try {
@@ -121,7 +139,9 @@ export function parseChannelRules(raw: string | null | undefined): ChannelRule[]
         retry: Number.isFinite(retry) && retry > 0 ? Math.floor(retry) : 0,
         randomType,
         raceTimeout:
-          Number.isInteger(raceTimeout) && raceTimeout >= 1 && raceTimeout <= 300
+          Number.isInteger(raceTimeout) &&
+          raceTimeout >= 1 &&
+          raceTimeout <= 300
             ? raceTimeout
             : DEFAULT_RACE_TIMEOUT,
         disableChannels: toIntList(rule.disable_channels),
@@ -152,21 +172,28 @@ export function serializeChannelRules(rules: ChannelRule[]): string {
     const channels = rule.tiers
       .filter((tier) => tier.ids.length > 0)
       .map((tier) => {
+        const groupStrategyFields =
+          tier.raceMode !== DEFAULT_RACE_GROUP_MODE
+            ? {
+                race_mode: tier.raceMode,
+                ...(tier.raceMode === 'random_n'
+                  ? { race_count: tier.raceCount }
+                  : {}),
+              }
+            : {}
         // Single-channel tiers keep the `{id}` shape when they carry
         // passthrough fields, matching what the backend writes.
         const hasExtra = Object.keys(tier.extra).length > 0
         if (hasExtra && tier.ids.length === 1) {
-          return { id: tier.ids[0], ...tier.extra }
+          return { id: tier.ids[0], ...tier.extra, ...groupStrategyFields }
         }
-        return hasExtra ? { ids: tier.ids, ...tier.extra } : { ids: tier.ids }
+        return { ids: tier.ids, ...tier.extra, ...groupStrategyFields }
       })
 
     output[modelKey] = {
       retry: rule.retry,
       random_type: rule.randomType,
-      ...(rule.randomType === 'race'
-        ? { race_timeout: rule.raceTimeout }
-        : {}),
+      ...(rule.randomType === 'race' ? { race_timeout: rule.raceTimeout } : {}),
       disable_channels: rule.disableChannels,
       channels,
     }
@@ -188,7 +215,13 @@ export function createEmptyRule(): ChannelRule {
 }
 
 export function createEmptyTier(): ChannelRuleTier {
-  return { uid: nextUid(), ids: [], extra: {} }
+  return {
+    uid: nextUid(),
+    ids: [],
+    raceMode: DEFAULT_RACE_GROUP_MODE,
+    raceCount: DEFAULT_RACE_GROUP_COUNT,
+    extra: {},
+  }
 }
 
 /** Move a tier within a rule, used by the drag handle. */

@@ -81,8 +81,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				logger.LogWarn(c, "channel race mode is unsupported for this protocol; falling back to serial routing")
 				channelIds := make([]int, 0)
 				for _, configured := range plan.Groups {
-					group := append([]int(nil), configured...)
-					common.ShuffleSlice(group)
+					group := selectRaceGroupChannels(configured, common.ShuffleSlice[int])
 					channelIds = append(channelIds, group...)
 				}
 				c.Set("token_channel_ids", channelIds)

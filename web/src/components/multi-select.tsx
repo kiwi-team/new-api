@@ -38,6 +38,8 @@ import {
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { cn } from '@/lib/utils'
 
+import { multiSelectOptionMatchesQuery } from './multi-select/search'
+
 export type Option = {
   label: string
   value: string
@@ -139,6 +141,12 @@ export function MultiSelect(props: MultiSelectProps) {
     return map
   }, [props.options])
 
+  const filterOption = React.useCallback(
+    (item: string, query: string) =>
+      multiSelectOptionMatchesQuery(item, labelMap.get(item) ?? item, query),
+    [labelMap]
+  )
+
   const trimmedInput = inputValue.trim()
   const inputMatchesExisting =
     trimmedInput.length > 0 &&
@@ -164,7 +172,7 @@ export function MultiSelect(props: MultiSelectProps) {
     if (canCreate) {
       set.add(trimmedInput)
     }
-    return Array.from(set)
+    return [...set]
   }, [props.options, props.selected, canCreate, trimmedInput])
 
   const addValues = React.useCallback(
@@ -249,6 +257,7 @@ export function MultiSelect(props: MultiSelectProps) {
     <Combobox
       multiple
       items={items}
+      filter={filterOption}
       value={props.selected}
       onValueChange={handleValueChange}
       inputValue={inputValue}

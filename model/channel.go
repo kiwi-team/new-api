@@ -553,7 +553,10 @@ func CheckMultiTags(tags []string, channelTags string) bool {
 
 func GetChannelIdsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) (channelIds []int) {
 	disabledChannels := channelRules.DisableChannels
+	groups := make([][]int, 0, len(channelRules.Channels))
+	hasExplicitGroupStrategy := false
 	for _, item := range channelRules.Channels {
+		group := make([]int, 0, len(item.Ids))
 		if item.Id > 0 {
 			if slices.Contains(disabledChannels, item.Id) {
 				continue
@@ -565,7 +568,7 @@ func GetChannelIdsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) 
 				if !allIn {
 					continue // 如果这个渠道不能处理这个请求的所有模态，就跳过这个渠道，继续寻找满足条件的。
 				}
-				channelIds = append(channelIds, channel.Id)
+				group = append(group, channel.Id)
 			}
 		} else if len(item.Ids) > 0 {
 			sameWeightIds := []int{}
@@ -584,22 +587,80 @@ func GetChannelIdsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) 
 				}
 			}
 			if len(sameWeightIds) > 0 {
-				common.ShuffleSlice(sameWeightIds)
-				channelIds = append(channelIds, sameWeightIds...)
+				group = selectChannelRuleGroupCandidates(
+					sameWeightIds,
+					item.RaceMode,
+					item.RaceCount,
+					common.ShuffleSlice[int],
+				)
 			}
 		}
+		if len(group) > 0 {
+			if item.RaceMode != "" {
+				hasExplicitGroupStrategy = true
+			}
+			groups = append(groups, group)
+		}
 	}
-	if channelRules.RandomType == "random" {
-		// 打乱channelIds顺序
-		common.ShuffleSlice(channelIds)
-		return channelIds
+	return flattenChannelRuleGroups(
+		groups,
+		channelRules.RandomType,
+		hasExplicitGroupStrategy,
+		common.ShuffleSlice[[]int],
+		common.ShuffleSlice[int],
+	)
+}
+
+func flattenChannelRuleGroups(
+	groups [][]int,
+	randomType string,
+	hasExplicitGroupStrategy bool,
+	shuffleGroups func([][]int),
+	shuffleChannels func([]int),
+) []int {
+	orderedGroups := append([][]int(nil), groups...)
+	if randomType == "random" && hasExplicitGroupStrategy {
+		// Once a rule opts into per-group behavior, randomize group priority but
+		// keep the candidate order produced by each group's strategy intact.
+		shuffleGroups(orderedGroups)
+	}
+
+	channelIds := make([]int, 0)
+	for _, group := range orderedGroups {
+		channelIds = append(channelIds, group...)
+	}
+	if randomType == "random" && !hasExplicitGroupStrategy {
+		// Preserve the historical whole-list shuffle for existing rules.
+		shuffleChannels(channelIds)
 	}
 	return channelIds
 }
 
-// GetChannelGroupsByRule preserves configured group boundaries for race mode.
-// Unlike GetChannelIdsByRule it deliberately does not shuffle any IDs.
-func GetChannelGroupsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) (groups [][]int) {
+func selectChannelRuleGroupCandidates(channelIds []int, mode string, count int, shuffle func([]int)) []int {
+	candidates := append([]int(nil), channelIds...)
+	if mode == "" {
+		mode = hostdto.DefaultRaceGroupMode
+	}
+	if mode == hostdto.ChannelRaceGroupModeOrder {
+		return candidates
+	}
+
+	shuffle(candidates)
+	if mode != hostdto.ChannelRaceGroupModeRandomN {
+		return candidates
+	}
+	if count <= 0 {
+		count = hostdto.DefaultRaceGroupRandomCount
+	}
+	if count < len(candidates) {
+		candidates = candidates[:count]
+	}
+	return candidates
+}
+
+// GetChannelGroupsByRule preserves configured group boundaries and strategies
+// for race mode. Candidate ordering and random sampling happen in relayRace.
+func GetChannelGroupsByRule(channelRules *hostdto.ChannelRulesItem, tags []string) (groups []hostdto.ChannelRaceGroup) {
 	disabledChannels := channelRules.DisableChannels
 	seen := make(map[int]struct{})
 	for _, item := range channelRules.Channels {
@@ -623,7 +684,19 @@ func GetChannelGroupsByRule(channelRules *hostdto.ChannelRulesItem, tags []strin
 			group = append(group, id)
 		}
 		if len(group) > 0 {
-			groups = append(groups, group)
+			mode := item.RaceMode
+			if mode == "" {
+				mode = hostdto.DefaultRaceGroupMode
+			}
+			randomCount := item.RaceCount
+			if randomCount <= 0 {
+				randomCount = hostdto.DefaultRaceGroupRandomCount
+			}
+			groups = append(groups, hostdto.ChannelRaceGroup{
+				ChannelIds:  group,
+				Mode:        mode,
+				RandomCount: randomCount,
+			})
 		}
 	}
 	return groups

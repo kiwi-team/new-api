@@ -83,19 +83,17 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		request.MaxTokens = &defaultMaxTokens
 	}
 
-	isOpus47 := strings.HasPrefix(request.Model, "claude-opus-4-7")
 	isOpus46 := strings.HasPrefix(request.Model, "claude-opus-4-6")
-	isOpus48 := strings.HasPrefix(request.Model, "claude-opus-4-8")
+	requiresAdaptiveThinking := claude.RequiresAdaptiveThinking(request.Model)
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
-		(isOpus46 || isOpus47 || isOpus48) {
+		(isOpus46 || requiresAdaptiveThinking) {
 		request.Model = baseModel
 		request.Thinking = &dto.Thinking{
 			Type: "adaptive",
 		}
 		request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if strings.HasPrefix(request.Model, "claude-opus-4-7") ||
-			strings.HasPrefix(request.Model, "claude-opus-4-8") {
+		if claude.RequiresAdaptiveThinking(request.Model) {
 			// Opus 4.7/4.8 reject non-default temperature/top_p/top_k with 400
 			// and defaults display to "omitted"; restore the 4.6 visible summary.
 			request.Thinking.Display = "summarized"
@@ -110,8 +108,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		strings.HasSuffix(request.Model, "-thinking") {
 		if request.Thinking == nil {
 			baseModel := strings.TrimSuffix(request.Model, "-thinking")
-			if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
-				strings.HasPrefix(baseModel, "claude-opus-4-8") {
+			if claude.RequiresAdaptiveThinking(baseModel) {
 				// Opus 4.7/4.8 reject thinking.type="enabled"; use adaptive at high effort.
 				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
 				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
@@ -145,22 +142,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
-	// claude-opus-4-7 / claude-opus-4-8 breaking changes:
+	// Claude Opus 4.7/4.8 and Claude 5+ breaking changes:
 	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
 	// 2. temperature/top_p/top_k non-default values return 400
-	if isOpus47 || isOpus48 {
-		if request.Thinking != nil && request.Thinking.Type == "enabled" {
-			request.Thinking = &dto.Thinking{
-				Type: "adaptive",
-			}
-			if request.OutputConfig == nil {
-				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
-			}
-		}
-		request.Temperature = nil
-		request.TopP = nil
-		request.TopK = nil
-		request.Model = strings.TrimSuffix(request.Model, "-thinking")
+	if claude.NormalizeAdaptiveThinking(request) {
 		info.UpstreamModelName = request.Model
 	}
 

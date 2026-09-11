@@ -272,11 +272,34 @@ func isRaceSupported(c *gin.Context, relayFormat types.RelayFormat) bool {
 	}
 }
 
+func selectRaceGroupChannels(configured hostdto.ChannelRaceGroup, shuffle func([]int)) []int {
+	channelIds := append([]int(nil), configured.ChannelIds...)
+	mode := configured.Mode
+	if mode == "" {
+		mode = hostdto.DefaultRaceGroupMode
+	}
+	if mode == hostdto.ChannelRaceGroupModeOrder {
+		return channelIds
+	}
+
+	shuffle(channelIds)
+	if mode != hostdto.ChannelRaceGroupModeRandomN {
+		return channelIds
+	}
+	count := configured.RandomCount
+	if count <= 0 {
+		count = hostdto.DefaultRaceGroupRandomCount
+	}
+	if count < len(channelIds) {
+		channelIds = channelIds[:count]
+	}
+	return channelIds
+}
+
 func relayRace(c *gin.Context, relayFormat types.RelayFormat, plan hostdto.ChannelRacePlan) {
 	groups := make([][]int, 0, len(plan.Groups))
 	for _, configured := range plan.Groups {
-		group := append([]int(nil), configured...)
-		common.ShuffleSlice(group)
+		group := selectRaceGroupChannels(configured, common.ShuffleSlice[int])
 		if len(group) > 0 {
 			groups = append(groups, group)
 		}

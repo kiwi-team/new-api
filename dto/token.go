@@ -10,15 +10,26 @@ type ChannelRulesItem struct {
 }
 
 const (
-	ChannelRuleModeRace       = "race"
-	DefaultRaceTimeoutSeconds = 25
-	MinRaceTimeoutSeconds     = 1
-	MaxRaceTimeoutSeconds     = 300
+	ChannelRuleModeRace         = "race"
+	ChannelRaceGroupModeRandom  = "random"
+	ChannelRaceGroupModeOrder   = "order"
+	ChannelRaceGroupModeRandomN = "random_n"
+	DefaultRaceGroupMode        = ChannelRaceGroupModeRandom
+	DefaultRaceGroupRandomCount = 1
+	DefaultRaceTimeoutSeconds   = 25
+	MinRaceTimeoutSeconds       = 1
+	MaxRaceTimeoutSeconds       = 300
 )
 
 type ChannelRacePlan struct {
-	Groups         [][]int
+	Groups         []ChannelRaceGroup
 	TimeoutSeconds int
+}
+
+type ChannelRaceGroup struct {
+	ChannelIds  []int
+	Mode        string
+	RandomCount int
 }
 
 type ChannelItem struct {
@@ -27,6 +38,8 @@ type ChannelItem struct {
 	Id         int                `json:"id,omitempty"`
 	Ids        []int              `json:"ids,omitempty"` // 同一个级别的多个渠道，这些渠道的权重是相等的
 	Weight     int32              `json:"weight,omitempty"`
+	RaceMode   string             `json:"race_mode,omitempty"`  // Historical wire name; group strategy for order, random, and race rules.
+	RaceCount  int                `json:"race_count,omitempty"` // Candidate count when RaceMode is random_n.
 }
 
 type OnlyTextChannels struct {
