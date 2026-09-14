@@ -12,10 +12,21 @@ import (
 
 // from songquanpeng/one-api
 const (
-	USD2RMB = 7.3 // 暂定 1 USD = 7.3 RMB
-	USD     = 500 // $0.002 = 1 -> $1 = 500
-	RMB     = USD / USD2RMB
+	USD2RMB                    = 7.3 // 暂定 1 USD = 7.3 RMB
+	USD                        = 500 // $0.002 = 1 -> $1 = 500
+	RMB                        = USD / USD2RMB
+	gptImage25ModelRatio       = 2.5  // $5 / 1M text input tokens
+	gptImage25CompletionRatio  = 6.0  // $30 / 1M image output tokens
+	gptImage25ImageInputRatio  = 1.6  // $8 / 1M image input tokens
+	gptImage25CachedInputRatio = 0.25 // $1.25 text / $2 image cached input
 )
+
+func isGPTImage25Model(name string) bool {
+	return name == "gpt-image-2.5-sunburst" ||
+		strings.HasPrefix(name, "gpt-image-2.5-sunburst-") ||
+		name == "gpt-image-2.5-flare" ||
+		strings.HasPrefix(name, "gpt-image-2.5-flare-")
+}
 
 // modelRatio
 // https://platform.openai.com/docs/models/model-endpoint-compatibility
@@ -59,6 +70,10 @@ var defaultModelRatio = map[string]float64{
 	"gpt-4.1-nano":                              0.05, // $0.1 / 1M tokens
 	"gpt-4.1-nano-2025-04-14":                   0.05, // $0.1 / 1M tokens
 	"gpt-image-1":                               2.5,  // $5 / 1M tokens
+	"gpt-image-2.5-sunburst":                    gptImage25ModelRatio,
+	"gpt-image-2.5-sunburst-2026-09-08":         gptImage25ModelRatio,
+	"gpt-image-2.5-flare":                       gptImage25ModelRatio,
+	"gpt-image-2.5-flare-2026-09-08":            gptImage25ModelRatio,
 	"o1":                                        7.5,  // $15 / 1M tokens
 	"o1-2024-12-17":                             7.5,  // $15 / 1M tokens
 	"o1-preview":                                7.5,  // $15 / 1M tokens
@@ -375,13 +390,17 @@ func ValidateTieredPriceConfig(tiers []PriceTier) error {
 }
 
 var defaultCompletionRatio = map[string]float64{
-	"gpt-4-gizmo-*":                 2,
-	"gpt-4o-gizmo-*":                3,
-	"gpt-4-all":                     2,
-	"gpt-image-1":                   8,
-	"qwen3-omni-flash-realtime":     7.06,  // multimodal output ￥12.7 / text input ￥1.8 = 7.06
-	"qwen-deep-research":            3.019, // ￥0.163 / ￥0.054
-	"qwen-deep-research-2025-12-15": 2.987, // ￥0.236 / ￥0.079
+	"gpt-4-gizmo-*":                     2,
+	"gpt-4o-gizmo-*":                    3,
+	"gpt-4-all":                         2,
+	"gpt-image-1":                       8,
+	"gpt-image-2.5-sunburst":            gptImage25CompletionRatio,
+	"gpt-image-2.5-sunburst-2026-09-08": gptImage25CompletionRatio,
+	"gpt-image-2.5-flare":               gptImage25CompletionRatio,
+	"gpt-image-2.5-flare-2026-09-08":    gptImage25CompletionRatio,
+	"qwen3-omni-flash-realtime":         7.06,  // multimodal output ￥12.7 / text input ￥1.8 = 7.06
+	"qwen-deep-research":                3.019, // ￥0.163 / ￥0.054
+	"qwen-deep-research-2025-12-15":     2.987, // ￥0.236 / ￥0.079
 }
 
 // UpdateTieredPriceByJSONString parses a JSON string into tiered price config,
@@ -533,6 +552,9 @@ func GetModelRatio(name string) (float64, bool, string) {
 	name = FormatMatchingModelName(name)
 
 	ratio, ok := modelRatioMap.Get(name)
+	if !ok && isGPTImage25Model(name) {
+		return gptImage25ModelRatio, true, name
+	}
 	if !ok {
 		return 37.5, operation_setting.SelfUseModeEnabled, name
 	}
@@ -620,6 +642,10 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 }
 
 func getHardcodedCompletionModelRatio(name string) (float64, bool) {
+	if isGPTImage25Model(name) {
+		// Keep this unlocked so an explicit administrator setting still wins.
+		return gptImage25CompletionRatio, false
+	}
 
 	isReservedModel := strings.HasSuffix(name, "-all") || strings.HasSuffix(name, "-gizmo-*")
 	if isReservedModel {
@@ -783,7 +809,11 @@ func ModelRatio2JSONString() string {
 }
 
 var defaultImageRatio = map[string]float64{
-	"gpt-image-1": 2,
+	"gpt-image-1":                       2,
+	"gpt-image-2.5-sunburst":            gptImage25ImageInputRatio,
+	"gpt-image-2.5-sunburst-2026-09-08": gptImage25ImageInputRatio,
+	"gpt-image-2.5-flare":               gptImage25ImageInputRatio,
+	"gpt-image-2.5-flare-2026-09-08":    gptImage25ImageInputRatio,
 }
 var imageRatioMap = types.NewRWMap[string, float64]()
 var audioRatioMap = types.NewRWMap[string, float64]()
@@ -803,7 +833,11 @@ func UpdateImageRatioByJSONString(jsonStr string) error {
 }
 
 func GetImageRatio(name string) (float64, bool) {
+	name = FormatMatchingModelName(name)
 	ratio, ok := imageRatioMap.Get(name)
+	if !ok && isGPTImage25Model(name) {
+		return gptImage25ImageInputRatio, true
+	}
 	if !ok {
 		return 1, false // Default to 1 if not found
 	}

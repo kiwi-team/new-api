@@ -36,6 +36,10 @@ var defaultCacheRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":               0.1,
 	"gpt-5-nano":                          0.1,
 	"gpt-5-nano-2025-08-07":               0.1,
+	"gpt-image-2.5-sunburst":              gptImage25CachedInputRatio,
+	"gpt-image-2.5-sunburst-2026-09-08":   gptImage25CachedInputRatio,
+	"gpt-image-2.5-flare":                 gptImage25CachedInputRatio,
+	"gpt-image-2.5-flare-2026-09-08":      gptImage25CachedInputRatio,
 	"deepseek-chat":                       0.25,
 	"deepseek-reasoner":                   0.25,
 	"deepseek-coder":                      0.25,
@@ -157,7 +161,11 @@ func UpdateCreateCacheRatioByJSONString(jsonStr string) error {
 
 // GetCacheRatio returns the cache ratio for a model
 func GetCacheRatio(name string) (float64, bool) {
+	name = FormatMatchingModelName(name)
 	ratio, ok := cacheRatioMap.Get(name)
+	if !ok && isGPTImage25Model(name) {
+		return gptImage25CachedInputRatio, true
+	}
 	if !ok {
 		return 1, false // Default to 1 if not found
 	}

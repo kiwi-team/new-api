@@ -291,8 +291,12 @@ func BuildOmniRequestBody(c *gin.Context, req relaycommon.TaskSubmitReq, modelNa
 	} else {
 		reqMap["input"] = prompt
 	}
-	reqMap["generation_config"] = map[string]any{
-		"video_config": map[string]any{"task": task},
+	// 官方的首尾帧插值请求只依赖 input 中两张图的顺序，不传
+	// video_config.task。其他场景仍显式传 task，保持现有行为。
+	if task != "" {
+		reqMap["generation_config"] = map[string]any{
+			"video_config": map[string]any{"task": task},
+		}
 	}
 	seconds, resolution := resolveOmniOutputSettings(req)
 	responseFormat := make(map[string]any)
@@ -324,9 +328,9 @@ func BuildOmniRequestBody(c *gin.Context, req relaycommon.TaskSubmitReq, modelNa
 
 // buildOmniInput 组装 Omni 的 input 数组、video_config.task 与最终 prompt。
 //
-// Omni 通过 prompt 里的标签把素材与叙述绑定（<FIRST_FRAME> 标记首帧，
-// <IMAGE_REF_n> 标记第 n 个参考图，0-indexed）。这是 Omni 强制的机制，不是对
-// 用户指代语法的改写：只在 prompt 前追加必需的标签声明，不改动用户自己写的指代文字。
+// Omni 的普通首帧/参考图通过 prompt 标签与叙述绑定（<FIRST_FRAME>
+// 与 <IMAGE_REF_n>）。首尾帧插值是例外：它按 input 中两张图的顺序确定
+// 起始/结束帧，不注入标签。
 //
 // 返回的 parts 为空表示纯文生视频（此时 input 直接用 prompt 字符串）。
 func buildOmniInput(c *gin.Context, req *relaycommon.TaskSubmitReq) (parts []omniPart, task string, prompt string, err error) {
@@ -335,8 +339,26 @@ func buildOmniInput(c *gin.Context, req *relaycommon.TaskSubmitReq) (parts []omn
 	// 显式 references：按角色区分首帧 / 参考图 / 待编辑视频。
 	if len(req.References) > 0 {
 		firstFrame, hasFirstFrame := req.FirstRefByRole(relaycommon.RefRoleFirstFrame)
+		lastFrame, hasLastFrame := req.FirstRefByRole(relaycommon.RefRoleLastFrame)
 		refImages := req.RefsByRole(relaycommon.RefRoleReferenceImage)
 		baseVideo, hasBaseVideo := req.FirstRefByRole(relaycommon.RefRoleBaseVideo)
+
+		// 首尾帧插值的上游协议就是 [first image, last image, text]；
+		// 图片不需要标签，顺序本身定义起始帧和结束帧。
+		if hasLastFrame {
+			if !hasFirstFrame {
+				return nil, "", "", fmt.Errorf("last_frame requires a first_frame reference")
+			}
+			for _, ref := range []relaycommon.TaskReference{firstFrame, lastFrame} {
+				data, mimeType, e := service.ResolveMediaRef(c, ref.URL, "image/jpeg")
+				if e != nil {
+					return nil, "", "", errors.Wrap(e, "resolve interpolation frame failed")
+				}
+				parts = append(parts, omniPart{Type: "image", Data: data, MimeType: mimeType})
+			}
+			parts = append(parts, omniPart{Type: "text", Text: prompt})
+			return parts, "", prompt, nil
+		}
 
 		var tags []string
 

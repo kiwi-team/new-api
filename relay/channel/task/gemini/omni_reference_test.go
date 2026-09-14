@@ -3,6 +3,7 @@ package gemini
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -104,4 +105,31 @@ func TestBuildOmniRequestBodyTextOnlyUsesStringInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"input":"一只猫"`)
 	assert.Contains(t, string(data), `"task":"text_to_video"`)
+}
+
+// 官方首尾帧插值协议：input 必须严格为首帧、尾帧、文本，且不传
+// video_config.task。即使用户在 references 中先写尾帧，适配器也要按角色重排。
+func TestBuildOmniRequestBodyFirstLastFrameInterpolation(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+	req := relaycommon.TaskSubmitReq{
+		Prompt: "smooth transition",
+		References: []relaycommon.TaskReference{
+			imageRef(relaycommon.RefRoleLastFrame, "data:image/jpeg;base64,bGFzdA=="),
+			imageRef(relaycommon.RefRoleFirstFrame, "data:image/jpeg;base64,Zmlyc3Q="),
+		},
+	}
+
+	data, err := BuildOmniRequestBody(c, req, "gemini-omni-1.1-flash-preview")
+	require.NoError(t, err)
+
+	var body struct {
+		Input            []omniPart     `json:"input"`
+		GenerationConfig map[string]any `json:"generation_config"`
+	}
+	require.NoError(t, common.Unmarshal(data, &body))
+	require.Len(t, body.Input, 3)
+	assert.Equal(t, "Zmlyc3Q=", body.Input[0].Data)
+	assert.Equal(t, "bGFzdA==", body.Input[1].Data)
+	assert.Equal(t, "smooth transition", body.Input[2].Text)
+	assert.Nil(t, body.GenerationConfig)
 }

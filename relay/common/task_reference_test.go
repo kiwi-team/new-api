@@ -237,6 +237,22 @@ func TestValidateReferenceCapability(t *testing.T) {
 			refs: []TaskReference{aud}, wantErr: true, wantCode: "unsupported_reference_role",
 		},
 		{
+			name: "gemini omni family supports first and last frame interpolation", channelType: constant.ChannelTypeGemini,
+			model: "gemini-omni-1.1-flash-preview",
+			refs:  []TaskReference{img(RefRoleFirstFrame), img(RefRoleLastFrame)},
+		},
+		{
+			name: "future gemini omni model inherits interpolation support", channelType: constant.ChannelTypeGemini,
+			model: "gemini-omni-2.0-flash",
+			refs:  []TaskReference{img(RefRoleFirstFrame), img(RefRoleLastFrame)},
+		},
+		{
+			name: "gemini omni interpolation rejects extra reference material", channelType: constant.ChannelTypeGemini,
+			model:   "gemini-omni-1.1-flash-preview",
+			refs:    []TaskReference{img(RefRoleFirstFrame), img(RefRoleLastFrame), img(RefRoleReferenceImage)},
+			wantErr: true, wantCode: "conflicting_references",
+		},
+		{
 			name: "seedance2 rejects mixing frame with reference", channelType: constant.ChannelTypeDoubaoVideo,
 			model:   "doubao-seedance-2-0-260128",
 			refs:    []TaskReference{img(RefRoleFirstFrame), img(RefRoleReferenceImage)},

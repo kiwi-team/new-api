@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -917,6 +918,93 @@ func TestCalculateTextQuotaSummaryFixedPriceAppliesImageCountOnceAndAllowsOverri
 	relayInfo.PriceData.AddOtherRatio("n", 2)
 	summary = calculateTextQuotaSummary(ctx, relayInfo, usage)
 	require.Equal(t, 120000, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryGPTImage25OfficialTokenPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	savedModelRatio := ratio_setting.ModelRatio2JSONString()
+	savedCompletionRatio := ratio_setting.CompletionRatio2JSONString()
+	savedImageRatio := ratio_setting.ImageRatio2JSONString()
+	savedCacheRatio := ratio_setting.CacheRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatio))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(savedCompletionRatio))
+		require.NoError(t, ratio_setting.UpdateImageRatioByJSONString(savedImageRatio))
+		require.NoError(t, ratio_setting.UpdateCacheRatioByJSONString(savedCacheRatio))
+	})
+
+	// Simulate an upgraded installation whose persisted option maps predate
+	// GPT Image 2.5. Official defaults must still apply when those maps do not
+	// contain the newly introduced model names.
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateImageRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateCacheRatioByJSONString(`{}`))
+
+	usage := &dto.Usage{
+		PromptTokens:     1_500_000,
+		CompletionTokens: 200_000,
+		TotalTokens:      1_700_000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			TextTokens:  1_000_000,
+			ImageTokens: 500_000,
+		},
+	}
+
+	models := []string{
+		"gpt-image-2.5-sunburst",
+		"gpt-image-2.5-sunburst-2026-09-08",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-flare-2026-09-08",
+	}
+	for _, modelName := range models {
+		t.Run(modelName, func(t *testing.T) {
+			modelRatio, configured, _ := ratio_setting.GetModelRatio(modelName)
+			require.True(t, configured)
+			require.Equal(t, 2.5, modelRatio) // $5 / 1M text input tokens
+			require.Equal(t, 6.0, ratio_setting.GetCompletionRatio(modelName))
+			imageRatio, configured := ratio_setting.GetImageRatio(modelName)
+			require.True(t, configured)
+			require.Equal(t, 1.6, imageRatio) // $8 / 1M image input tokens
+			cacheRatio, configured := ratio_setting.GetCacheRatio(modelName)
+			require.True(t, configured)
+			require.Equal(t, 0.25, cacheRatio) // $1.25 text / $2 image cached input
+
+			relayInfo := &relaycommon.RelayInfo{
+				OriginModelName: modelName,
+				StartTime:       time.Now(),
+				PriceData: hosttypes.PriceData{
+					ModelRatio:      modelRatio,
+					CompletionRatio: ratio_setting.GetCompletionRatio(modelName),
+					ImageRatio:      imageRatio,
+					CacheRatio:      cacheRatio,
+					GroupRatioInfo: hosttypes.GroupRatioInfo{
+						GroupRatio: 1,
+					},
+				},
+			}
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+			// $5 text input + $4 image input + $6 image output = $15.
+			require.Equal(t, 7_500_000, summary.Quota)
+
+			requestUsage := &dto.Usage{
+				PromptTokens:     3068,
+				CompletionTokens: 1756,
+				TotalTokens:      4824,
+				PromptTokensDetails: dto.InputTokenDetails{
+					TextTokens:  39,
+					ImageTokens: 3029,
+				},
+			}
+			summary = calculateTextQuotaSummary(ctx, relayInfo, requestUsage)
+			// Request toio202609140353017355860000WwdJu42 costs
+			// 39*$5/M + 3029*$8/M + 1756*$30/M = $0.077107.
+			require.Equal(t, 38_554, summary.Quota)
+		})
+	}
 }
 
 func TestCalculateTextToolCallSurchargeGeneralizedBuiltInTools(t *testing.T) {

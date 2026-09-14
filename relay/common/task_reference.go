@@ -170,11 +170,14 @@ func getReferenceCapability(channelType int, model string) *referenceCapability 
 	case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi:
 		switch {
 		case isOmniVideoModel(m):
-			// Gemini Omni：图片参考 + 待编辑视频；不支持参考视频/音频。
+			// Gemini Omni：首帧、首尾帧插值、多图参考与待编辑视频。
+			// 以 gemini-omni 前缀按模型家族判断，后续版本自动继承。
 			return &referenceCapability{
-				name:          "gemini omni",
-				roles:         capRoles(RefRoleFirstFrame, RefRoleReferenceImage, RefRoleBaseVideo),
+				name: "gemini omni",
+				roles: capRoles(RefRoleFirstFrame, RefRoleLastFrame,
+					RefRoleReferenceImage, RefRoleBaseVideo),
 				maxFirstFrame: 1,
+				maxLastFrame:  1,
 				maxRefImage:   -1,
 				maxElement:    0,
 			}
@@ -459,6 +462,14 @@ func ValidateReferenceCapability(channelType int, model string, req *TaskSubmitR
 		if taskErr := validateKlingOmniCounts(model, req); taskErr != nil {
 			return taskErr
 		}
+	}
+
+	// Gemini Omni 的首尾帧插值要求 input 中的两张图分别是起始帧和
+	// 结束帧。混入其他参考素材会使位置语义变得不确定，因此显式拒绝。
+	if cap.name == "gemini omni" && req.HasRefRole(RefRoleLastFrame) && req.HasReferenceMaterial() {
+		return createTaskError(
+			fmt.Errorf("model %s cannot mix first_frame/last_frame interpolation with reference materials", model),
+			"conflicting_references", http.StatusBadRequest, true)
 	}
 
 	// 7. 阿里 wan2.7-r2v 至少要有一个参考图或参考视频
