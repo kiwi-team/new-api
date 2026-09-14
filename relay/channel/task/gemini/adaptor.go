@@ -68,7 +68,24 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate); taskErr != nil {
+		return taskErr
+	}
+	if !isOmniModel(info.OriginModelName) {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	seconds, resolution := resolveOmniOutputSettings(req)
+	if seconds < 3 || seconds > 10 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Gemini Omni duration must be between 3 and 10 seconds"), "invalid_seconds", http.StatusBadRequest)
+	}
+	if _, ok := omniVideoOutputTokensPerSecond[resolution]; !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported Gemini Omni resolution: %s", resolution), "invalid_resolution", http.StatusBadRequest)
+	}
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -234,6 +251,7 @@ func (a *TaskAdaptor) GetModelList() []string {
 		"veo-3.1-generate-preview",
 		"veo-3.1-fast-generate-preview",
 		"gemini-omni-flash-preview",
+		"gemini-omni-1.1-flash-preview",
 	}
 }
 
@@ -253,9 +271,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 
-	// Omni models bill per second of generated video and have no resolution tier.
+	// Gemini Omni has mixed token prices. ModelPrice is configured as the 720p
+	// output price per second; this ratio turns the request estimate into a
+	// pre-charge. Completion settlement uses the upstream modality usage.
 	if isOmniModel(info.OriginModelName) {
-		return OmniSecondsRatio(req.Seconds)
+		return OmniBillingEstimate(req, info.PriceData.ModelPrice)
 	}
 
 	seconds := ResolveVeoDuration(req.Metadata, req.Duration, req.Seconds)
@@ -266,6 +286,26 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		"seconds":    float64(seconds),
 		"resolution": resRatio,
 	}
+}
+
+// AdjustBillingOnComplete settles Gemini Omni from the exact per-modality token
+// usage returned by the Interactions API.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil ||
+		(!isOmniModel(task.Properties.UpstreamModelName) && !isOmniModel(task.Properties.OriginModelName)) {
+		return 0
+	}
+	billing := task.PrivateData.BillingContext
+	if billing == nil || billing.ModelPrice <= 0 {
+		return 0
+	}
+	cost := omniUsageCostUSD(billing.ModelPrice, taskResult)
+	if cost <= 0 {
+		return 0
+	}
+	quota, clamp := common.QuotaFromFloatChecked(cost * common.QuotaPerUnit * billing.GroupRatio)
+	taskResult.QuotaClamp = clamp
+	return quota
 }
 
 // FetchTask polls task status via the Gemini operations GET endpoint.

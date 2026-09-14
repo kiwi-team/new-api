@@ -926,10 +926,14 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios(),
 			OriginModelName: relayInfo.OriginModelName,
-			// Wan 3.0 的固定价是 480P 每秒基价，任务完成后还要用
-			// 上游 usage.duration 做差额结算，不能当成普通“按次固定价”跳过。
+			// Wan 3.0 需要按上游 usage.duration 结算；Gemini Omni 需要按
+			// Interactions API 返回的各模态 token 结算。两者都不能当成
+			// 普通“按次固定价”跳过完成阶段的差额结算。
 			PerCallBilling: common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
-				(relayInfo.PriceData.UsePrice && !relaycommon.IsWan3VideoModel(relayInfo.UpstreamModelName)),
+				(relayInfo.PriceData.UsePrice &&
+					!relaycommon.IsWan3VideoModel(relayInfo.UpstreamModelName) &&
+					!relaycommon.IsGeminiOmniVideoModel(relayInfo.UpstreamModelName) &&
+					!relaycommon.IsGeminiOmniVideoModel(relayInfo.OriginModelName)),
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

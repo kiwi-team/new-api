@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,8 +31,20 @@ const (
 	omniTaskIDPrefix = "omni:"
 	// omniDefaultSeconds is the default video length (seconds) billed when the client
 	// does not specify `seconds`. Omni generates 10-second videos by default.
-	omniDefaultSeconds = 10
+	omniDefaultSeconds                 = 10
+	omniDefaultResolution              = "720p"
+	omniInputUSDPerMillionTokens       = 1.50
+	omniTextOutputUSDPerMillionTokens  = 9.00
+	omniVideoOutputUSDPerMillionTokens = 17.50
+	omni720OutputUSDPerSecond          = 0.10136
 )
+
+var omniVideoOutputTokensPerSecond = map[string]int{
+	"360p":  1931,
+	"720p":  5792,
+	"1080p": 8688,
+	"4k":    17376,
+}
 
 // OmniSecondsRatio returns the per-second billing multiplier for an Omni video task.
 // It reads the top-level `seconds` field (defaulting to omniDefaultSeconds); the task
@@ -49,6 +62,97 @@ func OmniSecondsRatio(seconds string) map[string]float64 {
 		sec = relaycommon.MaxTaskDurationSeconds
 	}
 	return map[string]float64{"seconds": float64(sec)}
+}
+
+// OmniBillingEstimate returns a multiplier relative to the configured 720p
+// per-second ModelPrice. The estimate covers declared input text/images and
+// requested video output; final billing is replaced by upstream token usage.
+func OmniBillingEstimate(req relaycommon.TaskSubmitReq, modelPrice float64) map[string]float64 {
+	if modelPrice <= 0 {
+		return nil
+	}
+	seconds, resolution := resolveOmniOutputSettings(req)
+	videoTokensPerSecond, ok := omniVideoOutputTokensPerSecond[resolution]
+	if !ok {
+		return nil
+	}
+	imageCount := 0
+	if len(req.References) > 0 {
+		for _, ref := range req.References {
+			if ref.Type == relaycommon.RefTypeImage {
+				imageCount++
+			}
+		}
+	} else {
+		imageCount = len(req.Images)
+		if imageCount == 0 && strings.TrimSpace(req.Image) != "" {
+			imageCount = 1
+		}
+	}
+	inputTokens := service.CountTokenInput(req.Prompt, req.Model) + imageCount*1120
+	scale := modelPrice / omni720OutputUSDPerSecond
+	estimatedCost := scale * (float64(inputTokens)*omniInputUSDPerMillionTokens/1_000_000 +
+		float64(seconds*videoTokensPerSecond)*omniVideoOutputUSDPerMillionTokens/1_000_000)
+	return map[string]float64{"omni_usage_estimate": estimatedCost / modelPrice}
+}
+
+func resolveOmniOutputSettings(req relaycommon.TaskSubmitReq) (int, string) {
+	seconds := req.Duration
+	if seconds == 0 {
+		seconds = common.String2Int(strings.TrimSuffix(strings.TrimSpace(req.Seconds), "s"))
+	}
+	resolution := strings.ToLower(strings.TrimSpace(req.Resolution))
+	if responseFormat, ok := req.Metadata["response_format"].(map[string]any); ok {
+		if seconds == 0 {
+			switch duration := responseFormat["duration"].(type) {
+			case string:
+				seconds = common.String2Int(strings.TrimSuffix(strings.TrimSpace(duration), "s"))
+			case float64:
+				seconds = int(duration)
+			case int:
+				seconds = duration
+			}
+		}
+		if resolution == "" {
+			resolution, _ = responseFormat["resolution"].(string)
+			resolution = strings.ToLower(strings.TrimSpace(resolution))
+		}
+	}
+	if seconds == 0 {
+		seconds = omniDefaultSeconds
+	}
+	if resolution == "" {
+		resolution = omniDefaultResolution
+	}
+	return seconds, resolution
+}
+
+func omniUsageCostUSD(modelPrice float64, usage *relaycommon.TaskInfo) float64 {
+	if modelPrice <= 0 || usage == nil {
+		return 0
+	}
+	inputTokens := float64(max(usage.InputTokens, 0))
+	if inputTokens == 0 {
+		for _, tokens := range usage.InputTokensByModality {
+			inputTokens += float64(max(tokens, 0))
+		}
+	}
+	outputTokens := float64(max(usage.OutputTokens, 0))
+	if outputTokens == 0 {
+		for _, tokens := range usage.OutputTokensByModality {
+			outputTokens += float64(max(tokens, 0))
+		}
+	}
+	textOutputTokens := float64(max(usage.OutputTokensByModality["text"], 0))
+	if textOutputTokens > outputTokens {
+		textOutputTokens = outputTokens
+	}
+	videoOutputTokens := outputTokens - textOutputTokens
+	thoughtTokens := float64(max(usage.ThoughtTokens, 0))
+	scale := modelPrice / omni720OutputUSDPerSecond
+	return scale * (inputTokens*omniInputUSDPerMillionTokens +
+		(textOutputTokens+thoughtTokens)*omniTextOutputUSDPerMillionTokens +
+		videoOutputTokens*omniVideoOutputUSDPerMillionTokens) / 1_000_000
 }
 
 // isOmniModel reports whether the model name refers to a Gemini Omni video model.
@@ -144,9 +248,23 @@ type omniInteractionResponse struct {
 	Status string     `json:"status"`
 	Model  string     `json:"model"`
 	Steps  []omniStep `json:"steps"`
+	Usage  omniUsage  `json:"usage"`
 	Error  *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+type omniModalityTokens struct {
+	Modality string `json:"modality"`
+	Tokens   int    `json:"tokens"`
+}
+
+type omniUsage struct {
+	TotalInputTokens       int                  `json:"total_input_tokens"`
+	TotalOutputTokens      int                  `json:"total_output_tokens"`
+	TotalThoughtTokens     int                  `json:"total_thought_tokens"`
+	InputTokensByModality  []omniModalityTokens `json:"input_tokens_by_modality"`
+	OutputTokensByModality []omniModalityTokens `json:"output_tokens_by_modality"`
 }
 
 // ============================
@@ -176,10 +294,24 @@ func BuildOmniRequestBody(c *gin.Context, req relaycommon.TaskSubmitReq, modelNa
 	reqMap["generation_config"] = map[string]any{
 		"video_config": map[string]any{"task": task},
 	}
+	seconds, resolution := resolveOmniOutputSettings(req)
+	responseFormat := make(map[string]any)
+	if configured, ok := req.Metadata["response_format"].(map[string]any); ok {
+		for key, value := range configured {
+			responseFormat[key] = value
+		}
+	}
+	responseFormat["type"] = "video"
+	responseFormat["duration"] = strconv.Itoa(seconds) + "s"
+	responseFormat["resolution"] = resolution
+	if strings.TrimSpace(req.AspectRatio) != "" {
+		responseFormat["aspect_ratio"] = req.AspectRatio
+	}
+	reqMap["response_format"] = responseFormat
 
 	// Merge gemini-specific params from metadata (metadata wins), but never let it
 	// clobber the core fields we control.
-	protected := map[string]bool{"input": true, "model": true, "background": true, "store": true}
+	protected := map[string]bool{"input": true, "model": true, "background": true, "store": true, "response_format": true}
 	for k, v := range req.Metadata {
 		if protected[k] {
 			continue
@@ -310,6 +442,27 @@ func ParseOmniTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	}
 
 	ti := &relaycommon.TaskInfo{}
+	ti.InputTokens = max(op.Usage.TotalInputTokens, 0)
+	ti.OutputTokens = max(op.Usage.TotalOutputTokens, 0)
+	ti.ThoughtTokens = max(op.Usage.TotalThoughtTokens, 0)
+	for _, item := range op.Usage.InputTokensByModality {
+		if item.Tokens <= 0 {
+			continue
+		}
+		if ti.InputTokensByModality == nil {
+			ti.InputTokensByModality = make(map[string]int)
+		}
+		ti.InputTokensByModality[strings.ToLower(item.Modality)] += item.Tokens
+	}
+	for _, item := range op.Usage.OutputTokensByModality {
+		if item.Tokens <= 0 {
+			continue
+		}
+		if ti.OutputTokensByModality == nil {
+			ti.OutputTokensByModality = make(map[string]int)
+		}
+		ti.OutputTokensByModality[strings.ToLower(item.Modality)] += item.Tokens
+	}
 
 	if op.Error != nil && op.Error.Message != "" {
 		ti.Status = model.TaskStatusFailure

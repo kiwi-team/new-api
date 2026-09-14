@@ -306,6 +306,13 @@ const omniDefaultSeconds = 10
 
 // isOmniVideoModel 判断是否为 Gemini Omni 视频模型（如 gemini-omni-flash-preview）。
 func isOmniVideoModel(model string) bool {
+	return IsGeminiOmniVideoModel(model)
+}
+
+// IsGeminiOmniVideoModel reports whether model uses the Gemini Omni
+// Interactions API. Keep this in relay/common so billing lifecycle code can
+// recognize these tasks without importing a provider adaptor.
+func IsGeminiOmniVideoModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gemini-omni")
 }
 

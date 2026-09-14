@@ -1101,6 +1101,14 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// Token usage broken down by modality. Gemini Omni returns these values
+	// when an interaction completes, allowing its mixed input/text/video rates
+	// to be settled exactly instead of approximated from video duration.
+	InputTokens            int            `json:"input_tokens,omitempty"`
+	OutputTokens           int            `json:"output_tokens,omitempty"`
+	ThoughtTokens          int            `json:"thought_tokens,omitempty"`
+	InputTokensByModality  map[string]int `json:"input_tokens_by_modality,omitempty"`
+	OutputTokensByModality map[string]int `json:"output_tokens_by_modality,omitempty"`
 	// ActualSeconds 是上游返回的实际生成时长（秒）。仅当提交时时长未知
 	// （如 Seedance 2.0 传 duration=-1 由模型自选）才需要，用于按实际时长重算计费。
 	ActualSeconds float64 `json:"actual_seconds,omitempty"`
