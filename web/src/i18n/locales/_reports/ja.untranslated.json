@@ -42,6 +42,7 @@
   "Save correction": "Save correction",
   "Selected · expired": "Selected · expired",
   "Selected · not started": "Selected · not started",
+  "SGLang": "SGLang",
   "Temporary budget:": "Temporary budget:",
   "The start date cannot be later than the end date": "The start date cannot be later than the end date",
   "Total used this month": "Total used this month",
@@ -50,5 +51,6 @@
   "Usage correction saved": "Usage correction saved",
   "Usage end date": "End date",
   "Usage start date": "Start date",
-  "Used: {{amount}}": "Used: {{amount}}"
+  "Used: {{amount}}": "Used: {{amount}}",
+  "Zhipu GLM": "Zhipu GLM"
 }

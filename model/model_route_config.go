@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strconv"
@@ -41,19 +40,19 @@ func (m *ModelRouteConfig) MarshalJSON() ([]byte, error) {
 	var channelGroups [][]int
 
 	if m.ModelPatterns != "" {
-		json.Unmarshal([]byte(m.ModelPatterns), &modelPatterns)
+		_ = common.Unmarshal([]byte(m.ModelPatterns), &modelPatterns)
 	}
 	if m.BodyPatterns != "" {
-		json.Unmarshal([]byte(m.BodyPatterns), &bodyPatterns)
+		_ = common.Unmarshal([]byte(m.BodyPatterns), &bodyPatterns)
 	}
 	if m.UrlPatterns != "" {
-		json.Unmarshal([]byte(m.UrlPatterns), &urlPatterns)
+		_ = common.Unmarshal([]byte(m.UrlPatterns), &urlPatterns)
 	}
 	if m.ChannelGroups != "" {
-		json.Unmarshal([]byte(m.ChannelGroups), &channelGroups)
+		_ = common.Unmarshal([]byte(m.ChannelGroups), &channelGroups)
 	}
 
-	return json.Marshal(&struct {
+	return common.Marshal(&struct {
 		*Alias
 		ModelPatterns []string `json:"model_patterns"`
 		BodyPatterns  []string `json:"body_patterns"`
@@ -74,7 +73,7 @@ func (m *ModelRouteConfig) GetModelPatterns() []string {
 		return []string{}
 	}
 	var patterns []string
-	_ = json.Unmarshal([]byte(m.ModelPatterns), &patterns)
+	_ = common.Unmarshal([]byte(m.ModelPatterns), &patterns)
 	return patterns
 }
 
@@ -84,7 +83,7 @@ func (m *ModelRouteConfig) GetBodyPatterns() []string {
 		return []string{}
 	}
 	var patterns []string
-	_ = json.Unmarshal([]byte(m.BodyPatterns), &patterns)
+	_ = common.Unmarshal([]byte(m.BodyPatterns), &patterns)
 	return patterns
 }
 
@@ -94,7 +93,7 @@ func (m *ModelRouteConfig) GetUrlPatterns() []string {
 		return []string{}
 	}
 	var patterns []string
-	_ = json.Unmarshal([]byte(m.UrlPatterns), &patterns)
+	_ = common.Unmarshal([]byte(m.UrlPatterns), &patterns)
 	return patterns
 }
 
@@ -104,7 +103,7 @@ func (m *ModelRouteConfig) GetChannelGroups() [][]int {
 		return [][]int{}
 	}
 	var groups [][]int
-	_ = json.Unmarshal([]byte(m.ChannelGroups), &groups)
+	_ = common.Unmarshal([]byte(m.ChannelGroups), &groups)
 	return groups
 }
 
@@ -152,6 +151,11 @@ func (m *ModelRouteConfig) MatchUrl(url string) bool {
 		}
 	}
 	return false
+}
+
+// MatchesRequest requires every configured request dimension to match.
+func (m *ModelRouteConfig) MatchesRequest(modelName, body, url string) bool {
+	return m.MatchModel(modelName) && m.MatchBody(body) && m.MatchUrl(url)
 }
 
 // Insert 插入新配置
@@ -259,11 +263,9 @@ func FindMatchingRouteConfig(modelName, body, url string) (*ModelRouteConfig, er
 
 	// 按优先级从高到低匹配
 	for _, config := range configs {
-		if config.MatchModel(modelName) {
+		if config.MatchesRequest(modelName, body, url) {
 			return config, nil
 		}
-		//(len(body) > 0 && config.MatchBody(body)) &&
-		//(len(url) > 0 && config.MatchUrl(url)) {
 	}
 
 	return nil, nil // 没有匹配的配置

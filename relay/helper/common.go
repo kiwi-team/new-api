@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -153,7 +154,7 @@ func PingData(c *gin.Context) error {
 	return FlushWriter(c)
 }
 
-func ObjectData(c *gin.Context, object interface{}) error {
+func ObjectData(c *gin.Context, object any) error {
 	if object == nil {
 		return errors.New("object is nil")
 	}
@@ -177,7 +178,17 @@ func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 	return ws.WriteMessage(1, []byte(str))
 }
 
-func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
+// WssResponseString applies the selected channel's response model mapping to
+// an upstream WebSocket message before forwarding it to the client.
+func WssResponseString(c *gin.Context, info *relaycommon.RelayInfo, ws *websocket.Conn, str string) error {
+	mapper, err := info.ResponseModelOutputMapper()
+	if err == nil && mapper != nil {
+		str = string(mapper.RewritePayload([]byte(str)))
+	}
+	return WssString(c, ws, str)
+}
+
+func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	jsonData, err := common.Marshal(object)
 	if err != nil {
 		return fmt.Errorf("error marshalling object: %w", err)

@@ -171,28 +171,12 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	formData := c.Request.PostForm
 	req = TaskSubmitReq{
-		Prompt:         formData.Get("prompt"),
-		Model:          formData.Get("model"),
-		Mode:           formData.Get("mode"),
-		Image:          formData.Get("image"),
-		Size:           formData.Get("size"),
-		NegativePrompt: formData.Get("negative_prompt"),
-		Resolution:     formData.Get("resolution"),
-		AspectRatio:    formData.Get("aspect_ratio"),
-		Audio:          formData.Get("audio"),
-		CameraMotion:   formData.Get("camera_motion"),
-		LastFrameURI:   formData.Get("last_frame_uri"),
-		Metadata:       make(map[string]interface{}),
-	}
-	if fpsStr := formData.Get("fps"); fpsStr != "" {
-		if fps, err := strconv.Atoi(fpsStr); err == nil {
-			req.FPS = &fps
-		}
-	}
-	if generateAudioStr := formData.Get("generate_audio"); generateAudioStr != "" {
-		if generateAudio, err := strconv.ParseBool(generateAudioStr); err == nil {
-			req.GenerateAudio = &generateAudio
-		}
+		Prompt:   formData.Get("prompt"),
+		Model:    formData.Get("model"),
+		Mode:     formData.Get("mode"),
+		Image:    formData.Get("image"),
+		Size:     formData.Get("size"),
+		Metadata: make(map[string]any),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -269,11 +253,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return taskErr
 	}
 
-	action := constant.TaskActionTextGenerate
-	if explicitRefs {
-		action = deriveActionFromReferences(&req, action)
-	} else if hasInputReference {
-		action = constant.TaskActionGenerate
+	action := constant.TaskActionTextToVideo
+	if hasInputReference {
+		action = constant.TaskActionImageToVideo
 	}
 	if strings.HasPrefix(model, "sora-2") {
 

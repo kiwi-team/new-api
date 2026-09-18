@@ -103,14 +103,17 @@ func TestTaskAdaptorDoResponseReturnsPublicIDToClient(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(tc.upstreamBody)),
 			}
 
-			upstreamID, _, taskErr := adaptor.DoResponse(c, upstreamResp, info)
+			parsed, taskErr := adaptor.ParseResponse(c, upstreamResp, info)
 			require.Nil(t, taskErr)
+			require.NotNil(t, parsed)
 
 			// 返回值进 PrivateData.UpstreamTaskID，轮询靠它跟上游对话。
-			assert.Equal(t, tc.wantUpstreamID, upstreamID)
+			assert.Equal(t, tc.wantUpstreamID, parsed.UpstreamTaskID)
 
 			var clientResp map[string]any
-			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &clientResp))
+			clientBody, err := common.Marshal(parsed.ClientResponse)
+			require.NoError(t, err)
+			require.NoError(t, common.Unmarshal(clientBody, &clientResp))
 			assert.Equal(t, publicTaskID, clientResp["id"])
 			assert.Equal(t, publicTaskID, clientResp["task_id"])
 		})

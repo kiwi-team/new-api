@@ -41,6 +41,7 @@ export function LogFilterCombobox(props: LogFilterComboboxProps) {
       value={props.value}
       onValueChange={props.onValueChange}
       placeholder={props.placeholder}
+      aria-label={props.placeholder}
       id={props.id}
       emptyText={t('No matching items')}
       allowCustomValue

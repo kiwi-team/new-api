@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relay"
-	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/fal"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
@@ -19,10 +22,13 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/vertex/yunwu"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"io"
-	"strings"
-	"time"
 )
+
+type legacyVideoTaskAdaptor interface {
+	Init(info *relaycommon.RelayInfo)
+	FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error)
+	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
+}
 
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
@@ -50,7 +56,7 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
-	adaptor := relay.GetTaskAdaptor(platform)
+	var adaptor legacyVideoTaskAdaptor
 	if strings.Contains(cacheGetChannel.GetBaseURL(), "yunwu") {
 		adaptor = &yunwu.TaskAdaptor{}
 	} else if strings.Contains(cacheGetChannel.GetBaseURL(), "ppinfra") {
@@ -83,7 +89,7 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	return nil
 }
 
-func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, channel *model.Channel, taskId string, taskM map[string]*model.Task) error {
+func updateVideoSingleTask(ctx context.Context, adaptor legacyVideoTaskAdaptor, channel *model.Channel, taskId string, taskM map[string]*model.Task) error {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()

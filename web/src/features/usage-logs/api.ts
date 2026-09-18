@@ -16,9 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { api } from '@/lib/api'
+import { api, type ApiRequestConfig } from '@/lib/api'
 
-import { buildQueryParams } from './lib/build-query-params'
+import { buildQueryParams } from './lib/query-params'
+import { parseTaskArtifactsResponse } from './lib/task-artifacts'
 import type {
   GetLogsParams,
   GetLogsResponse,
@@ -26,46 +27,18 @@ import type {
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
+  TaskArtifactsResponse,
   UserInfo,
 } from './types'
 
-export type LogFilterOption = {
-  value: string
-  label: string
-}
-
-export type LogChannelOption = LogFilterOption & {
-  name?: string
-}
-
-type FilterOptionApiResponse<T> = {
-  success: boolean
-  data?: T
-}
-
-type TokenOptionSource = {
-  id?: number
-  name?: string
-}
-
-type ChannelOptionSource = {
-  id?: number
-  name?: string
-}
-
-type UserOptionSource = {
-  id?: number
-  username?: string
-}
-
-type ClientUidOptionSource = {
-  client_user_id?: string
-  client_name?: string
-}
-
-type FilterOptionPage<T> = {
-  items?: T[]
-}
+export type LogFilterOption = { value: string; label: string }
+export type LogChannelOption = LogFilterOption & { name?: string }
+type FilterOptionApiResponse<T> = { success: boolean; data?: T }
+type TokenOptionSource = { id?: number; name?: string }
+type ChannelOptionSource = { id?: number; name?: string }
+type UserOptionSource = { id?: number; username?: string }
+type ClientUidOptionSource = { client_user_id?: string; client_name?: string }
+type FilterOptionPage<T> = { items?: T[] }
 
 // ============================================================================
 // Generic API Helpers
@@ -141,7 +114,6 @@ export async function getLogTokenIdOptions(): Promise<LogFilterOption[]> {
     '/api/data/token-list'
   )
   if (!res.data.success || !Array.isArray(res.data.data)) return []
-
   return res.data.data.flatMap((token) => {
     if (token.id == null) return []
     const value = String(token.id)
@@ -155,7 +127,6 @@ export async function getLogChannelOptions(): Promise<LogChannelOption[]> {
     '/api/channel/channel-name-list'
   )
   if (!res.data.success || !Array.isArray(res.data.data)) return []
-
   return res.data.data.flatMap((channel) => {
     if (channel.id == null) return []
     const value = String(channel.id)
@@ -205,15 +176,10 @@ export async function getLogClientUidOptions(
   const res = await api.get<
     FilterOptionApiResponse<FilterOptionPage<ClientUidOptionSource>>
   >(path, {
-    params: {
-      p: 1,
-      page_size: 50,
-      ...(trimmed ? { keyword: trimmed } : {}),
-    },
+    params: { p: 1, page_size: 50, ...(trimmed ? { keyword: trimmed } : {}) },
   })
   const items = res.data.data?.items
   if (!res.data.success || !Array.isArray(items)) return []
-
   return items.flatMap((item) => {
     const clientUserId = item.client_user_id?.trim()
     if (!clientUserId) return []
@@ -254,15 +220,19 @@ export const getAllTaskLogs = (params: GetTaskLogsParams) =>
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
   fetchLogs('/api/task', params, false)
 
-// ============================================================================
-// Raw payload API (root only)
-// ============================================================================
+const taskArtifactRequestConfig = {
+  skipBusinessError: true,
+  skipErrorHandler: true,
+} satisfies ApiRequestConfig
 
-/**
- * Request/response bodies and headers are fetched per log on demand: they are
- * large, and the backend keeps all three behind `RootAuth` because they can
- * contain prompts and upstream credentials.
- */
+export async function getTaskArtifacts(taskId: string) {
+  const response = await api.get<TaskArtifactsResponse>(
+    `/api/task/${encodeURIComponent(taskId)}/artifacts`,
+    taskArtifactRequestConfig
+  )
+  return parseTaskArtifactsResponse(response.data)
+}
+
 async function getLogPayload(
   id: number,
   kind: 'request' | 'response' | 'header'

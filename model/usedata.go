@@ -247,10 +247,10 @@ func SaveQuotaDataCache() {
 }
 
 // GetMonthlyNonProjectQuota 返回某 uid 自 monthStart 起未打项目标签的消耗（原始 quota 单位）。
-// 与 GetBatchProjectBudgetSummary 中 `project_name <> ''` 的项目侧口径互补，两者相加等于总消耗。
+// 与 GetBatchProjectBudgetSummary 中 `project_name <> ”` 的项目侧口径互补，两者相加等于总消耗。
 //
 // project_name 为空串即非项目请求；`IS NULL` 是对历史数据的防御——正常写入路径与 AutoMigrate
-// 加列（带 DEFAULT ''）都不会留 NULL，但手工执行过 ALTER TABLE 的环境可能有。
+// 加列（带 DEFAULT ”）都不会留 NULL，但手工执行过 ALTER TABLE 的环境可能有。
 func GetMonthlyNonProjectQuota(clientUserId string, monthStart int64) (int64, error) {
 	if clientUserId == "" {
 		return 0, nil
@@ -599,23 +599,14 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 }
 
 func increaseQuotaData(quotaData *QuotaData) {
-	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
-		quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).Updates(map[string]interface{}{
-		"count":                          gorm.Expr("count + ?", quotaData.Count),
-		"quota":                          gorm.Expr("quota + ?", quotaData.Quota),
-		"token_used":                     gorm.Expr("token_used + ?", quotaData.TokenUsed),
-		"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", quotaData.PromptTokens),
-		"completion_tokens":              gorm.Expr("completion_tokens + ?", quotaData.CompletionTokens),
-		"cached_tokens":                  gorm.Expr("cached_tokens + ?", quotaData.CachedTokens),
-		"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", quotaData.ClaudeCacheCreation5mTokens),
-		"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", quotaData.ClaudeCacheCreation1hTokens),
-		"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", quotaData.CacheWrite5mRequestCount),
-		"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", quotaData.CacheWrite1hRequestCount),
-		"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", quotaData.CacheReadRequestCount),
-		"stream_request_count":           gorm.Expr("stream_request_count + ?", quotaData.StreamRequestCount),
-		"frt_sum":                        gorm.Expr("frt_sum + ?", quotaData.FrtSum),
-		"request_time_sum":               gorm.Expr("request_time_sum + ?", quotaData.RequestTimeSum),
-	}).Error
+	err := DB.Table("quota_data").
+		Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
+			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenId, quotaData.ChannelId, quotaData.NodeName).
+		Updates(map[string]any{
+			"count":      gorm.Expr("count + ?", quotaData.Count),
+			"quota":      gorm.Expr("quota + ?", quotaData.Quota),
+			"token_used": gorm.Expr("token_used + ?", quotaData.TokenUsed),
+		}).Error
 	if err != nil {
 		common.SysLog("increaseQuotaData error:" + err.Error())
 	}

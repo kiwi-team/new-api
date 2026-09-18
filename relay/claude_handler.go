@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -19,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/setting/reasoning"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +40,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if err := helper.ApplyReasoningModelSuffix(c, info, request); err != nil {
+		return newConvertRequestFailedError(c, info, err)
+	}
 
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
 	requestStr := ""
@@ -54,100 +54,6 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
-
-	// metadata.user_id 格式规整：把下划线连接格式
-	// （user_<device>_account_<account>_session_<session>）转换为真实 CC 的序列化 JSON 字符串格式，
-	// 使发往上游的请求能通过上游 nuwa-cc 的 CC 检测。仅命中下划线格式时转换，其余原样保留。
-	// 必须在下方 DetectClaudeCode 之前执行，使本地检测也认规整后的格式。
-	claude.NormalizeClaudeCodeMetadata(request)
-
-	// Claude Code 客户端检测：渠道开启后，仅放行真实 Claude Code 客户端请求。
-	// 检测以「客户端原始请求头叠加渠道 Header Override 后的合并结果」为准，即在请求头覆盖之后进行，
-	// 使渠道对头的改写/透传/{client_header} 占位符都能被检测感知。
-	// 未通过检测视为该渠道请求失败——用 channel: 前缀错误码触发跨渠道重试并写入 error_logs，
-	// 同时该错误码在 ShouldDisableChannel 中被显式跳过，不会误禁用当前渠道。
-	if info.ChannelSetting.ClaudeCodeGuardEnabled {
-		guardHeader, headerErr := channel.BuildOverriddenClientHeader(c, info)
-		if headerErr != nil {
-			return types.NewErrorWithStatusCode(headerErr, types.ErrorCodeChannelHeaderOverrideInvalid, http.StatusBadRequest)
-		}
-		if guardErr := claude.DetectClaudeCode(request, guardHeader, c.Request.URL.Path); guardErr != nil {
-			return types.NewErrorWithStatusCode(guardErr, types.ErrorCodeChannelClaudeCodeGuardReject, http.StatusBadRequest)
-		}
-		// 通过检测后：若 system 缺少 billing 签名块，则在 system 首位补一个（内容可按渠道配置）。
-		claude.InsertClaudeCodeBillingHeader(request, info.ChannelSetting.ClaudeCodeBillingHeader)
-	}
-
-	if request.MaxTokens == nil || *request.MaxTokens == 0 {
-		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
-		request.MaxTokens = &defaultMaxTokens
-	}
-
-	isOpus46 := strings.HasPrefix(request.Model, "claude-opus-4-6")
-	requiresAdaptiveThinking := claude.RequiresAdaptiveThinking(request.Model)
-
-	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
-		(isOpus46 || requiresAdaptiveThinking) {
-		request.Model = baseModel
-		request.Thinking = &dto.Thinking{
-			Type: "adaptive",
-		}
-		request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if claude.RequiresAdaptiveThinking(request.Model) {
-			// Opus 4.7/4.8 reject non-default temperature/top_p/top_k with 400
-			// and defaults display to "omitted"; restore the 4.6 visible summary.
-			request.Thinking.Display = "summarized"
-			request.Temperature = nil
-			request.TopP = nil
-			request.TopK = nil
-		} else {
-			request.Temperature = common.GetPointer[float64](1.0)
-		}
-		info.UpstreamModelName = request.Model
-	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
-		strings.HasSuffix(request.Model, "-thinking") {
-		if request.Thinking == nil {
-			baseModel := strings.TrimSuffix(request.Model, "-thinking")
-			if claude.RequiresAdaptiveThinking(baseModel) {
-				// Opus 4.7/4.8 reject thinking.type="enabled"; use adaptive at high effort.
-				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
-				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
-				request.Temperature = nil
-				request.TopP = nil
-				request.TopK = nil
-			} else {
-				// 因为BudgetTokens 必须大于1024
-				if request.MaxTokens == nil || *request.MaxTokens < 1280 {
-					request.MaxTokens = common.GetPointer[uint](1280)
-				}
-
-				// BudgetTokens 为 max_tokens 的 80%
-				request.Thinking = &dto.Thinking{
-					Type:         "enabled",
-					BudgetTokens: common.GetPointer[int](int(float64(*request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
-				}
-				// TODO: 临时处理
-				// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
-				request.Temperature = common.GetPointer[float64](1.0)
-			}
-		}
-		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
-			request.Model = strings.TrimSuffix(request.Model, "-thinking")
-		}
-		info.UpstreamModelName = request.Model
-	}
-	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
-		if effort := request.GetEfforts(); effort != "" {
-			info.SetReasoningEffort(effort)
-		}
-	}
-
-	// Claude Opus 4.7/4.8 and Claude 5+ breaking changes:
-	// 1. thinking: {type: "enabled"} returns 400 → must use {type: "adaptive"}
-	// 2. temperature/top_p/top_k non-default values return 400
-	if claude.NormalizeAdaptiveThinking(request) {
-		info.UpstreamModelName = request.Model
-	}
 
 	if info.ChannelSetting.SystemPrompt != "" {
 		if request.System == nil {
@@ -177,16 +83,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
-		result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
-		if convErr != nil {
-			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		openAIRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
-		if !ok {
-			return types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, openAIRequest)
+		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
 			return newApiErr
 		}
@@ -213,7 +110,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
 		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			return newConvertRequestFailedError(c, info, err)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 		jsonData, err := common.Marshal(convertedRequest)

@@ -36,7 +36,9 @@ type ChannelSettings struct {
 	PathWhitelist []string `json:"path_whitelist,omitempty"`
 	// PathBlacklist 请求路径黑名单（前缀匹配，忽略 query）。请求路径命中列表中任意一项前缀时，
 	// 该渠道被跳过，不处理该请求。为空则不生效。黑名单优先级高于白名单。
-	PathBlacklist []string `json:"path_blacklist,omitempty"`
+	PathBlacklist             []string `json:"path_blacklist,omitempty"`
+	TaskPluginKey             string   `json:"task_plugin_key,omitempty"`
+	ResponsesWebSocketEnabled bool     `json:"responses_websocket_enabled,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`
@@ -105,6 +107,14 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	// OllamaOpenAIChat routes Ollama chat completions to the OpenAI-compatible
+	// /v1/chat/completions endpoint. When unset, chat completions keep using
+	// the native /api/chat protocol.
+	OllamaOpenAIChat bool `json:"ollama_openai_chat,omitempty"`
+	// ToolLossPolicy is a channel-level opt-in for request-phase conversion
+	// rejection. Empty follows the default allow policy. Accepted values:
+	// "", "allow", "safe", "strict".
+	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
@@ -114,7 +124,22 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 	return *s.OpenRouterEnterprise
 }
 
+// ValidateToolLossPolicy validates the channel-level request-phase tool-loss
+// policy. Empty keeps the default allow policy.
+func (s *ChannelOtherSettings) ValidateToolLossPolicy() error {
+	if s == nil {
+		return nil
+	}
+	switch strings.TrimSpace(s.ToolLossPolicy) {
+	case "", string(types.ConversionLossPolicyAllow), string(types.ConversionLossPolicySafe), string(types.ConversionLossPolicyStrict):
+		return nil
+	default:
+		return fmt.Errorf("invalid tool_loss_policy: %s", s.ToolLossPolicy)
+	}
+}
+
 const (
+	AdvancedCustomConverterSGLangRerank                = "jina_rerank_to_sglang"
 	advancedCustomConverterNone                        = "none"
 	advancedCustomConverterClaudeMessagesToOpenAIChat  = "anthropic_messages_to_openai_chat_completions"
 	advancedCustomConverterOpenAIChatToClaudeMessages  = "openai_chat_completions_to_anthropic_messages"
@@ -374,6 +399,7 @@ func matchAdvancedCustomIncomingPathTemplate(configuredPath string, requestPath 
 func IsAdvancedCustomConverterAllowed(converter string) bool {
 	switch converter {
 	case advancedCustomConverterNone,
+		AdvancedCustomConverterSGLangRerank,
 		advancedCustomConverterClaudeMessagesToOpenAIChat,
 		advancedCustomConverterOpenAIChatToClaudeMessages,
 		advancedCustomConverterOpenAIChatToOpenAIResponses,
@@ -557,6 +583,9 @@ func validateAdvancedCustomUpstreamTarget(index int, upstreamPath string) error 
 }
 
 func validateAdvancedCustomConverterPath(index int, incomingPath string, converter string) error {
+	if converter == AdvancedCustomConverterSGLangRerank && (incomingPath == "/v1/rerank" || incomingPath == "/rerank") {
+		return nil
+	}
 	if incomingPath == advancedCustomEndpointPathOpenAIAlphaSearch {
 		if converter == advancedCustomConverterNone {
 			return nil

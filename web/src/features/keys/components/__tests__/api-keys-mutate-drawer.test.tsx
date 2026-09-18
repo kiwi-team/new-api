@@ -24,6 +24,8 @@ const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
 const { api } = await import('@/lib/api')
+const { ROLE } = await import('@/lib/roles')
+const { useAuthStore } = await import('@/stores/auth-store')
 const { ApiKeysProvider } = await import('../api-keys-provider')
 const { ApiKeysMutateDrawer } = await import('../api-keys-mutate-drawer')
 
@@ -196,6 +198,7 @@ function selectComboboxOption(
 afterEach(() => {
   apiClient.get = originalGet
   apiClient.post = originalPost
+  useAuthStore.getState().auth.reset()
   localStorage.clear()
   if (renderedDrawer) {
     renderedDrawer.queryClient.clear()
@@ -276,5 +279,37 @@ describe('API keys mutate drawer Auto group integration', () => {
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+  })
+
+  test('lets root bind channel routing rules when creating a key', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'root',
+      role: ROLE.SUPER_ADMIN,
+    })
+    await renderCreateDrawer()
+
+    fireEvent.click(findButton('Advanced Settings', true))
+    fireEvent.change(screen.getByLabelText('Channel ratios'), {
+      target: { value: '{"12":0.8}' },
+    })
+    fireEvent.change(screen.getByLabelText('Channel rules'), {
+      target: { value: '{"gpt-4o":{"retry":2}}' },
+    })
+    fireEvent.click(
+      screen.getByRole('switch', { name: 'Prioritize key channel rules' })
+    )
+    expect(findButton('Visual editor', true)).toBeVisible()
+
+    changeInput(getControlByLabel('Name'), 'root-routed')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]).toMatchObject({
+      channel_ratios: '{"12":0.8}',
+      channel_rules: '{"gpt-4o":{"retry":2}}',
+      channel_rules_high_priority: true,
+    })
   })
 })

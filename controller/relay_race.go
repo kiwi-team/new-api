@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -273,27 +274,7 @@ func isRaceSupported(c *gin.Context, relayFormat types.RelayFormat) bool {
 }
 
 func selectRaceGroupChannels(configured hostdto.ChannelRaceGroup, shuffle func([]int)) []int {
-	channelIds := append([]int(nil), configured.ChannelIds...)
-	mode := configured.Mode
-	if mode == "" {
-		mode = hostdto.DefaultRaceGroupMode
-	}
-	if mode == hostdto.ChannelRaceGroupModeOrder {
-		return channelIds
-	}
-
-	shuffle(channelIds)
-	if mode != hostdto.ChannelRaceGroupModeRandomN {
-		return channelIds
-	}
-	count := configured.RandomCount
-	if count <= 0 {
-		count = hostdto.DefaultRaceGroupRandomCount
-	}
-	if count < len(channelIds) {
-		channelIds = channelIds[:count]
-	}
-	return channelIds
+	return service.SelectChannelRaceGroupCandidates(configured, shuffle)
 }
 
 func relayRace(c *gin.Context, relayFormat types.RelayFormat, plan hostdto.ChannelRacePlan) {

@@ -31,32 +31,19 @@ import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { getSelfSettlementConfigs } from '@/features/bill/api'
 import { getUserModels } from '@/lib/api'
+import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
 
 import { updateUserSettings } from '../../api'
-import {
-  DEFAULT_QUOTA_WARNING_THRESHOLD,
-  NOTIFICATION_METHODS,
-} from '../../constants'
-import { parseUserSettings } from '../../lib'
-import type { UserProfile, UserSettings, NotifyType } from '../../types'
+import { NOTIFICATION_METHODS } from '../../constants'
+import { normalizeUserSettings } from '../../lib/user-settings'
+import type { UserProfile, NotifyType } from '../../types'
 
 const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
   email: Mail,
   webhook: Webhook,
   bark: Bell,
   gotify: Server,
-}
-
-const NOTIFICATION_VALUES = new Set<NotifyType>(
-  NOTIFICATION_METHODS.map((method) => method.value)
-)
-
-function normalizeNotifyType(value: unknown): NotifyType {
-  return typeof value === 'string' &&
-    NOTIFICATION_VALUES.has(value as NotifyType)
-    ? (value as NotifyType)
-    : 'email'
 }
 
 // ============================================================================
@@ -72,30 +59,11 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
   const { t } = useTranslation()
   const isAdmin = (profile?.role ?? 0) >= ROLE.ADMIN
   const [loading, setLoading] = useState(false)
-  const [settings, setSettings] = useState<UserSettings>({
-    notify_type: 'email',
-    quota_warning_threshold: DEFAULT_QUOTA_WARNING_THRESHOLD,
-    notification_email: '',
-    webhook_url: '',
-    webhook_secret: '',
-    bark_url: '',
-    gotify_url: '',
-    gotify_token: '',
-    gotify_priority: 5,
-    accept_unset_model_ratio_model: false,
-    record_ip_log: false,
-    upstream_model_update_notify_enabled: false,
-    model_limits_enabled: false,
-    model_limits: [],
-  })
-
-  // Update form field helper
-  // Models the user may pick from. `/api/user/models` is the same list the
-  // key editor uses; settlement models are merged in on demand because they
-  // can include models this user has never called.
+  const [settings, setSettings] = useState(() => normalizeUserSettings())
   const { data: userModels } = useQuery({
     queryKey: ['user-models'],
     queryFn: getUserModels,
+    enabled: settings.model_limits_enabled,
   })
   const [extraModels, setExtraModels] = useState<string[]>([])
   const [addingSettlementModels, setAddingSettlementModels] = useState(false)
@@ -104,10 +72,27 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
     const names = new Set([
       ...(userModels?.data ?? []),
       ...extraModels,
-      ...(settings.model_limits ?? []),
+      ...settings.model_limits,
     ])
     return [...names].map((name) => ({ label: name, value: name }))
-  }, [userModels, extraModels, settings.model_limits])
+  }, [userModels?.data, extraModels, settings.model_limits])
+
+  // Update form field helper
+  const updateField = useCallback(
+    <K extends keyof typeof settings>(
+      field: K,
+      value: (typeof settings)[K]
+    ) => {
+      setSettings((prev) => ({ ...prev, [field]: value }))
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (profile?.setting) {
+      setSettings(normalizeUserSettings(profile.setting))
+    }
+  }, [profile])
 
   const handleAddSettlementModels = async () => {
     setAddingSettlementModels(true)
@@ -120,76 +105,47 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
         toast.warning(t('No model has a settlement price yet'))
         return
       }
-      const current = settings.model_limits ?? []
-      const merged = [...new Set([...current, ...settlementModels])]
-      setExtraModels((prev) => [...new Set([...prev, ...settlementModels])])
-      setSettings((prev) => ({
-        ...prev,
-        model_limits: merged,
-        // Adding models is pointless while the limit is off, so turn it on.
+
+      const merged = [
+        ...new Set([...settings.model_limits, ...settlementModels]),
+      ]
+      const addedCount = merged.length - settings.model_limits.length
+      setExtraModels((previous) => [
+        ...new Set([...previous, ...settlementModels]),
+      ])
+      setSettings((previous) => ({
+        ...previous,
         model_limits_enabled: true,
+        model_limits: merged,
       }))
-      toast.success(
-        t('Added {{count}} models', {
-          count: merged.length - current.length,
-        })
-      )
+      toast.success(t('Added {{count}} models', { count: addedCount }))
+    } catch (error) {
+      handleServerError(error, t('Failed to load models'))
     } finally {
       setAddingSettlementModels(false)
     }
   }
 
-  const updateField = useCallback(
-    <K extends keyof UserSettings>(field: K, value: UserSettings[K]) => {
-      setSettings((prev) => ({ ...prev, [field]: value }))
-    },
-    []
-  )
-
-  useEffect(() => {
-    if (profile?.setting) {
-      const parsed = parseUserSettings(profile.setting)
-      setSettings({
-        notify_type: normalizeNotifyType(parsed.notify_type),
-        quota_warning_threshold:
-          parsed.quota_warning_threshold ?? DEFAULT_QUOTA_WARNING_THRESHOLD,
-        notification_email: parsed.notification_email ?? '',
-        webhook_url: parsed.webhook_url ?? '',
-        webhook_secret: parsed.webhook_secret ?? '',
-        bark_url: parsed.bark_url ?? '',
-        gotify_url: parsed.gotify_url ?? '',
-        gotify_token: parsed.gotify_token ?? '',
-        gotify_priority: parsed.gotify_priority ?? 5,
-        accept_unset_model_ratio_model:
-          parsed.accept_unset_model_ratio_model || false,
-        record_ip_log: parsed.record_ip_log || false,
-        upstream_model_update_notify_enabled:
-          parsed.upstream_model_update_notify_enabled || false,
-        model_limits_enabled: parsed.model_limits_enabled || false,
-        model_limits: parsed.model_limits ?? [],
-      })
-    }
-  }, [profile])
-
   const handleSave = async () => {
     try {
       setLoading(true)
-      const response = await updateUserSettings(settings)
+      const { record_ip_log: _recordIpLog, ...notificationSettings } = settings
+      const response = await updateUserSettings(notificationSettings)
 
       if (response.success) {
         toast.success(t('Settings updated successfully'))
         onUpdate()
       } else {
-        toast.error(response.message || t('Failed to update settings'))
+        handleServerError(response, t('Failed to update settings'))
       }
-    } catch (_error) {
-      toast.error(t('Failed to update settings'))
+    } catch (error) {
+      handleServerError(error, t('Failed to update settings'))
     } finally {
       setLoading(false)
     }
   }
 
-  const notifyType = normalizeNotifyType(settings.notify_type)
+  const notifyType = settings.notify_type
 
   return (
     <div className='space-y-4 sm:space-y-6'>
@@ -200,8 +156,7 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
           value={[notifyType]}
           onValueChange={(value) => {
             const nextValue = value.find((item) => item !== notifyType)
-            if (nextValue)
-              updateField('notify_type', normalizeNotifyType(nextValue))
+            if (nextValue) updateField('notify_type', nextValue as NotifyType)
           }}
           aria-label={t('Notification Method')}
           variant='outline'
@@ -432,25 +387,8 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
             }
           />
         </div>
-
-        {/* Record IP Log */}
-        <div className='flex items-start justify-between gap-3 rounded-lg border p-3 sm:items-center sm:p-4'>
-          <div className='space-y-0.5'>
-            <Label htmlFor='recordIp'>{t('Record IP Address')}</Label>
-            <p className='text-muted-foreground text-xs sm:text-sm'>
-              {t('Log IP address for usage and error logs')}
-            </p>
-          </div>
-          <Switch
-            id='recordIp'
-            className='shrink-0'
-            checked={settings.record_ip_log}
-            onCheckedChange={(checked) => updateField('record_ip_log', checked)}
-          />
-        </div>
       </div>
 
-      {/* Divider */}
       <div className='border-t' />
 
       {/* Account-level model limits */}
@@ -480,11 +418,15 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
           <div className='space-y-2'>
             <div className='space-y-1'>
               <Button
+                type='button'
                 variant='outline'
                 size='sm'
                 disabled={addingSettlementModels}
                 onClick={() => void handleAddSettlementModels()}
               >
+                {addingSettlementModels && (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                )}
                 {t('Limit to models with a settlement price')}
               </Button>
               <p className='text-muted-foreground text-xs'>
@@ -498,7 +440,7 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
             <MultiSelect
               id='modelLimits'
               options={modelOptions}
-              selected={settings.model_limits ?? []}
+              selected={settings.model_limits}
               onChange={(values) => updateField('model_limits', values)}
               placeholder={t('Select models')}
             />

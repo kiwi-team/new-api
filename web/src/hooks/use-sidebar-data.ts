@@ -22,6 +22,7 @@ import {
   Boxes,
   ChartColumn,
   ChartLine,
+  ClipboardList,
   Coins,
   CreditCard,
   FileText,
@@ -32,13 +33,15 @@ import {
   ListTodo,
   MessageSquare,
   Network,
+  PlugZap,
   Radio,
   Receipt,
-  Route,
   ReceiptText,
+  Route,
   ServerCog,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   Tags,
   Ticket,
   TriangleAlert,
@@ -48,7 +51,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { type SidebarData } from '@/components/layout/types'
+import type { SidebarData } from '@/components/layout/types'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -109,6 +112,11 @@ export function useSidebarData(): SidebarData {
             pageKeys: ['log'],
           },
           {
+            title: t('Audit Logs'),
+            url: '/usage-logs/audit',
+            icon: ClipboardList,
+          },
+          {
             title: t('Error Logs'),
             url: '/error-logs',
             icon: TriangleAlert,
@@ -141,6 +149,11 @@ export function useSidebarData(): SidebarData {
             icon: User,
             pageKeys: ['personal'],
           },
+          {
+            title: t('Security & Access'),
+            url: '/security',
+            icon: ShieldCheck,
+          },
         ],
       },
       {
@@ -168,10 +181,6 @@ export function useSidebarData(): SidebarData {
             title: t('Bill'),
             url: '/bill',
             icon: ReceiptText,
-            // No module mapping: admins always keep the entry, while regular
-            // accounts only get it when their org menu grants a bill page.
-            // `bill_self` is the regular user's own bill; `bill` is the
-            // org-wide view wl-admin gets. Either one shows the entry.
             pageKeys: ['bill', 'bill_self'],
           },
           {
@@ -196,10 +205,6 @@ export function useSidebarData(): SidebarData {
             title: t('Pricing Center'),
             url: '/pricing-center',
             icon: Tags,
-            // Root-only, and `service/org_view.go` has no page constant for it,
-            // so `requiredRole` is the whole gate. Do not invent a pageKeys
-            // entry here: an org whitelist can never contain a key the backend
-            // does not emit.
             requiredRole: ROLE.SUPER_ADMIN,
           },
         ],
@@ -221,10 +226,6 @@ export function useSidebarData(): SidebarData {
             pageKeys: ['models'],
           },
           {
-            // Deployments is a section of the Models page, but it had its own
-            // entry in the previous console and the backend grants it a
-            // separate page key, so it keeps a separate link — same pattern as
-            // the two Usage Logs entries.
             title: t('Model Deployments'),
             url: '/models/deployments',
             icon: Boxes,
@@ -279,6 +280,12 @@ export function useSidebarData(): SidebarData {
             title: t('System Info'),
             url: '/system-info',
             icon: ServerCog,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Task Plugins'),
+            url: '/task-plugins',
+            icon: PlugZap,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {

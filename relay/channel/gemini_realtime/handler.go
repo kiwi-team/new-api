@@ -127,7 +127,7 @@ func GeminiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 
 				// Forward message to client
-				err = helper.WssString(c, clientConn, string(message))
+				err = helper.WssResponseString(c, info, clientConn, string(message))
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to client: %v", err)
 					return

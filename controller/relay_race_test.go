@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -59,6 +61,62 @@ func TestRaceResponseWriterOnlyForwardsOneWinner(t *testing.T) {
 	assert.JSONEq(t, `{"channel":11}`, recorder.Body.String())
 	assert.Equal(t, "winner", firstContext.GetString(common.KeyChannelRaceResult))
 	assert.Equal(t, "loser", secondContext.GetString(common.KeyChannelRaceResult))
+}
+
+func TestModelOutputMappingResponseWriterRewritesAllResponseFormats(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "native anthropic response",
+			payload: `{"type":"message","model":"Claude-3-7-Sonnet"}`,
+			want:    `{"type":"message","model":"public-claude"}`,
+		},
+		{
+			name:    "nested responses api response",
+			payload: `{"type":"response.created","response":{"id":"resp_1","sequence_number":9007199254740993,"model":"GPT-5.1"}}`,
+			want:    `{"type":"response.created","response":{"id":"resp_1","sequence_number":9007199254740993,"model":"public-gpt"}}`,
+		},
+		{
+			name:    "gemini native response",
+			payload: `{"responseId":"gemini-1","modelVersion":"Gemini-2.5-Pro"}`,
+			want:    `{"responseId":"gemini-1","modelVersion":"public-gemini"}`,
+		},
+		{
+			name:    "server sent event",
+			payload: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"Claude-3-7-Sonnet\"}}\n\n",
+			want:    "event: message_start\ndata: {\"message\":{\"model\":\"public-claude\"},\"type\":\"message_start\"}\n\n",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			writer, err := newModelOutputMappingResponseWriter(ctx.Writer, `{
+				"claude-3-7-sonnet":"public-claude",
+				"gpt-5.1":"public-gpt",
+				"gemini-2.5-pro":"public-gemini"
+			}`)
+			require.NoError(t, err)
+			ctx.Writer = writer
+			ctx.Writer.Header().Set("Content-Length", "999")
+			ctx.Writer.WriteHeader(http.StatusOK)
+
+			written, err := ctx.Writer.WriteString(testCase.payload)
+			require.NoError(t, err)
+			assert.Equal(t, len(testCase.payload), written)
+			assert.Empty(t, recorder.Header().Get("Content-Length"))
+			if strings.HasPrefix(testCase.payload, "{") {
+				assert.JSONEq(t, testCase.want, recorder.Body.String())
+			} else {
+				assert.Equal(t, testCase.want, recorder.Body.String())
+			}
+		})
+	}
 }
 
 func TestRaceCoordinatorWaitsForSlowStartedAttemptBeforeFailing(t *testing.T) {

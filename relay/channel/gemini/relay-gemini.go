@@ -178,7 +178,7 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 					clampedBudget := clampThinkingBudget(modelName, budgetTokens)
 					geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
 						ThinkingBudget:  common.GetPointer(clampedBudget),
-						IncludeThoughts: true,
+						IncludeThoughts: common.GetPointer(true),
 					}
 				}
 			}
@@ -197,11 +197,11 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 
 			if isUnsupported {
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-					IncludeThoughts: true,
+					IncludeThoughts: common.GetPointer(true),
 				}
 			} else {
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-					IncludeThoughts: true,
+					IncludeThoughts: common.GetPointer(true),
 				}
 				if maxOutputTokens := lo.FromPtr(geminiRequest.GenerationConfig.MaxOutputTokens); maxOutputTokens > 0 {
 					budgetTokens := model_setting.GetGeminiSettings().ThinkingAdapterBudgetTokensPercentage * float64(maxOutputTokens)
@@ -220,9 +220,9 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 					ThinkingBudget: common.GetPointer(0),
 				}
 			}
-		} else if _, level, ok := reasoning.TrimEffortSuffix(info.UpstreamModelName); ok && level != "" {
+		} else if _, level, ok := reasoning.TrimEffortSuffixWithSuffixes(info.UpstreamModelName, reasoning.OpenAIEffortSuffixes); ok && level != "" {
 			geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-				IncludeThoughts: true,
+				IncludeThoughts: common.GetPointer(true),
 				ThinkingLevel:   level,
 			}
 			info.ReasoningEffort = level
@@ -299,10 +299,10 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 							tempThinkingConfig.ThinkingBudget = common.GetPointer(budgetInt)
 							if budgetInt > 0 {
 								// 有正数预算
-								tempThinkingConfig.IncludeThoughts = true
+								tempThinkingConfig.IncludeThoughts = common.GetPointer(true)
 							} else {
 								// 存在但为0或负数，禁用思考
-								tempThinkingConfig.IncludeThoughts = false
+								tempThinkingConfig.IncludeThoughts = common.GetPointer(false)
 							}
 							hasThinkingConfig = true
 						default:
@@ -312,7 +312,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 
 					if includeThoughts, exists := thinkingConfig["include_thoughts"]; exists {
 						if v, ok := includeThoughts.(bool); ok {
-							tempThinkingConfig.IncludeThoughts = v
+							tempThinkingConfig.IncludeThoughts = common.GetPointer(v)
 							hasThinkingConfig = true
 						} else {
 							return nil, errors.New("extra_body.google.thinking_config.include_thoughts must be a boolean")
@@ -941,12 +941,12 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			if strings.Contains(textRequest.Model, "gemini-3-pro") || strings.Contains(textRequest.Model, "gemini-3.1-pro") {
 				//The model does not support setting thinking_budget to 0. (
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-					IncludeThoughts: true,
+					IncludeThoughts: common.GetPointer(true),
 				}
 			} else {
 				clampedBudget := clampThinkingBudget(textRequest.Model, int(thinking.BudgetTokens))
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-					IncludeThoughts: true,
+					IncludeThoughts: common.GetPointer(true),
 					ThinkingBudget:  &clampedBudget,
 				}
 			}
@@ -955,7 +955,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			if strings.Contains(textRequest.Model, "gemini-2.5-flash") {
 				zero := 0
 				geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
-					IncludeThoughts: false,
+					IncludeThoughts: common.GetPointer(false),
 					ThinkingBudget:  &zero,
 				}
 			}
@@ -1567,6 +1567,10 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*d
 	var response dto.ChatCompletionsStreamResponse
 	response.Object = "chat.completion.chunk"
 	response.Choices = choices
+	if metadata := geminiResponse.GetUsageMetadata(); dto.HasGeminiUsageMetadataTokens(metadata) {
+		usage := buildUsageFromGeminiMetadata(metadata, 0)
+		response.Usage = &usage
+	}
 	return &response, isStop
 }
 func buildUsageFromGeminiMetadata(metadata *dto.GeminiUsageMetadata, fallbackPromptTokens int) dto.Usage {
@@ -1602,10 +1606,13 @@ func patchGeminiZeroCompletionUsage(c *gin.Context, info *relaycommon.RelayInfo,
 		usage.CompletionTokens = imageCount * 1400
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	// Overwrite the metadata-derived billing usage: effectiveBillingUsage prefers
-	// BillingUsage during settlement, so keeping the prompt-only metadata there
-	// would still bill zero completion tokens.
-	usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+	// Settlement prefers BillingUsage, so fill the missing completion in the
+	// original upstream dialect without discarding cache or modality details.
+	if usage.BillingUsage != nil {
+		usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(usage.BillingUsage, usage.CompletionTokens)
+	} else {
+		usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+	}
 }
 
 func geminiResponseUsageText(response *dto.GeminiChatResponse) string {
@@ -1631,6 +1638,23 @@ func markGeminiGoogleSearchCall(c *gin.Context, response *dto.GeminiChatResponse
 		if candidate.GroundingMetadata != nil && len(candidate.GroundingMetadata.WebSearchQueries) > 0 {
 			c.Set("gemini_google_search_call", true)
 			return
+		}
+	}
+}
+
+func countGeminiBillableFunctionCalls(info *relaycommon.RelayInfo, response *dto.GeminiChatResponse) {
+	if info == nil || response == nil {
+		return
+	}
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.FunctionCall == nil {
+				continue
+			}
+			if part.FunctionCall.WillContinue != nil && *part.FunctionCall.WillContinue {
+				continue
+			}
+			info.CountBillableToolCall(dto.BuildInCallFunctionCall, part.FunctionCall.FunctionName)
 		}
 	}
 }
@@ -1687,12 +1711,15 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var usage = &dto.Usage{}
 	var imageCount int
 	var hasBillableUsageMetadata bool
+	var streamErr error
+	var accumulatedUsageMetadata *dto.GeminiUsageMetadata
 	responseText := strings.Builder{}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var geminiResponse dto.GeminiChatResponse
 		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
-			sr.Stop(fmt.Errorf("unmarshal: %w", err))
+			streamErr = fmt.Errorf("unmarshal Gemini stream response: %w", err)
+			sr.Stop(streamErr)
 			return
 		}
 
@@ -1701,6 +1728,7 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 
 		markGeminiGoogleSearchCall(c, &geminiResponse)
+		countGeminiBillableFunctionCalls(info, &geminiResponse)
 
 		// 统计图片数量
 		for _, candidate := range geminiResponse.Candidates {
@@ -1730,13 +1758,19 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		// 	}
 		// }
 		if metadata := geminiResponse.GetUsageMetadata(); dto.HasGeminiUsageMetadataTokens(metadata) {
-			mappedUsage := buildUsageFromGeminiMetadata(metadata, info.GetEstimatePromptTokens())
+			accumulatedUsageMetadata = dto.MergeGeminiUsageMetadataNonZero(accumulatedUsageMetadata, metadata)
+			mappedUsage := buildUsageFromGeminiMetadata(accumulatedUsageMetadata, info.GetEstimatePromptTokens())
 			*usage = mappedUsage
 			hasBillableUsageMetadata = true
 		}
 
 		if !callback(data, &geminiResponse) {
-			sr.Stop(fmt.Errorf("gemini callback stopped"))
+			if isGeminiDownstreamStop(c, info) {
+				sr.Stop(nil)
+				return
+			}
+			streamErr = errors.New("Gemini stream callback stopped")
+			sr.Stop(streamErr)
 		}
 	})
 
@@ -1756,7 +1790,22 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		patchGeminiZeroCompletionUsage(c, info, usage, responseText.String(), imageCount)
 	}
 
+	if streamErr != nil {
+		return usage, types.NewOpenAIError(streamErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if info.StreamStatus != nil && !info.StreamStatus.IsNormalEnd() {
+		logger.LogWarn(c, fmt.Sprintf("Gemini stream ended unexpectedly: %s", info.StreamStatus.Summary()))
+	}
+
 	return usage, nil
+}
+
+func isGeminiDownstreamStop(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return true
+	}
+	return info != nil && info.StreamStatus != nil &&
+		info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone
 }
 
 func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -1807,6 +1856,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		if info.SendResponseCount == 0 {
 			// send first response
 			emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
+			// Claude message_start is emitted from this first OpenAI chunk.
+			// Carry upstream usage when the current Gemini frame provided it.
+			emptyResponse.Usage = response.Usage
 			if response.IsToolCall() {
 				if len(emptyResponse.Choices) > 0 && len(response.Choices) > 0 {
 					toolCalls := response.Choices[0].Delta.ToolCalls
@@ -1876,6 +1928,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	markGeminiGoogleSearchCall(c, &geminiResponse)
+	countGeminiBillableFunctionCalls(info, &geminiResponse)
 	if len(geminiResponse.Candidates) == 0 {
 		// usage := dto.Usage{
 		// 	PromptTokens: geminiResponse.UsageMetadata.PromptTokenCount,
@@ -1956,7 +2009,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatClaude, fullTextResponse)
+		convertResult, err := service.ConvertResponse(c, info, types.RelayFormatClaude, fullTextResponse)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -2088,7 +2141,7 @@ func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 	nextPageToken := ""
 	maxPages := 100 // Safety limit to prevent infinite loops
 
-	for page := 0; page < maxPages; page++ {
+	for range maxPages {
 		url := fmt.Sprintf("%s/v1beta/models", baseURL)
 		if nextPageToken != "" {
 			url = fmt.Sprintf("%s?pageToken=%s", url, nextPageToken)

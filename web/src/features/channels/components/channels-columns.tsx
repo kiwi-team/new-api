@@ -23,7 +23,6 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
-  Eye,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -33,7 +32,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyButton } from '@/components/copy-button'
 import { BadgeListCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { ProviderBadge } from '@/components/provider-badge'
@@ -48,10 +46,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
 import { toIntlLocale } from '@/i18n/languages'
 import {
   formatCurrencyFromUSD,
@@ -59,14 +53,16 @@ import {
   getCurrencyLabel,
 } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannelKey, getCodexUsage,updateChannelBalance } from '../api'
+import { getCodexUsage, updateChannelBalance } from '../api'
 import {
   CHANNEL_STATUS_CONFIG,
-  CHANNEL_TYPE_CODEX,
+  CHANNEL_TYPE_TASK_PLUGIN,
+  CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_SGLANG,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
 import {
@@ -90,6 +86,7 @@ import {
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
+import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
@@ -185,98 +182,6 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
 /**
  * Priority cell component with inline editing
  */
-/**
- * Channel keys are stripped from the list payload (`GetAllChannels` omits the
- * column), so the row fetches one on demand. `/api/channel/:id/key` is gated
- * by passkey/2FA the same way the edit drawer's reveal is — each row owns its
- * verification dialog because only one is ever open at a time.
- */
-function ChannelKeyCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
-  const [revealed, setRevealed] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const {
-    open: verificationOpen,
-    methods: verificationMethods,
-    state: verificationState,
-    executeVerification,
-    withVerification,
-    cancel: cancelVerification,
-    setCode: setVerificationCode,
-    switchMethod: switchVerificationMethod,
-  } = useSecureVerification()
-
-  if (isTagAggregateRow(channel)) return null
-
-  const handleReveal = async () => {
-    try {
-      await withVerification(
-        async (proofToken?: string) => {
-          setIsLoading(true)
-          try {
-            const res = await getChannelKey(channel.id, proofToken)
-            if (!res.success) {
-              throw new Error(res.message || t('Failed to fetch channel key'))
-            }
-            setRevealed(res.data?.key ?? '')
-            return res
-          } finally {
-            setIsLoading(false)
-          }
-        },
-        {
-          scope: 'channel.key.read',
-          preferredMethod: 'passkey',
-          title: t('Verify to view channel key'),
-          description: t(
-            'Use Passkey or 2FA to confirm your identity before revealing this channel key.'
-          ),
-        }
-      )
-    } catch (error) {
-      if (error instanceof Error) toast.error(error.message)
-    }
-  }
-
-  return (
-    <>
-      {revealed === null ? (
-        <Button
-          variant='ghost'
-          size='sm'
-          className='text-muted-foreground h-7 gap-1 px-2 text-xs'
-          disabled={isLoading}
-          onClick={() => void handleReveal()}
-        >
-          <Eye className='h-3.5 w-3.5' />
-          {t('Reveal')}
-        </Button>
-      ) : (
-        <div className='flex max-w-[220px] items-center gap-1'>
-          <span className='truncate font-mono text-xs'>{revealed || '-'}</span>
-          {revealed && (
-            <CopyButton value={revealed} className='h-5 w-5 shrink-0' />
-          )}
-        </div>
-      )}
-      <SecureVerificationDialog
-        open={verificationOpen}
-        onOpenChange={(open) => {
-          if (!open) cancelVerification()
-        }}
-        methods={verificationMethods}
-        state={verificationState}
-        onVerify={async (method, code) => {
-          await executeVerification(method, code)
-        }}
-        onCancel={cancelVerification}
-        onCodeChange={setVerificationCode}
-        onMethodChange={switchVerificationMethod}
-      />
-    </>
-  )
-}
-
 function PriorityCell({ channel }: { channel: Channel }) {
   if (isTagAggregateRow(channel)) {
     return <TagPriorityCell channel={channel} />
@@ -434,7 +339,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
-  const { sensitiveVisible, setCurrentRow } = useChannels()
+  const { sensitiveVisible, setCurrentRow, setOpen } = useChannels()
   const isTagRow = isTagAggregateRow(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
@@ -525,25 +430,32 @@ export function BalanceCell({ channel }: { channel: Channel }) {
 
   // Regular channel row: show used and remaining with click to update
   const variant = getBalanceVariant(balance)
+  const isInferenceChannel =
+    channel.type === CHANNEL_TYPE_VLLM || channel.type === CHANNEL_TYPE_SGLANG
+  const inferenceStatusLabel =
+    channel.type === CHANNEL_TYPE_SGLANG ? t('SGLang status') : t('vLLM status')
 
   const handleClickUpdate = async () => {
+    if (isInferenceChannel) {
+      setCurrentRow(channel)
+      setOpen('inference-status')
+      return
+    }
     if (isUpdating) {
       return
     }
 
     setIsUpdating(true)
-    if (channel.type === CHANNEL_TYPE_CODEX) {
+    if (channel.type === 57) {
       try {
         const res = await getCodexUsage(channel.id)
         if (!res.success) {
-          throw new Error(res.message || t('Failed to fetch usage'))
+          throw createServerError(res, t('Failed to fetch usage'))
         }
         setCodexUsageResponse(res)
         setCodexUsageOpen(true)
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t('Failed to fetch usage')
-        )
+        handleServerError(error, t('Failed to fetch usage'))
       } finally {
         setIsUpdating(false)
       }
@@ -569,12 +481,10 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
       } else {
-        toast.error(response.message || t('Failed to update balance'))
+        handleServerError(response, t('Failed to update balance'))
       }
     } catch (error: unknown) {
-      toast.error(
-        error instanceof Error ? error.message : t('Failed to update balance')
-      )
+      handleServerError(error, t('Failed to update balance'))
     } finally {
       setIsUpdating(false)
     }
@@ -582,21 +492,36 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
     remainingBadgeLabel = t('Updating...')
-  } else if (sensitiveVisible && channel.type === CHANNEL_TYPE_CODEX) {
+  } else if (sensitiveVisible && channel.type === 57) {
     remainingBadgeLabel = t('Account Info')
+  } else if (sensitiveVisible && isInferenceChannel) {
+    remainingBadgeLabel = inferenceStatusLabel
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
-  } else if (channel.type === CHANNEL_TYPE_CODEX) {
+  } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
+  } else if (isInferenceChannel) {
+    remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === CHANNEL_TYPE_CODEX) {
+  if (channel.type === 57 || isInferenceChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
   }
+  const remainingBadge = (
+    <StatusBadge
+      label={remainingBadgeLabel}
+      variant={remainingBadgeVariant}
+      size='sm'
+      copyable={false}
+      showDot={false}
+      className='cursor-pointer'
+      onClick={isInferenceChannel ? undefined : handleClickUpdate}
+    />
+  )
 
   return (
     <TooltipProvider>
@@ -621,20 +546,26 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <StatusBadge
-                label={remainingBadgeLabel}
-                variant={remainingBadgeVariant}
-                size='sm'
-                copyable={false}
-                showDot={false}
-                className='cursor-pointer'
-                onClick={handleClickUpdate}
-              />
+              isInferenceChannel ? (
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-auto rounded-full p-0'
+                  aria-haspopup='dialog'
+                  onClick={handleClickUpdate}
+                >
+                  {remainingBadge}
+                </Button>
+              ) : (
+                remainingBadge
+              )
             }
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== CHANNEL_TYPE_CODEX && <p>{t('Click to update balance')}</p>}
+            {channel.type !== 57 && !isInferenceChannel && (
+              <p>{t('Click to update balance')}</p>
+            )}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -655,15 +586,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           try {
             const res = await getCodexUsage(channel.id)
             if (!res.success) {
-              throw new Error(res.message || t('Failed to fetch usage'))
+              throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
           } catch (error) {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : t('Failed to fetch usage')
-            )
+            handleServerError(error, t('Failed to fetch usage'))
           } finally {
             setIsUpdating(false)
           }
@@ -695,8 +622,6 @@ export function useChannelsColumns(
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
-  const canRevealKey =
-    useAuthStore((state) => state.auth.user?.role) === ROLE.SUPER_ADMIN
   const enableSelection = options.enableSelection ?? true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
@@ -925,26 +850,34 @@ export function useChannelsColumns(
                   </Tooltip>
                 </TooltipProvider>
               )}
-              <TooltipProvider delay={300}>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <div className='max-w-full min-w-0 overflow-hidden' />
-                    }
-                  >
-                    <ProviderBadge
-                      iconKey={`${iconName}.Color`}
-                      iconSize={18}
-                      label={typeName}
-                      colorText={false}
-                      copyable={false}
-                      showDot={false}
-                      className='max-w-full min-w-0 overflow-hidden'
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side='top'>{typeName}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              {type === CHANNEL_TYPE_TASK_PLUGIN ? (
+                <TaskPluginChannelBadge
+                  pluginKey={
+                    parseChannelSettings(channel.setting)?.task_plugin_key
+                  }
+                />
+              ) : (
+                <TooltipProvider delay={300}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <div className='max-w-full min-w-0 overflow-hidden' />
+                      }
+                    >
+                      <ProviderBadge
+                        iconKey={`${iconName}.Color`}
+                        iconSize={18}
+                        label={typeName}
+                        colorText={false}
+                        copyable={false}
+                        showDot={false}
+                        className='max-w-full min-w-0 overflow-hidden'
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side='top'>{typeName}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               {isIonet && (
                 <TooltipProvider delay={100}>
                   <Tooltip>
@@ -1235,20 +1168,6 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
-      // Key column: root-only, revealed per row on demand.
-      ...(canRevealKey
-        ? [
-            {
-              id: 'key',
-              header: t('Key'),
-              meta: { mobileHidden: true },
-              cell: ({ row }) => <ChannelKeyCell channel={row.original} />,
-              size: 150,
-              enableSorting: false,
-            } as ColumnDef<Channel>,
-          ]
-        : []),
-
       // Balance column (Used/Remaining)
       {
         accessorKey: 'balance',
@@ -1345,6 +1264,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible, canRevealKey]
+    [enableSelection, t, locale, sensitiveVisible]
   )
 }

@@ -25,6 +25,8 @@ const (
 	ContextKeyTokenCrossGroupRetry          ContextKey = "token_cross_group_retry"
 	ContextKeyTokenAutoGroups               ContextKey = "token_auto_groups"
 	ContextKeyTokenChannelRulesHighPriority ContextKey = "token_channel_rules_high_priority"
+	ContextKeyChannelConstraints            ContextKey = "channel_constraints"
+	ContextKeyOriginTasks                   ContextKey = "origin_tasks"
 
 	/* channel related keys */
 	ContextKeyChannelRatio                      ContextKey = "channel_ratio"
@@ -108,4 +110,9 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyTokenAuditParams contains only the API token operation's safe metadata.
+	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
+	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
+	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 )

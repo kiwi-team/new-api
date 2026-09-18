@@ -648,7 +648,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			common.SysLog("get_channel_null: " + err.Error())
 		}
 		if channel.GetAutoBan() && common.AutomaticDisableChannelEnabled {
-			model.UpdateChannelStatus(midjourneyTask.ChannelId, "", 2, "No available account instance")
+			if model.UpdateChannelStatus(midjourneyTask.ChannelId, "", common.ChannelStatusManuallyDisabled, "No available account instance") {
+				service.CloseActiveWebSocketsForChannel(midjourneyTask.ChannelId, service.ChannelDisabledCloseReason)
+			}
 		}
 	}
 	if midjResponse.Code != 1 && midjResponse.Code != 21 && midjResponse.Code != 22 {
@@ -659,7 +661,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 
 	if midjResponse.Code == 21 { //21-任务已存在（处理中或者有结果了）
 		// 将 properties 转换为一个 map
-		properties, ok := midjResponse.Properties.(map[string]interface{})
+		properties, ok := midjResponse.Properties.(map[string]any)
 		if ok {
 			imageUrl, ok1 := properties["imageUrl"].(string)
 			status, ok2 := properties["status"].(string)

@@ -1,9 +1,18 @@
 package relay
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	_ "github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
@@ -52,6 +61,7 @@ import (
 	taskHunyuan "github.com/QuantumNous/new-api/relay/channel/task/hunyuan"
 	taskHunyuanPPio "github.com/QuantumNous/new-api/relay/channel/task/hunyuan/ppio"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
+	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	taskLtx "github.com/QuantumNous/new-api/relay/channel/task/ltx"
 	taskMiniMax "github.com/QuantumNous/new-api/relay/channel/task/minimax"
@@ -75,6 +85,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/xunfei"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu_4v"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -183,6 +194,9 @@ func GetAdaptor(apiType int) channel.Adaptor {
 }
 
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
+	if pluginKey := c.GetString("task_plugin_key"); pluginKey != "" {
+		return constant.TaskPlatform(pluginKey)
+	}
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {
 		return constant.TaskPlatform(strconv.Itoa(channelType))
@@ -190,73 +204,223 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	return constant.TaskPlatform(c.GetString("platform"))
 }
 
-func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
-	switch platform {
-	//case constant.APITypeAIProxyLibrary:
-	//	return &aiproxy.Adaptor{}
-	case constant.TaskPlatformSuno:
-		return &suno.TaskAdaptor{}
-	// 聚合上游（云雾 / PPInfra / Novita / 腾讯云 / FAL）：这些渠道复用通用
-	// ChannelType，只能靠 base URL 区分，所以用独立的 TaskPlatform 标识。
-	// 平台由 resolveTaskPlatform 判定一次并落库到 task，fetch 阶段直接按平台派发。
-	case constant.TaskPlatformYunwuVeo:
-		return &taskVertexYunwu.TaskAdaptor{}
-	case constant.TaskPlatformYunwuSora:
-		return &taskSoraYunwu.TaskAdaptor{}
-	case constant.TaskPlatformPPio:
-		return &taskPPio.TaskAdaptor{}
-	case constant.TaskPlatformPPioHunyuanImage:
-		return &taskHunyuanPPio.TaskAdaptor{}
-	case constant.TaskPlatformNovitaImage:
-		return &taskNovita.TaskAdaptor{}
-	case constant.TaskPlatformHunyuanImage:
-		return &taskHunyuan.TaskAdaptor{}
-	case constant.TaskPlatformFAL, constant.TaskPlatformFALImage:
-		return &taskFal.TaskAdaptor{}
+var taskPluginKeys = map[constant.TaskPlatform]string{
+	constant.TaskPlatformSuno:                                            "sunoapi",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):         "alibaba",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):       "kling",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):      "jimeng",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):        "vidu",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)): "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):  "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):      "google",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
+}
+
+func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, bool) {
+	if generation == nil {
+		return nil, false
 	}
-	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
-		switch channelType {
-		case constant.ChannelTypeAli:
-			return &taskali.TaskAdaptor{}
-		case constant.ChannelTypeKling:
-			return &kling.TaskAdaptor{}
-		case constant.ChannelTypeJimeng:
-			return &taskjimeng.TaskAdaptor{}
-		case constant.ChannelTypeVertexAi:
-			return &taskvertex.TaskAdaptor{}
-		case constant.ChannelTypeVidu:
-			return &taskVidu.TaskAdaptor{}
-		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
-			return &taskdoubao.TaskAdaptor{}
-		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
-			return &tasksora.TaskAdaptor{}
-		case constant.ChannelTypeGemini:
-			return &taskGemini.TaskAdaptor{}
-		case constant.ChannelTypeMiniMaxVideo:
-			return &taskMiniMax.TaskAdaptor{}
-		case constant.ChannelTypeMiniMax:
-			return &hailuo.TaskAdaptor{}
-		case constant.ChannelTypePixverse:
-			return &taskPixverse.TaskAdaptor{}
-		case constant.ChannelTypeLtx:
-			return &taskLtx.TaskAdaptor{}
-		case constant.ChannelTypeWorldLabs:
-			return &taskWorldLabs.TaskAdaptor{}
-		case constant.ChannelTypeRunwayML:
-			return &taskRunwayML.TaskAdaptor{}
-		case constant.ChannelTypeReplicate:
-			return &taskReplicateTask.TaskAdaptor{}
-		case constant.ChannelTypeHedra:
-			return &taskHedra.TaskAdaptor{}
-		case constant.ChannelTypeHeyGen:
-			return &taskHeyGen.TaskAdaptor{}
-		case constant.ChannelTypeFAL:
-			return &taskFal.TaskAdaptor{}
-		case constant.ChannelTypePPIO:
-			return &taskPPio.TaskAdaptor{}
-		case constant.ChannelTypeTencent:
-			return &taskHunyuan.TaskAdaptor{}
+	if key, ok := taskPluginKeys[platform]; ok {
+		if plugin, found := generation.Get(key); found {
+			return plugin, true
 		}
 	}
-	return nil
+	return generation.Get(string(platform))
+}
+
+// TaskPlatformUnavailableError explains why no adaptor serves the platform:
+// the task-plugin system is switched off, the resolved plugin is disabled,
+// or the platform simply names nothing. The distinction is user-actionable,
+// so it must survive into the client-facing message.
+func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, string) {
+	if !pluginruntime.DefaultRegistry.Enabled() {
+		return "task_plugin_system_disabled", "the task plugin system is disabled on this gateway"
+	}
+	key := string(platform)
+	if mapped, ok := taskPluginKeys[platform]; ok {
+		key = mapped
+	}
+	for _, meta := range pluginruntime.DefaultRegistry.Snapshot().Factory {
+		if meta.Key == key {
+			return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
+		}
+	}
+	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
+}
+
+func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
+	if ok {
+		return jspluginadaptor.New(plugin)
+	}
+	return getLegacyTaskAdaptor(platform)
+}
+
+type legacyTaskAdaptor interface {
+	Init(info *relaycommon.RelayInfo)
+	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError
+	EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64
+	AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64
+	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+	BuildRequestURL(info *relaycommon.RelayInfo) (string, error)
+	BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error
+	BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error)
+	DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error)
+	DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *taskdto.TaskError)
+	GetModelList() []string
+	GetChannelName() string
+	FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error)
+	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
+}
+
+type legacyTaskAdaptorBridge struct {
+	legacyTaskAdaptor
+}
+
+func (a *legacyTaskAdaptorBridge) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	recorder := httptest.NewRecorder()
+	bridgeContext, _ := gin.CreateTestContext(recorder)
+	bridgeContext.Request = c.Request
+	bridgeContext.Keys = c.Keys
+	taskID, taskData, taskErr := a.DoResponse(bridgeContext, resp, info)
+	if taskErr != nil {
+		return nil, taskErr
+	}
+	var clientResponse any
+	if recorder.Body.Len() > 0 {
+		if err := common.Unmarshal(recorder.Body.Bytes(), &clientResponse); err != nil {
+			return nil, &taskdto.TaskError{Error: err, Code: "unmarshal_response_failed", StatusCode: http.StatusInternalServerError}
+		}
+	}
+	return &channel.TaskSubmitResponse{UpstreamTaskID: taskID, TaskData: taskData, ClientResponse: clientResponse}, nil
+}
+
+func (a *legacyTaskAdaptorBridge) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
+	return a.legacyTaskAdaptor.FetchTask(baseURL, key, map[string]any{
+		"task_id": task.GetUpstreamTaskID(),
+		"action":  task.Action,
+		"model":   task.Properties.UpstreamModelName,
+	}, proxy)
+}
+
+func (a *legacyTaskAdaptorBridge) ParseTaskResult(_ *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+	return a.legacyTaskAdaptor.ParseTaskResult(body)
+}
+
+func bridgeLegacyTaskAdaptor(adaptor legacyTaskAdaptor) channel.TaskAdaptor {
+	return &legacyTaskAdaptorBridge{legacyTaskAdaptor: adaptor}
+}
+
+func getLegacyTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	switch platform {
+	case constant.TaskPlatformSuno:
+		return bridgeLegacyTaskAdaptor(&suno.TaskAdaptor{})
+	case constant.TaskPlatformYunwuVeo:
+		return bridgeLegacyTaskAdaptor(&taskVertexYunwu.TaskAdaptor{})
+	case constant.TaskPlatformYunwuSora:
+		return bridgeLegacyTaskAdaptor(&taskSoraYunwu.TaskAdaptor{})
+	case constant.TaskPlatformPPio:
+		return bridgeLegacyTaskAdaptor(&taskPPio.TaskAdaptor{})
+	case constant.TaskPlatformPPioHunyuanImage:
+		return bridgeLegacyTaskAdaptor(&taskHunyuanPPio.TaskAdaptor{})
+	case constant.TaskPlatformNovitaImage:
+		return bridgeLegacyTaskAdaptor(&taskNovita.TaskAdaptor{})
+	case constant.TaskPlatformHunyuanImage:
+		return bridgeLegacyTaskAdaptor(&taskHunyuan.TaskAdaptor{})
+	case constant.TaskPlatformFAL, constant.TaskPlatformFALImage:
+		return bridgeLegacyTaskAdaptor(&taskFal.TaskAdaptor{})
+	}
+
+	channelType, err := strconv.ParseInt(string(platform), 10, 64)
+	if err != nil {
+		return nil
+	}
+	switch channelType {
+	case constant.ChannelTypeAli:
+		return bridgeLegacyTaskAdaptor(&taskali.TaskAdaptor{})
+	case constant.ChannelTypeKling:
+		return bridgeLegacyTaskAdaptor(&kling.TaskAdaptor{})
+	case constant.ChannelTypeJimeng:
+		return bridgeLegacyTaskAdaptor(&taskjimeng.TaskAdaptor{})
+	case constant.ChannelTypeVertexAi:
+		return bridgeLegacyTaskAdaptor(&taskvertex.TaskAdaptor{})
+	case constant.ChannelTypeVidu:
+		return bridgeLegacyTaskAdaptor(&taskVidu.TaskAdaptor{})
+	case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
+		return bridgeLegacyTaskAdaptor(&taskdoubao.TaskAdaptor{})
+	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+		return bridgeLegacyTaskAdaptor(&tasksora.TaskAdaptor{})
+	case constant.ChannelTypeGemini:
+		return bridgeLegacyTaskAdaptor(&taskGemini.TaskAdaptor{})
+	case constant.ChannelTypeMiniMaxVideo:
+		return bridgeLegacyTaskAdaptor(&taskMiniMax.TaskAdaptor{})
+	case constant.ChannelTypeMiniMax:
+		return bridgeLegacyTaskAdaptor(&hailuo.TaskAdaptor{})
+	case constant.ChannelTypePixverse:
+		return bridgeLegacyTaskAdaptor(&taskPixverse.TaskAdaptor{})
+	case constant.ChannelTypeLtx:
+		return bridgeLegacyTaskAdaptor(&taskLtx.TaskAdaptor{})
+	case constant.ChannelTypeWorldLabs:
+		return bridgeLegacyTaskAdaptor(&taskWorldLabs.TaskAdaptor{})
+	case constant.ChannelTypeRunwayML:
+		return bridgeLegacyTaskAdaptor(&taskRunwayML.TaskAdaptor{})
+	case constant.ChannelTypeReplicate:
+		return bridgeLegacyTaskAdaptor(&taskReplicateTask.TaskAdaptor{})
+	case constant.ChannelTypeHedra:
+		return bridgeLegacyTaskAdaptor(&taskHedra.TaskAdaptor{})
+	case constant.ChannelTypeHeyGen:
+		return bridgeLegacyTaskAdaptor(&taskHeyGen.TaskAdaptor{})
+	case constant.ChannelTypeFAL:
+		return bridgeLegacyTaskAdaptor(&taskFal.TaskAdaptor{})
+	case constant.ChannelTypePPIO:
+		return bridgeLegacyTaskAdaptor(&taskPPio.TaskAdaptor{})
+	case constant.ChannelTypeTencent:
+		return bridgeLegacyTaskAdaptor(&taskHunyuan.TaskAdaptor{})
+	default:
+		return nil
+	}
+}
+
+// getTaskAdaptorForRequest preserves the exact plugin object pinned by the
+// declarative or shared-endpoint router. Legacy task routes are pinned here
+// from one registry generation before the adaptor is returned.
+func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (constant.TaskPlatform, channel.TaskAdaptor) {
+	if c != nil {
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin); exists {
+			if pinned, ok := value.(pluginruntime.PinnedPlugin); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
+			if pinned, ok := value.(pluginruntime.PinnedEndpoint); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+		if value, exists := c.Get(pluginruntime.ContextKeyPinnedRoute); exists {
+			if pinned, ok := value.(pluginruntime.PinnedRoute); ok && pinned.Plugin != nil {
+				platform = constant.TaskPlatform(pinned.Plugin.Meta.Key)
+				return platform, jspluginadaptor.New(pinned.Plugin)
+			}
+			return platform, nil
+		}
+	}
+	generation := pluginruntime.DefaultRegistry.Generation()
+	plugin, ok := ResolveTaskPluginForPlatform(generation, platform)
+	if !ok {
+		return platform, getLegacyTaskAdaptor(platform)
+	}
+	if c != nil {
+		c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{
+			Generation: generation,
+			Plugin:     plugin,
+		})
+	}
+	return platform, jspluginadaptor.New(plugin)
 }

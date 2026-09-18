@@ -2,13 +2,41 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/gin-gonic/gin"
 )
+
+func GetChannelConstraints(c *gin.Context) *dto.ChannelConstraints {
+	if c == nil {
+		return &dto.ChannelConstraints{}
+	}
+	if existing, ok := common.GetContextKeyType[*dto.ChannelConstraints](c, constant.ContextKeyChannelConstraints); ok && existing != nil {
+		return existing
+	}
+	constraints := &dto.ChannelConstraints{}
+	common.SetContextKey(c, constant.ContextKeyChannelConstraints, constraints)
+	return constraints
+}
+
+func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
+	if c == nil {
+		return
+	}
+	channelTypes, pluginKeys := pinnedTaskPluginIdentities(c, pluginKey)
+	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
+		Kind:                   dto.FilterTaskPluginIdentity,
+		TaskPluginKey:          pluginKey,
+		TaskPluginChannelTypes: channelTypes,
+		TaskPluginKeys:         pluginKeys,
+	})
+}
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -19,6 +47,73 @@ type RetryParam struct {
 	Tags         []string
 	ChannelIds   []int  // 渠道ID列表,用户指定渠道ID时使用
 	RequestPath  string // 请求路径，用于渠道路径白名单/黑名单过滤
+}
+
+type ChannelRetryPlan struct {
+	ChannelIds []int
+	MaxRetries int
+}
+
+// GetChannelRetryPlan returns the explicit routing sequence selected by the
+// distributor and bounds retries to that sequence. A channel pin takes
+// precedence over key/global routing and therefore must not inherit its list.
+func GetChannelRetryPlan(c *gin.Context) ChannelRetryPlan {
+	plan := ChannelRetryPlan{MaxRetries: common.RetryTimes}
+	if c == nil {
+		return plan
+	}
+	if _, pinned, _ := GetChannelConstraints(c).ResolvedPin(); pinned {
+		return plan
+	}
+	if rawRacePlan, exists := c.Get(common.KeyChannelRacePlan); exists && rawRacePlan != nil && !c.GetBool(common.KeyChannelRaceAttempt) {
+		if racePlan, ok := rawRacePlan.(dto.ChannelRacePlan); ok {
+			for _, group := range racePlan.Groups {
+				plan.ChannelIds = append(plan.ChannelIds, SelectChannelRaceGroupCandidates(group, common.ShuffleSlice[int])...)
+			}
+			if len(plan.ChannelIds) > 0 {
+				plan.MaxRetries = len(plan.ChannelIds) - 1
+				return plan
+			}
+		}
+	}
+	rawIds, exists := c.Get("token_channel_ids")
+	if !exists {
+		return plan
+	}
+	ids, ok := rawIds.([]int)
+	if !ok || len(ids) == 0 {
+		return plan
+	}
+	plan.ChannelIds = append([]int(nil), ids...)
+	if _, configured := c.Get("new_retry_times"); configured {
+		plan.MaxRetries = max(c.GetInt("new_retry_times"), 0)
+	}
+	plan.MaxRetries = min(plan.MaxRetries, len(plan.ChannelIds)-1)
+	return plan
+}
+
+func SelectChannelRaceGroupCandidates(group dto.ChannelRaceGroup, shuffle func([]int)) []int {
+	channelIds := append([]int(nil), group.ChannelIds...)
+	mode := group.Mode
+	if mode == "" {
+		mode = dto.DefaultRaceGroupMode
+	}
+	if mode == dto.ChannelRaceGroupModeOrder {
+		return channelIds
+	}
+
+	shuffle(channelIds)
+	if mode != dto.ChannelRaceGroupModeRandomN {
+		return channelIds
+	}
+	count := group.RandomCount
+	if count <= 0 {
+		count = dto.DefaultRaceGroupRandomCount
+	}
+	if count < len(channelIds) {
+		channelIds = channelIds[:count]
+	}
+	return channelIds
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -87,6 +182,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+	filters := GetChannelConstraints(param.Ctx).Filters
 
 	if len(param.ChannelIds) > 0 {
 		if param.GetRetry() >= len(param.ChannelIds) {
@@ -95,6 +191,18 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		channel, err = model.GetChannelById(param.ChannelIds[param.GetRetry()], true)
 		if err != nil {
 			return nil, selectGroup, err
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			return nil, selectGroup, errors.New("channel is disabled")
+		}
+		if ok, kind := model.ChannelSatisfiesFilters(channel, param.ModelName, filters); !ok {
+			return nil, selectGroup, fmt.Errorf("channel does not satisfy %s constraint", kind)
+		}
+		if value, exists := param.Ctx.Get("multi_model_tags"); exists {
+			tags, _ := value.([]string)
+			if !model.CheckMultiTags(tags, channel.GetTag()) {
+				return nil, selectGroup, errors.New("channel does not support request modalities")
+			}
 		}
 	} else if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
@@ -122,8 +230,12 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.Tags, param.RequestPath)
-			//channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+			channel, _ = model.GetRandomSatisfiedChannel(
+				autoGroup,
+				param.ModelName,
+				priorityRetry,
+				filters,
+			)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -161,11 +273,67 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.Tags, param.RequestPath)
-		//channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err = model.GetRandomSatisfiedChannel(
+			param.TokenGroup,
+			param.ModelName,
+			param.GetRetry(),
+			filters,
+		)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []string) {
+	if c == nil || expected == "" {
+		return nil, nil
+	}
+	if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
+		pinned, ok := value.(jsplugin.PinnedEndpoint)
+		if ok && pinned.Generation != nil && len(pinned.Candidates) > 1 {
+			expectedFound := false
+			channelTypes := make([]int, 0, len(pinned.Candidates))
+			pluginKeys := make([]string, 0, len(pinned.Candidates))
+			seen := make(map[int]struct{}, len(pinned.Candidates))
+			for _, candidate := range pinned.Candidates {
+				if candidate.Plugin == nil {
+					continue
+				}
+				if candidate.Plugin.Meta.Key == expected {
+					expectedFound = true
+				}
+				pluginKeys = append(pluginKeys, candidate.Plugin.Meta.Key)
+				for _, channelType := range candidate.Plugin.Meta.ChannelTypes {
+					if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+						continue
+					}
+					if _, duplicate := seen[channelType]; duplicate {
+						continue
+					}
+					if plugin, indexed := pinned.Generation.GetByChannelType(channelType); indexed && plugin == candidate.Plugin {
+						seen[channelType] = struct{}{}
+						channelTypes = append(channelTypes, channelType)
+					}
+				}
+			}
+			if expectedFound {
+				return channelTypes, pluginKeys
+			}
+		}
+	}
+	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
+	pinned, ok := value.(jsplugin.PinnedPlugin)
+	if !exists || !ok || pinned.Generation == nil || pinned.Plugin == nil || pinned.Plugin.Meta.Key != expected {
+		return nil, nil
+	}
+	channelTypes := make([]int, 0, len(pinned.Plugin.Meta.ChannelTypes))
+	for _, channelType := range pinned.Plugin.Meta.ChannelTypes {
+		if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+			continue
+		}
+		channelTypes = append(channelTypes, channelType)
+	}
+	return channelTypes, []string{expected}
 }

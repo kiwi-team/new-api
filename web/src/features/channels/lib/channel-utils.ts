@@ -54,6 +54,9 @@ export function getChannelTypeIcon(type: number): string {
     74: 'NewAPI', // Advanced Custom
     75: 'Sub2API', // Sub2API
     76: 'NewAPI', // New API
+    78: 'OpenAI', // Task Plugin
+    79: 'Vllm', // vLLM
+    80: 'SGLang', // SGLang
     3: 'Azure', // Azure
 
     // Anthropic

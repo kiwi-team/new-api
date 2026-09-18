@@ -71,15 +71,17 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/keys': { section: 'console', module: 'token' },
   '/usage-logs': { section: 'console', module: 'log' },
   '/usage-logs/common': { section: 'console', module: 'log' },
+  '/usage-logs/audit': { section: 'console', module: 'audit' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
   '/error-logs': { section: 'console', module: 'errorlog' },
   '/wallet': { section: 'personal', module: 'topup' },
   '/profile': { section: 'personal', module: 'personal' },
+  '/security': { section: 'personal', module: 'security' },
   '/channels': { section: 'admin', module: 'channel' },
   '/models': { section: 'admin', module: 'models' },
   '/models/metadata': { section: 'admin', module: 'models' },
-  '/models/deployments': { section: 'admin', module: 'models' },
+  '/models/deployments': { section: 'admin', module: 'deployment' },
   '/users': { section: 'admin', module: 'user' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
@@ -257,9 +259,10 @@ function filterNavItems(
  *      means "don't narrow". A section/module is only hidden if the user
  *      explicitly set it to false; undefined fields default to visible so
  *      legacy users with empty sidebar_modules keep the full admin view.
- *      The overlay only applies to accounts the backend grants
- *      `sidebar_settings` (root), since everyone else has no UI to change or
- *      restore it.
+ *      The overlay is also skipped entirely when the backend tells us the
+ *      user cannot configure sidebar_settings (e.g. root accounts), so a
+ *      stale historical value cannot lock them out of entries they have no
+ *      UI to restore.
  */
 export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   const { status } = useStatus()
@@ -274,10 +277,12 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   )
 
   const userConfig = useMemo(() => {
-    // Only root can configure the sidebar, so only root's overlay applies.
-    // For everyone else a stale historical sidebar_modules value would hide
-    // entries they have no in-product UI to restore.
-    if (auth?.user?.permissions?.sidebar_settings !== true) {
+    // If the backend marks the user as unable to configure the sidebar
+    // (e.g. root accounts), skip the user overlay entirely — a stale
+    // historical sidebar_modules value from a previous role would otherwise
+    // hide admin entries for someone who has no in-product UI to restore
+    // them.
+    if (auth?.user?.permissions?.sidebar_settings === false) {
       return null
     }
     return parseUserSidebarConfig(auth?.user?.sidebar_modules)
@@ -317,12 +322,6 @@ export function useIsSidebarModuleVisible(url: string): boolean {
   return isModuleEnabled(url, adminConfig, userConfig)
 }
 
-/**
- * Read one admin-level module switch directly, for in-page sections that are
- * not sidebar entries (e.g. the tabs of the billing page). Only the admin
- * layer applies here: these switches are set by root for the whole site, and
- * a module the admin never configured stays visible.
- */
 export function useAdminSidebarModuleEnabled(
   section: string,
   module: string

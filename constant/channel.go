@@ -75,10 +75,15 @@ const (
 	ChannelTypeSub2API          = 75
 	ChannelTypeNewAPI           = 76
 	ChannelTypeMiniMaxVideo     = 77
+	ChannelTypeTaskPlugin       = 78
+	ChannelTypeVLLM             = 79
+	ChannelTypeSGLang           = 80
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
 
+// ChannelBaseURLs 保存各渠道类型的内置默认 Base URL。
+// 非空值会通过 /api/channel/default_base_urls 下发到前端，作为渠道表单的 API 地址占位提示。
 var ChannelBaseURLs = []string{
 	"",                                    // 0
 	"https://api.openai.com",              // 1
@@ -159,6 +164,16 @@ var ChannelBaseURLs = []string{
 	"",                                     // 75
 	"",                                     // 76
 	"https://api.minimaxi.com",             // 77 minimax video (v2)
+	"",                                     // 78 task plugin
+	"",                                     // 79 vLLM
+	"",                                     // 80 SGLang
+}
+
+func GetChannelBaseURL(channelType int) string {
+	if channelType < 0 || channelType >= len(ChannelBaseURLs) {
+		return ""
+	}
+	return ChannelBaseURLs[channelType]
 }
 
 var ChannelTypeNames = map[int]string{
@@ -233,6 +248,9 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
 	ChannelTypeMiniMaxVideo:   "MiniMaxVideo",
+	ChannelTypeTaskPlugin:     "Task Plugin",
+	ChannelTypeVLLM:           "vLLM",
+	ChannelTypeSGLang:         "SGLang",
 }
 
 func GetChannelTypeName(channelType int) string {
@@ -264,4 +282,14 @@ var ChannelSpecialBases = map[string]ChannelSpecialBase{
 		ClaudeBaseURL: "https://ark.cn-beijing.volces.com/api/coding",
 		OpenAIBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
 	},
+}
+
+// IsAdvancedCustomChannel includes named channels backed by route presets.
+func IsAdvancedCustomChannel(channelType int) bool {
+	switch channelType {
+	case ChannelTypeAdvancedCustom, ChannelTypeVLLM, ChannelTypeSGLang:
+		return true
+	default:
+		return false
+	}
 }

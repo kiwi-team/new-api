@@ -64,6 +64,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     detail: true,
     token: true,
     log: true,
+    audit: true,
     midjourney: true,
     task: true,
     errorlog: true,
@@ -80,6 +81,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     topup: true,
     personal: true,
+    security: true,
     // Sections of the profile page itself, not sidebar entries.
     accountManagement: true,
     preferences: true,
@@ -93,7 +95,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     // These must default to visible: an admin who never opened this page has
-    // no key stored for them, and a missing key reads as "hidden".
+    // no key stored for them, and a missing key reads as hidden.
     deployment: true,
     modelRouteConfig: true,
     modelChannelMonitor: true,

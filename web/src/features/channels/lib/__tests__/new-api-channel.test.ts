@@ -19,12 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import {
+  CHANNEL_TYPE_ADVANCED_CUSTOM,
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_OPTIONS,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
-import { CHANNEL_TYPE_ADVANCED_CUSTOM } from '../advanced-custom'
-import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema } from '../channel-form'
+import {
+  CHANNEL_FORM_DEFAULT_VALUES,
+  channelFormSchema,
+  transformFormDataToCreatePayload,
+} from '../channel-form'
 import { getChannelTypeConfig } from '../channel-type-config'
 import { getChannelTypeIcon, getKeyPromptForType } from '../channel-utils'
 
@@ -53,7 +59,11 @@ describe('New API channel', () => {
       CHANNEL_TYPE_OPTIONS.findIndex(
         (item) => item.value === CHANNEL_TYPE_NEW_API
       ) + 1
-    ).toBe(CHANNEL_TYPE_OPTIONS.findIndex((item) => item.value === 74))
+    ).toBe(
+      CHANNEL_TYPE_OPTIONS.findIndex(
+        (item) => item.value === CHANNEL_TYPE_ADVANCED_CUSTOM
+      )
+    )
     expect(MODEL_FETCHABLE_TYPES.has(CHANNEL_TYPE_NEW_API)).toBe(true)
     expect(getChannelTypeIcon(CHANNEL_TYPE_NEW_API)).toBe('NewAPI')
     expect(getKeyPromptForType(CHANNEL_TYPE_NEW_API)).toBe(
@@ -84,9 +94,59 @@ describe('New API channel', () => {
   test('keeps Sub2API Base URL validation unchanged', () => {
     const result = channelFormSchema.safeParse({
       ...newAPIForm(''),
-      type: 75,
+      type: 59,
     })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe.each([
+  { type: CHANNEL_TYPE_VLLM, name: 'vLLM', icon: 'Vllm' },
+  { type: CHANNEL_TYPE_SGLANG, name: 'SGLang', icon: 'SGLang' },
+])('$name channel', ({ type, name, icon }) => {
+  test('can be selected and discover served models', () => {
+    expect(CHANNEL_TYPE_OPTIONS).toContainEqual({
+      value: type,
+      label: name,
+    })
+    expect(MODEL_FETCHABLE_TYPES.has(type)).toBe(true)
+    expect(getChannelTypeIcon(type)).toBe(icon)
+    expect(getChannelTypeConfig(type).icon).toBe(icon)
+    expect(getKeyPromptForType(type)).toBe(
+      `${name} API key, or EMPTY if authentication is disabled`
+    )
+  })
+
+  test('requires an upstream address and submits the served model name', () => {
+    const form = {
+      ...newAPIForm(''),
+      type,
+      models: 'deepseek-v4-flash-vision-exp',
+      key: 'EMPTY',
+    }
+    const blank = channelFormSchema.safeParse(form)
+    expect(blank.success).toBe(false)
+    if (!blank.success) {
+      expect(blank.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ['base_url'],
+            message: 'Base URL is required for this channel type',
+          }),
+        ])
+      )
+    }
+    const parsed = channelFormSchema.parse({
+      ...form,
+      base_url: 'http://vllm:8000/',
+    })
+    const payload = transformFormDataToCreatePayload(parsed)
+    expect(payload.channel).toMatchObject({
+      type,
+      base_url: 'http://vllm:8000',
+      models: 'deepseek-v4-flash-vision-exp',
+      key: 'EMPTY',
+    })
   })
 })

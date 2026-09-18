@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { UserPermissions } from '@/stores/auth-store'
+
 // ============================================================================
 // Profile Type Definitions
 // ============================================================================
@@ -33,6 +35,8 @@ export interface ApiResponse<T = unknown> {
  * User profile data
  */
 export interface UserProfile {
+  has_password?: boolean
+  permissions?: UserPermissions
   /** User ID */
   id: number
   /** Username */
@@ -133,6 +137,19 @@ export interface UpdateUserRequest {
   original_password?: string
 }
 
+export interface AccountSecurityResult {
+  notification_warning?: boolean
+}
+
+export interface EmailBindingFlow extends AccountSecurityResult {
+  flow_token: string
+  email: string
+  current_email?: string
+  old_email_required: boolean
+  expires_at: number
+  resend_at: number
+}
+
 /**
  * User settings update request
  */
@@ -159,13 +176,6 @@ export interface UpdateUserSettingsRequest {
 }
 
 /**
- * Account deletion request
- */
-export interface DeleteAccountRequest {
-  password?: string
-}
-
-/**
  * Account binding item
  */
 export interface BindingItem {
@@ -185,15 +195,6 @@ export interface TwoFAStatus {
   enabled: boolean
   locked: boolean
   backup_codes_remaining: number
-}
-
-/**
- * Two-Factor Authentication Setup Data
- */
-export interface TwoFASetupData {
-  secret: string
-  qr_code_data: string
-  backup_codes: string[]
 }
 
 // ============================================================================
