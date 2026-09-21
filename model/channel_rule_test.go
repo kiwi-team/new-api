@@ -75,3 +75,12 @@ func TestFlattenChannelRuleGroups(t *testing.T) {
 		assert.Equal(t, []int{3, 4, 1, 2}, got)
 	})
 }
+
+func TestChannelSupportsRequestedModel(t *testing.T) {
+	channel := &Channel{Models: "gpt-4o, deepseek-chat,claude-3-5"}
+
+	assert.True(t, channel.SupportsModel("deepseek-chat"))
+	assert.False(t, channel.SupportsModel("deepseek"))
+	assert.False(t, channel.SupportsModel("DeepSeek-Chat"))
+	assert.False(t, channel.SupportsModel(""))
+}

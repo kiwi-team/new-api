@@ -36,7 +36,7 @@ func shouldSpecialChannelsOverrideKeyRules(specialChannelIds, keyChannelIds []in
 	return len(specialChannelIds) > 0 && (!keyRulesHighPriority || len(keyChannelIds) == 0)
 }
 
-func filterExplicitChannelCandidates(channelIds []int, modelName string, tags []string, constraints *taskdto.ChannelConstraints) []int {
+func filterExplicitChannelCandidates(channelIds []int, modelName string, requireModelSupport bool, tags []string, constraints *taskdto.ChannelConstraints) []int {
 	filtered := make([]int, 0, len(channelIds))
 	seen := make(map[int]struct{}, len(channelIds))
 	for _, channelId := range channelIds {
@@ -48,6 +48,9 @@ func filterExplicitChannelCandidates(channelIds []int, modelName string, tags []
 		}
 		candidate, err := model.CacheGetChannel(channelId)
 		if err != nil || candidate == nil || candidate.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		if requireModelSupport && !candidate.SupportsModel(modelName) {
 			continue
 		}
 		if !model.CheckMultiTags(tags, candidate.GetTag()) {
@@ -122,7 +125,7 @@ func Distribute() func(c *gin.Context) {
 				channelIds = model.GetChannelIdsByRule(channelRules, tags)
 			}
 		}
-		channelIds = filterExplicitChannelCandidates(channelIds, modelName, tags, constraints)
+		channelIds = filterExplicitChannelCandidates(channelIds, modelName, true, tags, constraints)
 
 		var specialChannelIds []int
 		switch {
@@ -135,7 +138,7 @@ func Distribute() func(c *gin.Context) {
 		default:
 			specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyTextChannels")
 		}
-		specialChannelIds = filterExplicitChannelCandidates(specialChannelIds, modelName, tags, constraints)
+		specialChannelIds = filterExplicitChannelCandidates(specialChannelIds, modelName, false, tags, constraints)
 		keyRulesHighPriority := common.GetContextKeyBool(c, constant.ContextKeyTokenChannelRulesHighPriority)
 		if shouldSpecialChannelsOverrideKeyRules(specialChannelIds, channelIds, keyRulesHighPriority) {
 			channelIds = specialChannelIds
@@ -159,7 +162,7 @@ func Distribute() func(c *gin.Context) {
 			if routeErr != nil {
 				logger.LogWarn(c, fmt.Sprintf("failed to resolve model route config: %v", routeErr))
 			}
-			modelRouterChannelIds = filterExplicitChannelCandidates(modelRouterChannelIds, modelName, tags, constraints)
+			modelRouterChannelIds = filterExplicitChannelCandidates(modelRouterChannelIds, modelName, true, tags, constraints)
 			if len(modelRouterChannelIds) > 0 {
 				channelIds = modelRouterChannelIds
 				c.Set("new_retry_times", retryTimes)

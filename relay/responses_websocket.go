@@ -278,6 +278,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		retryPlan := service.GetChannelRetryPlan(c)
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0), ChannelIds: retryPlan.ChannelIds}
 		for ; retry.GetRetry() <= retryPlan.MaxRetries; retry.IncreaseRetry() {
+			c.Set(common.UpstreamRequestIdKey, "")
 			var channel *appmodel.Channel
 			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
 			if apiErr != nil {
@@ -315,7 +316,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				apiErr = service.NormalizeViolationFeeError(apiErr)
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
-				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
+				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info, c.GetString(common.UpstreamRequestIdKey))
 				if service.ShouldRetryRelayError(c, apiErr, retryPlan.MaxRetries-retry.GetRetry()) {
 					continue
 				}

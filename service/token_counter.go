@@ -3,7 +3,10 @@ package service
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"mime"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
@@ -198,8 +201,13 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 		if err != nil {
 			return 0, fmt.Errorf("error parsing multipart form: %v", err)
 		}
+		defer multiForm.RemoveAll()
 		fileHeaders := multiForm.File["file"]
 		totalAudioToken := 0
+		isHyASR := info.OriginModelName == "hy-asr-3.0-preview"
+		if isHyASR && len(fileHeaders) > 1 {
+			return 0, errors.New("Hy ASR accepts only one audio file")
+		}
 		for _, fileHeader := range fileHeaders {
 			file, err := fileHeader.Open()
 			if err != nil {
@@ -208,17 +216,102 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 			defer file.Close()
 			// get ext and io.seeker
 			ext := filepath.Ext(fileHeader.Filename)
-			duration, err := common.GetAudioDuration(c.Request.Context(), file, ext)
-			if err != nil {
-				return 0, fmt.Errorf("error getting audio duration: %v", err)
+			var duration float64
+			if isHyASR && strings.EqualFold(ext, ".pcm") {
+				// TokenHub Hy ASR PCM input is 16 kHz, mono, signed 16-bit.
+				duration = float64(fileHeader.Size) / (16000 * 1 * 2)
+			} else {
+				duration, err = common.GetAudioDuration(c.Request.Context(), file, ext)
+				if err != nil {
+					return 0, fmt.Errorf("error getting audio duration: %v", err)
+				}
 			}
 			// duration 来自用户上传文件的元数据，可被伪造成天文数字或负数。
 			// 负值会让 token 估算变成负数（低估预扣费），先钳到 0 再转换。
 			if duration < 0 {
 				duration = 0
 			}
-			// 一分钟 1000 token，与 $price / minute 对齐。
-			totalAudioToken += common.QuotaRound(math.Ceil(duration) / 60.0 * 1000)
+			var audioToken int
+			if isHyASR {
+				audioToken, err = common.QuotaRoundStrict(math.Ceil(duration * 22))
+			} else {
+				// 一分钟 1000 token，与 $price / minute 对齐。
+				audioToken, err = common.QuotaRoundStrict(math.Ceil(duration) / 60.0 * 1000)
+			}
+			if err != nil {
+				return 0, fmt.Errorf("audio token estimate exceeds the supported range: %w", err)
+			}
+			if totalAudioToken > common.MaxQuota-audioToken {
+				return 0, errors.New("audio token estimate exceeds the supported range")
+			}
+			totalAudioToken += audioToken
+		}
+
+		if isHyASR {
+			audioURL := ""
+			if values := multiForm.Value["audio_url"]; len(values) > 0 {
+				audioURL = strings.TrimSpace(values[0])
+			}
+			inputURL := ""
+			if values := multiForm.Value["input_url"]; len(values) > 0 {
+				inputURL = strings.TrimSpace(values[0])
+			}
+			if audioURL != "" && inputURL != "" {
+				return 0, errors.New("audio_url and input_url cannot both be provided")
+			}
+			if audioURL == "" {
+				audioURL = inputURL
+			}
+			if (len(fileHeaders) == 0) == (audioURL == "") {
+				return 0, errors.New("exactly one of file or audio_url/input_url is required")
+			}
+			if audioURL != "" {
+				resp, downloadErr := DoDownloadRequest(audioURL, "estimate Hy ASR duration")
+				if downloadErr != nil {
+					return 0, fmt.Errorf("fetch audio_url for duration estimate: %w", downloadErr)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+					_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+					return 0, fmt.Errorf("audio_url returned HTTP %d", resp.StatusCode)
+				}
+				maxMB := constant.MaxRequestBodyMB
+				if maxMB <= 0 {
+					maxMB = 128
+				}
+				storage, storageErr := common.CreateBodyStorageFromReader(resp.Body, resp.ContentLength, int64(maxMB)<<20)
+				if storageErr != nil {
+					return 0, fmt.Errorf("cache audio_url for duration estimate: %w", storageErr)
+				}
+				defer storage.Close()
+				finalPath := ""
+				if resp.Request != nil && resp.Request.URL != nil {
+					finalPath = resp.Request.URL.Path
+				}
+				ext := strings.ToLower(filepath.Ext(finalPath))
+				if ext == "" {
+					mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+					if extensions, _ := mime.ExtensionsByType(mediaType); len(extensions) > 0 {
+						ext = extensions[0]
+					}
+				}
+				var duration float64
+				if strings.EqualFold(ext, ".pcm") {
+					duration = float64(storage.Size()) / (16000 * 1 * 2)
+				} else {
+					duration, storageErr = common.GetAudioDuration(c.Request.Context(), storage, ext)
+					if storageErr != nil {
+						return 0, fmt.Errorf("get audio_url duration: %w", storageErr)
+					}
+				}
+				if duration < 0 {
+					duration = 0
+				}
+				totalAudioToken, err = common.QuotaRoundStrict(math.Ceil(duration * 22))
+				if err != nil {
+					return 0, fmt.Errorf("audio token estimate exceeds the supported range: %w", err)
+				}
+			}
 		}
 		return totalAudioToken, nil
 	}

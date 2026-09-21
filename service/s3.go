@@ -116,6 +116,36 @@ func UploadIOReaderToS3(ctx context.Context, req *http.Response) (string, error)
 	return fmt.Sprintf("https://%s.%s/%s", bucket, endpoint, key), nil
 }
 
+// UploadReaderToS3 uploads a stream without first buffering or base64-encoding it.
+// contentType and extension are supplied by the caller because multipart streams
+// cannot be sniffed without consuming bytes.
+func UploadReaderToS3(ctx context.Context, reader io.Reader, contentLength int64, contentType, extension string) (string, error) {
+	s3Client, bucket, endpoint, err := getS3Client()
+	if err != nil {
+		return "", err
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	extension = strings.ToLower(extension)
+	if extension != "" && (!strings.HasPrefix(extension, ".") || strings.ContainsAny(extension, `/\\`)) {
+		return "", fmt.Errorf("invalid file extension %q", extension)
+	}
+	key := fmt.Sprintf("audios/%d-%s%s", time.Now().UnixNano(), common.GetRandomString(10), extension)
+	uploader := manager.NewUploader(s3Client)
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          reader,
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(contentLength),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload audio to S3: %w", err)
+	}
+	return fmt.Sprintf("https://%s.%s/%s", bucket, endpoint, key), nil
+}
+
 func UploadFileToS3(ctx context.Context, s3Client *s3.Client, bucket, endpoint, file string) (string, error) {
 	// Generate a unique filename
 	for i := 0; i < 3; i++ {

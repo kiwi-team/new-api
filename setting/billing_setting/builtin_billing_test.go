@@ -141,6 +141,25 @@ func TestJevBuiltinBillingUsesInputTokensOnly(t *testing.T) {
 	assert.Equal(t, settings.BillingExpr["jev-1.13.0"], actual)
 }
 
+func TestHyASRBuiltinBillingUsesReportedInputTokens(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("hy-asr-3.0-preview")
+	require.True(t, ok)
+	assert.Equal(t, `tier("standard", p * 1.481766859)`, expression)
+	usage := &dto.Usage{
+		PromptTokens: 1_000_000,
+		TotalTokens:  1_000_000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			AudioTokens: 1_000_000,
+		},
+	}
+	result, err := billingexpr.ComputeTieredQuota(
+		&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500_000},
+		service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 740_883, result.ActualQuotaAfterGroup)
+}
+
 func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings

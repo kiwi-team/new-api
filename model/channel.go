@@ -366,6 +366,20 @@ func (channel *Channel) GetModels() []string {
 	return strings.Split(strings.Trim(channel.Models, ","), ",")
 }
 
+// SupportsModel reports whether the exact client-requested model is present in
+// the channel's configured supported-model list.
+func (channel *Channel) SupportsModel(modelName string) bool {
+	if modelName == "" {
+		return false
+	}
+	for _, supportedModel := range channel.GetModels() {
+		if strings.TrimSpace(supportedModel) == modelName {
+			return true
+		}
+	}
+	return false
+}
+
 func (channel *Channel) GetGroups() []string {
 	if channel.Group == "" {
 		return []string{}

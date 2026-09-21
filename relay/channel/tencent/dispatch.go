@@ -11,7 +11,7 @@ import (
 
 const tokenHubBaseURL = "https://tokenhub.tencentmaas.com"
 
-// DispatchAdaptor 按密钥格式分流:三段式 ak/sk 走原生 TC3,单段 TokenHub key 走 OpenAI 兼容。
+// DispatchAdaptor 按密钥格式分流:三段式 ak/sk 走原生 TC3,单段 TokenHub key 走 TokenHub 兼容适配器。
 type DispatchAdaptor struct {
 	channel.Adaptor
 }
@@ -20,7 +20,7 @@ func (a *DispatchAdaptor) Init(info *relaycommon.RelayInfo) {
 	if strings.Contains(info.ApiKey, "|") {
 		a.Adaptor = &Adaptor{}
 	} else {
-		a.Adaptor = &openai.Adaptor{}
+		a.Adaptor = &TokenHubAdaptor{Adaptor: openai.Adaptor{}}
 		if info.ChannelBaseUrl == "" || info.ChannelBaseUrl == constant.ChannelBaseURLs[constant.ChannelTypeTencent] {
 			info.ChannelBaseUrl = tokenHubBaseURL
 		}

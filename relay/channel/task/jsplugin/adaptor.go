@@ -877,8 +877,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	// identity and lifecycle, including completion timestamps after settlement.
 	host := task.ToOpenAIVideo()
 	rendered["id"] = host.ID
+	rendered["task_id"] = host.TaskID
 	rendered["object"] = host.Object
-	delete(rendered, "task_id")
 	rendered["status"] = host.Status
 	rendered["progress"] = host.Progress
 	rendered["created_at"] = host.CreatedAt

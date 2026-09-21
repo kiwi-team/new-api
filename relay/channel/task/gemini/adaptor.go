@@ -424,6 +424,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 
 	video := dto.NewOpenAIVideo()
 	video.ID = task.TaskID
+	video.TaskID = task.TaskID
 	video.Model = modelName
 	video.Status = task.Status.ToVideoStatus()
 	video.SetProgressStr(task.Progress)

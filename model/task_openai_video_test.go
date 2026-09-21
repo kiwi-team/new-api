@@ -26,6 +26,7 @@ func TestTaskToOpenAIVideoDoesNotExposeResultURL(t *testing.T) {
 	video := task.ToOpenAIVideo()
 
 	assert.Equal(t, "task_public", video.ID)
+	assert.Equal(t, video.ID, video.TaskID)
 	assert.Equal(t, "video", video.Object)
 	assert.Equal(t, "completed", video.Status)
 	assert.Nil(t, video.Metadata)

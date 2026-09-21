@@ -31,7 +31,7 @@
 | `go.sum` | 合并两侧依赖后执行 `go mod tidy`，以实际模块图重建校验和。 |
 | `main.go` | 保留用户已手工解决的工作区版本，不重新选择 ours/theirs；仅在编译必需时做窄范围兼容修正。 |
 | `middleware/auth.go` | 保留用户手工认证合并结果；仅修正 DTO 包别名，保持 main 的会话/审计控制与 prod 的项目/UID 校验。 |
-| `middleware/distributor.go` | 保留 main 的渠道约束/插件过滤与 prod 的 Key、特殊渠道、全局模型路由优先级；显式候选先过滤禁用渠道、路径黑白名单、模态和插件约束，无可用候选时按优先级继续回退；将真实请求 Body 与 URL 交给全局路由匹配，并仅为最终采用的规则设置重试次数。 |
+| `middleware/distributor.go` | 保留 main 的渠道约束/插件过滤与 prod 的 Key、特殊渠道、全局模型路由优先级；Key 渠道规则和全局模型路由的显式候选必须在渠道支持模型列表中包含用户请求的完整模型名，并继续过滤禁用渠道、路径黑白名单、模态和插件约束；无可用候选时按既有优先级继续回退，将真实请求 Body 与 URL 交给全局路由匹配，并仅为最终采用的规则设置重试次数。 |
 | `middleware/utils.go` | 冲突区采用 main 的新接口/安全与计费语义，保留不冲突的 prod 定制；根据编译与调用链补齐字段、参数和日志兼容。 |
 | `model/ability.go` | 冲突区采用 main 的新接口/安全与计费语义，保留不冲突的 prod 定制；根据编译与调用链补齐字段、参数和日志兼容。 |
 | `model/channel_cache.go` | 冲突区采用 main 的新接口/安全与计费语义，保留不冲突的 prod 定制；根据编译与调用链补齐字段、参数和日志兼容。 |
@@ -132,6 +132,9 @@
 | `relay/responses_websocket_test.go` | 增加 Responses WebSocket 按显式渠道序列选择指定重试索引的回归测试。 |
 | `relay/chat_completions_via_responses_test.go` | 增加 Responses 消费日志回归，直接验证共用结算入口会把已捕获的 `/v1/responses` 请求体与响应体写入日志，防止后续 HTTP/WebSocket 结算重构再次静默丢弃。 |
 | `service/channel_select_test.go` | 覆盖显式列表边界、配置重试次数、零重试、单候选竞速、race 串行降级及固定渠道优先级。 |
+| `model/channel.go` | 增加渠道支持模型精确判断；Key 渠道规则和全局模型路由只能把用户请求的完整模型名确实列在渠道 `models` 中的渠道作为候选。 |
+| `model/channel_rule_test.go` | 覆盖渠道支持模型的完整名称、大小写及空模型边界，防止退化为关键词或正则匹配。 |
+| `middleware/distributor_priority_test.go` | 覆盖显式候选的请求模型过滤开关，确认同关键词但不同完整模型名的渠道不会进入 Key/全局路由候选。 |
 | `model/model_route_config.go` | 修复旧逻辑仅检查模型名、忽略 Body/URL 条件的问题；现在模型、Body、URL 三个已配置维度必须同时匹配，并统一使用项目 JSON 包装函数。 |
 | `model/model_route_config_test.go` | 覆盖全局模型路由的模型正则、Body 关键词、URL 关键词联合匹配，以及未配置 Body/URL 时的通配语义。 |
 | `web/src/features/usage-logs/components/__tests__/detail-preview.test.tsx` | 增加日志原始报文入口权限回归：root 即使处于“仅看自己”视图仍可见，普通管理员和普通用户均不可见。 |
@@ -163,12 +166,14 @@
 | 左侧菜单与系统模块开关 | 账单、错误日志、部署、监控、预算、路由、结算、价格中心等 prod 入口被 `main` 菜单结构覆盖。 | prod 旧入口与 main 新增审计日志、安全中心、任务插件入口并存；默认开关、设置页名称、路由和组织菜单 `pageKeys` 保持一致。 | `web/src/hooks/use-sidebar-data.ts`、`web/src/hooks/use-sidebar-config.ts`、`web/src/features/system-settings/maintenance/*`；`web/src/hooks/__tests__/sidebar-config.test.tsx` 及侧边栏定向测试。 |
 | root 创建/编辑 Key 的渠道规则 | root 可配置的渠道倍率、渠道规则和“优先使用 Key 渠道规则”开关丢失。 | 这些控件只对 root 开放，编辑时正确回填，提交时继续写入既有字段；普通账号不可获得该权限。 | `web/src/features/keys/components/api-keys-mutate-drawer.tsx`；`api-keys-mutate-drawer.test.tsx`、`channel-rules-editor-dialog.test.tsx`、`web/src/features/keys/lib/__tests__/channel-rules.test.ts`。 |
 | root 按用户筛选 Key | Key 列表只能查看当前用户，root 的“全部用户/指定用户”筛选丢失。 | root 可选择我的 Key、全部用户或指定用户；普通列表与搜索请求都必须携带正确的 `user_id`，非 root 不显示越权入口。 | `web/src/features/keys/components/api-keys-table.tsx`；`api-key-listing.test.tsx`。 |
-| Key/全局/特殊渠道规则及三种模式 | Key 维度规则、`/model-route-config` 全局路由和特殊渠道之间的优先级、回退及 order/random/race 行为在重构后不完整；全局路由曾只匹配模型而忽略 Body/URL。 | 固定渠道优先；显式 Key 规则、特殊渠道和全局路由按既有优先级选择并在无可用候选时正确回退。顺序、随机、随机竞速均保持候选边界和重试语义；不支持并发竞速的协议按同一候选计划串行降级。全局规则的模型、Body、URL 已配置维度必须同时匹配。 | `middleware/distributor.go`、`service/channel_select.go`、`controller/relay_race.go`、`model/model_route_config.go`；`service/channel_select_test.go`、`controller/relay_race_test.go`、`model/model_route_config_test.go`、`relay/responses_websocket_test.go`。 |
+| Key/全局/特殊渠道规则及三种模式 | Key 维度规则、`/model-route-config` 全局路由和特殊渠道之间的优先级、回退及 order/random/race 行为在重构后不完整；全局路由曾只匹配模型而忽略 Body/URL；Key/全局规则还曾把不支持用户请求模型的显式渠道作为候选并实际发起请求。 | 固定渠道优先；显式 Key 规则、特殊渠道和全局路由按既有优先级选择并在无可用候选时正确回退。Key 规则及全局模型路由中的每个显式渠道，必须在自身支持模型列表中包含用户请求参数里的完整模型名，否则在发送请求前排除；不得退化为关键词、子串、正则或仅按规则名匹配。全部候选被排除后继续沿用现有回退与无可用渠道异常逻辑。顺序、随机、随机竞速均保持过滤后的候选边界和重试语义；不支持并发竞速的协议按同一候选计划串行降级。全局规则的模型、Body、URL 已配置维度必须同时匹配。 | `middleware/distributor.go`、`model/channel.go`、`service/channel_select.go`、`controller/relay_race.go`、`model/model_route_config.go`；`middleware/distributor_priority_test.go`、`model/channel_rule_test.go`、`service/channel_select_test.go`、`controller/relay_race_test.go`、`model/model_route_config_test.go`、`relay/responses_websocket_test.go`。 |
 | 日志列表筛选条件 | Token、用户名、渠道、Client UID、MT Session ID、Trace ID、Traj ID、Session ID 等筛选入口和 URL 状态同步丢失。 | 恢复的筛选条件必须继续支持回填、清空、提交、计数和权限边界；root 用户名筛选与 Token/渠道选项接口必须保留。 | `web/src/features/usage-logs/components/common-logs-filter-bar.tsx`、`web/src/features/usage-logs/api.ts`；`group-filter.test.tsx`、`filter-combobox.test.tsx`、`log-type-filter.test.tsx`。 |
+| Claude Session ID 日志落库 | 合并时 `/v1/messages` 请求校验中的 `metadata.user_id` Session ID 提取被删除，导致 `logs.session_id` 与 `error_logs.session_id` 为空。 | Claude 请求必须在后续校验及 relay 失败前提取 Session ID 并写入请求 Context，使成功消费日志和错误日志均可落库；OpenAI 兼容链路的同类提取也必须保留。 | `relay/helper/valid_request.go`；`relay/helper/max_tokens_bounds_test.go` 中 `claude session id is retained for logging`。 |
 | root 查看日志原始报文 | 日志详情中请求体、响应体和 Header 入口消失。 | 三个入口仅 root 可见；root 即使切换为“仅看自己”仍可用；前端隐藏不能替代后端 `RootAuth`。 | `web/src/features/usage-logs/components/dialogs/details-dialog.tsx`、`router/api-router.go`、`controller/log.go`；`detail-preview.test.tsx`。 |
 | 个人资料模型限制 | 账号级模型限制开关、允许模型列表和“限制为已有结算价格模型”操作丢失。 | 用户设置必须完整回填并保存模型限制；令牌单独设置限制时以令牌为准；批量加入结算模型需去重且失败时恢复 UI 状态。 | `web/src/features/profile/components/tabs/notification-tab.tsx`、用户设置 DTO/接口；`web/src/features/profile/__tests__/settings.test.tsx`。 |
 | 独立错误日志 | 失败请求只写普通 `logs`，不再写 `error_logs`。 | `SAVE_ERROR_LOG`/错误日志开关启用时，每次失败渠道记录真实渠道快照与耗时；重试成功或竞速胜出时清除不应保留的失败请求体，全部失败时保留最终可审计请求；落库失败必须写后端错误日志。 | `controller/relay.go`、`controller/channel-test.go`、`model/debug.go`；`controller/relay_error_log_test.go`。 |
 | 日志渠道链路与竞速胜者 | 渠道列不再直接展示各段耗时，hover 信息和 race winner/loser 标记消失；成功的最后一段耗时曾漏记。 | root 渠道列直接展示每个渠道的耗时，hover 展示渠道名称、ID、耗时；竞速日志明确标记胜出/未胜出；`use_channel` 与 `admin_info.use_channel_time` 一一对应并包含最终成功尝试。 | `service/log_info_generate.go`、`controller/relay.go`、日志列组件；`service/text_quota_test.go`、`retry-chain-display.test.tsx`。 |
+| `/v1/videos` 任务 ID 兼容字段 | OpenAI Video 新响应只保留 `id`，删除了旧客户端依赖的 `task_id`，导致既有调用方无法读取任务 ID。 | `POST /v1/videos` 与 `GET /v1/videos/:task_id` 的所有内置 provider 和 Task Plugin 响应必须同时返回 `id`、`task_id`，且两者始终等于同一个公开任务 ID；不得返回上游私有任务 ID，也不得以兼容新版接口为由删除 `task_id`。 | `model/task.go`、`relay/channel/task/*/adaptor.go`、`relay/channel/task/jsplugin/adaptor.go`；`TestTaskToOpenAIVideoDoesNotExposeResultURL`、`TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt`、`TestTaskAdaptorPreservesSoraVideoResponseFields`。 |
 | `/v1/responses` 请求/响应日志 | handler 已捕获请求和完整响应，但 HTTP/WebSocket 共用结算函数把两个参数替换为空串，普通 Responses 日志因此没有原始报文。 | `SAVE_REQUEST_RESPONSE=true` 时，普通及音频 HTTP `/v1/responses` 必须把已捕获请求、响应传入消费日志；`/v1/responses/compact` 保持独立计价日志路径。WebSocket 没有 HTTP body 记录器时不得伪造报文。 | `relay/responses_handler.go`、`relay/responses_websocket.go`；`TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse`。 |
 
 ### Required merge review procedure
@@ -196,6 +201,7 @@
 - 前端完整测试套件曾启动，但在并行运行时出现多组 20 秒级超时并被终止；不将完整前端测试标记为通过。
 - 数据库相关合并尚未完成 SQLite/MySQL/PostgreSQL 三数据库实机矩阵，因此不声明数据库兼容性验证完成。
 - 本轮渠道路由定向验证：`go test ./model ./service ./middleware ./controller ./relay -count=1` 通过；覆盖 Key 顺序/随机/竞速重试计划、Responses WebSocket 显式路由和全局 Body/URL 匹配。
+- Key/全局模型路由支持模型过滤定向验证：`go test ./model -run 'Test(ChannelSupportsRequestedModel|SelectChannelRuleGroupCandidates|FlattenChannelRuleGroups|ModelRouteConfig)'`、`go test ./middleware -run 'Test(ShouldSpecialChannelsOverrideKeyRules|FilterExplicitChannelCandidatesRequiresRequestedModelWhenEnabled)'` 和 `go test ./service -run TestGetChannelRetryPlanBoundsExplicitRoutes` 通过；确认只有支持模型列表包含用户请求完整模型名的显式渠道会进入候选，同关键词但不同模型名会被排除，全部排除后的回退及最终异常语义保持不变。
 - 本轮再次执行 `go test ./... -count=1` 时有一个未定位的全量套件失败；上述五个受影响包随后/单独均通过，因此不把这次全量复跑记录为通过，需在资源允许时用 JSON 输出继续定位。
 - 日志详情原始报文入口定向测试：`bun run test --run src/features/usage-logs/components/__tests__/detail-preview.test.tsx`，22 个用例通过；后端 `/api/log/:id/request`、`response`、`header` 路由均确认位于 `RootAuth` 路由组。
 - 个人资料模型限制定向验证：`bun run test -- src/features/profile/__tests__/settings.test.tsx`，8 个用例通过；相关文件通过 `oxlint`、`oxfmt --check`，并通过 `bun run typecheck`。

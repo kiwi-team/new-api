@@ -39,11 +39,27 @@ type RealtimeAdaptor struct{}
 
 func (a *RealtimeAdaptor) Init(info *relaycommon.RelayInfo) {}
 
+func isDoubaoRealtimeDialogue(info *relaycommon.RelayInfo) bool {
+	return info != nil && info.UpstreamModelName == "doubao-realtime"
+}
+
 func (a *RealtimeAdaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	return doubaoRealtimeDialogueURL, nil
+	if isSeedASRStreaming(info) {
+		return seedASRStreamingURL, nil
+	}
+	if isDoubaoRealtimeDialogue(info) {
+		return doubaoRealtimeDialogueURL, nil
+	}
+	return "", fmt.Errorf("unsupported Volcengine realtime model %q", info.UpstreamModelName)
 }
 
 func (a *RealtimeAdaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
+	if isSeedASRStreaming(info) {
+		return setupSeedASRStreamingHeaders(c, *req, info)
+	}
+	if !isDoubaoRealtimeDialogue(info) {
+		return fmt.Errorf("unsupported Volcengine realtime model %q", info.UpstreamModelName)
+	}
 	appID, accessToken, err := parseVolcengineAuth(info.ApiKey)
 	if err != nil {
 		return fmt.Errorf("invalid volcengine key: %w", err)
@@ -61,12 +77,19 @@ func (a *RealtimeAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo,
 }
 
 func (a *RealtimeAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if isSeedASRStreaming(info) {
+		err, usage = handleSeedASRStreaming(c, info)
+		return usage, err
+	}
+	if !isDoubaoRealtimeDialogue(info) {
+		return nil, types.NewError(fmt.Errorf("unsupported Volcengine realtime model %q", info.UpstreamModelName), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
 	err, usage = DoubaoRealtimeHandler(c, info)
 	return usage, err
 }
 
 func (a *RealtimeAdaptor) GetModelList() []string {
-	return []string{"doubao-realtime"}
+	return []string{"doubao-realtime", "doubao-seed-asr-2.0-streaming"}
 }
 
 func (a *RealtimeAdaptor) GetChannelName() string {

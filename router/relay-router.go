@@ -83,9 +83,11 @@ func SetRelayRouter(router *gin.Engine) {
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
-		// 豆包端到端实时语音大模型（与 Doubao 原生 WebSocket 协议一致）
-		// 客户端通过 ?model=xxx 指定渠道路由依据
+		// 兼容旧版豆包专用路径；新客户端统一使用 /v1/realtime，并通过 model 选择协议与渠道。
 		wsRouter.GET("/realtime/volcengine/dialogue", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIRealtime)
+		})
+		wsRouter.GET("/realtime/volcengine/asr", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
 	}

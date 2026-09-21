@@ -324,6 +324,12 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if textRequest.Model == "" {
 		return nil, errors.New("field model is required")
 	}
+
+	// Extract the Claude session before later validation or relay failures so
+	// both usage logs and error logs can persist it.
+	if sessionId := dto.ExtractSessionIdFromMetadata(textRequest.Metadata); sessionId != "" {
+		common.SetContextKey(c, constant.ContextKeyClaudeSessionId, sessionId)
+	}
 	if ExceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
 		return nil, errors.New("max_tokens is invalid")
 	}

@@ -4,12 +4,60 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDoRequestCapturesUpstreamRequestId(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		headers     http.Header
+		want        string
+	}{
+		{name: "new-api id has global priority", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Oneapi-Request-Id": {"gateway-id"}, "X-Request-Id": {"provider-id"}}, want: "gateway-id"},
+		{name: "OpenAI compatible", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Request-Id": {"openai-id"}}, want: "openai-id"},
+		{name: "Anthropic native id", channelType: constant.ChannelTypeAnthropic, headers: http.Header{"Request-Id": {"anthropic-id"}, "X-Request-Id": {"gateway-id"}}, want: "anthropic-id"},
+		{name: "Azure native id", channelType: constant.ChannelTypeAzure, headers: http.Header{"Apim-Request-Id": {"azure-id"}, "X-Request-Id": {"gateway-id"}}, want: "azure-id"},
+		{name: "AWS native id", channelType: constant.ChannelTypeAws, headers: http.Header{"X-Amzn-RequestId": {"aws-id"}, "Request-Id": {"anthropic-id"}}, want: "aws-id"},
+		{name: "VolcEngine log id", channelType: constant.ChannelTypeVolcEngine, headers: http.Header{"X-Tt-Logid": {"volc-id"}, "X-Request-Id": {"gateway-id"}}, want: "volc-id"},
+		{name: "ShellAPI request id", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Shellapi-Request-Id": {"shellapi-id"}}, want: "shellapi-id"},
+		{name: "missing id clears stale value", channelType: constant.ChannelTypeOpenAI, headers: http.Header{}, want: ""},
+		{name: "oversized id falls back", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Request-Id": {strings.Repeat("x", 129)}, "Request-Id": {"fallback-id"}}, want: "fallback-id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for name, values := range tt.headers {
+					for _, value := range values {
+						w.Header().Add(name, value)
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			t.Cleanup(server.Close)
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Set(common.UpstreamRequestIdKey, "stale-id")
+			request, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader(""))
+			require.NoError(t, err)
+
+			response, err := doRequest(ctx, request, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: tt.channelType}})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+			require.Equal(t, tt.want, ctx.GetString(common.UpstreamRequestIdKey))
+		})
+	}
+}
 
 func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
 	recorder := httptest.NewRecorder()

@@ -68,6 +68,7 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	ctx.Set("channel_name", "mutable-context-channel")
 	ctx.Set("channel_type", 9)
 	ctx.Set("use_channel", []string{"101"})
+	ctx.Set(common.UpstreamRequestIdKey, "later-attempt-id")
 	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-time.Second))
 
 	channelSnapshot := types.ChannelError{
@@ -78,11 +79,12 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	}
 	apiErr := types.NewOpenAIError(errors.New("upstream failed"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
 
-	processChannelError(ctx, channelSnapshot, apiErr, nil, 1000, true)
+	processChannelError(ctx, channelSnapshot, apiErr, nil, 1000, "upstream-attempt-101", true)
 
 	var stored model.Log
 	require.NoError(t, database.First(&stored).Error)
 	assert.Equal(t, channelSnapshot.ChannelId, stored.ChannelId)
+	assert.Equal(t, "upstream-attempt-101", stored.UpstreamRequestId)
 	storedOther, err := common.StrToMap(stored.Other)
 	require.NoError(t, err)
 	assert.Equal(t, float64(http.StatusBadGateway), storedOther["status_code"])

@@ -525,6 +525,7 @@ func TestTaskAdaptorMapsJSContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"id":"task_public",
+		"task_id":"task_public",
 		"object":"video",
 		"model":"",
 		"status":"completed",
@@ -577,7 +578,7 @@ func TestTaskAdaptorPreservesSoraVideoResponseFields(t *testing.T) {
 			var fields map[string]any
 			require.NoError(t, common.Unmarshal(rendered, &fields))
 			assert.Equal(t, "task_public", fields["id"])
-			assert.NotContains(t, fields, "task_id")
+			assert.Equal(t, fields["id"], fields["task_id"])
 			assert.Equal(t, "video", fields["object"])
 			assert.Equal(t, "origin-model", fields["model"])
 			assert.Equal(t, tc.want, fields["status"])
@@ -638,7 +639,7 @@ func TestTaskAdaptorPreservesOpenAIVideoFailureSlotsAndOwnsLifecycle(t *testing.
 	rendered, err := adaptor.ConvertToOpenAIVideo(task)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"id":"task_public","object":"video","model":"origin-model","status":"failed","progress":0,"created_at":10,"error":{"message":"provider rejected request","code":"provider_error"}}`, string(rendered))
+	assert.JSONEq(t, `{"id":"task_public","task_id":"task_public","object":"video","model":"origin-model","status":"failed","progress":0,"created_at":10,"error":{"message":"provider rejected request","code":"provider_error"}}`, string(rendered))
 }
 
 func TestTaskAdaptorBoundsNativeUsageBeforeQuotaCalculation(t *testing.T) {

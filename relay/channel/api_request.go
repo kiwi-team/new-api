@@ -417,9 +417,30 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+	targetConn, handshakeResponse, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
+		if handshakeResponse != nil {
+			defer handshakeResponse.Body.Close()
+			service.CaptureUpstreamRequestId(c, handshakeResponse.Header, info.GetChannelType())
+			body, readErr := io.ReadAll(io.LimitReader(handshakeResponse.Body, 4097))
+			if readErr == nil {
+				if len(body) > 4096 {
+					body = body[:4096]
+				}
+				detail := strings.TrimSpace(string(body))
+				if detail == "" {
+					detail = handshakeResponse.Header.Get("X-Api-Message")
+				}
+				if detail != "" {
+					return nil, fmt.Errorf("dial failed to %s: upstream HTTP %d: %s: %w", common.SanitizeURLForLog(fullRequestURL), handshakeResponse.StatusCode, common2.LocalLogPreview(detail), err)
+				}
+			}
+			return nil, fmt.Errorf("dial failed to %s: upstream HTTP %d: %w", common.SanitizeURLForLog(fullRequestURL), handshakeResponse.StatusCode, err)
+		}
 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+	}
+	if handshakeResponse != nil {
+		service.CaptureUpstreamRequestId(c, handshakeResponse.Header, info.GetChannelType())
 	}
 	// send request body
 	//all, err := io.ReadAll(requestBody)
@@ -574,9 +595,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		))
 	}
 
-	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
-		c.Set(common2.UpstreamRequestIdKey, upID)
-	}
+	service.CaptureUpstreamRequestId(c, resp.Header, info.GetChannelType())
 
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()

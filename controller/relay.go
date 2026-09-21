@@ -177,9 +177,10 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	type pendingError struct {
-		channelError types.ChannelError
-		apiError     *types.NewAPIError
-		useTimeMs    int64
+		channelError      types.ChannelError
+		apiError          *types.NewAPIError
+		useTimeMs         int64
+		upstreamRequestId string
 	}
 	pendingErrors := make([]pendingError, 0, retryPlan.MaxRetries+1)
 
@@ -214,6 +215,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 
 		attemptStart := time.Now()
 		relayInfo.ChannelAttemptStartTime = attemptStart
+		c.Set(common.UpstreamRequestIdKey, "")
 		originalWriter := c.Writer
 		channelSetting, _ := common.GetContextKeyType[relaykitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 		if mapping := channelSetting.ModelOutputMapping; mapping != "" && mapping != "{}" {
@@ -236,13 +238,14 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Writer = originalWriter
 		attemptUseTimeMs := max(time.Since(attemptStart).Milliseconds(), 1)
+		attemptUpstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 		addUsedChannelTime(c, attemptUseTimeMs)
 		relayInfo.ChannelAttemptStartTime = time.Time{}
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
 			for _, pending := range pendingErrors {
-				processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, false)
+				processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, false)
 			}
 			return
 		}
@@ -250,9 +253,10 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 		pendingErrors = append(pendingErrors, pendingError{
-			channelError: *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-			apiError:     newAPIError,
-			useTimeMs:    attemptUseTimeMs,
+			channelError:      *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+			apiError:          newAPIError,
+			useTimeMs:         attemptUseTimeMs,
+			upstreamRequestId: attemptUpstreamRequestId,
 		})
 
 		if !shouldRetry(c, newAPIError, retryPlan.MaxRetries-retryParam.GetRetry()) {
@@ -260,7 +264,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 	for i, pending := range pendingErrors {
-		processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, i == len(pendingErrors)-1)
+		processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, i == len(pendingErrors)-1)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -385,9 +389,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, useTimeMs int64, includeBody bool) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, useTimeMs int64, upstreamRequestId string, includeBody bool) {
 	recordRelayErrorLog(c, channelError, err, useTimeMs, includeBody)
-	service.ProcessChannelError(c, channelError, err, relayInfo)
+	service.ProcessChannelError(c, channelError, err, relayInfo, upstreamRequestId)
 }
 
 func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool) {
@@ -677,6 +681,7 @@ func executeTaskSubmissionWith(
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		stage = "submit"
+		c.Set(common.UpstreamRequestIdKey, "")
 		result, taskErr = submit(c, relayInfo)
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
@@ -693,7 +698,7 @@ func executeTaskSubmissionWith(
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
-				relayInfo, 0, false)
+				relayInfo, 0, c.GetString(common.UpstreamRequestIdKey), false)
 		}
 
 		willRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, retryPlan.MaxRetries-retryParam.GetRetry())

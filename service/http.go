@@ -8,10 +8,58 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxUpstreamRequestIdLength = 128
+
+// CaptureUpstreamRequestId records the first recognized upstream request ID
+// using a stable, channel-aware priority. The logs column is varchar(128), so
+// oversized values are ignored instead of making the whole log insert fail.
+func CaptureUpstreamRequestId(c *gin.Context, header http.Header, channelType int) string {
+	headerNames := []string{common.RequestIdKey}
+	switch channelType {
+	case constant.ChannelTypeAzure:
+		headerNames = append(headerNames, "Apim-Request-Id", "X-Ms-Request-Id")
+	case constant.ChannelTypeAnthropic:
+		headerNames = append(headerNames, "Request-Id")
+	case constant.ChannelTypeAws:
+		headerNames = append(headerNames, "X-Amzn-RequestId", "X-Amz-Request-Id", "Request-Id")
+	case constant.ChannelTypeVolcEngine:
+		headerNames = append(headerNames, "X-Tt-Logid")
+	}
+	headerNames = append(headerNames,
+		"X-Shellapi-Request-Id",
+		"X-Request-Id",
+		"Request-Id",
+		"Apim-Request-Id",
+		"X-Ms-Request-Id",
+		"X-Amzn-RequestId",
+		"X-Amz-Request-Id",
+		"X-Tt-Logid",
+	)
+
+	upstreamRequestId := ""
+	for _, headerName := range headerNames {
+		value := strings.TrimSpace(header.Get(headerName))
+		if value == "" {
+			continue
+		}
+		if len(value) > maxUpstreamRequestIdLength {
+			logger.LogWarn(c, "ignored oversized upstream request id from header %s: length=%d", headerName, len(value))
+			continue
+		}
+		upstreamRequestId = value
+		break
+	}
+	if c != nil {
+		c.Set(common.UpstreamRequestIdKey, upstreamRequestId)
+	}
+	return upstreamRequestId
+}
 
 func CloseResponseBodyGracefully(httpResponse *http.Response) {
 	if httpResponse == nil || httpResponse.Body == nil {
@@ -26,16 +74,13 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 // ShouldCopyUpstreamHeader checks whether a given upstream response header
 // should be copied to the client response. It returns false for Content-Length
 // (managed separately) and X-Oneapi-Request-Id (to preserve the local instance
-// ID). When the upstream header is X-Oneapi-Request-Id, the value is captured
-// into the Gin context for later logging.
-func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
+// ID). Request ID capture is handled once per complete response header by
+// CaptureUpstreamRequestId so candidate priority stays deterministic.
+func ShouldCopyUpstreamHeader(_ *gin.Context, k string, _ []string) bool {
 	if strings.EqualFold(k, "Content-Length") {
 		return false
 	}
 	if strings.EqualFold(k, common.RequestIdKey) {
-		if c != nil && len(v) > 0 {
-			c.Set(common.UpstreamRequestIdKey, v[0])
-		}
 		return false
 	}
 	return true
@@ -53,6 +98,7 @@ func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 	// So the httpClient will be confused by the response.
 	// For example, Postman will report error, and we cannot check the response at all.
 	if src != nil {
+		CaptureUpstreamRequestId(c, src.Header, common.GetContextKeyInt(c, constant.ContextKeyChannelType))
 		for k, v := range src.Header {
 			if !ShouldCopyUpstreamHeader(c, k, v) {
 				continue

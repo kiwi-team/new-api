@@ -16,4 +16,8 @@ var builtinBillingExpr = map[string]string{
 	// https://docs.typesafe.ai/models (Jev 1.13, 2026-09-20).
 	// TypeSafe charges input tokens only; output tokens are free.
 	"jev-1.13.0": `tier("standard", p * 0.042 + c * 0)`,
+	// https://cloud.tencent.com/document/product/1823/130055 (2026-09-10):
+	// CNY 10 / 1M tokens. Converted at the 2026-09-21 PBOC midpoint of
+	// USD 1 = CNY 6.7487. TokenHub reports the billable ASR tokens as input.
+	"hy-asr-3.0-preview": `tier("standard", p * 1.481766859)`,
 }

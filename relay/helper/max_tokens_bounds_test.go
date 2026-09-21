@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,13 @@ func TestMaxTokensBounds(t *testing.T) {
 		req, err := GetAndValidateClaudeRequest(c)
 		require.NoError(t, err)
 		require.EqualValues(t, 8192, *req.MaxTokens)
+	})
+
+	t.Run("claude session id is retained for logging", func(t *testing.T) {
+		c := newJSONContext(t, `{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}],"max_tokens":8192,"metadata":{"user_id":"{\"device_id\":\"device-1\",\"account_uuid\":\"\",\"session_id\":\"session-123\"}"}}`)
+		_, err := GetAndValidateClaudeRequest(c)
+		require.NoError(t, err)
+		require.Equal(t, "session-123", common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId))
 	})
 
 	t.Run("gemini maxOutputTokens overflow rejected", func(t *testing.T) {
