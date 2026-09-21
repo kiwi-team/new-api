@@ -78,6 +78,7 @@ const (
 	ChannelTypeTaskPlugin       = 78
 	ChannelTypeVLLM             = 79
 	ChannelTypeSGLang           = 80
+	ChannelTypeTypeSafe         = 81
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -167,6 +168,7 @@ var ChannelBaseURLs = []string{
 	"",                                     // 78 task plugin
 	"",                                     // 79 vLLM
 	"",                                     // 80 SGLang
+	"https://api.typesafe.ai",              // 81 TypeSafe
 }
 
 func GetChannelBaseURL(channelType int) string {
@@ -251,6 +253,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeTaskPlugin:     "Task Plugin",
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",
+	ChannelTypeTypeSafe:       "TypeSafe",
 }
 
 func GetChannelTypeName(channelType int) string {

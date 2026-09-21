@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -38,6 +39,12 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	fullRequestURL := ""
 	switch info.RelayMode {
+	case constant.RelayModeAudioTranscription:
+		if IsFunASRFlashModel(info.UpstreamModelName) {
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
+		} else {
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/audio/asr/transcription", info.ChannelBaseUrl)
+		}
 	case constant.RelayModeEmbeddings:
 		fullRequestURL = fmt.Sprintf("%s/api/v1/services/embeddings/text-embedding/text-embedding", info.ChannelBaseUrl)
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
@@ -47,7 +54,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", info.ChannelBaseUrl)
 		}
 	default:
-		fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text-generation/generation", info.ChannelBaseUrl)
+		if IsQwen3ASRFlashModel(info.UpstreamModelName) {
+			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/chat/completions", info.ChannelBaseUrl)
+		} else {
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/text-generation/generation", info.ChannelBaseUrl)
+		}
 	}
 
 	return fullRequestURL, nil
@@ -60,6 +71,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		req.Set("X-DashScope-SSE", "enable")
 	}
 	req.Set("Authorization", "Bearer "+info.ApiKey)
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		req.Set("Content-Type", "application/json")
+		if IsFunASRFlashModel(info.UpstreamModelName) {
+			req.Set("X-DashScope-SSE", "disable")
+		} else {
+			req.Set("X-DashScope-Async", "enable")
+		}
+		req.Set("X-DashScope-OssResourceResolve", "enable")
+		if info.Organization != "" {
+			req.Set("X-DashScope-WorkSpace", info.Organization)
+		}
+	}
 
 	if c.GetString("plugin") != "" {
 		req.Set("X-DashScope-Plugin", c.GetString("plugin"))
@@ -79,6 +102,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+	if IsQwen3ASRFlashModel(info.UpstreamModelName) {
+		return request, nil
 	}
 	switch info.RelayMode {
 	case constant.RelayModeEmbeddings:
@@ -111,7 +137,10 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	return nil, errors.New("not implemented")
+	if info.RelayMode != constant.RelayModeAudioTranscription {
+		return nil, errors.New("not implemented")
+	}
+	return ConvertASRRequest(c, info, request)
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
@@ -131,11 +160,21 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 
 // func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *meta.Meta) (usage *model.Usage, err *model.ErrorWithStatusCode) {
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if IsQwen3ASRFlashModel(info.UpstreamModelName) {
+		usage, err := (&openai.Adaptor{}).DoResponse(c, resp, info)
+		if typedUsage, ok := usage.(*dto.Usage); err == nil && ok {
+			NormalizeQwen3ASRUsage(info, typedUsage)
+		}
+		return usage, err
+	}
 	if IsDeepResearchModel(info.UpstreamModelName) {
 		err, usage = DeepResearchStreamHandler(c, info, resp)
 		return
 	}
 	switch info.RelayMode {
+	case constant.RelayModeAudioTranscription:
+		err, usage = ASRHandler(c, resp, info)
+		return
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
 		err, usage = wan27ImageHandler(c, info, resp)
 		return

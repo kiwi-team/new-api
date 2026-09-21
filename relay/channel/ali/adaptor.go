@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -112,6 +113,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/rerank/text-rerank/text-rerank", info.ChannelBaseUrl)
 		case constant.RelayModeResponses:
 			fullRequestURL = fmt.Sprintf("%s/api/v2/apps/protocols/compatible-mode/v1/responses", info.ChannelBaseUrl)
+		case constant.RelayModeAudioTranscription:
+			if ali_dashscope.IsFunASRFlashModel(info.UpstreamModelName) {
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
+			} else {
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/audio/asr/transcription", info.ChannelBaseUrl)
+			}
 		case constant.RelayModeImagesGenerations:
 			if isSyncImageModel(info.UpstreamModelName) {
 				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
@@ -145,6 +152,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if info.IsStream {
 		req.Set("X-DashScope-SSE", "enable")
 	}
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		req.Set("Content-Type", "application/json")
+		if ali_dashscope.IsFunASRFlashModel(info.UpstreamModelName) {
+			req.Set("X-DashScope-SSE", "disable")
+		} else {
+			req.Set("X-DashScope-Async", "enable")
+		}
+		req.Set("X-DashScope-OssResourceResolve", "enable")
+		if info.Organization != "" {
+			req.Set("X-DashScope-WorkSpace", info.Organization)
+		}
+	}
 	if c.GetString("plugin") != "" {
 		req.Set("X-DashScope-Plugin", c.GetString("plugin"))
 	}
@@ -167,6 +186,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+	if ali_dashscope.IsQwen3ASRFlashModel(info.UpstreamModelName) {
+		return requestOpenAI2Ali(*request, info.UpstreamModelName), nil
 	}
 	// docs: https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712216
 	// fix: InternalError.Algo.InvalidParameter: The value of the enable_thinking parameter is restricted to True.
@@ -275,6 +297,9 @@ func getLanguageType(request dto.AudioRequest) string {
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		return ali_dashscope.ConvertASRRequest(c, info, request)
+	}
 	if info.RelayMode == constant.RelayModeAudioSpeech {
 		aliRequest := QwenTTSReqeust{
 			Model: request.Model,
@@ -321,9 +346,14 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			err, usage = RerankHandler(c, resp, info)
 		case constant.RelayModeAudioSpeech:
 			err, usage = aliAudioHandler(c, resp, info)
+		case constant.RelayModeAudioTranscription:
+			err, usage = ali_dashscope.ASRHandler(c, resp, info)
 		default:
 			adaptor := openai.Adaptor{}
 			usage, err = adaptor.DoResponse(c, resp, info)
+			if typedUsage, ok := usage.(*dto.Usage); err == nil && ok && ali_dashscope.IsQwen3ASRFlashModel(info.UpstreamModelName) {
+				ali_dashscope.NormalizeQwen3ASRUsage(info, typedUsage)
+			}
 		}
 		return usage, err
 	}

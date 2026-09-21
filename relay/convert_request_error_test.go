@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	typesafechannel "github.com/QuantumNous/new-api/relay/channel/typesafe"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -201,6 +202,59 @@ func TestUnknownModelModifierIsBadRequestWithoutRetry(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 	assert.Equal(t, types.ErrorCodeConvertRequestFailed, apiErr.GetErrorCode())
 	assert.True(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestTypeSafeChatCompletionsIsNotSupported(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "jev-1.13.0",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeTypeSafe,
+			UpstreamModelName: "jev-1.13.0",
+		},
+	}
+	_, err := (&typesafechannel.Adaptor{}).ConvertOpenAIRequest(nil, info, &dto.GeneralOpenAIRequest{
+		Model:    "jev-1.13.0",
+		Messages: []dto.Message{{Role: "user", Content: "Solve this math problem"}},
+	})
+	require.Error(t, err)
+
+	apiErr := newConvertRequestFailedError(nil, info, err)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, types.ErrorCodeConvertRequestFailed, apiErr.GetErrorCode())
+	assert.Contains(t, apiErr.Error(), "do not support /v1/chat/completions")
+	assert.True(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestTypeSafeNativeRequestValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "native payload", body: `{"model":"jev-1.13.0","state":{"ticket":"failed"},"questions":{"urgent":{"type":"noul","instructions":"Urgent?"}}}`},
+		{name: "missing state", body: `{"model":"jev-1.13.0","questions":{"urgent":{"type":"noul"}}}`, wantErr: "state is required"},
+		{name: "empty questions", body: `{"model":"jev-1.13.0","state":"hello","questions":{}}`, wantErr: "at least one question"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/systemone", strings.NewReader(tc.body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			request, err := helper.GetAndValidateRequest(ctx, types.RelayFormatTypeSafe)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			native, ok := request.(*dto.TypeSafeRequest)
+			require.True(t, ok)
+			assert.Equal(t, "jev-1.13.0", native.Model)
+			assert.Contains(t, native.Questions, "urgent")
+			assert.NotEmpty(t, native.GetTokenCountMeta().CombineText)
+		})
+	}
 }
 
 func hasHostDiagnosticCode(diagnostics []types.ConversionDiagnostic, code string) bool {

@@ -135,6 +135,56 @@ func TestAddTokenPersistsOrderedAutoGroupsSnapshot(t *testing.T) {
 	assert.Equal(t, []string{"vip", "default"}, data.AutoGroups)
 }
 
+func TestAddTokenOwnerAuthorization(t *testing.T) {
+	tests := []struct {
+		name          string
+		role          int
+		targetOwnUser bool
+		targetExists  bool
+		expectSuccess bool
+	}{
+		{name: "root creates for another user", role: common.RoleRootUser, targetExists: true, expectSuccess: true},
+		{name: "common user creates for self", role: common.RoleCommonUser, targetOwnUser: true, targetExists: true, expectSuccess: true},
+		{name: "common user cannot create for another user", role: common.RoleCommonUser, targetExists: true},
+		{name: "root cannot create for a missing user", role: common.RoleRootUser},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupTokenControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.User{}))
+			caller := &model.User{Username: "caller", Password: "password", Group: "default", Role: test.role, Status: common.UserStatusEnabled, AffCode: "caller-aff"}
+			require.NoError(t, db.Create(caller).Error)
+			targetUserID := caller.Id
+			if !test.targetOwnUser {
+				targetUserID = caller.Id + 1000
+				if test.targetExists {
+					target := &model.User{Id: targetUserID, Username: "target", Password: "password", Group: "default", Status: common.UserStatusEnabled, AffCode: "target-aff"}
+					require.NoError(t, db.Create(target).Error)
+				}
+			}
+
+			request := baseAutoTokenRequest("delegated-key")
+			request["group"] = "default"
+			request["user_id"] = targetUserID
+			ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", request, caller.Id)
+			ctx.Set("role", test.role)
+			AddToken(ctx)
+
+			response := decodeAPIResponse(t, recorder)
+			assert.Equal(t, test.expectSuccess, response.Success, response.Message)
+			var tokens []model.Token
+			require.NoError(t, db.Find(&tokens).Error)
+			if test.expectSuccess {
+				require.Len(t, tokens, 1)
+				assert.Equal(t, targetUserID, tokens[0].UserId)
+			} else {
+				assert.Empty(t, tokens)
+			}
+		})
+	}
+}
+
 func TestUpdateTokenAutoGroupsTriStateAndNonAutoCleanup(t *testing.T) {
 	tests := []struct {
 		name               string

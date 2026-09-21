@@ -48,6 +48,9 @@ func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) s
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
+	if channel != nil && channel.Type == constant.ChannelTypeTypeSafe {
+		return string(constant.EndpointTypeTypeSafe)
+	}
 	return normalized
 }
 
@@ -198,6 +201,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			relayFormat = types.RelayFormatOpenAIImage
 		case constant.EndpointTypeEmbeddings:
 			relayFormat = types.RelayFormatEmbedding
+		case constant.EndpointTypeTypeSafe:
+			relayFormat = types.RelayFormatTypeSafe
 		default:
 			relayFormat = types.RelayFormatOpenAI
 		}
@@ -779,6 +784,14 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				req.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
 			}
 			return req
+		case constant.EndpointTypeTypeSafe:
+			return &dto.TypeSafeRequest{
+				Model: model,
+				State: json.RawMessage(`{"message":"hello"}`),
+				Questions: map[string]json.RawMessage{
+					"health": json.RawMessage(`{"type":"noul","instructions":"Does the state contain a greeting?"}`),
+				},
+			}
 		}
 	}
 

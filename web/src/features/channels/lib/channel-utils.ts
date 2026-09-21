@@ -57,6 +57,7 @@ export function getChannelTypeIcon(type: number): string {
     78: 'OpenAI', // Task Plugin
     79: 'Vllm', // vLLM
     80: 'SGLang', // SGLang
+    81: 'OpenAI', // TypeSafe (no dedicated Lobe icon)
     3: 'Azure', // Azure
 
     // Anthropic

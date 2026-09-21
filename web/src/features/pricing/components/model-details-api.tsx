@@ -109,7 +109,7 @@ function buildChatSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${bodyJson.replace(/\n/g, '\n     ')}'`,
+      `  -d '${bodyJson.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
 
@@ -233,6 +233,50 @@ function buildAnthropicSample(lang: Lang, ctx: SampleContext): string {
     '',
     `const data = await response.json()`,
     `console.log(data.content[0].text)`,
+  ].join('\n')
+}
+
+function buildTypeSafeSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const body = {
+    model: ctx.modelName,
+    state: { ticket: 'Payment failed and the customer is blocked.' },
+    questions: {
+      urgent: { type: 'noul', instructions: 'Is this ticket urgent?' },
+    },
+  }
+  const bodyJson = JSON.stringify(body, null, 2)
+
+  if (lang === 'curl') {
+    return [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '${bodyJson.replace(/\n/g, '\n     ')}'`,
+    ].join('\n')
+  }
+  if (lang === 'python') {
+    return [
+      'import requests',
+      '',
+      `response = requests.post('${url}',`,
+      `    headers={'Authorization': 'Bearer <YOUR_API_KEY>'},`,
+      `    json=${bodyJson.replaceAll('\n', '\n    ')},`,
+      ')',
+      'print(response.json())',
+    ].join('\n')
+  }
+  return [
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: {`,
+    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `    'Content-Type': 'application/json',`,
+    `  },`,
+    `  body: JSON.stringify(${bodyJson}),`,
+    `})`,
+    '',
+    `console.log(await response.json())`,
   ].join('\n')
 }
 
@@ -433,6 +477,7 @@ function buildSample(
   if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
     return buildEmbeddingSample(lang, ctx)
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'typesafe') return buildTypeSafeSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 

@@ -78,6 +78,7 @@ import (
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskWorldLabs "github.com/QuantumNous/new-api/relay/channel/task/worldlabs"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
+	"github.com/QuantumNous/new-api/relay/channel/typesafe"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/visualvolcengine"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
@@ -189,6 +190,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &sub2api.Adaptor{}
 	case constant.APITypeNewAPI:
 		return &newapi.Adaptor{}
+	case constant.APITypeTypeSafe:
+		return &typesafe.Adaptor{}
 	}
 	return nil
 }

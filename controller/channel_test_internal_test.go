@@ -161,6 +161,12 @@ func TestMultiprotocolGatewayEndpointTypes(t *testing.T) {
 	assert.Equal(t, want, common.GetEndpointTypesByChannelType(constant.ChannelTypeSub2API, "gpt-5"))
 }
 
+func TestTypeSafeEndpointTypes(t *testing.T) {
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeTypeSafe,
+	}, common.GetEndpointTypesByChannelType(constant.ChannelTypeTypeSafe, "jev-1.13.0"))
+}
+
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	settingBytes, err := common.Marshal(dto.ChannelSettings{

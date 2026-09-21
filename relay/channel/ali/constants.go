@@ -9,6 +9,14 @@ var ModelList = []string{
 	"qwen3-235b-a22b",
 	"text-embedding-v1",
 	"gte-rerank-v2",
+	"fun-asr", "fun-asr-2025-11-07", "fun-asr-2025-08-25",
+	"fun-asr-mtl", "fun-asr-mtl-2025-08-25", "fun-asr-flash-2026-06-15",
+	"qwen-audio-3.0-asr-flash-filetrans",
+	"qwen3-asr-flash", "qwen3-asr-flash-2026-02-10", "qwen3-asr-flash-2025-09-08",
+	"fun-asr-realtime", "fun-asr-realtime-2026-02-28", "fun-asr-realtime-2025-11-07", "fun-asr-realtime-2025-09-15",
+	"fun-asr-flash-8k-realtime", "fun-asr-flash-8k-realtime-2026-01-28",
+	"qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2026-02-10", "qwen3-asr-flash-realtime-2025-10-27",
+	"qwen-audio-3.0-asr-flash-streaming",
 }
 
 var ChannelName = "ali"

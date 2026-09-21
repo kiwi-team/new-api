@@ -28,6 +28,14 @@ var ModelList = []string{
 	"qwen-mt-plus", "qwen-mt-turbo",
 	"deepseek-r1", "deepseek-v3", "deepseek-r1-distill-qwen-1.5b", "deepseek-r1-distill-qwen-7b", "deepseek-r1-distill-qwen-14b", "deepseek-r1-distill-qwen-32b", "deepseek-r1-distill-llama-8b", "deepseek-r1-distill-llama-70b",
 	"qwen-deep-research", "qwen-deep-research-2025-12-15",
+	"fun-asr", "fun-asr-2025-11-07", "fun-asr-2025-08-25",
+	"fun-asr-mtl", "fun-asr-mtl-2025-08-25", "fun-asr-flash-2026-06-15",
+	"qwen-audio-3.0-asr-flash-filetrans",
+	"qwen3-asr-flash", "qwen3-asr-flash-2026-02-10", "qwen3-asr-flash-2025-09-08",
+	"fun-asr-realtime", "fun-asr-realtime-2026-02-28", "fun-asr-realtime-2025-11-07", "fun-asr-realtime-2025-09-15",
+	"fun-asr-flash-8k-realtime", "fun-asr-flash-8k-realtime-2026-01-28",
+	"qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2026-02-10", "qwen3-asr-flash-realtime-2025-10-27",
+	"qwen-audio-3.0-asr-flash-streaming",
 }
 
 // "qwen-vl-max",

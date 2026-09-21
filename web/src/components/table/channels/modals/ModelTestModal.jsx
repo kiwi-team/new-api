@@ -62,6 +62,7 @@ const ModelTestModal = ({
     'image-generation',
     'jina-rerank',
     'openai-response-compact',
+    'typesafe',
   ].includes(selectedEndpointType);
 
   React.useEffect(() => {
@@ -97,6 +98,7 @@ const ModelTestModal = ({
       label: t('图像生成') + ' (/v1/images/generations)',
     },
     { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+    { value: 'typesafe', label: 'TypeSafe System One (/v1/systemone)' },
   ];
 
   const handleCopySelected = () => {

@@ -2,10 +2,12 @@ package common
 
 import "github.com/QuantumNous/new-api/constant"
 
-// GetEndpointTypesByChannelType 获取渠道最优先端点类型（所有的渠道都支持 OpenAI 端点）
+// GetEndpointTypesByChannelType returns the endpoint protocols supported by a channel.
 func GetEndpointTypesByChannelType(channelType int, modelName string) []constant.EndpointType {
 	var endpointTypes []constant.EndpointType
 	switch channelType {
+	case constant.ChannelTypeTypeSafe:
+		endpointTypes = []constant.EndpointType{constant.EndpointTypeTypeSafe}
 	case constant.ChannelTypeJina:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeJinaRerank}
 	//case constant.ChannelTypeMidjourney, constant.ChannelTypeMidjourneyPlus:

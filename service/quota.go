@@ -229,12 +229,12 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent string) {
 
+	var tieredUsedVars map[string]bool
+	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
+	}
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
-		P:   float64(usage.InputTokens),
-		C:   float64(usage.OutputTokens),
-		Len: float64(usage.InputTokens),
-	})
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredRealtimeTokenParams(usage, tieredUsedVars))
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -296,7 +296,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	totalTokens := usage.TotalTokens
 	var logContent string
-	if relayInfo.PriceData.UseTieredPrice {
+	if tieredOk {
+		logContent = tieredRealtimeLogContent(relayInfo, usage, tieredResult)
+	} else if relayInfo.PriceData.UseTieredPrice {
 		logContent = fmt.Sprintf("阶梯价格（≤%d tokens）：输入 %.6f / 输出 %.6f /1M tokens，音频倍率 %.2f，音频补全倍率 %.2f，视频倍率 %.2f，分组倍率 %.2f",
 			relayInfo.PriceData.TieredMaxTokens,
 			quotaInfo.TieredInputPrice, quotaInfo.TieredOutputPrice,
@@ -389,6 +391,144 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		PlanId:           planId,
 		Usage:            usageStr,
 	})
+}
+
+func tieredRealtimeLogContent(relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, result *billingexpr.TieredResult) string {
+	tier := "未命名"
+	unit := billingexpr.BillingUnitToken
+	prefix := "计费表达式"
+	if result != nil {
+		if result.MatchedTier != "" {
+			tier = result.MatchedTier
+		}
+		if result.BillingUnit != "" {
+			unit = result.BillingUnit
+		}
+	} else if snapshot := relayInfo.TieredBillingSnapshot; snapshot != nil {
+		prefix = "计费表达式（结算回退预扣）"
+		if snapshot.EstimatedTier != "" {
+			tier = snapshot.EstimatedTier
+		}
+		if snapshot.EstimatedBillingUnit != "" {
+			unit = snapshot.EstimatedBillingUnit
+		}
+	}
+
+	return fmt.Sprintf(
+		"%s：档位 %s，计费单位 %s，输入 %d tokens（文本 %d，音频 %d，图片 %d，视频 %d），输出 %d tokens（文本 %d，音频 %d，图片 %d），分组倍率 %.2f",
+		prefix,
+		tier,
+		unit,
+		usage.InputTokens,
+		usage.InputTokenDetails.TextTokens,
+		usage.InputTokenDetails.AudioTokens,
+		usage.InputTokenDetails.ImageTokens,
+		usage.InputTokenDetails.VideoTokens,
+		usage.OutputTokens,
+		usage.OutputTokenDetails.TextTokens,
+		usage.OutputTokenDetails.AudioTokens,
+		usage.OutputTokenDetails.ImageTokens,
+		relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+	)
+}
+
+// BuildTieredRealtimeTokenParams normalizes Realtime usage for expression
+// billing. Realtime input/output totals include their modality details, so a
+// separately referenced modality must be removed from the p/c fallback.
+func BuildTieredRealtimeTokenParams(usage *dto.RealtimeUsage, usedVars map[string]bool) billingexpr.TokenParams {
+	if usage == nil {
+		return billingexpr.TokenParams{}
+	}
+	p := float64(usage.InputTokens)
+	c := float64(usage.OutputTokens)
+	cr := float64(usage.InputTokenDetails.CachedTokens)
+	ai := float64(usage.InputTokenDetails.AudioTokens)
+	img := float64(usage.InputTokenDetails.ImageTokens)
+	ao := float64(usage.OutputTokenDetails.AudioTokens)
+	imgO := float64(usage.OutputTokenDetails.ImageTokens)
+	if usedVars["cr"] {
+		p -= cr
+	}
+	if usedVars["ai"] {
+		p -= ai
+	}
+	if usedVars["img"] {
+		p -= img
+	}
+	if usedVars["ao"] {
+		c -= ao
+	}
+	if usedVars["img_o"] {
+		c -= imgO
+	}
+	return billingexpr.TokenParams{
+		P:    max(p, 0),
+		C:    max(c, 0),
+		Len:  float64(usage.InputTokens),
+		CR:   cr,
+		AI:   ai,
+		Img:  img,
+		AO:   ao,
+		ImgO: imgO,
+	}
+}
+
+// ReserveWssUsage raises the current request reservation to the cumulative
+// realtime usage cost. It avoids directly charging each partial update, which
+// would otherwise be charged again during final settlement.
+func ReserveWssUsage(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
+	if relayInfo == nil || usage == nil {
+		return errors.New("invalid realtime billing state")
+	}
+
+	quotaInfo := QuotaInfo{
+		InputDetails: TokenDetails{
+			TextTokens:  usage.InputTokenDetails.TextTokens,
+			AudioTokens: usage.InputTokenDetails.AudioTokens,
+			ImageTokens: usage.InputTokenDetails.ImageTokens,
+			VideoTokens: usage.InputTokenDetails.VideoTokens,
+		},
+		OutputDetails: TokenDetails{
+			TextTokens:  usage.OutputTokenDetails.TextTokens,
+			AudioTokens: usage.OutputTokenDetails.AudioTokens,
+			ImageTokens: usage.OutputTokenDetails.ImageTokens,
+		},
+		ModelName:      relayInfo.GetBillingModelName(),
+		UsePrice:       relayInfo.PriceData.UsePrice,
+		ModelPrice:     relayInfo.PriceData.ModelPrice,
+		ModelRatio:     relayInfo.PriceData.ModelRatio,
+		GroupRatio:     relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		UseTieredPrice: relayInfo.PriceData.UseTieredPrice,
+	}
+	if relayInfo.PriceData.UseTieredPrice {
+		tiers, ok := ratio_setting.GetTieredPrice(quotaInfo.ModelName)
+		if ok && len(tiers) > 0 {
+			tier := ratio_setting.MatchPriceTier(tiers, usage.InputTokens)
+			quotaInfo.TieredInputPrice = tier.InputPrice
+			quotaInfo.TieredOutputPrice = tier.OutputPrice
+		}
+	}
+
+	quota, clamp := calculateAudioQuota(quotaInfo)
+	noteQuotaClamp(relayInfo, clamp)
+	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		usedVars := billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
+		if ok, tieredQuota, _ := TryTieredSettle(relayInfo, BuildTieredRealtimeTokenParams(usage, usedVars)); ok {
+			quota = tieredQuota
+		}
+	}
+	if relayInfo.Billing == nil {
+		if quota == 0 {
+			return nil
+		}
+		return errors.New("realtime billing session is missing")
+	}
+	if err := relayInfo.Billing.Reserve(quota); err != nil {
+		return err
+	}
+	relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()
+	logger.LogInfo(ctx, "realtime streaming reserve quota success, quota: "+fmt.Sprintf("%d", quota))
+	return nil
 }
 
 func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData) int {

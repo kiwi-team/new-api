@@ -72,6 +72,7 @@ const BACKEND_CHANNEL_IDS = {
   Sub2API: 75,
   NewAPI: 76,
   MiniMaxVideo: 77,
+  TypeSafe: 81,
 } as const
 
 describe('channel type IDs match the backend', () => {
@@ -112,6 +113,10 @@ describe('channel type IDs match the backend', () => {
       getChannelTypeConfig(BACKEND_CHANNEL_IDS.Sub2API).icon,
       'Sub2API'
     )
+    assert.equal(
+      getChannelTypeConfig(BACKEND_CHANNEL_IDS.TypeSafe).defaultBaseUrl,
+      'https://api.typesafe.ai'
+    )
   })
 
   test('icons follow the backend provider, not upstream numbering', () => {
@@ -120,6 +125,7 @@ describe('channel type IDs match the backend', () => {
     assert.equal(getChannelTypeIcon(BACKEND_CHANNEL_IDS.Replicate), 'Replicate')
     assert.equal(getChannelTypeIcon(BACKEND_CHANNEL_IDS.DoubaoVideo), 'Doubao')
     assert.equal(getChannelTypeIcon(BACKEND_CHANNEL_IDS.NewAPI), 'NewAPI')
+    assert.equal(getChannelTypeIcon(BACKEND_CHANNEL_IDS.TypeSafe), 'OpenAI')
   })
 
   test('model discovery is enabled for the OpenAI-compatible aggregators', () => {

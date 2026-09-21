@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -23,13 +24,35 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	baseUrl := strings.TrimRight(info.ChannelBaseUrl, "/")
-	//fmt.Printf("baseUrl: %s,%s\n", baseUrl, info.OriginModelName)
-	return fmt.Sprintf("%s/api-ws/v1/realtime?model=%s", baseUrl, info.OriginModelName), nil
+	baseURL, err := url.Parse(strings.TrimRight(info.ChannelBaseUrl, "/"))
+	if err != nil {
+		return "", fmt.Errorf("parse Qwen realtime base URL: %w", err)
+	}
+	switch baseURL.Scheme {
+	case "http":
+		baseURL.Scheme = "ws"
+	case "https":
+		baseURL.Scheme = "wss"
+	case "ws", "wss":
+	default:
+		return "", fmt.Errorf("unsupported Qwen realtime URL scheme %q", baseURL.Scheme)
+	}
+	if isFunASRRealtimeModel(info.UpstreamModelName) {
+		baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/api-ws/v1/inference"
+		return baseURL.String(), nil
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/api-ws/v1/realtime"
+	query := baseURL.Query()
+	query.Set("model", info.UpstreamModelName)
+	baseURL.RawQuery = query.Encode()
+	return baseURL.String(), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	req.Set("Authorization", "Bearer "+info.ApiKey)
+	if info.Organization != "" {
+		req.Set("X-DashScope-WorkSpace", info.Organization)
+	}
 	return nil
 }
 
@@ -75,7 +98,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 }
 
 func (a *Adaptor) GetModelList() []string {
-	return []string{"qwen3-omni-flash-realtime"}
+	return []string{
+		"qwen3-omni-flash-realtime",
+		"fun-asr-realtime", "fun-asr-realtime-2026-02-28", "fun-asr-realtime-2025-11-07", "fun-asr-realtime-2025-09-15",
+		"fun-asr-flash-8k-realtime", "fun-asr-flash-8k-realtime-2026-01-28",
+		"qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2026-02-10", "qwen3-asr-flash-realtime-2025-10-27",
+		"qwen-audio-3.0-asr-flash-streaming",
+	}
 }
 
 func (a *Adaptor) GetChannelName() string {

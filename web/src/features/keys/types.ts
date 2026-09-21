@@ -96,6 +96,8 @@ export interface SearchApiKeysParams {
 }
 
 export interface ApiKeyFormData {
+  /** Root only: create the key for this user instead of the caller. */
+  user_id?: number
   name: string
   remain_quota: number
   expired_time: number

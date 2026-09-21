@@ -338,6 +338,59 @@ func (s *recordingBillingSettler) Reserve(targetQuota int) error {
 	return nil
 }
 
+func TestReserveWssUsageUsesAudioExpressionWithoutDoubleCharging(t *testing.T) {
+	const expr = `tier("audio", ai * 6)`
+	billing := &recordingBillingSettler{}
+	relayInfo := &relaycommon.RelayInfo{
+		Billing: billing,
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:  "tiered_expr",
+			ExprString:   expr,
+			ExprHash:     billingexpr.ExprHashString(expr),
+			GroupRatio:   1,
+			QuotaPerUnit: 500_000,
+		},
+	}
+	usage := &dto.RealtimeUsage{
+		TotalTokens: 100,
+		InputTokens: 100,
+		InputTokenDetails: dto.InputTokenDetails{
+			AudioTokens: 100,
+		},
+	}
+
+	ctx, _ := gin.CreateTestContext(nil)
+	require.NoError(t, ReserveWssUsage(ctx, relayInfo, usage))
+	require.Equal(t, []int{300}, billing.reserveTargets)
+	assert.Equal(t, 300, relayInfo.FinalPreConsumedQuota)
+
+	params := BuildTieredRealtimeTokenParams(usage, map[string]bool{"ai": true})
+	assert.Zero(t, params.P)
+	assert.Equal(t, 100.0, params.AI)
+}
+
+func TestTieredRealtimeLogContentDescribesExpressionBilling(t *testing.T) {
+	relayInfo := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	usage := &dto.RealtimeUsage{
+		TotalTokens: 183,
+		InputTokens: 183,
+		InputTokenDetails: dto.InputTokenDetails{
+			AudioTokens: 183,
+		},
+	}
+	result := &billingexpr.TieredResult{
+		MatchedTier: "audio",
+		BillingUnit: billingexpr.BillingUnitToken,
+	}
+
+	content := tieredRealtimeLogContent(relayInfo, usage, result)
+	assert.Equal(t, "计费表达式：档位 audio，计费单位 token，输入 183 tokens（文本 0，音频 183，图片 0，视频 0），输出 0 tokens（文本 0，音频 0，图片 0），分组倍率 1.00", content)
+}
+
 func TestPrepareTieredBillingForSelectedGroupUpdatesReservation(t *testing.T) {
 	const expr = `tier("base", p)`
 	billing := &recordingBillingSettler{preConsumedQuota: 50_000}

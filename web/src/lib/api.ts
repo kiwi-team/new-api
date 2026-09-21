@@ -66,6 +66,17 @@ export async function getUserGroups(): Promise<{
   return res.data
 }
 
+export async function getUserGroupsForUser(userId: number): Promise<{
+  success: boolean
+  message?: string
+  data?: Record<string, { desc: string; ratio: number | string }>
+}> {
+  const res = await api.get('/api/user/self/groups', {
+    params: { user_id: userId },
+  })
+  return res.data
+}
+
 // ============================================================================
 // System APIs
 // ============================================================================

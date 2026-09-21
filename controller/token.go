@@ -34,6 +34,7 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
+	UserID     *int                 `json:"user_id"`
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
 }
 
@@ -109,17 +110,19 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
 	return maskedTokens
 }
 
-func getTokenRequestUserGroup(c *gin.Context) (string, error) {
-	if userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup); userGroup != "" {
-		return userGroup, nil
+func getTokenRequestUserGroup(c *gin.Context, userID int) (string, error) {
+	if userID == c.GetInt("id") {
+		if userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup); userGroup != "" {
+			return userGroup, nil
+		}
+		if userGroup := c.GetString("group"); userGroup != "" {
+			return userGroup, nil
+		}
 	}
-	if userGroup := c.GetString("group"); userGroup != "" {
-		return userGroup, nil
-	}
-	return model.GetUserGroup(c.GetInt("id"), false)
+	return model.GetUserGroup(userID, false)
 }
 
-func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
+func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string, userID int) bool {
 	if len(groups) == 0 {
 		if err := token.SetAutoGroups(nil); err != nil {
 			common.ApiError(c, err)
@@ -134,7 +137,7 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 		return false
 	}
 
-	userGroup, err := getTokenRequestUserGroup(c)
+	userGroup, err := getTokenRequestUserGroup(c, userID)
 	if err != nil {
 		common.ApiError(c, err)
 		return false
@@ -285,7 +288,20 @@ func GetToken(c *gin.Context) {
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
-	userGroup, err := getTokenRequestUserGroup(c)
+	userID := c.GetInt("id")
+	if requestedUserID := c.Query("user_id"); requestedUserID != "" {
+		parsedUserID, err := strconv.Atoi(requestedUserID)
+		if err != nil || parsedUserID <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if c.GetInt("role") != common.RoleRootUser && parsedUserID != userID {
+			common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+			return
+		}
+		userID = parsedUserID
+	}
+	userGroup, err := getTokenRequestUserGroup(c, userID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -398,12 +414,31 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	userID := c.GetInt("id")
+	if request.UserID != nil {
+		if *request.UserID <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if *request.UserID != userID && c.GetInt("role") != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+			return
+		}
+		userID = *request.UserID
+		if _, err := model.GetUserById(userID, false); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserNotExists)
+			return
+		}
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
 	}
 	params := tokenAuditParams(c)
 	params["name"] = token.Name
+	if request.UserID != nil {
+		params["user_id"] = userID
+	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -418,7 +453,7 @@ func AddToken(c *gin.Context) {
 	}
 	// 检查用户令牌数量是否已达上限
 	maxTokens := operation_setting.GetMaxUserTokens()
-	count, err := model.CountUserTokens(c.GetInt("id"))
+	count, err := model.CountUserTokens(userID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -431,7 +466,7 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	if token.Group == "auto" {
-		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
+		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups, userID) {
 			return
 		}
 	} else {
@@ -448,7 +483,7 @@ func AddToken(c *gin.Context) {
 		token.AlertThreshold = 0
 	}
 	cleanToken := model.Token{
-		UserId:             c.GetInt("id"),
+		UserId:             userID,
 		Name:               token.Name,
 		Key:                key,
 		CreatedTime:        common.GetTimestamp(),
@@ -614,7 +649,7 @@ func UpdateToken(c *gin.Context) {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
+			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups, cleanToken.UserId) {
 				return
 			}
 		}

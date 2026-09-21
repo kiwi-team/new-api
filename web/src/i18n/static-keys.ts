@@ -83,6 +83,8 @@ export const STATIC_I18N_KEYS = [
   'Connect to model services from another New API instance',
   'SGLang',
   'Connect to self-hosted models served by SGLang',
+  'TypeSafe',
+  'Connect to TypeSafe System One decision models',
   'SGLang server address, without /v1',
   'SGLang API key, or EMPTY if authentication is disabled',
   'vLLM',

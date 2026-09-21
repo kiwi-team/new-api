@@ -110,6 +110,37 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 	}
 }
 
+func TestJevBuiltinBillingUsesInputTokensOnly(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+
+	expression, ok := billing_setting.GetBillingExpr("jev-1.13.0")
+	require.True(t, ok)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode("jev-1.13.0"))
+	usage := &dto.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000, TotalTokens: 1_500_000}
+	result, err := billingexpr.ComputeTieredQuota(
+		&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500_000},
+		service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 21_000, result.ActualQuotaAfterGroup)
+
+	settings.BillingMode["jev-1.13.0"] = billing_setting.BillingModeTieredExpr
+	settings.BillingExpr["jev-1.13.0"] = `tier("custom", p * 1)`
+	actual, ok := billing_setting.GetBillingExpr("jev-1.13.0")
+	require.True(t, ok)
+	assert.Equal(t, settings.BillingExpr["jev-1.13.0"], actual)
+}
+
 func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings

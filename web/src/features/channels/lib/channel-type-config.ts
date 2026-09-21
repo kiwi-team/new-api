@@ -20,6 +20,7 @@ import {
   CHANNEL_TYPES,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_TYPESAFE,
 } from '../constants'
 
 // ============================================================================
@@ -50,6 +51,13 @@ export interface ChannelTypeConfig {
  * Configuration for each channel type
  */
 export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
+  [CHANNEL_TYPE_TYPESAFE]: {
+    id: CHANNEL_TYPE_TYPESAFE,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_TYPESAFE],
+    icon: 'openai',
+    defaultBaseUrl: 'https://api.typesafe.ai',
+    supportedModels: ['jev-1.13.0'],
+  },
   [CHANNEL_TYPE_SGLANG]: {
     id: CHANNEL_TYPE_SGLANG,
     name: CHANNEL_TYPES[CHANNEL_TYPE_SGLANG],

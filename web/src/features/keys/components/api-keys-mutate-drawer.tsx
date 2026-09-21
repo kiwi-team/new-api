@@ -47,6 +47,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -69,7 +70,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserModels, getUserGroups, getUserGroupsForUser } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
@@ -82,6 +83,7 @@ import {
   updateApiKey,
   getApiKey,
   getTokenAutoGroups,
+  getUserOptions,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -122,10 +124,30 @@ export function ApiKeysMutateDrawer({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [channelRulesEditorOpen, setChannelRulesEditorOpen] = useState(false)
+  const [targetUserId, setTargetUserId] = useState('self')
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
   )
   const defaultUseAutoGroup = status?.default_use_auto_group === true
+  const targetOwnerUserId =
+    targetUserId === 'self' ? undefined : Number(targetUserId)
+
+  const { data: userOptionsData = [] } = useQuery({
+    queryKey: ['keys', 'user-options'],
+    queryFn: getUserOptions,
+    enabled: open && isRoot && !isUpdate,
+    staleTime: 5 * 60 * 1000,
+  })
+  const ownerOptions = useMemo(
+    () => [
+      { value: 'self', label: t('My account') },
+      ...userOptionsData.map((user) => ({
+        value: String(user.id),
+        label: `${user.username} (ID: ${user.id})`,
+      })),
+    ],
+    [t, userOptionsData]
+  )
 
   // Fetch models
   const { data: modelsData } = useQuery({
@@ -141,8 +163,13 @@ export function ApiKeysMutateDrawer({
     isFetched: groupsFetched,
     isFetching: groupsFetching,
   } = useQuery({
-    queryKey: ['user-groups'],
-    queryFn: async () => requireServerSuccess(await getUserGroups()),
+    queryKey: ['user-groups', targetOwnerUserId],
+    queryFn: async () =>
+      requireServerSuccess(
+        await (targetOwnerUserId === undefined
+          ? getUserGroups()
+          : getUserGroupsForUser(targetOwnerUserId))
+      ),
     enabled: open,
     staleTime: 0,
   })
@@ -164,8 +191,9 @@ export function ApiKeysMutateDrawer({
     isFetched: autoGroupsFetched,
     isFetching: autoGroupsFetching,
   } = useQuery({
-    queryKey: ['token-auto-groups'],
-    queryFn: async () => requireServerSuccess(await getTokenAutoGroups()),
+    queryKey: ['token-auto-groups', targetOwnerUserId],
+    queryFn: async () =>
+      requireServerSuccess(await getTokenAutoGroups(targetOwnerUserId)),
     enabled: open,
     staleTime: 0,
   })
@@ -218,6 +246,7 @@ export function ApiKeysMutateDrawer({
   useEffect(() => {
     if (!open) {
       setInitializedTarget(null)
+      setTargetUserId('self')
       return
     }
     if (
@@ -318,6 +347,9 @@ export function ApiKeysMutateDrawer({
         for (let i = 0; i < count; i++) {
           const result = await createApiKey({
             ...basePayload,
+            ...(targetOwnerUserId === undefined
+              ? {}
+              : { user_id: targetOwnerUserId }),
             name:
               i === 0 && data.name
                 ? data.name
@@ -427,6 +459,29 @@ export function ApiKeysMutateDrawer({
                   </FormItem>
                 )}
               />
+
+              {isRoot && !isUpdate && (
+                <FormItem>
+                  <FormLabel htmlFor='api-key-owner'>
+                    {t('Create for user')}
+                  </FormLabel>
+                  <FormControl>
+                    <Combobox
+                      id='api-key-owner'
+                      options={ownerOptions}
+                      value={targetUserId}
+                      onValueChange={(value) =>
+                        setTargetUserId(value ?? 'self')
+                      }
+                      placeholder={t('My account')}
+                      searchPlaceholder={t('Search...')}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Only root users can create API keys for other users.')}
+                  </FormDescription>
+                </FormItem>
+              )}
 
               <FormField
                 control={form.control}

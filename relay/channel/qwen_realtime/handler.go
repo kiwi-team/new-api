@@ -51,6 +51,10 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 	sumUsage := &dto.RealtimeUsage{}
 
 	var msgMu sync.Mutex
+	isFunASR := isFunASRRealtimeModel(info.UpstreamModelName)
+	isQwen3ASR := isQwen3ASRRealtimeModel(info.UpstreamModelName)
+	asrAccounted := make(map[string]int)
+	qwen3ASRTracker := newQwen3ASRUsageTracker()
 
 	// Upstream goroutine: Client → Upstream (direct passthrough, no parsing)
 	gopool.Go(func() {
@@ -72,8 +76,38 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 					close(clientClosed)
 					return
 				}
-				// Direct passthrough: write raw message to upstream without parsing
-				collectWsMessage(c, info, &msgMu, "client→upstream", message)
+				if isQwen3ASR && msgType != websocket.TextMessage {
+					errChan <- fmt.Errorf("Qwen3 ASR only accepts JSON text messages with base64 PCM audio")
+					return
+				}
+				if isFunASR && msgType == websocket.TextMessage {
+					rewritten, rewriteErr := rewriteASRRunTaskModel(message, info.UpstreamModelName)
+					if rewriteErr != nil {
+						errChan <- fmt.Errorf("invalid ASR control message: %v", rewriteErr)
+						return
+					}
+					message = rewritten
+				}
+				if isQwen3ASR && msgType == websocket.TextMessage {
+					delta, clamp, trackErr := qwen3ASRTracker.consume(message)
+					if trackErr != nil {
+						errChan <- fmt.Errorf("invalid Qwen3 ASR audio event: %v", trackErr)
+						return
+					}
+					if clamp != nil && info.QuotaClamp == nil {
+						info.QuotaClamp = clamp
+					}
+					if delta != nil {
+						if consumeErr := qwenReserveUsage(c, info, delta, sumUsage); consumeErr != nil {
+							errChan <- fmt.Errorf("reserve Qwen3 ASR usage: %v", consumeErr)
+							return
+						}
+					}
+				}
+				// Binary audio and text control messages retain their original frame type.
+				if msgType != websocket.BinaryMessage {
+					collectWsMessage(c, info, &msgMu, "client→upstream", message)
+				}
 				err = targetConn.WriteMessage(msgType, message)
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to target: %v", err)
@@ -106,20 +140,34 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 				info.SetFirstResponseTime()
 				collectWsMessage(c, info, &msgMu, "upstream→client", message)
 
-				// Try to parse for usage extraction; failures are non-fatal
-				event := &QwenRealtimeEvent{}
-				parseErr := common.Unmarshal(message, event)
-				if parseErr != nil {
-					logger.LogWarn(c, fmt.Sprintf("qwen_realtime: failed to parse downstream message: %v", parseErr))
-				} else if event.Type == QwenEventResponseDone && event.Response != nil && event.Response.Usage != nil {
-					accumulateUsage(usage, event.Response.Usage)
-					consumeErr := qwenPreConsumeUsage(c, info, usage, sumUsage)
-					if consumeErr != nil {
-						errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
-						return
+				// Parse usage while preserving the provider-native messages sent to the client.
+				if isFunASR {
+					delta, clamp, parseErr := asrUsageDelta(message, asrAccounted)
+					if parseErr != nil {
+						logger.LogWarn(c, fmt.Sprintf("qwen_realtime: failed to parse ASR downstream message: %v", parseErr))
+					} else if delta != nil {
+						if clamp != nil && info.QuotaClamp == nil {
+							info.QuotaClamp = clamp
+						}
+						if consumeErr := qwenReserveUsage(c, info, delta, sumUsage); consumeErr != nil {
+							errChan <- fmt.Errorf("error consume ASR usage: %v", consumeErr)
+							return
+						}
 					}
-					// Billing done for this round, reset
-					usage = &dto.RealtimeUsage{}
+				} else if !isQwen3ASR {
+					event := &QwenRealtimeEvent{}
+					parseErr := common.Unmarshal(message, event)
+					if parseErr != nil {
+						logger.LogWarn(c, fmt.Sprintf("qwen_realtime: failed to parse downstream message: %v", parseErr))
+					} else if event.Type == QwenEventResponseDone && event.Response != nil && event.Response.Usage != nil {
+						accumulateUsage(usage, event.Response.Usage)
+						consumeErr := qwenReserveUsage(c, info, usage, sumUsage)
+						if consumeErr != nil {
+							errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
+							return
+						}
+						usage = &dto.RealtimeUsage{}
+					}
 				}
 
 				// Forward message to client
@@ -143,15 +191,15 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 
 	// Flush any remaining usage before returning
 	if usage.TotalTokens != 0 {
-		_ = qwenPreConsumeUsage(c, info, usage, sumUsage)
+		_ = qwenReserveUsage(c, info, usage, sumUsage)
 	}
 
 	return nil, sumUsage
 }
 
-// qwenPreConsumeUsage accumulates usage into totalUsage and triggers pre-consumption billing.
-// Follows the same pattern as preConsumeUsage in relay/channel/openai/relay-openai.go.
-func qwenPreConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
+// qwenReserveUsage accumulates usage and raises the billing reservation to the
+// cumulative cost. Final settlement charges only the remaining delta.
+func qwenReserveUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
 	}
@@ -165,5 +213,5 @@ func qwenPreConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *d
 	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
 	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
 
-	return service.PreWssConsumeQuota(ctx, info, usage)
+	return service.ReserveWssUsage(ctx, info, totalUsage)
 }

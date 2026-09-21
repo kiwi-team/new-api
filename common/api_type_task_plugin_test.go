@@ -12,3 +12,9 @@ func TestTaskPluginChannelHasNoOrdinaryAPIType(t *testing.T) {
 	assert.Equal(t, -1, apiType)
 	assert.False(t, ok)
 }
+
+func TestTypeSafeChannelUsesDedicatedAPIType(t *testing.T) {
+	apiType, ok := ChannelType2APIType(constant.ChannelTypeTypeSafe)
+	assert.Equal(t, constant.APITypeTypeSafe, apiType)
+	assert.True(t, ok)
+}

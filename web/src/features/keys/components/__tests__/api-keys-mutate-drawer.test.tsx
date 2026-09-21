@@ -74,6 +74,18 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
             data: { groups: ['vip', 'default'], max_count: 3 },
           },
         }
+      case '/api/user/':
+        return {
+          data: {
+            success: true,
+            data: {
+              items: [
+                { id: 1, username: 'root' },
+                { id: 42, username: 'alice' },
+              ],
+            },
+          },
+        }
       default:
         throw new Error(`Unexpected GET ${url}`)
     }
@@ -237,7 +249,9 @@ describe('API keys mutate drawer Auto group integration', () => {
       expect(payload.group).toBe('auto')
       expect(payload.auto_groups).toEqual([])
       expect(payload.cross_group_retry).toBe(true)
+      expect(payload.user_id).toBeUndefined()
     }
+    expect(document.body.textContent?.includes('Create for user')).toBe(false)
   })
 
   test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
@@ -311,5 +325,38 @@ describe('API keys mutate drawer Auto group integration', () => {
       channel_rules: '{"gpt-4o":{"retry":2}}',
       channel_rules_high_priority: true,
     })
+  })
+
+  test('lets root choose another key owner and submits that user ID', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'root',
+      role: ROLE.SUPER_ADMIN,
+    })
+    await renderCreateDrawer()
+
+    const ownerControl = screen.getByRole('combobox', {
+      name: 'Create for user',
+    })
+    const ownerTrigger = ownerControl
+      .closest('[data-slot="form-item"]')
+      ?.querySelector<HTMLButtonElement>('button')
+    if (!ownerTrigger) throw new Error('Expected owner combobox trigger')
+    fireEvent.click(ownerTrigger)
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="combobox-item"]')).toBeTruthy()
+    })
+    const targetOption = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]'),
+    ].find((option) => option.textContent?.includes('alice (ID: 42)'))
+    if (!targetOption) throw new Error('Expected target user option')
+    fireEvent.click(targetOption)
+
+    changeInput(getControlByLabel('Name'), 'delegated')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.user_id).toBe(42)
   })
 })

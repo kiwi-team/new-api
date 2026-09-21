@@ -52,6 +52,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		err = relay.ResponsesHelper(c, info)
 	case relayconstant.RelayModeAlphaSearch:
 		err = relay.AlphaSearchHelper(c, info)
+	case relayconstant.RelayModeSystemOne:
+		err = relay.TypeSafeHelper(c, info)
 	default:
 		err = relay.TextHelper(c, info)
 	}
@@ -123,6 +125,13 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"type":  "error",
 					"error": newAPIError.ToClaudeError(),
+				})
+			case types.RelayFormatTypeSafe:
+				c.JSON(newAPIError.StatusCode, gin.H{
+					"error": gin.H{
+						"message": newAPIError.Error(),
+						"type":    string(newAPIError.GetErrorCode()),
+					},
 				})
 			default:
 				c.JSON(newAPIError.StatusCode, gin.H{

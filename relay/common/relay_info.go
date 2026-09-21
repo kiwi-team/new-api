@@ -442,6 +442,7 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeBaiduV2:        true,
 	constant.ChannelTypeZhipu_v4:       true,
 	constant.ChannelTypeAli:            true,
+	constant.ChannelTypeAliDashScope:   true,
 	constant.ChannelTypeSubmodel:       true,
 	constant.ChannelTypeCodex:          true,
 	constant.ChannelTypeMoonshot:       true,
@@ -732,6 +733,12 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
 			return GenRelayInfoAlphaSearch(c, request), nil
 		}
 		return nil, errors.New("request is not a AlphaSearchRequest")
+	case types.RelayFormatTypeSafe:
+		if _, ok := request.(*dto.TypeSafeRequest); !ok {
+			return nil, errors.New("request is not a TypeSafeRequest")
+		}
+		info = genBaseRelayInfo(c, request)
+		info.RelayFormat = types.RelayFormatTypeSafe
 	case types.RelayFormatTask:
 		info = genBaseRelayInfo(c, nil)
 		info.TaskRelayInfo = &TaskRelayInfo{}

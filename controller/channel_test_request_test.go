@@ -111,6 +111,16 @@ func TestChannelTestOpenAIChatCompatibility(t *testing.T) {
 	}
 }
 
+func TestBuildTypeSafeChannelTestRequestUsesNativeProtocol(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeTypeSafe}
+	endpoint := normalizeChannelTestEndpoint(channel, "")
+	assert.Equal(t, string(constant.EndpointTypeTypeSafe), endpoint)
+	request, ok := buildTestRequest("jev-1.13.0", endpoint, channel, false).(*dto.TypeSafeRequest)
+	require.True(t, ok)
+	require.Contains(t, request.Questions, "health")
+	assert.Equal(t, "jev-1.13.0", request.Model)
+}
+
 func TestOpenAIChatSamplingCompatibility(t *testing.T) {
 	const sampling = `{"temperature":0.2,"top_p":0.8,"logprobs":true,"top_logprobs":5}`
 	for _, tt := range []struct {

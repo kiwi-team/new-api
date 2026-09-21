@@ -322,3 +322,69 @@ func TestAliImageHandlerHonorsRequestResponseFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestAliASRRequestConfiguration(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		RelayMode: constant.RelayModeAudioTranscription,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: "https://workspace.cn-beijing.maas.aliyuncs.com",
+			ApiKey:         "secret",
+		},
+	}
+	adaptor := &Adaptor{}
+	requestURL, err := adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/asr/transcription", requestURL)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", nil)
+	header := http.Header{}
+	require.NoError(t, adaptor.SetupRequestHeader(c, &header, info))
+	assert.Equal(t, "Bearer secret", header.Get("Authorization"))
+	assert.Equal(t, "application/json", header.Get("Content-Type"))
+	assert.Equal(t, "enable", header.Get("X-DashScope-Async"))
+	assert.Equal(t, "enable", header.Get("X-DashScope-OssResourceResolve"))
+
+	info.ChannelMeta.UpstreamModelName = "fun-asr-flash-2026-06-15"
+	requestURL, err = adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", requestURL)
+	header = http.Header{}
+	require.NoError(t, adaptor.SetupRequestHeader(c, &header, info))
+	assert.Empty(t, header.Get("X-DashScope-Async"))
+	assert.Equal(t, "disable", header.Get("X-DashScope-SSE"))
+}
+
+func TestAliQwen3ASRFlashChatRequest(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		RelayMode: constant.RelayModeChatCompletions,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl:    "https://workspace.cn-beijing.maas.aliyuncs.com",
+			UpstreamModelName: "qwen3-asr-flash",
+		},
+	}
+	adaptor := &Adaptor{}
+	requestURL, err := adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions", requestURL)
+
+	request := &dto.GeneralOpenAIRequest{
+		Model:      "qwen3-asr-flash",
+		ASROptions: json.RawMessage(`{"language":"zh","enable_itn":true}`),
+		Messages: []dto.Message{{
+			Role: "user",
+			Content: []any{map[string]any{
+				"type":        "input_audio",
+				"input_audio": map[string]any{"data": "https://example.com/audio.wav"},
+			}},
+		}},
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	converted, err := adaptor.ConvertOpenAIRequest(c, info, request)
+	require.NoError(t, err)
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	assert.Equal(t, "zh", gjson.GetBytes(body, "asr_options.language").String())
+	assert.Equal(t, "input_audio", gjson.GetBytes(body, "messages.0.content.0.type").String())
+	assert.False(t, gjson.GetBytes(body, "enable_thinking").Exists())
+}
