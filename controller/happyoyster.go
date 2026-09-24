@@ -113,6 +113,13 @@ type happyOysterTravelData struct {
 	NoStreamAutoEndTimeout *int   `json:"noStreamAutoEndTimeoutSec"`
 }
 
+func (d happyOysterTravelData) validForWorld(encryptedWorldId string) bool {
+	if d.EncryptedTravelId == "" || len(d.EncryptedTravelId) > 255 {
+		return false
+	}
+	return d.EncryptedWorldId == "" || d.EncryptedWorldId == encryptedWorldId
+}
+
 type happyOysterArtifactsData struct {
 	EncryptedTravelId string `json:"encryptedTravelId"`
 	Video             struct {
@@ -120,6 +127,11 @@ type happyOysterArtifactsData struct {
 			DurationSec *int `json:"durationSec"`
 		} `json:"original"`
 	} `json:"video"`
+}
+
+type happyOysterLogPayload struct {
+	Request  string
+	Response string
 }
 
 func happyOysterError(c *gin.Context, status int, message string) {
@@ -507,7 +519,7 @@ func HappyOysterCreateWorld(c *gin.Context) {
 		_ = service.SettleBilling(c, info, quota)
 		dataType := common.GetJsonType(envelope.Data)
 		logger.LogWarn(c, "HappyOyster create-world success response is missing data.encryptedWorldId: data_type=%s data_bytes=%d", dataType, len(envelope.Data))
-		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation returned invalid routing data", "", "")
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation returned invalid routing data", "", "", happyOysterLogPayload{Request: string(body), Response: string(payload)})
 		happyOysterError(c, 502, "upstream success response is missing data.encryptedWorldId")
 		return
 	}
@@ -520,12 +532,12 @@ func HappyOysterCreateWorld(c *gin.Context) {
 		BaseURL: baseURL, Status: data.Status, Name: data.Name, Perspective: req.Perspective, CreationModel: "simple", UploadMode: "first_frame", FirstFrame: firstFrame}
 	if err := model.DB.Create(&world).Error; err != nil {
 		_ = service.SettleBilling(c, info, quota)
-		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation routing persistence failure", data.EncryptedWorldId, "")
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation routing persistence failure", data.EncryptedWorldId, "", happyOysterLogPayload{Request: string(body), Response: string(payload)})
 		happyOysterError(c, 500, "failed to persist world routing")
 		return
 	}
 	_ = service.SettleBilling(c, info, quota)
-	_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation", data.EncryptedWorldId, "")
+	_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation", data.EncryptedWorldId, "", happyOysterLogPayload{Request: string(body), Response: string(payload)})
 	c.Data(status, "application/json", payload)
 }
 
@@ -705,9 +717,11 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		return
 	}
 	var data happyOysterTravelData
-	if common.Unmarshal(envelope.Data, &data) != nil || !strings.HasPrefix(data.EncryptedTravelId, "trvl_") || (data.EncryptedWorldId != "" && data.EncryptedWorldId != world.EncryptedWorldId) {
+	decodeErr := common.Unmarshal(envelope.Data, &data)
+	if decodeErr != nil || !data.validForWorld(world.EncryptedWorldId) {
 		_ = service.SettleBilling(c, info, quota)
-		_, _ = happyOysterLog(c, info, quota, "HappyOyster travel returned invalid routing data", world.EncryptedWorldId, "")
+		logger.LogWarn(c, "HappyOyster enter-travel success response has invalid routing data: decode_error=%t travel_id_length=%d world_id_present=%t world_id_matches=%t", decodeErr != nil, len(data.EncryptedTravelId), data.EncryptedWorldId != "", data.EncryptedWorldId == "" || data.EncryptedWorldId == world.EncryptedWorldId)
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster travel returned invalid routing data", world.EncryptedWorldId, "", happyOysterLogPayload{})
 		happyOysterError(c, 502, "upstream returned an invalid travel")
 		return
 	}
@@ -716,7 +730,7 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		adoptedDuration = *data.MaxExperienceTimeSec
 		if adoptedDuration != 60 && adoptedDuration != 90 && adoptedDuration != 120 {
 			_ = service.SettleBilling(c, info, quota)
-			_, _ = happyOysterLog(c, info, quota, "HappyOyster travel returned invalid duration", world.EncryptedWorldId, data.EncryptedTravelId)
+			_, _ = happyOysterLog(c, info, quota, "HappyOyster travel returned invalid duration", world.EncryptedWorldId, data.EncryptedTravelId, happyOysterLogPayload{})
 			happyOysterError(c, 502, "upstream returned an invalid maxExperienceTimeSec")
 			return
 		}
@@ -730,12 +744,12 @@ func HappyOysterEnterTravel(c *gin.Context) {
 	travel.ProjectId = common.GetContextKeyInt(c, constant.ContextKeyProjectId)
 	if err := model.DB.Create(&travel).Error; err != nil {
 		_ = service.SettleBilling(c, info, quota)
-		_, _ = happyOysterLog(c, info, quota, "HappyOyster travel routing persistence failure", world.EncryptedWorldId, data.EncryptedTravelId)
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster travel routing persistence failure", world.EncryptedWorldId, data.EncryptedTravelId, happyOysterLogPayload{})
 		happyOysterError(c, 500, "failed to persist travel routing")
 		return
 	}
 	model.DB.Model(ticket).Updates(map[string]any{"state": model.HappyOysterTicketConsumed, "travel_id": travel.Id, "updated_at": time.Now().Unix()})
-	travel.ProjectName, travel.PlanId = happyOysterLog(c, info, quota, "HappyOyster travel pre-consume", world.EncryptedWorldId, travel.EncryptedTravelId)
+	travel.ProjectName, travel.PlanId = happyOysterLog(c, info, quota, "HappyOyster travel pre-consume", world.EncryptedWorldId, travel.EncryptedTravelId, happyOysterLogPayload{})
 	model.DB.Model(&travel).Updates(map[string]any{"project_name": travel.ProjectName, "plan_id": travel.PlanId})
 	c.Data(status, "application/json", payload)
 }
@@ -1105,7 +1119,7 @@ func HappyOysterIssueTemporaryAPIKey(c *gin.Context) {
 	c.Data(status, "application/json", payload)
 }
 
-func happyOysterLog(c *gin.Context, info *relaycommon.RelayInfo, quota int, content, worldId, travelId string) (string, int) {
+func happyOysterLog(c *gin.Context, info *relaycommon.RelayInfo, quota int, content, worldId, travelId string, payload happyOysterLogPayload) (string, int) {
 	other := model.NewLogOther()
 	other.SetPublic("protocol", "happyoyster-adventure")
 	other.SetPublic("world_id", worldId)
@@ -1119,7 +1133,7 @@ func happyOysterLog(c *gin.Context, info *relaycommon.RelayInfo, quota int, cont
 	}
 	service.AttachQuotaSaturation(c, info, other)
 	projectName, planId, _ := service.TrackProjectConsumption(c, quota)
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{ChannelId: info.ChannelId, ModelName: happyOysterModel, TokenName: c.GetString("token_name"), Quota: quota, Content: content, TokenId: info.TokenId, Group: info.UsingGroup, Other: other, RequestId: c.GetString(common.RequestIdKey), ClientUserId: common.GetContextKeyString(c, constant.ContextKeyClientUserId), ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo), ProjectName: projectName, PlanId: planId})
+	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{ChannelId: info.ChannelId, ModelName: happyOysterModel, TokenName: c.GetString("token_name"), Quota: quota, Content: content, TokenId: info.TokenId, Group: info.UsingGroup, Other: other, Request: payload.Request, Response: payload.Response, RequestId: c.GetString(common.RequestIdKey), ClientUserId: common.GetContextKeyString(c, constant.ContextKeyClientUserId), ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo), ProjectName: projectName, PlanId: planId})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, quota)
 	return projectName, planId

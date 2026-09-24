@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/happyoyster"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -154,6 +155,48 @@ func TestHappyOysterTravelResponsePreservesOptionalDuration(t *testing.T) {
 	assert.Nil(t, travel.DurationSec)
 	require.NotNil(t, travel.MaxExperienceTimeSec)
 	assert.Equal(t, 90, *travel.MaxExperienceTimeSec)
+}
+
+func TestHappyOysterTravelRoutingAcceptsOpaqueEncryptedID(t *testing.T) {
+	worldId := "zAFXAwF7DMjt_C7Axt4L66bH-plkNAhYQwYYAN0YyOMaq9tS39yZ8Z0EybgApjCt"
+	travel := happyOysterTravelData{
+		EncryptedTravelId: "fM8u4vA9_wQZc6pL1xY2nR7sK3tB5dE0",
+		EncryptedWorldId:  worldId,
+	}
+
+	assert.True(t, travel.validForWorld(worldId))
+	travel.EncryptedWorldId = "another-world"
+	assert.False(t, travel.validForWorld(worldId))
+	travel.EncryptedWorldId = worldId
+	travel.EncryptedTravelId = ""
+	assert.False(t, travel.validForWorld(worldId))
+}
+
+func TestHappyOysterLogRetainsCompleteWorldPayloads(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:happyoyster-log-payloads?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.User{}, &model.Channel{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	model.DB, model.LOG_DB = db, db
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.RedisEnabled = previousRedisEnabled
+	})
+
+	requestBody := `{"async":true,"prompt":"完整提示词","firstFrameImage":{"base64":"iVBORw0KGgoAAAANSUhEUg=="}}`
+	responseBody := `{"code":0,"message":null,"data":{"encryptedWorldId":"opaque-world-id","status":"generating","firstFrame":null}}`
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, happyoyster.APIPath+"/worlds", strings.NewReader(requestBody))
+
+	happyOysterLog(c, &relaycommon.RelayInfo{UserId: 7, TokenId: 11, UsingGroup: "default", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 9}}, 123, "HappyOyster world creation", "opaque-world-id", "", happyOysterLogPayload{Request: requestBody, Response: responseBody})
+
+	var log model.Log
+	require.NoError(t, db.Where("model_name = ?", happyOysterModel).First(&log).Error)
+	assert.Equal(t, requestBody, log.Request)
+	assert.Equal(t, responseBody, log.Response)
 }
 
 func TestHappyOysterListValidationUsesOfficialBusinessEnvelope(t *testing.T) {
