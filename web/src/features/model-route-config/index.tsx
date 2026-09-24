@@ -63,7 +63,9 @@ export function ModelRouteConfigPage() {
   const [mutateState, setMutateState] = useState<{
     currentRow?: ModelRouteConfig
   } | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<ModelRouteConfig | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ModelRouteConfig | null>(
+    null
+  )
 
   const configsQuery = useQuery({
     queryKey: [
@@ -164,158 +166,192 @@ export function ModelRouteConfigPage() {
 
             {activeTab === 'special' && <SpecialChannelsTab />}
             {activeTab === 'routes' && (
-            <div className='flex h-full min-h-0 flex-col gap-4'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <div className='relative'>
-                <Search className='text-muted-foreground pointer-events-none absolute inset-y-0 start-2 my-auto h-4 w-4' />
-                <Input
-                  className='w-56 ps-8'
-                  placeholder={t('Search by config name')}
-                  value={keyword}
-                  onChange={(event) => setKeyword(event.target.value)}
-                />
-              </div>
-              <Input
-                className='w-56'
-                placeholder={t('Search by model keyword')}
-                value={modelKeyword}
-                onChange={(event) => setModelKeyword(event.target.value)}
-              />
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => void refresh()}
-                disabled={configsQuery.isFetching}
-              >
-                <RefreshCw className='h-4 w-4' />
-                {t('Refresh')}
-              </Button>
-            </div>
+              <div className='flex h-full min-h-0 flex-col gap-4'>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <div className='relative'>
+                    <Search className='text-muted-foreground pointer-events-none absolute inset-y-0 start-2 my-auto h-4 w-4' />
+                    <Input
+                      className='w-56 ps-8'
+                      placeholder={t('Search by config name')}
+                      value={keyword}
+                      onChange={(event) => setKeyword(event.target.value)}
+                    />
+                  </div>
+                  <Input
+                    className='w-56'
+                    placeholder={t('Search by model keyword')}
+                    value={modelKeyword}
+                    onChange={(event) => setModelKeyword(event.target.value)}
+                  />
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void refresh()}
+                    disabled={configsQuery.isFetching}
+                  >
+                    <RefreshCw className='h-4 w-4' />
+                    {t('Refresh')}
+                  </Button>
+                </div>
 
-            <div className='min-h-0 flex-1 overflow-auto'>
-              <StaticDataTable
-                tableClassName='min-w-max'
-                data={configsQuery.data?.items ?? []}
-                getRowKey={(config) => config.id}
-                emptyContent={t('No route configs yet')}
-                emptyClassName='text-muted-foreground py-8'
-                columns={[
-                  { id: 'id', header: t('ID'), cell: (config) => config.id },
-                  {
-                    id: 'name',
-                    header: t('Config name'),
-                    cellClassName: 'font-medium',
-                    cell: (config) => (
-                      <span className='flex items-center gap-2'>
-                        {config.name}
-                        {config.enabled === 0 && (
-                          <Badge variant='destructive'>{t('Disabled')}</Badge>
-                        )}
-                      </span>
-                    ),
-                  },
-                  {
-                    id: 'rules',
-                    header: t('Match rules'),
-                    cell: (config) => {
-                      const hasRules =
-                        config.model_patterns?.length ||
-                        config.body_patterns?.length ||
-                        config.url_patterns?.length
-                      if (!hasRules) {
-                        return <span className='text-muted-foreground'>-</span>
-                      }
-                      return (
-                        <div className='flex flex-wrap items-center gap-1.5'>
-                          <PatternBadgeList
-                            label={t('Model')}
-                            items={config.model_patterns ?? []}
+                <div className='min-h-0 flex-1 overflow-auto'>
+                  <StaticDataTable
+                    tableClassName='min-w-max'
+                    data={configsQuery.data?.items ?? []}
+                    getRowKey={(config) => config.id}
+                    emptyContent={t('No route configs yet')}
+                    emptyClassName='text-muted-foreground py-8'
+                    columns={[
+                      {
+                        id: 'id',
+                        header: t('ID'),
+                        cell: (config) => config.id,
+                      },
+                      {
+                        id: 'name',
+                        header: t('Config name'),
+                        cellClassName: 'font-medium',
+                        cell: (config) => (
+                          <span className='flex items-center gap-2'>
+                            {config.name}
+                            {config.enabled === 0 && (
+                              <Badge variant='destructive'>
+                                {t('Disabled')}
+                              </Badge>
+                            )}
+                          </span>
+                        ),
+                      },
+                      {
+                        id: 'rules',
+                        header: t('Match rules'),
+                        cell: (config) => {
+                          const hasRules =
+                            config.model_patterns?.length ||
+                            config.body_patterns?.length ||
+                            config.body_match ||
+                            config.url_patterns?.length
+                          if (!hasRules) {
+                            return (
+                              <span className='text-muted-foreground'>-</span>
+                            )
+                          }
+                          return (
+                            <div className='flex flex-wrap items-center gap-1.5'>
+                              <PatternBadgeList
+                                label={t('Model')}
+                                items={config.model_patterns ?? []}
+                              />
+                              <PatternBadgeList
+                                label={t('Body')}
+                                items={config.body_patterns ?? []}
+                              />
+                              {config.body_match && (
+                                <PatternBadgeList
+                                  label={t('Body JSON')}
+                                  items={[JSON.stringify(config.body_match)]}
+                                />
+                              )}
+                              <PatternBadgeList
+                                label={t('URL')}
+                                items={config.url_patterns ?? []}
+                              />
+                            </div>
+                          )
+                        },
+                      },
+                      {
+                        id: 'channel-groups',
+                        header: t('Channel groups'),
+                        cell: (config) => (
+                          <ChannelGroupsCell
+                            groups={config.channel_groups ?? []}
+                            channelNames={channelNames}
                           />
-                          <PatternBadgeList
-                            label={t('Body')}
-                            items={config.body_patterns ?? []}
+                        ),
+                      },
+                      {
+                        id: 'apply-mode',
+                        header: t('Application mode'),
+                        cell: (config) => (
+                          <Badge
+                            variant={
+                              config.apply_mode === 'enforce'
+                                ? 'default'
+                                : 'outline'
+                            }
+                          >
+                            {config.apply_mode === 'enforce'
+                              ? t('Strict routing')
+                              : t('Compatible fallback')}
+                          </Badge>
+                        ),
+                      },
+                      {
+                        id: 'random-type',
+                        header: t('Selection mode'),
+                        cell: (config) => (
+                          <Badge variant='outline'>
+                            {config.random_type === 'random'
+                              ? t('Random')
+                              : t('In order')}
+                          </Badge>
+                        ),
+                      },
+                      {
+                        id: 'priority',
+                        header: t('Priority'),
+                        cell: (config) => config.priority,
+                      },
+                      {
+                        id: 'max-retry',
+                        header: t('Max retries'),
+                        cell: (config) => config.max_retry,
+                      },
+                      {
+                        id: 'enabled',
+                        header: t('Status'),
+                        cell: (config) => (
+                          <Switch
+                            checked={config.enabled === 1}
+                            onCheckedChange={() =>
+                              void handleToggleStatus(config)
+                            }
+                            aria-label={t('Status')}
                           />
-                          <PatternBadgeList
-                            label={t('URL')}
-                            items={config.url_patterns ?? []}
-                          />
-                        </div>
-                      )
-                    },
-                  },
-                  {
-                    id: 'channel-groups',
-                    header: t('Channel groups'),
-                    cell: (config) => (
-                      <ChannelGroupsCell
-                        groups={config.channel_groups ?? []}
-                        channelNames={channelNames}
-                      />
-                    ),
-                  },
-                  {
-                    id: 'random-type',
-                    header: t('Selection mode'),
-                    cell: (config) => (
-                      <Badge variant='outline'>
-                        {config.random_type === 'random'
-                          ? t('Random')
-                          : t('In order')}
-                      </Badge>
-                    ),
-                  },
-                  {
-                    id: 'priority',
-                    header: t('Priority'),
-                    cell: (config) => config.priority,
-                  },
-                  {
-                    id: 'max-retry',
-                    header: t('Max retries'),
-                    cell: (config) => config.max_retry,
-                  },
-                  {
-                    id: 'enabled',
-                    header: t('Status'),
-                    cell: (config) => (
-                      <Switch
-                        checked={config.enabled === 1}
-                        onCheckedChange={() =>
-                          void handleToggleStatus(config)
-                        }
-                        aria-label={t('Status')}
-                      />
-                    ),
-                  },
-                  {
-                    id: 'actions',
-                    header: t('Actions'),
-                    cell: (config) => (
-                      <div className='flex gap-1'>
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setMutateState({ currentRow: config })}
-                        >
-                          <Edit className='h-4 w-4' />
-                          {t('Edit')}
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          className='text-destructive'
-                          aria-label={t('Delete')}
-                          onClick={() => setDeleteTarget(config)}
-                        >
-                          <Trash2 className='h-4 w-4' />
-                        </Button>
-                      </div>
-                    ),
-                  },
-                ]}
-              />
-            </div>
-            </div>
+                        ),
+                      },
+                      {
+                        id: 'actions',
+                        header: t('Actions'),
+                        cell: (config) => (
+                          <div className='flex gap-1'>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                setMutateState({ currentRow: config })
+                              }
+                            >
+                              <Edit className='h-4 w-4' />
+                              {t('Edit')}
+                            </Button>
+                            <Button
+                              variant='ghost'
+                              size='icon'
+                              className='text-destructive'
+                              aria-label={t('Delete')}
+                              onClick={() => setDeleteTarget(config)}
+                            >
+                              <Trash2 className='h-4 w-4' />
+                            </Button>
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
             )}
           </div>
         </SectionPageLayout.Content>

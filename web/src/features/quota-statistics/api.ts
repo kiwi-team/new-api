@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { QuotaStatisticsQuery, QuotaStatisticsRow, TokenOption } from './types'
+import type {
+  ChannelOption,
+  QuotaStatisticsQuery,
+  QuotaStatisticsRow,
+  TokenOption,
+} from './types'
 
 function toParams(query: QuotaStatisticsQuery) {
   return {
@@ -33,6 +38,7 @@ function toParams(query: QuotaStatisticsQuery) {
     ...(query.user_id ? { user_id: query.user_id } : {}),
     ...(query.project_name ? { project_name: query.project_name } : {}),
     ...(query.token_ids ? { token_ids: query.token_ids } : {}),
+    ...(query.channel_id ? { channel_id: query.channel_id } : {}),
   }
 }
 
@@ -65,6 +71,13 @@ export async function getTokenOptions(): Promise<TokenOption[]> {
 
 export async function getProjectNames(): Promise<string[]> {
   const res = await api.get('/api/data/project-names')
+  if (!res.data?.success) return []
+  return Array.isArray(res.data.data) ? res.data.data : []
+}
+
+/** Channels available to the root-only consumption filter. */
+export async function getChannelOptions(): Promise<ChannelOption[]> {
+  const res = await api.get('/api/data/channel-list')
   if (!res.data?.success) return []
   return Array.isArray(res.data.data) ? res.data.data : []
 }

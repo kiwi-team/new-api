@@ -165,6 +165,17 @@ func TestTypeSafeEndpointTypes(t *testing.T) {
 	assert.Equal(t, []constant.EndpointType{
 		constant.EndpointTypeTypeSafe,
 	}, common.GetEndpointTypesByChannelType(constant.ChannelTypeTypeSafe, "jev-1.13.0"))
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeOpenAI,
+		constant.EndpointTypeTypeSafe,
+	}, common.GetEndpointTypesByChannelType(constant.ChannelTypeOpenRouter, "~typesafe/jev-latest"))
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeOpenAI,
+		constant.EndpointTypeTypeSafe,
+	}, common.GetEndpointTypesByChannelType(constant.ChannelTypeOpenRouter, "typesafe/jev-1.13"))
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeOpenAI,
+	}, common.GetEndpointTypesByChannelType(constant.ChannelTypeOpenRouter, "openai/gpt-5"))
 }
 
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {

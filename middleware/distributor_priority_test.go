@@ -1,11 +1,16 @@
 package middleware
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	appI18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +60,57 @@ func TestShouldSpecialChannelsOverrideKeyRules(t *testing.T) {
 			))
 		})
 	}
+}
+
+func TestEnforcedModelRouteFailsClosedWhenNoConfiguredChannelIsAvailable(t *testing.T) {
+	require.NoError(t, appI18n.Init())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelRouteConfig{}, &model.Channel{}))
+
+	originalDB := model.DB
+	originalMemoryCache := common.MemoryCacheEnabled
+	model.DB = db
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.MemoryCacheEnabled = originalMemoryCache
+	})
+
+	route := &model.ModelRouteConfig{
+		Name:          "adaptive only",
+		ModelPatterns: `["^claude"]`,
+		BodyMatch:     `{"thinking":{"type":"adaptive"}}`,
+		ChannelGroups: `[[999]]`,
+		RandomType:    "order",
+		MaxRetry:      2,
+		Priority:      100,
+		ApplyMode:     model.ModelRouteApplyModeEnforce,
+		Enabled:       1,
+	}
+	require.NoError(t, db.Create(route).Error)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	called := false
+	engine.Use(Distribute())
+	engine.POST("/v1/messages", func(c *gin.Context) {
+		called = true
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet","thinking":{"type":"adaptive"}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+
+	assert.False(t, called)
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "model_route_no_available_channel")
 }
 
 func TestFilterExplicitChannelCandidatesRequiresRequestedModelWhenEnabled(t *testing.T) {

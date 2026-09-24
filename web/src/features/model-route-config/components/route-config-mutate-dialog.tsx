@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
+import { JsonCodeEditor } from '@/components/json-code-editor'
 import { TagInput } from '@/components/tag-input'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,16 +42,23 @@ import {
   getChannelNameList,
   updateModelRouteConfig,
 } from '../api'
-import type { ModelRouteConfig, RouteRandomType } from '../types'
+import { parseBodyMatchDraft } from '../lib/body-match'
+import type {
+  ModelRouteConfig,
+  RouteApplyMode,
+  RouteRandomType,
+} from '../types'
 import { ChannelGroupEditor } from './channel-group-editor'
 
 const FORM_ID = 'model-route-config-form'
+type BodyMatchMode = 'keyword' | 'json'
 
 type FormValues = {
   name: string
   priority: string
   max_retry: string
   random_type: RouteRandomType
+  apply_mode: RouteApplyMode
   enabled: boolean
 }
 
@@ -74,6 +82,8 @@ export function RouteConfigMutateDialog({
   // the form rather than inside it.
   const [modelPatterns, setModelPatterns] = useState<string[]>([])
   const [bodyPatterns, setBodyPatterns] = useState<string[]>([])
+  const [bodyMatchDraft, setBodyMatchDraft] = useState('')
+  const [bodyMatchMode, setBodyMatchMode] = useState<BodyMatchMode>('keyword')
   const [urlPatterns, setUrlPatterns] = useState<string[]>([])
   const [channelGroups, setChannelGroups] = useState<number[][]>([[]])
 
@@ -89,6 +99,7 @@ export function RouteConfigMutateDialog({
       priority: '0',
       max_retry: '3',
       random_type: 'order',
+      apply_mode: 'fallback',
       enabled: true,
     },
   })
@@ -100,10 +111,17 @@ export function RouteConfigMutateDialog({
       priority: String(currentRow?.priority ?? 0),
       max_retry: String(currentRow?.max_retry ?? 3),
       random_type: currentRow?.random_type ?? 'order',
+      apply_mode: currentRow?.apply_mode ?? 'fallback',
       enabled: currentRow ? currentRow.enabled === 1 : true,
     })
     setModelPatterns(currentRow?.model_patterns ?? [])
     setBodyPatterns(currentRow?.body_patterns ?? [])
+    setBodyMatchDraft(
+      currentRow?.body_match
+        ? JSON.stringify(currentRow.body_match, null, 2)
+        : ''
+    )
+    setBodyMatchMode(currentRow?.body_match ? 'json' : 'keyword')
     setUrlPatterns(currentRow?.url_patterns ?? [])
     setChannelGroups(
       currentRow?.channel_groups?.length ? currentRow.channel_groups : [[]]
@@ -111,15 +129,8 @@ export function RouteConfigMutateDialog({
   }, [currentRow, form, open])
 
   const handleSubmit = async (values: FormValues) => {
-    // A rule with no pattern would match everything, so require at least one.
-    if (
-      modelPatterns.length === 0 &&
-      bodyPatterns.length === 0 &&
-      urlPatterns.length === 0
-    ) {
-      toast.warning(
-        t('Configure at least one match rule (model, body keyword or URL)')
-      )
+    if (modelPatterns.length === 0) {
+      toast.warning(t('Configure at least one model name pattern'))
       return
     }
     if (channelGroups.some((group) => group.length === 0)) {
@@ -127,15 +138,30 @@ export function RouteConfigMutateDialog({
       return
     }
 
+    const bodyMatchResult =
+      bodyMatchMode === 'json'
+        ? parseBodyMatchDraft(bodyMatchDraft)
+        : { value: null, error: null }
+    if (bodyMatchResult.error === 'invalid_json') {
+      toast.warning(t('Invalid JSON'))
+      return
+    }
+    if (bodyMatchResult.error === 'non_empty_object_required') {
+      toast.warning(t('Body JSON match must be a non-empty object'))
+      return
+    }
+
     const payload = {
       name: values.name.trim(),
       model_patterns: modelPatterns,
-      body_patterns: bodyPatterns,
+      body_patterns: bodyMatchMode === 'keyword' ? bodyPatterns : [],
+      body_match: bodyMatchResult.value,
       url_patterns: urlPatterns,
       channel_groups: channelGroups,
       random_type: values.random_type,
       max_retry: Number.parseInt(values.max_retry, 10) || 0,
       priority: Number.parseInt(values.priority, 10) || 0,
+      apply_mode: values.apply_mode,
       enabled: values.enabled ? 1 : 0,
     }
 
@@ -161,6 +187,14 @@ export function RouteConfigMutateDialog({
   const randomTypeItems = [
     { value: 'order', label: t('In order') },
     { value: 'random', label: t('Random') },
+  ]
+  const bodyMatchModeItems = [
+    { value: 'keyword', label: t('Legacy keyword match') },
+    { value: 'json', label: t('JSON field match') },
+  ]
+  const applyModeItems = [
+    { value: 'fallback', label: t('Compatible fallback') },
+    { value: 'enforce', label: t('Strict routing') },
   ]
 
   return (
@@ -192,7 +226,10 @@ export function RouteConfigMutateDialog({
       >
         <div className='grid gap-1.5'>
           <Label htmlFor='route-name'>{t('Config name')} *</Label>
-          <Input id='route-name' {...form.register('name', { required: true })} />
+          <Input
+            id='route-name'
+            {...form.register('name', { required: true })}
+          />
         </div>
 
         <div className='grid grid-cols-2 gap-3'>
@@ -236,12 +273,52 @@ export function RouteConfigMutateDialog({
           />
         </div>
         <div className='grid gap-1.5'>
-          <Label>{t('Body keywords')}</Label>
-          <TagInput
-            value={bodyPatterns}
-            onChange={setBodyPatterns}
-            placeholder={t('Keywords, press Enter to add')}
-          />
+          <Label>{t('Request body matching')}</Label>
+          <Select
+            items={bodyMatchModeItems}
+            value={bodyMatchMode}
+            onValueChange={(value) => {
+              const nextMode = (value as BodyMatchMode) ?? 'keyword'
+              setBodyMatchMode(nextMode)
+              if (nextMode === 'json') {
+                form.setValue('apply_mode', 'enforce')
+              }
+            }}
+          >
+            <SelectTrigger className='w-56'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {bodyMatchModeItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {bodyMatchMode === 'keyword' ? (
+            <TagInput
+              value={bodyPatterns}
+              onChange={setBodyPatterns}
+              placeholder={t('Keywords, press Enter to add')}
+            />
+          ) : (
+            <>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'The request body must contain these JSON fields and values; other fields do not affect matching'
+                )}
+              </p>
+              <JsonCodeEditor
+                id='route-body-match'
+                value={bodyMatchDraft}
+                onChange={setBodyMatchDraft}
+                placeholder='{"thinking":{"type":"adaptive"}}'
+                ariaLabel={t('Body JSON match')}
+                heightClassName='h-40 min-h-40 max-h-40'
+              />
+            </>
+          )}
         </div>
         <div className='grid gap-1.5'>
           <Label>{t('URL keywords')}</Label>
@@ -253,12 +330,49 @@ export function RouteConfigMutateDialog({
         </div>
 
         <div className='grid gap-1.5'>
+          <Label>{t('Application mode')}</Label>
+          <Select
+            items={applyModeItems}
+            value={form.watch('apply_mode')}
+            onValueChange={(value) =>
+              form.setValue(
+                'apply_mode',
+                (value as RouteApplyMode) ?? 'fallback'
+              )
+            }
+          >
+            <SelectTrigger className='w-56'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {applyModeItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className='text-muted-foreground text-xs'>
+            {form.watch('apply_mode') === 'enforce'
+              ? t(
+                  'A matched rule only uses its configured channels and fails if none are available'
+                )
+              : t(
+                  'This rule is used only when higher-precedence routing produces no channels'
+                )}
+          </p>
+        </div>
+
+        <div className='grid gap-1.5'>
           <Label>{t('Selection mode')}</Label>
           <Select
             items={randomTypeItems}
             value={form.watch('random_type')}
             onValueChange={(value) =>
-              form.setValue('random_type', (value as RouteRandomType) ?? 'order')
+              form.setValue(
+                'random_type',
+                (value as RouteRandomType) ?? 'order'
+              )
             }
           >
             <SelectTrigger className='w-48'>

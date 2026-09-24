@@ -89,6 +89,32 @@ func TestListModelsSupportsOpenAIAndGeminiAuthentication(t *testing.T) {
 	}
 }
 
+func TestHappyOysterAdventureRoutesMatchOfficialAPI(t *testing.T) {
+	engine := gin.New()
+	SetHappyOysterRouter(engine)
+
+	routes := make(map[string]bool, len(engine.Routes()))
+	for _, route := range engine.Routes() {
+		routes[route.Method+" "+route.Path] = true
+	}
+	prefix := "/api/v2/apps/happyoyster-1.0-adventure/openapi/v1"
+	for _, route := range []string{
+		http.MethodPost + " " + prefix + "/worlds",
+		http.MethodGet + " " + prefix + "/worlds/build-status",
+		http.MethodPost + " " + prefix + "/worlds/get-travel-credential",
+		http.MethodPost + " " + prefix + "/travels/enter-travel",
+		http.MethodGet + " " + prefix + "/travels/status",
+		http.MethodPost + " " + prefix + "/travels/end",
+		http.MethodGet + " " + prefix + "/worlds/detail",
+		http.MethodGet + " " + prefix + "/worlds",
+		http.MethodPost + " " + prefix + "/worlds/delete",
+		http.MethodGet + " " + prefix + "/travels",
+		http.MethodGet + " " + prefix + "/travels/artifacts",
+	} {
+		assert.True(t, routes[route], route)
+	}
+}
+
 func setupRelayRouterTestDB(t *testing.T) {
 	t.Helper()
 

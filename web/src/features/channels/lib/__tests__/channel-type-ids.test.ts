@@ -73,6 +73,7 @@ const BACKEND_CHANNEL_IDS = {
   NewAPI: 76,
   MiniMaxVideo: 77,
   TypeSafe: 81,
+  HappyOyster: 82,
 } as const
 
 describe('channel type IDs match the backend', () => {

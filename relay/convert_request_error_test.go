@@ -234,6 +234,7 @@ func TestTypeSafeNativeRequestValidation(t *testing.T) {
 		wantErr string
 	}{
 		{name: "native payload", body: `{"model":"jev-1.13.0","state":{"ticket":"failed"},"questions":{"urgent":{"type":"noul","instructions":"Urgent?"}}}`},
+		{name: "OpenRouter optional fields", body: `{"model":"~typesafe/jev-latest","state":"failed","questions":{"urgent":{"type":"noul","instructions":"Urgent?"}},"provider":{"data_collection":"deny"},"session_id":"session-1234","trace":{"trace_id":"trace-1234"},"user":"user-1234"}`},
 		{name: "missing state", body: `{"model":"jev-1.13.0","questions":{"urgent":{"type":"noul"}}}`, wantErr: "state is required"},
 		{name: "empty questions", body: `{"model":"jev-1.13.0","state":"hello","questions":{}}`, wantErr: "at least one question"},
 	} {
@@ -250,9 +251,17 @@ func TestTypeSafeNativeRequestValidation(t *testing.T) {
 			require.NoError(t, err)
 			native, ok := request.(*dto.TypeSafeRequest)
 			require.True(t, ok)
-			assert.Equal(t, "jev-1.13.0", native.Model)
+			assert.NotEmpty(t, native.Model)
 			assert.Contains(t, native.Questions, "urgent")
 			assert.NotEmpty(t, native.GetTokenCountMeta().CombineText)
+			if tc.name == "OpenRouter optional fields" {
+				assert.JSONEq(t, `{"data_collection":"deny"}`, string(native.Provider))
+				require.NotNil(t, native.SessionID)
+				assert.Equal(t, "session-1234", *native.SessionID)
+				assert.JSONEq(t, `{"trace_id":"trace-1234"}`, string(native.Trace))
+				require.NotNil(t, native.User)
+				assert.Equal(t, "user-1234", *native.User)
+			}
 		})
 	}
 }

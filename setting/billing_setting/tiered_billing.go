@@ -204,6 +204,19 @@ func SmokeTestExpr(exprStr string) error {
 	return smokeTestExpr(exprStr)
 }
 
+// SmokeTestModelExpr validates built-in protocol usage dimensions that are not
+// provided by JavaScript task plugins.
+func SmokeTestModelExpr(modelName, exprStr string) error {
+	if modelName != "happyoyster-1.0-adventure" {
+		return smokeTestExpr(exprStr)
+	}
+	return SmokeTestTaskExpr(exprStr, map[string]jsplugin.UsageFieldSchema{
+		"price_scope":        {Type: "string", Enum: []string{"international", "global"}},
+		"world_creations":    {Type: "number", Unit: "count"},
+		"experience_seconds": {Type: "number", Unit: "second"},
+	})
+}
+
 func smokeTestExpr(exprStr string) error {
 	if _, err := billingexpr.CompileFromCache(exprStr); err != nil {
 		return err

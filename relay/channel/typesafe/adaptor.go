@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -21,8 +23,10 @@ import (
 type Adaptor struct{}
 
 type systemOneUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens      *int `json:"input_tokens"`
+	OutputTokens     *int `json:"output_tokens"`
+	PromptTokens     *int `json:"prompt_tokens"`
+	CompletionTokens *int `json:"completion_tokens"`
 }
 
 type systemOneResponse struct {
@@ -37,21 +41,28 @@ func parseSystemOneResponse(responseBody []byte) (*systemOneResponse, *dto.Usage
 		return nil, nil, err
 	}
 	if upstream.Usage == nil {
-		return nil, nil, errors.New("TypeSafe response is missing usage")
+		return nil, nil, errors.New("System One response is missing usage")
 	}
-	if upstream.Usage.InputTokens < 0 || upstream.Usage.OutputTokens < 0 {
-		return nil, nil, errors.New("TypeSafe usage token counts must not be negative")
+	inputTokens, outputTokens := upstream.Usage.InputTokens, upstream.Usage.OutputTokens
+	if inputTokens == nil && outputTokens == nil {
+		inputTokens, outputTokens = upstream.Usage.PromptTokens, upstream.Usage.CompletionTokens
 	}
-	if upstream.Usage.InputTokens > int(^uint(0)>>1)-upstream.Usage.OutputTokens {
-		return nil, nil, errors.New("TypeSafe usage token count overflow")
+	if inputTokens == nil || outputTokens == nil {
+		return nil, nil, errors.New("System One response usage is missing token counts")
+	}
+	if *inputTokens < 0 || *outputTokens < 0 {
+		return nil, nil, errors.New("System One usage token counts must not be negative")
+	}
+	if *inputTokens > int(^uint(0)>>1)-*outputTokens {
+		return nil, nil, errors.New("System One usage token count overflow")
 	}
 	usage := &dto.Usage{
-		PromptTokens:     upstream.Usage.InputTokens,
-		CompletionTokens: upstream.Usage.OutputTokens,
-		TotalTokens:      upstream.Usage.InputTokens + upstream.Usage.OutputTokens,
-		InputTokens:      upstream.Usage.InputTokens,
-		OutputTokens:     upstream.Usage.OutputTokens,
-		UsageSource:      dto.BillingUsageSourceTypeSafe,
+		PromptTokens:     *inputTokens,
+		CompletionTokens: *outputTokens,
+		TotalTokens:      *inputTokens + *outputTokens,
+		InputTokens:      *inputTokens,
+		OutputTokens:     *outputTokens,
+		UsageSource:      dto.BillingUsageSourceSystemOne,
 	}
 	return &upstream, usage, nil
 }
@@ -59,6 +70,14 @@ func parseSystemOneResponse(responseBody []byte) (*systemOneResponse, *dto.Usage
 func (a *Adaptor) Init(*relaycommon.RelayInfo) {}
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.ChannelType == constant.ChannelTypeOpenRouter {
+		baseURL := strings.TrimRight(info.ChannelBaseUrl, "/")
+		if strings.HasSuffix(baseURL, "/alpha/decisions") {
+			return baseURL, nil
+		}
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+		return baseURL + "/alpha/decisions", nil
+	}
 	return fmt.Sprintf("%s/v1/systemone", info.ChannelBaseUrl), nil
 }
 
@@ -66,6 +85,14 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	channel.SetupApiRequestHeader(info, c, header)
 	header.Set("Authorization", "Bearer "+info.ApiKey)
 	header.Set("Content-Type", "application/json")
+	if info.ChannelType == constant.ChannelTypeOpenRouter {
+		if header.Get("HTTP-Referer") == "" {
+			header.Set("HTTP-Referer", "https://www.newapi.ai")
+		}
+		if header.Get("X-OpenRouter-Title") == "" {
+			header.Set("X-OpenRouter-Title", "New API")
+		}
+	}
 	return nil
 }
 

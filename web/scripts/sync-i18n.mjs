@@ -56,6 +56,8 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'Gemini',
   'Gemini Image 4K',
   'GitHub',
+  'HappyOyster Adventure',
+  'happyoyster-1.0-adventure',
   'Jimeng',
   'JustSong',
   'LingYiWanWu',

@@ -351,6 +351,36 @@ func FromOpenAIChat(req *dto.GeneralOpenAIRequest) (Intent, error) {
 		}
 	}
 
+	if len(req.THINKING) > 0 && kitutil.GetJsonType(req.THINKING) != "null" {
+		if kitutil.GetJsonType(req.THINKING) != "object" {
+			return Intent{}, errors.New("thinking must be a JSON object")
+		}
+		var thinking dto.Thinking
+		if err := kitutil.Unmarshal(req.THINKING, &thinking); err != nil {
+			return Intent{}, fmt.Errorf("invalid thinking config: %w", err)
+		}
+		maxTokens := req.MaxTokens
+		if req.MaxCompletionTokens != nil {
+			maxTokens = req.MaxCompletionTokens
+		}
+		thinkingIntent, err := FromClaude(&dto.ClaudeRequest{
+			Model:     req.Model,
+			MaxTokens: maxTokens,
+			Thinking:  &thinking,
+		})
+		if err != nil {
+			return Intent{}, err
+		}
+		thinkingIntent.Source = SourceExplicit
+		if thinkingIntent.BudgetTokens != nil {
+			thinkingIntent.BudgetSource = SourceExplicit
+		}
+		intent, err = MergeExplicit(thinkingIntent, intent, req.Model)
+		if err != nil {
+			return Intent{}, err
+		}
+	}
+
 	if req.ReasoningConversion == nil {
 		return normalizeIntent(intent)
 	}

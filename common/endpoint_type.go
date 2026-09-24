@@ -1,6 +1,10 @@
 package common
 
-import "github.com/QuantumNous/new-api/constant"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/constant"
+)
 
 // GetEndpointTypesByChannelType returns the endpoint protocols supported by a channel.
 func GetEndpointTypesByChannelType(channelType int, modelName string) []constant.EndpointType {
@@ -26,8 +30,12 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		fallthrough
 	case constant.ChannelTypeGemini:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeGemini, constant.EndpointTypeOpenAI}
-	case constant.ChannelTypeOpenRouter: // OpenRouter 只支持 OpenAI 端点
+	case constant.ChannelTypeOpenRouter:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI}
+		openRouterModel := strings.TrimPrefix(strings.ToLower(modelName), "~")
+		if modelName == "jev-1.13.0" || strings.HasPrefix(openRouterModel, "typesafe/jev-") {
+			endpointTypes = append(endpointTypes, constant.EndpointTypeTypeSafe)
+		}
 	case constant.ChannelTypeXai:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeOpenAIResponse}
 	case constant.ChannelTypeVLLM, constant.ChannelTypeSGLang:

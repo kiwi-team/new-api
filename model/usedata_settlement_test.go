@@ -108,6 +108,34 @@ func TestQuotaDataSettlementAdjustmentAloneAddsNoRequest(t *testing.T) {
 	assert.Equal(t, 0, row.Count)
 }
 
+func TestGetQuotaDataStatisticsFiltersByChannel(t *testing.T) {
+	resetQuotaDataState(t)
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:       1,
+		ModelName:    "channel-filter-model",
+		ClientUserId: "channel-filter-user",
+		ChannelId:    11,
+		CreatedAt:    1000,
+		Count:        1,
+		Quota:        100,
+	}).Error)
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:       1,
+		ModelName:    "channel-filter-model",
+		ClientUserId: "channel-filter-user",
+		ChannelId:    22,
+		CreatedAt:    1000,
+		Count:        2,
+		Quota:        200,
+	}).Error)
+
+	rows, err := GetQuotaDataStatistics(900, 1100, "", "", "", false, false, false, 0, "", nil, 22, 0, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, int64(2), rows[0].TotalCount)
+	assert.Equal(t, float64(200)/common.QuotaPerUnit, rows[0].TotalQuota)
+}
+
 func resetQuotaDataState(t *testing.T) {
 	t.Helper()
 	require.NoError(t, DB.Exec("DELETE FROM quota_data").Error)

@@ -330,7 +330,7 @@ func estimateCacheCostUSD(modelName string, cachedTokens int64, cacheCreation5mT
 //
 // 系统 admin 三个都给 0/nil/nil,无 scope 过滤(看全局)。
 // 详见 org.md 第 4 节。
-func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int, scopeUserId int, scopeUids []string, scopeUserIds []int) ([]*QuotaDataStatistics, error) {
+func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, clientUserId string, clientScenairos string, expandModels bool, expandDates bool, expandTokens bool, userId int, projectName string, tokenIds []int, channelId int, scopeUserId int, scopeUids []string, scopeUserIds []int) ([]*QuotaDataStatistics, error) {
 	statistics := make([]*QuotaDataStatistics, 0)
 	var err error
 
@@ -448,6 +448,9 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 		}
 		if len(tokenIds) > 0 {
 			q = q.Where("token_id IN ?", tokenIds)
+		}
+		if channelId > 0 {
+			q = q.Where("channel_id = ?", channelId)
 		}
 		return q
 	}

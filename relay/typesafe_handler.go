@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/typesafe"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -29,16 +30,16 @@ func TypeSafeHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIEr
 	}
 	request, err := common.DeepCopy(nativeRequest)
 	if err != nil {
-		return types.NewError(fmt.Errorf("failed to copy TypeSafe request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+		return types.NewError(fmt.Errorf("failed to copy System One request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
-	adaptor, ok := GetAdaptor(info.ApiType).(*typesafe.Adaptor)
-	if !ok {
-		return types.NewError(errors.New("the /v1/systemone endpoint requires a TypeSafe channel"), types.ErrorCodeInvalidApiType)
+	if info.ChannelType != constant.ChannelTypeTypeSafe && info.ChannelType != constant.ChannelTypeOpenRouter {
+		return types.NewError(errors.New("the /v1/systemone endpoint requires a TypeSafe or OpenRouter channel"), types.ErrorCodeInvalidApiType)
 	}
+	adaptor := &typesafe.Adaptor{}
 	adaptor.Init(info)
 
 	jsonData, err := common.Marshal(request)
@@ -55,7 +56,7 @@ func TypeSafeHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIEr
 			return newAPIErrorFromParamOverride(err)
 		}
 	}
-	logger.LogDebug(c, "TypeSafe request body: %s", jsonData)
+	logger.LogDebug(c, "System One request body: %s", jsonData)
 
 	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
 	requestStr := ""
@@ -74,7 +75,7 @@ func TypeSafeHelper(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIEr
 	}
 	httpResp, ok := response.(*http.Response)
 	if !ok || httpResp == nil {
-		return types.NewError(errors.New("TypeSafe returned an invalid HTTP response"), types.ErrorCodeBadResponse)
+		return types.NewError(errors.New("System One upstream returned an invalid HTTP response"), types.ErrorCodeBadResponse)
 	}
 	statusCodeMapping := c.GetString("status_code_mapping")
 	if httpResp.StatusCode != http.StatusOK {

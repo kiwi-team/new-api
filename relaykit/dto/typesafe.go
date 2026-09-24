@@ -8,12 +8,16 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
-// TypeSafeRequest is the native request format accepted by TypeSafe System One.
-// RawMessage keeps the provider's structured state and question definitions intact.
+// TypeSafeRequest is the native request format accepted by System One and the
+// OpenRouter Decisions endpoint. RawMessage keeps structured fields intact.
 type TypeSafeRequest struct {
 	State     json.RawMessage            `json:"state"`
 	Model     string                     `json:"model"`
 	Questions map[string]json.RawMessage `json:"questions"`
+	Provider  json.RawMessage            `json:"provider,omitempty"`
+	SessionID *string                    `json:"session_id,omitempty"`
+	Trace     json.RawMessage            `json:"trace,omitempty"`
+	User      *string                    `json:"user,omitempty"`
 }
 
 func (r *TypeSafeRequest) GetTokenCountMeta() *types.TokenCountMeta {

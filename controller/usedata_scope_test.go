@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -49,4 +50,36 @@ func TestAdminCanManageAnotherUsersUsageAdjustment(t *testing.T) {
 
 	regularUser := usageScopeTestContext(common.RoleCommonUser, 7, "")
 	assert.False(t, canManageUsageAdjustment(regularUser))
+}
+
+func TestQuotaStatisticsChannelIdIsRootOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		role  int
+		query string
+		want  int
+	}{
+		{name: "root channel filter", role: common.RoleRootUser, query: "?channel_id=42", want: 42},
+		{name: "admin filter ignored", role: common.RoleAdminUser, query: "?channel_id=42", want: 0},
+		{name: "regular user filter ignored", role: common.RoleCommonUser, query: "?channel_id=42", want: 0},
+		{name: "invalid root filter ignored", role: common.RoleRootUser, query: "?channel_id=invalid", want: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := usageScopeTestContext(tc.role, 1, tc.query)
+			assert.Equal(t, tc.want, quotaStatisticsChannelId(c))
+		})
+	}
+}
+
+func TestQuotaStatisticsChannelListRejectsNonRoot(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("role", common.RoleAdminUser)
+
+	GetQuotaStatisticsChannelList(c)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "root permission required")
 }

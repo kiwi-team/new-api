@@ -79,6 +79,7 @@ const (
 	ChannelTypeVLLM             = 79
 	ChannelTypeSGLang           = 80
 	ChannelTypeTypeSafe         = 81
+	ChannelTypeHappyOyster      = 82
 	ChannelTypeDummy            // this one is only for count, do not add any channel after this
 
 )
@@ -169,6 +170,7 @@ var ChannelBaseURLs = []string{
 	"",                                     // 79 vLLM
 	"",                                     // 80 SGLang
 	"https://api.typesafe.ai",              // 81 TypeSafe
+	"",                                     // 82 HappyOyster (workspace-specific host)
 }
 
 func GetChannelBaseURL(channelType int) string {
@@ -254,6 +256,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",
 	ChannelTypeTypeSafe:       "TypeSafe",
+	ChannelTypeHappyOyster:    "HappyOyster Adventure",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -101,12 +101,19 @@ func init() {
 			OwnedBy: ltxAdaptor.GetChannelName(),
 		})
 	}
+	openAIModels = append(openAIModels, dto.OpenAIModels{
+		Id: happyOysterModel, Object: "model", Created: 1626777600, OwnedBy: "HappyOyster Adventure",
+	})
 	openAIModelsMap = make(map[string]dto.OpenAIModels)
 	for _, aiModel := range openAIModels {
 		openAIModelsMap[aiModel.Id] = aiModel
 	}
 	channelId2Models = make(map[int][]string)
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
+		if i == constant.ChannelTypeHappyOyster {
+			channelId2Models[i] = []string{happyOysterModel}
+			continue
+		}
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {
 			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {

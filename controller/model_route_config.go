@@ -1,9 +1,10 @@
 package controller
 
 import (
-	"encoding/json"
+	"bytes"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -119,34 +120,65 @@ func validateModelRouteConfig(config *model.ModelRouteConfig) error {
 
 	// 验证JSON格式
 	var groups [][]int
-	if err := json.Unmarshal([]byte(config.ChannelGroups), &groups); err != nil {
+	if err := common.Unmarshal([]byte(config.ChannelGroups), &groups); err != nil {
 		return errors.New("渠道组配置格式错误，必须是二维数组")
 	}
 
 	if len(groups) == 0 {
 		return errors.New("至少需要配置一个渠道组")
 	}
+	seenChannelIds := make(map[int]struct{})
+	for _, group := range groups {
+		if len(group) == 0 {
+			return errors.New("每个渠道组至少需要一个渠道")
+		}
+		for _, channelId := range group {
+			if channelId <= 0 {
+				return errors.New("渠道ID必须是正整数")
+			}
+			if _, exists := seenChannelIds[channelId]; exists {
+				return errors.New("同一个渠道不能重复出现在渠道组中")
+			}
+			seenChannelIds[channelId] = struct{}{}
+		}
+	}
 
 	// 验证模型匹配规则
 	if config.ModelPatterns != "" {
 		var patterns []string
-		if err := json.Unmarshal([]byte(config.ModelPatterns), &patterns); err != nil {
+		if err := common.Unmarshal([]byte(config.ModelPatterns), &patterns); err != nil {
 			return errors.New("模型匹配规则格式错误，必须是字符串数组")
 		}
+		if len(patterns) == 0 {
+			return errors.New("至少需要配置一个模型名称规则")
+		}
+		for _, pattern := range patterns {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return errors.New("模型名称规则包含无效的正则表达式")
+			}
+		}
+	} else {
+		return errors.New("至少需要配置一个模型名称规则")
 	}
 
 	// 验证Body匹配规则
 	if config.BodyPatterns != "" {
 		var patterns []string
-		if err := json.Unmarshal([]byte(config.BodyPatterns), &patterns); err != nil {
+		if err := common.Unmarshal([]byte(config.BodyPatterns), &patterns); err != nil {
 			return errors.New("Body匹配规则格式错误，必须是字符串数组")
 		}
+	}
+	if config.BodyPatterns != "" && config.BodyMatch != "" {
+		return errors.New("请求体关键词和JSON字段匹配不能同时配置")
+	}
+	if err := model.ValidateModelRouteBodyMatch(config.BodyMatch); err != nil {
+		return errors.New("请求体JSON字段匹配无效: " + err.Error())
 	}
 
 	// 验证URL匹配规则
 	if config.UrlPatterns != "" {
 		var patterns []string
-		if err := json.Unmarshal([]byte(config.UrlPatterns), &patterns); err != nil {
+		if err := common.Unmarshal([]byte(config.UrlPatterns), &patterns); err != nil {
 			return errors.New("URL匹配规则格式错误，必须是字符串数组")
 		}
 	}
@@ -160,40 +192,56 @@ func validateModelRouteConfig(config *model.ModelRouteConfig) error {
 	if config.MaxRetry < 0 {
 		return errors.New("最大重试次数不能为负数")
 	}
+	if config.ApplyMode != model.ModelRouteApplyModeFallback && config.ApplyMode != model.ModelRouteApplyModeEnforce {
+		return errors.New("应用模式必须是 fallback 或 enforce")
+	}
 
 	return nil
 }
 
 // ModelRouteConfigDTO 用于接收前端数据的DTO
 type ModelRouteConfigDTO struct {
-	Id            int      `json:"id"`
-	Name          string   `json:"name"`
-	ModelPatterns []string `json:"model_patterns"`
-	BodyPatterns  []string `json:"body_patterns"`
-	UrlPatterns   []string `json:"url_patterns"`
-	ChannelGroups [][]int  `json:"channel_groups"` // 前端发送的是二维数组
-	RandomType    string   `json:"random_type"`
-	MaxRetry      int      `json:"max_retry"`
-	Priority      int      `json:"priority"`
-	Enabled       int      `json:"enabled"`
+	Id            int               `json:"id"`
+	Name          string            `json:"name"`
+	ModelPatterns []string          `json:"model_patterns"`
+	BodyPatterns  []string          `json:"body_patterns"`
+	BodyMatch     common.RawMessage `json:"body_match"`
+	UrlPatterns   []string          `json:"url_patterns"`
+	ChannelGroups [][]int           `json:"channel_groups"` // 前端发送的是二维数组
+	RandomType    string            `json:"random_type"`
+	MaxRetry      int               `json:"max_retry"`
+	Priority      int               `json:"priority"`
+	ApplyMode     string            `json:"apply_mode"`
+	Enabled       int               `json:"enabled"`
 }
 
 // ToModel 将DTO转换为Model
 func (dto *ModelRouteConfigDTO) ToModel() (*model.ModelRouteConfig, error) {
+	bodyMatch := bytes.TrimSpace(dto.BodyMatch)
+	if bytes.Equal(bodyMatch, []byte("null")) {
+		bodyMatch = nil
+	}
+	applyMode := dto.ApplyMode
+	if applyMode == "" {
+		applyMode = model.ModelRouteApplyModeFallback
+		if len(bodyMatch) > 0 {
+			applyMode = model.ModelRouteApplyModeEnforce
+		}
+	}
 	config := &model.ModelRouteConfig{
-		Id:          dto.Id,
-		Name:        dto.Name,
-		RandomType:  dto.RandomType,
-		MaxRetry:    dto.MaxRetry,
-		Priority:    dto.Priority,
-		Enabled:     dto.Enabled,
-		CreatedTime: common.GetTimestamp(),
-		UpdatedTime: common.GetTimestamp(),
+		Id:         dto.Id,
+		Name:       dto.Name,
+		RandomType: dto.RandomType,
+		MaxRetry:   dto.MaxRetry,
+		Priority:   dto.Priority,
+		ApplyMode:  applyMode,
+		Enabled:    dto.Enabled,
+		BodyMatch:  string(bodyMatch),
 	}
 
 	// 转换 ModelPatterns
 	if len(dto.ModelPatterns) > 0 {
-		data, err := json.Marshal(dto.ModelPatterns)
+		data, err := common.Marshal(dto.ModelPatterns)
 		if err != nil {
 			return nil, errors.New("模型匹配规则格式错误")
 		}
@@ -202,7 +250,7 @@ func (dto *ModelRouteConfigDTO) ToModel() (*model.ModelRouteConfig, error) {
 
 	// 转换 BodyPatterns
 	if len(dto.BodyPatterns) > 0 {
-		data, err := json.Marshal(dto.BodyPatterns)
+		data, err := common.Marshal(dto.BodyPatterns)
 		if err != nil {
 			return nil, errors.New("请求体关键词格式错误")
 		}
@@ -211,7 +259,7 @@ func (dto *ModelRouteConfigDTO) ToModel() (*model.ModelRouteConfig, error) {
 
 	// 转换 UrlPatterns
 	if len(dto.UrlPatterns) > 0 {
-		data, err := json.Marshal(dto.UrlPatterns)
+		data, err := common.Marshal(dto.UrlPatterns)
 		if err != nil {
 			return nil, errors.New("URL路径匹配格式错误")
 		}
@@ -220,7 +268,7 @@ func (dto *ModelRouteConfigDTO) ToModel() (*model.ModelRouteConfig, error) {
 
 	// 转换 ChannelGroups
 	if len(dto.ChannelGroups) > 0 {
-		data, err := json.Marshal(dto.ChannelGroups)
+		data, err := common.Marshal(dto.ChannelGroups)
 		if err != nil {
 			return nil, errors.New("渠道组配置格式错误")
 		}
@@ -317,6 +365,14 @@ func UpdateModelRouteConfig(c *gin.Context) {
 	}
 
 	err = config.Update()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	config, err = model.GetModelRouteConfigById(config.Id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

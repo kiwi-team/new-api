@@ -576,6 +576,88 @@ func TestConvertRequestOpenAIChatToGeminiAddsThoughtSignatureForAdvancedCustom(t
 	assert.Equal(t, sharedgemini.ThoughtSignatureBypassValue, thoughtSignature)
 }
 
+func TestConvertRequestOpenAIChatToGeminiMovesNumericEnumsToDescriptions(t *testing.T) {
+	info := &convmeta.Values{
+		Options:             &convmeta.Options{},
+		ConversionChain:     []types.RelayFormat{types.RelayFormatOpenAI},
+		ChannelMetaAttached: true,
+		UpstreamModelName:   "gemini-test",
+	}
+	req := &dto.GeneralOpenAIRequest{
+		Model:    "gemini-test",
+		Messages: []dto.Message{{Role: "user", Content: "start navigation"}},
+		Tools: []dto.ToolCallRequest{
+			{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name: "navigation_start",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"index": map[string]any{
+								"type":        "integer",
+								"description": "Route selection",
+								"enum":        []any{-1, 1, 2, 3},
+							},
+							"routes": map[string]any{
+								"type": "array",
+								"items": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"priority": map[string]any{
+											"type": "integer",
+											"enum": []any{1, 2},
+										},
+									},
+								},
+							},
+							"mode": map[string]any{
+								"type": "string",
+								"enum": []any{"fast", "safe"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := ConvertRequest(nil, info, types.RelayFormatGemini, req)
+
+	require.NoError(t, err)
+	geminiReq, ok := result.Value.(*dto.GeminiChatRequest)
+	require.True(t, ok)
+	tools := geminiReq.GetTools()
+	require.Len(t, tools, 1)
+	functions, err := kitutil.Any2Type[[]dto.FunctionRequest](tools[0].FunctionDeclarations)
+	require.NoError(t, err)
+	require.Len(t, functions, 1)
+	params, ok := functions[0].Parameters.(map[string]any)
+	require.True(t, ok)
+	properties, ok := params["properties"].(map[string]any)
+	require.True(t, ok)
+
+	index, ok := properties["index"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, index, "enum")
+	assert.Equal(t, "Route selection\nAllowed values: [-1, 1, 2, 3]", index["description"])
+
+	routes, ok := properties["routes"].(map[string]any)
+	require.True(t, ok)
+	items, ok := routes["items"].(map[string]any)
+	require.True(t, ok)
+	nestedProperties, ok := items["properties"].(map[string]any)
+	require.True(t, ok)
+	priority, ok := nestedProperties["priority"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, priority, "enum")
+	assert.Equal(t, "Allowed values: [1, 2]", priority["description"])
+
+	mode, ok := properties["mode"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"fast", "safe"}, mode["enum"])
+}
+
 func TestConvertRequestViaResponsesToGeminiStillUsesDirectSteps(t *testing.T) {
 	info := &convmeta.Values{
 		ConversionChain:     []types.RelayFormat{types.RelayFormatOpenAIResponses},

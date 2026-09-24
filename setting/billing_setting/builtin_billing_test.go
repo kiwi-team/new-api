@@ -126,6 +126,14 @@ func TestJevBuiltinBillingUsesInputTokensOnly(t *testing.T) {
 	expression, ok := billing_setting.GetBillingExpr("jev-1.13.0")
 	require.True(t, ok)
 	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode("jev-1.13.0"))
+	openRouterExpression, ok := billing_setting.GetBillingExpr("~typesafe/jev-latest")
+	require.True(t, ok)
+	assert.Equal(t, expression, openRouterExpression)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode("~typesafe/jev-latest"))
+	openRouterCanonicalExpression, ok := billing_setting.GetBillingExpr("typesafe/jev-1.13")
+	require.True(t, ok)
+	assert.Equal(t, expression, openRouterCanonicalExpression)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode("typesafe/jev-1.13"))
 	usage := &dto.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000, TotalTokens: 1_500_000}
 	result, err := billingexpr.ComputeTieredQuota(
 		&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500_000},
@@ -158,6 +166,32 @@ func TestHyASRBuiltinBillingUsesReportedInputTokens(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 740_883, result.ActualQuotaAfterGroup)
+}
+
+func TestHappyOysterBuiltinBillingUsesProtocolUsage(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("happyoyster-1.0-adventure")
+	require.True(t, ok)
+	require.NoError(t, billing_setting.SmokeTestModelExpr("happyoyster-1.0-adventure", expression))
+
+	for _, tc := range []struct {
+		name  string
+		usage map[string]any
+		quota int
+		tier  string
+	}{
+		{"international world", map[string]any{"price_scope": "international", "world_creations": 1, "experience_seconds": 0}, 3850, "international"},
+		{"international travel", map[string]any{"price_scope": "international", "world_creations": 0, "experience_seconds": 60}, 924000, "international"},
+		{"global world and travel", map[string]any{"price_scope": "global", "world_creations": 1, "experience_seconds": 60}, 851544, "global"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: tc.usage})
+			require.NoError(t, err)
+			quota, clamp := common.QuotaRoundChecked(cost * 500_000)
+			assert.Nil(t, clamp)
+			assert.Equal(t, tc.quota, quota)
+			assert.Equal(t, tc.tier, trace.MatchedTier)
+		})
+	}
 }
 
 func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {

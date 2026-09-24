@@ -30,6 +30,7 @@ export const CHANNEL_TYPE_TASK_PLUGIN = 78
 export const CHANNEL_TYPE_VLLM = 79
 export const CHANNEL_TYPE_SGLANG = 80
 export const CHANNEL_TYPE_TYPESAFE = 81
+export const CHANNEL_TYPE_HAPPY_OYSTER = 82
 
 export const CHANNEL_TYPES = {
   0: 'Unknown',
@@ -110,6 +111,7 @@ export const CHANNEL_TYPES = {
   79: 'vLLM',
   80: 'SGLang',
   81: 'TypeSafe',
+  82: 'HappyOyster Adventure',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -200,6 +202,9 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   79: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   80: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
   81: { descriptionKey: 'Connect to TypeSafe System One decision models' },
+  82: {
+    descriptionKey: 'Create and explore interactive worlds with HappyOyster Adventure',
+  },
 }
 
 // Curated ordering for the type picker: mainstream LLM providers first, then
@@ -209,7 +214,7 @@ const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 65, 24, 43, 3, 41, 48, 76, 74, 42, 34, 20, 4, 40, 27, 25, 17, 60,
   26, 15, 46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 8, 68, 75, 22, 44, 51,
   52, 2, 5, 36, 50, 53, 55, 56, 57, 58, 77, 61, 67, 62, 63, 64, 66, 69, 70, 71,
-  72, 73, 54, 59, 78, 79, 80, 81,
+  72, 73, 54, 59, 78, 79, 80, 81, 82,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {

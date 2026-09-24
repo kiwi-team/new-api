@@ -24,10 +24,11 @@ import { toast } from 'sonner'
 
 import { StaticDataTable } from '@/components/data-table'
 import { DateTimePicker } from '@/components/datetime-picker'
-import { MultiSelect } from '@/components/multi-select'
 import { SectionPageLayout } from '@/components/layout'
+import { MultiSelect } from '@/components/multi-select'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -38,14 +39,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
+import { searchUserOptions } from '@/features/settlement-config/api'
 import { useDebounce } from '@/hooks/use-debounce'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { searchUserOptions } from '@/features/settlement-config/api'
-
 import {
   exportQuotaStatisticsCsv,
+  getChannelOptions,
   getProjectNames,
   getQuotaStatistics,
   getTokenOptions,
@@ -68,7 +69,9 @@ export function QuotaStatisticsPage() {
   const isRoot = role >= ROLE.SUPER_ADMIN
 
   const defaultRange = useMemo(currentMonthRange, [])
-  const [startTime, setStartTime] = useState<Date | undefined>(defaultRange.start)
+  const [startTime, setStartTime] = useState<Date | undefined>(
+    defaultRange.start
+  )
   const [endTime, setEndTime] = useState<Date | undefined>(defaultRange.end)
   const [expandModels, setExpandModels] = useState(false)
   const [expandDates, setExpandDates] = useState(false)
@@ -79,6 +82,7 @@ export function QuotaStatisticsPage() {
   const [scenarios, setScenarios] = useState<string[]>([])
   const [userId, setUserId] = useState(ALL_USERS)
   const [tokenIds, setTokenIds] = useState<string[]>([])
+  const [channelId, setChannelId] = useState('')
   const [userKeyword, setUserKeyword] = useState('')
   const debouncedUserKeyword = useDebounce(userKeyword, 300)
   // Typed filters reach the query only once typing settles, so that a request
@@ -105,6 +109,11 @@ export function QuotaStatisticsPage() {
     queryFn: () => searchUserOptions(debouncedUserKeyword),
     enabled: isRoot,
   })
+  const channelsQuery = useQuery({
+    queryKey: ['quota-statistics', 'channels'],
+    queryFn: getChannelOptions,
+    enabled: isRoot,
+  })
 
   // Every filter change re-derives the query, so the table refreshes on its
   // own. `null` means the range is incomplete and nothing can be asked.
@@ -124,6 +133,9 @@ export function QuotaStatisticsPage() {
         : {}),
       ...(projectName === ALL_PROJECTS ? {} : { project_name: projectName }),
       ...(tokenIds.length > 0 ? { token_ids: tokenIds.join(',') } : {}),
+      ...(isRoot && channelId
+        ? { channel_id: Number.parseInt(channelId, 10) }
+        : {}),
     }
   }, [
     startTime,
@@ -137,6 +149,7 @@ export function QuotaStatisticsPage() {
     userId,
     projectName,
     tokenIds,
+    channelId,
   ])
 
   const statisticsQuery = useQuery({
@@ -202,6 +215,10 @@ export function QuotaStatisticsPage() {
   const tokenOptions = (tokensQuery.data ?? []).map((token) => ({
     value: String(token.id),
     label: `${token.name} (ID: ${token.id})${token.key ? ` ${token.key}` : ''}`,
+  }))
+  const channelOptions = (channelsQuery.data ?? []).map((channel) => ({
+    value: String(channel.id),
+    label: `${channel.name} (ID: ${channel.id})`,
   }))
 
   return (
@@ -311,6 +328,20 @@ export function QuotaStatisticsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+            {isRoot && (
+              <div className='grid gap-1.5'>
+                <Label htmlFor='qs-channel'>{t('Channel')}</Label>
+                <ComboboxInput
+                  id='qs-channel'
+                  className='w-52'
+                  options={channelOptions}
+                  value={channelId}
+                  onValueChange={setChannelId}
+                  placeholder={t('Channel')}
+                  clearable
+                />
               </div>
             )}
             <div className='grid gap-1.5'>

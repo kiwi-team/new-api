@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 /** How a group's channels are picked: in order, or at random. */
 export type RouteRandomType = 'order' | 'random'
+export type RouteApplyMode = 'fallback' | 'enforce'
+export type BodyMatch = Record<string, unknown>
 
 /**
  * One routing rule. The backend stores the pattern lists and channel groups
@@ -30,12 +32,14 @@ export type ModelRouteConfig = {
   name: string
   model_patterns: string[]
   body_patterns: string[]
+  body_match: BodyMatch | null
   url_patterns: string[]
   /** Groups tried in order; each group holds interchangeable channel ids */
   channel_groups: number[][]
   random_type: RouteRandomType
   max_retry: number
   priority: number
+  apply_mode: RouteApplyMode
   /** 1 enabled, 0 disabled */
   enabled: number
   created_time?: number
@@ -47,11 +51,13 @@ export type ModelRouteConfigPayload = {
   name: string
   model_patterns: string[]
   body_patterns: string[]
+  body_match: BodyMatch | null
   url_patterns: string[]
   channel_groups: number[][]
   random_type: RouteRandomType
   max_retry: number
   priority: number
+  apply_mode: RouteApplyMode
   enabled: number
 }
 

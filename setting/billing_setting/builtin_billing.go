@@ -16,8 +16,16 @@ var builtinBillingExpr = map[string]string{
 	// https://docs.typesafe.ai/models (Jev 1.13, 2026-09-20).
 	// TypeSafe charges input tokens only; output tokens are free.
 	"jev-1.13.0": `tier("standard", p * 0.042 + c * 0)`,
+	// https://openrouter.ai/~typesafe/jev-latest (2026-09-22).
+	// OpenRouter publishes the same $0.042/M input and free output price.
+	"~typesafe/jev-latest": `tier("standard", p * 0.042 + c * 0)`,
+	"typesafe/jev-1.13":    `tier("standard", p * 0.042 + c * 0)`,
 	// https://cloud.tencent.com/document/product/1823/130055 (2026-09-10):
 	// CNY 10 / 1M tokens. Converted at the 2026-09-21 PBOC midpoint of
 	// USD 1 = CNY 6.7487. TokenHub reports the billable ASR tokens as input.
 	"hy-asr-3.0-preview": `tier("standard", p * 1.481766859)`,
+	// https://platform.qianwenai.com/docs/api-reference/world-model/happyoyster-adventure-openapi-reference.md
+	// HappyOyster Adventure OpenAPI pricing, checked 2026-09-22. `price_scope`
+	// is selected explicitly on the channel (international or global).
+	"happyoyster-1.0-adventure": `u("price_scope") == "international" ? tier("international", u("world_creations") * 0.0077 + u("experience_seconds") * 0.0308) : tier("global", u("world_creations") * 0.007067 + u("experience_seconds") * 0.028267)`,
 }

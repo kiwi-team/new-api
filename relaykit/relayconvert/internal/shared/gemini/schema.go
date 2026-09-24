@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -56,6 +57,7 @@ func cleanGeminiFunctionParametersWithDepth(params interface{}, depth int) inter
 		}
 
 		normalizeGeminiSchemaTypeAndNullable(cleanedMap)
+		moveNonStringEnumToDescription(cleanedMap)
 
 		if props, ok := cleanedMap["properties"].(map[string]interface{}); ok && props != nil {
 			cleanedProps := make(map[string]interface{})
@@ -102,6 +104,7 @@ func cleanGeminiFunctionParametersShallow(params interface{}) interface{} {
 			}
 		}
 		normalizeGeminiSchemaTypeAndNullable(cleanedMap)
+		moveNonStringEnumToDescription(cleanedMap)
 		delete(cleanedMap, "properties")
 		delete(cleanedMap, "items")
 		delete(cleanedMap, "anyOf")
@@ -111,6 +114,30 @@ func cleanGeminiFunctionParametersShallow(params interface{}) interface{} {
 	default:
 		return params
 	}
+}
+
+func moveNonStringEnumToDescription(schema map[string]any) {
+	typ, ok := schema["type"].(string)
+	if !ok || strings.EqualFold(typ, "string") {
+		return
+	}
+
+	enumValues, ok := schema["enum"].([]any)
+	if !ok {
+		return
+	}
+
+	values := make([]string, 0, len(enumValues))
+	for _, value := range enumValues {
+		values = append(values, fmt.Sprint(value))
+	}
+	enumDescription := "Allowed values: [" + strings.Join(values, ", ") + "]"
+	if description, ok := schema["description"].(string); ok && description != "" {
+		schema["description"] = description + "\n" + enumDescription
+	} else {
+		schema["description"] = enumDescription
+	}
+	delete(schema, "enum")
 }
 
 func normalizeGeminiSchemaTypeAndNullable(schema map[string]interface{}) {

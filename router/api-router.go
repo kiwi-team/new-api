@@ -369,6 +369,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/channel-monitor", middleware.RootAuth(), controller.GetChannelMonitor)
 		dataRoute.GET("/project-names", middleware.MixRouterAuth(), controller.GetDistinctProjectNames)
 		dataRoute.GET("/token-list", middleware.MixRouterAuth(), controller.GetTokenListForStatistics)
+		dataRoute.GET("/channel-list", middleware.RootAuth(), controller.GetQuotaStatisticsChannelList)
 		// /api/toio/data/* 路由已删除(组织标签系统替代,详见 org.md)。
 		// 同源能力通过 /api/data/statistics 等接口提供,数据范围由 ComputeOrgScope 计算。
 		systemTaskRoute := apiRouter.Group("/system-task")

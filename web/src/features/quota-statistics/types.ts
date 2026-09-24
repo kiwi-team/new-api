@@ -54,12 +54,19 @@ export type QuotaStatisticsQuery = {
   user_id?: number
   project_name?: string
   token_ids?: string
+  /** Root only: restrict consumption to one channel */
+  channel_id?: number
 }
 
 export type TokenOption = {
   id: number
   name: string
   key?: string
+}
+
+export type ChannelOption = {
+  id: number
+  name: string
 }
 
 export type ApiResponse<T = unknown> = {

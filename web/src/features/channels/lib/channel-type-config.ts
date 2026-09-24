@@ -21,6 +21,7 @@ import {
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_TYPESAFE,
+  CHANNEL_TYPE_HAPPY_OYSTER,
 } from '../constants'
 
 // ============================================================================
@@ -51,6 +52,18 @@ export interface ChannelTypeConfig {
  * Configuration for each channel type
  */
 export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
+  [CHANNEL_TYPE_HAPPY_OYSTER]: {
+    id: CHANNEL_TYPE_HAPPY_OYSTER,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_HAPPY_OYSTER],
+    icon: 'qwen',
+    supportedModels: ['happyoyster-1.0-adventure'],
+    hints: {
+      baseUrl: 'HappyOyster workspace API host, without the OpenAPI path',
+      key: 'HappyOyster workspace API key',
+      models: 'happyoyster-1.0-adventure',
+      other: 'Billing price scope: international or global',
+    },
+  },
   [CHANNEL_TYPE_TYPESAFE]: {
     id: CHANNEL_TYPE_TYPESAFE,
     name: CHANNEL_TYPES[CHANNEL_TYPE_TYPESAFE],

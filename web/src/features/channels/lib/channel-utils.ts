@@ -58,6 +58,7 @@ export function getChannelTypeIcon(type: number): string {
     79: 'Vllm', // vLLM
     80: 'SGLang', // SGLang
     81: 'OpenAI', // TypeSafe (no dedicated Lobe icon)
+    82: 'Qwen', // HappyOyster Adventure
     3: 'Azure', // Azure
 
     // Anthropic

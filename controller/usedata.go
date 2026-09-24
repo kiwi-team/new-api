@@ -217,6 +217,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
+	channelId := quotaStatisticsChannelId(c)
 
 	// 普通用户（通过 MixRouterAuth）只能查看自己或其关联 uid 的数据
 	// mt-admin / wl-admin 通过 resolveSelfScope 拿到 org 全员范围(详见 org.md)
@@ -235,7 +236,7 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids, scopeUserIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, channelId, scopeUserId, scopeUids, scopeUserIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -246,6 +247,38 @@ func GetQuotaDataStatistics(c *gin.Context) {
 		"message": "",
 		"data":    statistics,
 	})
+}
+
+func quotaStatisticsChannelId(c *gin.Context) int {
+	if c.GetInt("role") != common.RoleRootUser {
+		return 0
+	}
+	channelId, err := strconv.Atoi(c.Query("channel_id"))
+	if err != nil || channelId <= 0 {
+		return 0
+	}
+	return channelId
+}
+
+func GetQuotaStatisticsChannelList(c *gin.Context) {
+	if c.GetInt("role") != common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "root permission required",
+		})
+		return
+	}
+
+	var channels []struct {
+		Id     int    `json:"id"`
+		Name   string `json:"name"`
+		Status int    `json:"status"`
+	}
+	if err := model.DB.Model(&model.Channel{}).Select("id, name, status").Order("id asc").Find(&channels).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, channels)
 }
 
 // resolveSelfScope 当请求被标记为 force_self_user_id（非管理员自助视图）时，
@@ -292,6 +325,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 	userId, _ := strconv.Atoi(c.Query("user_id"))
 	projectName := c.Query("project_name")
 	tokenIdsStr := c.Query("token_ids")
+	channelId := quotaStatisticsChannelId(c)
 
 	// 普通用户（通过 MixRouterAuth）只能导出自己或其关联 uid 的数据
 	// mt-admin / wl-admin 通过 resolveSelfScope 拿到 org 全员范围(详见 org.md)
@@ -310,7 +344,7 @@ func ExportQuotaDataStatistics(c *gin.Context) {
 		}
 	}
 
-	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, scopeUserId, scopeUids, scopeUserIds)
+	statistics, err := model.GetQuotaDataStatistics(startTimestamp, endTimestamp, modelName, clientUserId, clientScenairos, expandModels, expandDates, expandTokens, userId, projectName, tokenIds, channelId, scopeUserId, scopeUids, scopeUserIds)
 	if err != nil {
 		common.ApiError(c, err)
 		return

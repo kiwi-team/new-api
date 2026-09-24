@@ -67,6 +67,12 @@ func attachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, o
 		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.GetBillingModelName()))
 }
 
+// AttachQuotaSaturation exposes the shared billing-clamp audit marker to
+// independent protocol controllers that write their own consume logs.
+func AttachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	attachQuotaSaturation(ctx, relayInfo, other)
+}
+
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 	if other == nil {
 		return
