@@ -159,7 +159,8 @@
 
 | 保护能力 | 本次合并后出现过的问题 | 后续合并必须保持的行为 | 主要实现与回归锚点 |
 |---|---|---|---|
-| 固定渠道类型编号与基础常量/DTO | 渠道编号随 `main` 新类型插入而漂移，前后端、任务插件和已有数据库配置可能指向错误 provider。 | prod 已有渠道编号 `0–77` 永久保持；新增 Task Plugin、vLLM、SGLang 使用 `78–80`。前端枚举、后端常量、API type、默认 Base URL、插件绑定和序列化 DTO 必须同步。 | `constant/channel.go`、`common/api_type.go`、`relaykit/dto/channel_settings.go`；`constant/channel_test.go`、`common/api_type_task_plugin_test.go`、`web/src/features/channels/lib/__tests__/channel-type-ids.test.ts`。 |
+| 固定渠道类型编号与基础常量/DTO | 渠道编号随 `main` 新类型插入而漂移，前后端、任务插件和已有数据库配置可能指向错误 provider。 | prod 已有渠道编号 `0–77` 永久保持；Task Plugin、vLLM、SGLang、TypeSafe、HappyOyster Adventure 分别固定使用 `78–82`。前端枚举、后端常量、API type、默认 Base URL、插件绑定和序列化 DTO 必须同步。 | `constant/channel.go`、`common/api_type.go`、`relaykit/dto/channel_settings.go`、`web/src/features/channels/constants.ts`；`constant/channel_test.go`、`common/api_type_task_plugin_test.go`、`web/src/features/channels/lib/__tests__/channel-type-ids.test.ts`。 |
+| HappyOyster Adventure 独立模型接入 | `main` 没有这套非 OpenAI 协议时，合并中容易把专用 router/controller、四张资源表、临时凭证鉴权、原生计费或前端渠道类型当成旁支删除，或强行并入通用任务接口；响应包装差异和加密 ID 前缀假设也曾导致上游成功被误报为 502。 | `happyoyster-1.0-adventure` 必须继续作为独立渠道类型 `82` 和独立协议存在，不得强行兼容 OpenAI/通用 Task submit-fetch。保留官方前缀下 11 个 World/Travel 接口以及 `/api/v1/tokens`；同时支持官方信封和百炼 `{output,request_id}` 包装，资源 ID 视为非空 opaque ID。主 Key 与 `st-` 临时 Key 的端点权限、摘要存储、过期/单次 ticket、用户/渠道账号绑定和资源固定路由必须保留；列表继续按网关用户隔离。保留 `happy_oyster_worlds/tickets/travels/client_tokens` 持久化和迁移、后台状态收敛及幂等差额结算。计费继续使用 `world_creations`、`experience_seconds`、`price_scope` 的内置表达式，进入 Travel 按 60/90/120 秒预扣并按实际时长结算。World 创建消费日志必须把完整请求 JSON（含 prompt、URL 或 Base64）和返回给客户端的完整响应分别写入 `logs.request`/`logs.response`，不受 `SAVE_REQUEST_RESPONSE` 开关影响；不得记录 Authorization 或主/临时 API Key。 | `HAPPY_OYSTER_ADVENTURE_INTEGRATION.md`、`router/happyoyster-router.go`、`middleware/happyoyster_auth.go`、`controller/happyoyster.go`、`model/happyoyster.go`、`relay/channel/happyoyster/client.go`、`setting/billing_setting/builtin_billing.go`、渠道常量/前端渠道配置；`TestHappyOysterAdventureRoutesMatchOfficialAPI`、`TestHappyOyster*`、`TestHappyOysterBuiltinBillingUsesProtocolUsage`、`channel-type-ids.test.ts`。 |
 | 创建/编辑渠道的旧配置 | 请求路径白名单、请求路径黑名单、响应模型名称重写和 Vertex Google bucket 控件从表单消失。 | 四项配置必须能够创建、编辑回填并保存，字段名和后端序列化契约不得改变；bucket 仅在适用的 Vertex 配置中显示。 | `web/src/features/channels/components/drawers/channel-mutate-drawer.tsx`；`web/src/features/channels/components/__tests__/channel-configuration.test.tsx`。 |
 | 请求路径白名单/黑名单运行时约束 | UI 字段存在但普通渠道选择链路没有执行约束。 | 所有候选来源——普通随机、固定渠道、Key 规则、全局路由、特殊渠道、重试、竞速和 affinity——都必须经过同一请求路径过滤；黑名单优先于白名单。 | `model/channel_constraint.go`、`middleware/distributor.go`；`model/channel_constraint_test.go`。 |
 | 跨协议响应模型名称重写 | 只有 OpenAI 响应生效，Anthropic、Gemini Native、Responses、SSE 和 Realtime 被遗漏。 | JSON、SSE、透传和 WebSocket 下行响应均应用当前渠道的映射；支持 `model`、`modelVersion`/`model_version` 和嵌套 Responses 对象；不得改写客户端上行请求，不得因长度变化保留错误的 `Content-Length`。 | `relay/common/model_output_mapping.go`、`controller/model_output_mapping.go`、Realtime handlers；`controller/relay_race_test.go`。 |
@@ -193,7 +194,7 @@
 - 渠道编号/新渠道定向测试：9 个 Vitest 用例及 6 个后端编号对照用例通过。
 - 任务适配器兼容：保留 main 的 JS 插件优先路由，同时为 prod 旧任务适配器增加接口桥接；实时查询、退款防重、公开任务 ID 回归测试通过。
 - 计费与流式响应兼容：退款日志按 main 的负数语义断言；Gemini 流首帧携带上游 usage，相关定向测试及全量测试通过。
-- 内置任务插件及前端 provider 映射已按固定渠道编号 0–80 校正，避免 Jimeng/Vidu/Doubao/Sora 等插件绑定到旧编号。
+- 内置任务插件及前端 provider 映射已按当时的固定渠道编号 0–80 校正；后续新增 TypeSafe `81` 与 HappyOyster Adventure `82` 也已纳入本文件的非回归契约和前后端编号测试。
 - 渠道配置表单完整回归文件：65 个 Vitest 用例通过，覆盖上述四项配置的编辑回填与保存。
 - 侧边栏定向回归测试 17 个 Vitest 用例通过，覆盖 prod 旧入口与 main 新入口的并存、模块默认值、独立部署开关及组织菜单 `pageKeys`。
 - Key 与日志筛选定向回归：5 个 Vitest 文件共 54 个用例通过；渠道规则解析/序列化的 Bun 测试 15 个用例通过。覆盖 root 渠道规则提交、root 按用户筛选 Key、日志关联标识 URL 状态及下拉框选择/清空行为。
@@ -209,3 +210,4 @@
 - 请求链路展示定向验证：`bun run test -- src/features/usage-logs/components/__tests__/retry-chain-display.test.tsx` 通过（2 个用例）；后端渠道耗时定向用例 `TestAppendRelayLogAdminInfoWritesChannelAttemptTimes` 通过。
 - 渠道请求路径与响应规则定向验证：`TestChannelSatisfiesFilters` 覆盖普通渠道白名单/黑名单，`TestModelOutputMappingResponseWriterRewritesAllResponseFormats` 覆盖 OpenAI/Anthropic/Gemini Native/Responses/SSE 的统一模型名称重写；受影响的 model/controller/relay/helper/OpenAI/Gemini Realtime/Qwen Realtime 包完整测试在允许 loopback listener 的环境全部通过。
 - Responses 请求/响应日志恢复验证：`go test ./relay -count=1` 通过；新增 `TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse` 确认普通 Responses 结算会将捕获的请求体和响应体实际写入消费日志。
+- HappyOyster Adventure 非回归验证：`go test ./controller -run 'TestHappyOyster' -count=1`、`go test ./router -run 'TestHappyOysterAdventureRoutesMatchOfficialAPI' -count=1`、`go test ./setting/billing_setting -run 'TestHappyOysterBuiltinBillingUsesProtocolUsage' -count=1` 以及 `cd web && bun test src/features/channels/lib/__tests__/channel-type-ids.test.ts` 通过；覆盖响应包装/opaque ID、临时 Key 端点边界、World 完整请求响应日志、11 个官方路由、原生计费表达式和渠道编号 `82`。
