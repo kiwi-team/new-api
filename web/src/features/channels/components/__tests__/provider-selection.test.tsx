@@ -417,7 +417,7 @@ test('creation searches legacy names and translated names through the replacemen
     fallbackLng: 'en',
     resources: {
       en: { translation: {} },
-      zh: { translation: { DoubaoVideo: '豆包视频' } },
+      zh: { translation: { Doubao: '豆包' } },
     },
   })
   const select = vi.fn()
@@ -439,13 +439,13 @@ test('creation searches legacy names and translated names through the replacemen
     </I18nextProvider>
   )
   const search = screen.getByRole('combobox')
-  await user.type(search, 'DoubaoVideo')
+  await user.type(search, 'Doubao')
   expect(
     screen.getByRole('option', { name: 'Ark Video Plugin doubao' })
   ).toBeVisible()
   await act(() => language.changeLanguage('zh'))
   await user.clear(search)
-  await user.type(search, '豆包视频')
+  await user.type(search, '豆包')
   await user.click(screen.getByRole('tab', { name: 'Plugins' }))
   expect(
     screen.getByRole('option', { name: 'Ark Video Plugin doubao' })

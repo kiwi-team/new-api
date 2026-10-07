@@ -41,6 +41,8 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
+import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
 // Form Validation Schema
@@ -207,6 +209,7 @@ export const channelFormSchema = z
     type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
     base_url: z.string().optional(),
     task_plugin_key: z.string().optional(),
+    task_extend_plugin_keys: z.array(z.string()).optional(),
     key: z.string(),
     openai_organization: z.string().optional(),
     models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
@@ -442,6 +445,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   type: 1,
   base_url: '',
   task_plugin_key: '',
+  task_extend_plugin_keys: [],
   key: '',
   openai_organization: '',
   models: '',
@@ -516,6 +520,7 @@ export function transformChannelToFormDefaults(
   // Parse channel extra settings from setting field
   let extraSettings = {
     task_plugin_key: '',
+    task_extend_plugin_keys: [] as string[],
     force_format: false,
     thinking_to_content: false,
     proxy: '',
@@ -543,6 +548,7 @@ export function transformChannelToFormDefaults(
       )
       extraSettings = {
         task_plugin_key: parsed.task_plugin_key || '',
+        task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
@@ -691,12 +697,19 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       formData.type === CHANNEL_TYPE_TASK_PLUGIN
         ? formData.task_plugin_key?.trim() || ''
         : undefined,
+    task_extend_plugin_keys:
+      formData.type === CHANNEL_TYPE_NEW_API &&
+      formData.task_extend_plugin_keys?.length
+        ? formData.task_extend_plugin_keys
+        : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: formData.proxy?.trim() || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
+    pass_through_body_enabled:
+      formData.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
+      formData.pass_through_body_enabled === true,
     responses_websocket_enabled:
-      (formData.type === 1 || formData.type === 57) &&
+      supportsResponsesWebSocket(formData.type) &&
       formData.responses_websocket_enabled === true,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,

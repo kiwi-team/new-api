@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -138,54 +137,14 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
 	return nil
 }
 
-// ingestStreamItem performs the same token-side accounting that the old
-// post-stream processTokens batch did, but does it incrementally as each
-// SSE line arrives. Done this way the handler does not need to retain every
-// stream item in memory until the stream ends — a major source of OOM
-// pressure under high concurrency.
-//
-// Behavior matches the legacy fallback path in processChatCompletions /
-// processCompletions: parse a single JSON object, append delta content /
-// reasoning / tool args to responseTextBuilder, track the maximum tool call
-// count. Parse errors are logged and skipped (the legacy one-shot path
-// likewise tolerated bad lines via its fallback; here we just keep going).
-//
-// Modes outside {ChatCompletions, Completions} require no token accounting
-// in the legacy code, so this is a no-op for them.
-func ingestStreamItem(relayMode int, item string, responseTextBuilder *strings.Builder, toolCount *int) {
-	if item == "" {
-		return
-	}
-	switch relayMode {
-	case relayconstant.RelayModeChatCompletions:
-		var sr dto.ChatCompletionsStreamResponse
-		if err := json.Unmarshal(common.StringToByteSlice(item), &sr); err != nil {
-			if common.DebugEnabled {
-				common.SysLog("ingestStreamItem unmarshal chat error: " + err.Error())
-			}
-			return
-		}
-		_ = ProcessStreamResponse(sr, responseTextBuilder, toolCount)
-	case relayconstant.RelayModeCompletions:
-		var sr dto.CompletionsStreamResponse
-		if err := json.Unmarshal(common.StringToByteSlice(item), &sr); err != nil {
-			if common.DebugEnabled {
-				common.SysLog("ingestStreamItem unmarshal completion error: " + err.Error())
-			}
-			return
-		}
-		for _, choice := range sr.Choices {
-			responseTextBuilder.WriteString(choice.Text)
-		}
-	}
-}
-func processTokenData(relayMode int, data string, responseTextBuilder *strings.Builder, toolCount *int) error {
-	switch relayMode {
+func processTokenData(info *relaycommon.RelayInfo, data string, responseTextBuilder *strings.Builder, toolCount *int) error {
+	switch info.RelayMode {
 	case relayconstant.RelayModeChatCompletions:
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			return err
 		}
+		info.ObserveResponseModel(streamResponse.Model)
 		return ProcessStreamResponse(streamResponse, responseTextBuilder, toolCount)
 	case relayconstant.RelayModeCompletions:
 		var streamResponse dto.CompletionsStreamResponse

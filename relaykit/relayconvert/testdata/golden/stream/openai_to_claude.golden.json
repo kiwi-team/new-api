@@ -66,7 +66,8 @@
               "cached_tokens": 0,
               "text_tokens": 0,
               "audio_tokens": 0,
-              "image_tokens": 0
+              "image_tokens": 0,
+              "video_tokens": 0
             },
             "completion_tokens_details": {
               "text_tokens": 0,

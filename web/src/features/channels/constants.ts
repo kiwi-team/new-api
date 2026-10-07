@@ -25,6 +25,7 @@ export const CHANNEL_TYPE_OLLAMA = 4
 export const CHANNEL_TYPE_SORA = 58
 export const CHANNEL_TYPE_CODEX = 68
 export const CHANNEL_TYPE_ADVANCED_CUSTOM = 74
+export const CHANNEL_TYPE_SUB2API = 75
 export const CHANNEL_TYPE_NEW_API = 76
 export const CHANNEL_TYPE_TASK_PLUGIN = 78
 export const CHANNEL_TYPE_VLLM = 79
@@ -140,7 +141,9 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   17: { descriptionKey: 'Connect to Alibaba Cloud Bailian model services' },
   18: { descriptionKey: 'Connect to iFlytek Spark model services' },
   19: { descriptionKey: 'Connect to 360 model services' },
-  20: { descriptionKey: 'Access models from multiple providers through OpenRouter' },
+  20: {
+    descriptionKey: 'Access models from multiple providers through OpenRouter',
+  },
   22: { descriptionKey: 'Connect to FastGPT applications' },
   23: { descriptionKey: 'Connect to Tencent Hunyuan model services' },
   24: { descriptionKey: 'Connect to models through the Google Gemini API' },
@@ -168,11 +171,16 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   50: { descriptionKey: 'Connect to Kling video generation services' },
   51: { descriptionKey: 'Sensenova' },
   52: { descriptionKey: 'Visual VolcEngine' },
-  53: { descriptionKey: 'Connect to Jimeng image and video generation services' },
+  53: {
+    descriptionKey: 'Connect to Jimeng image and video generation services',
+  },
   54: { descriptionKey: 'Serper' },
   55: { descriptionKey: 'Connect to Vidu video generation services' },
   56: { descriptionKey: 'Connect to Submodel model services' },
-  57: { descriptionKey: 'Generate Doubao Seedance videos through Volcengine Ark' },
+  57: {
+    descriptionKey:
+      'Connect to Doubao Seedance video and Seedream image generation through Volcengine Ark',
+  },
   58: { descriptionKey: 'Connect to OpenAI Sora video generation services' },
   59: { descriptionKey: 'ElevenLabs' },
   60: { descriptionKey: 'AliDashScope' },
@@ -197,13 +205,17 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
     badge: { labelKey: 'Flexible integration', tone: 'primary' },
   },
   75: { descriptionKey: 'Connect to model services through a Sub2API gateway' },
-  76: { descriptionKey: 'Connect to model services from another New API instance' },
+  76: {
+    descriptionKey:
+      'Connect to New API model services with support for multiple task plugins',
+  },
   77: { descriptionKey: 'MiniMax Video' },
   79: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   80: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
   81: { descriptionKey: 'Connect to TypeSafe System One decision models' },
   82: {
-    descriptionKey: 'Create and explore interactive worlds with HappyOyster Adventure',
+    descriptionKey:
+      'Create and explore interactive worlds with HappyOyster Adventure',
   },
 }
 
@@ -530,8 +542,28 @@ export const FIELD_DESCRIPTIONS = {
 // IDs follow constant/channel.go — 68/74/75/76 are Codex / Advanced Custom /
 // Sub2API / New API in this fork.
 export const MODEL_FETCHABLE_TYPES = new Set([
-  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 68, 74,
-  75, 76,
+  1,
+  4,
+  14,
+  17,
+  20,
+  23,
+  24,
+  25,
+  26,
+  27,
+  31,
+  34,
+  35,
+  40,
+  42,
+  43,
+  47,
+  48,
+  68,
+  74,
+  75,
+  76,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 ])

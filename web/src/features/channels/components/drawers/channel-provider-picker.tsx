@@ -44,6 +44,7 @@ import {
   CHANNEL_PROVIDER_PRESENTATION,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_TASK_PLUGIN,
   type ChannelProviderPresentation,
 } from '../../constants'
@@ -89,9 +90,10 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
       for (const option of CHANNEL_TYPE_OPTIONS) {
         const pluginKey = LEGACY_TASK_PLUGIN_KEYS[option.value]
         if (!pluginKey) continue
+        const compatibilityLabel = option.value === 57 ? 'Doubao' : option.label
         pluginAliases.set(
           pluginKey,
-          `${option.value} ${option.label} ${t(option.label)}`
+          `${option.value} ${option.label} ${t(option.label)} ${compatibilityLabel} ${t(compatibilityLabel)}`
         )
         const isCurrent =
           props.currentProvider?.kind === 'builtin' &&
@@ -139,7 +141,8 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
         const isCustom =
           option.value === 8 || option.value === CHANNEL_TYPE_ADVANCED_CUSTOM
         const isGateway =
-          option.value === CHANNEL_TYPE_NEW_API || option.value === 75
+          option.value === CHANNEL_TYPE_NEW_API ||
+          option.value === CHANNEL_TYPE_SUB2API
         if (filter === 'gateway' && !isGateway) continue
         if (filter === 'custom' && !isCustom) continue
         if (filter === 'builtin' && isCustom) continue

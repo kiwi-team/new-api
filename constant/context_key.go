@@ -104,6 +104,7 @@ const (
 	// requested for a nano-banana-2 call (adds a one-time fee).
 	ContextKeyFalNanoBananaWebSearch ContextKey = "fal_nano_banana_web_search"
 	ContextKeyIsStream               ContextKey = "is_stream"
+	ContextKeyResponseStreamStatus   ContextKey = "response_stream_status"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit

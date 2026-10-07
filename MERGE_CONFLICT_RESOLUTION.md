@@ -211,3 +211,41 @@
 - 渠道请求路径与响应规则定向验证：`TestChannelSatisfiesFilters` 覆盖普通渠道白名单/黑名单，`TestModelOutputMappingResponseWriterRewritesAllResponseFormats` 覆盖 OpenAI/Anthropic/Gemini Native/Responses/SSE 的统一模型名称重写；受影响的 model/controller/relay/helper/OpenAI/Gemini Realtime/Qwen Realtime 包完整测试在允许 loopback listener 的环境全部通过。
 - Responses 请求/响应日志恢复验证：`go test ./relay -count=1` 通过；新增 `TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse` 确认普通 Responses 结算会将捕获的请求体和响应体实际写入消费日志。
 - HappyOyster Adventure 非回归验证：`go test ./controller -run 'TestHappyOyster' -count=1`、`go test ./router -run 'TestHappyOysterAdventureRoutesMatchOfficialAPI' -count=1`、`go test ./setting/billing_setting -run 'TestHappyOysterBuiltinBillingUsesProtocolUsage' -count=1` 以及 `cd web && bun test src/features/channels/lib/__tests__/channel-type-ids.test.ts` 通过；覆盖响应包装/opaque ID、临时 Key 端点边界、World 完整请求响应日志、11 个官方路由、原生计费表达式和渠道编号 `82`。
+
+## 2026-09-29 merge main 冲突修复
+
+### 合并范围与判断基线
+
+- 当前分支基线为 `16a13b853`，本次合入的 `main` 为 `789c97019`；开始处理时索引中有 40 个未解决文件。
+- 先复核本文件的 “Future main merge non-regression contract”，再逐个比较 stage 2（当前分支）和 stage 3（main），没有对受保护文件整文件采用 `theirs`。
+- 涉及计费、Task Plugin、认证和前端 UI 的冲突，分别先核对 `.agents/rules/billing.md`、`docs/plugin-api/v1.md`、OWASP Authentication/Session/OAuth 指南、`web/AGENTS.md` 及项目 UI/i18n 约定。
+
+### 主要冲突决策与理由
+
+| 范围 | 处理结果 | 理由 |
+|---|---|---|
+| 渠道选择与重试 | 在 `middleware/distributor.go`、`service/channel_select.go`、`controller/relay.go` 上保留 main 的统一请求策略、约束和性能结果，同时接回固定渠道、Key 规则、特殊渠道、全局模型路由、顺序/随机/race 计划以及逐次错误日志。显式候选继续校验状态、完整模型名、路径、标签和插件约束。 | 统一策略是 main 的新执行骨架；显式路由、竞速、日志和固定编号属于既有生产契约，任一侧单独覆盖都会造成可编译但静默回退。 |
+| 固定渠道编号 | 前后端继续保持既有 `0–77`，New API 为 `76`；Task Plugin、vLLM、SGLang、TypeSafe、HappyOyster Adventure 继续为 `78–82`。同步修正插件绑定测试和 provider 映射。 | 已有数据库记录、前端表单和任务插件都持久化数值编号，按 main 插入顺序重排会把旧渠道解释为其他 provider。 |
+| 阿里云旧图片/音频能力 | 保留 main 的适配器改造，同时恢复 `relay/channel/ali/image.go`、`image_wan.go`、图片 DTO、Qwen 设置和图片倍率。 | main 已迁移部分能力到 Task Plugin，但当前分支仍有直接调用与已有渠道配置；上游删除文件不能作为移除生产能力的依据。 |
+| OpenAI/Gemini 流式响应 | 合并 main 的 Responses outcome/usage/response-model 处理与当前分支 Ring/Ling、图片解析、finish reason、上游请求 ID 逻辑；增量 JSON 继续使用项目 wrapper/流式解析，不引入业务代码直接 marshal/unmarshal。 | 两侧分别承载计费健康语义和 provider 兼容语义，必须并存。 |
+| Responses WebSocket | 保留统一请求 runner、渠道策略、流式结算、显式重试、路由 Body 和上游请求 ID；补齐中间件阶段拒绝的健康采样，AccessDenied/429 不污染模型健康；初始上游拒绝继续保留协议错误类型并退款。 | main 新测试要求 HTTP/SSE/WS 具有相同健康与计费分类；当前分支的全局错误 envelope 会改写 type，因此仅在 WS 协议转发帧恢复上游 type，不改变普通 HTTP 全局行为。 |
+| 模型请求限流 | 保留当前分支按 `(uid, token_id)` 隔离，采用 main 的 reservation 机制与 `StreamStatus.ResponseFailed()` 成功判定，并修复 Redis 总限流拒绝后继续执行的问题。 | 避免不同 Token 相互占用额度，同时保证 failed/incomplete 流不会错误消耗“成功请求”额度。 |
+| Task Plugin | Doubao 合并 main 的图片任务和 `1.1.0` 元数据，保留固定渠道类型 `57`；Sora 合并 `1.1.0` 协议并保留类型 `58`。数值 usage description 继续表达“计费主体 + 单价”，单位放在 `unit`。 | 兼顾 main 的协议扩展和现有渠道绑定，避免元数据版本或类型编号漂移。 |
+| 计费与日志 | `relay/image_handler.go` 保留响应记录、SDK 响应和结算后的图片数量；任务轮询合并 main 的性能收敛与当前分支的结算、脱敏、物化流程；日志合并 response model、billing source、任务同步状态与重试链/竞速结果。 | 预扣、结算、退款及 billable quantity 必须来源一致，日志还需保持现有审计字段和敏感信息边界。 |
+| OAuth | 采用 main 的安全流程并保留 legacy binding 迁移：继续执行 state/会话校验、账号绑定权限和安全审计，不恢复可绕过服务端校验的旧分支。 | 与 OWASP 的服务端校验、会话绑定、重放防护和敏感信息不落日志要求一致。 |
+| 前端 UI 与 i18n | 以 main 的 React/shadcn 组合结构为基础，复用现有 MultiSelect、Combobox、表格与按钮组件，补回 API 地址复制、root Key 操作、日志链路/响应模型、用户组织列及固定 provider 映射。七个 locale 以 main 新 key 为全集、当前分支同 key 翻译优先，再执行同步工具。 | 避免复制已有交互组件；同时防止只恢复英文或因整文件选边而丢失任一侧翻译。 |
+| relaykit | 保持模块独立，reasoning 冲突按 main 的“诊断并采用更具体控制”语义处理；保留当前分支 `video_tokens` DTO，并更新转换 golden。 | relaykit 不能依赖宿主；推理字段冲突的新语义已有专门 diagnostics 回归，而视频 token 是现有 usage 契约。 |
+| 数据库测试夹具 | 请求策略 SQLite 夹具显式迁移 `ModelRouteConfig`；未修改生产 schema 或迁移逻辑。 | 合并后的 distributor 会查询该表，测试夹具必须声明自身依赖，不能靠生产查询吞掉“表不存在”。 |
+
+### 验证结果
+
+- 冲突标记扫描通过；所有 40 个冲突文件均已形成单一工作区结果。
+- `go test ./controller -count=1`：通过（在允许 loopback listener 的环境执行）。
+- `go test ./middleware ./relay ./service ./plugins ./pkg/jsplugin -count=1`：通过。
+- `cd relaykit && GOWORK=off GOCACHE=/tmp/new-api-relaykit-cache go build ./...`：通过。
+- `cd relaykit && GOWORK=off GOCACHE=/tmp/new-api-relaykit-cache go test ./... -count=1`：通过。
+- `cd web && bun run typecheck`：通过。
+- `cd web && bun run test -- channel-configuration provider-selection api-addresses detail-preview model-badge option-hint option-icon`：7 个文件、335 个用例通过。
+- `cd web && bun run build`：通过；`bun run i18n:sync` 与 `bun run format:plugins:check`：通过。
+- `cd web && bun run lint`：未通过；完整 lint 在大量本次冲突范围外的既有文件中报告规则存量问题（例如 `src/lib/utils.ts`、旧 `src/helpers/*`、旧 `src/components/table/*`）。TypeScript、定向测试和生产构建均已单独通过，本轮未扩大范围批量改写旧代码。
+- `TestRequestPolicyRoutingDatabaseMatrix` 的 SQLite 3.50.4 用例通过；MySQL/PostgreSQL 因未配置 `TEST_MYSQL_DSN` / `TEST_POSTGRES_DSN` 被测试显式跳过。本轮未修改生产数据库 schema，且不声明三数据库实机矩阵已完成。

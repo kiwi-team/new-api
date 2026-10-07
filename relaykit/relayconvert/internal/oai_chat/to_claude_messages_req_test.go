@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -119,9 +118,9 @@ func TestOpenAIChatRequestToClaudeMessagesPreservesDisabledThinking(t *testing.T
 	assert.Empty(t, got.OutputConfig)
 }
 
-func TestOpenAIChatRequestToClaudeMessagesRejectsConflictingThinkingFields(t *testing.T) {
+func TestOpenAIChatRequestToClaudeMessagesResolvesConflictingThinkingFields(t *testing.T) {
 	maxTokens := uint(20000)
-	_, err := OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
+	got, err := OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
 		Model:           "claude-sonnet-5",
 		MaxTokens:       &maxTokens,
 		ReasoningEffort: "high",
@@ -131,6 +130,8 @@ func TestOpenAIChatRequestToClaudeMessagesRejectsConflictingThinkingFields(t *te
 		},
 	})
 
-	require.Error(t, err)
-	assert.ErrorIs(t, err, reasoning.ErrEffortConflict)
+	require.NoError(t, err)
+	require.NotNil(t, got.Thinking)
+	assert.Equal(t, "disabled", got.Thinking.Type)
+	assert.Empty(t, got.OutputConfig)
 }
