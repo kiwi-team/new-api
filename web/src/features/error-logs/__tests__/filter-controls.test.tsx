@@ -164,4 +164,31 @@ describe('error log filter controls', () => {
       })
     ).toBeNull()
   })
+
+  test('time filtering uses the common log compact range picker', () => {
+    renderPage()
+
+    const rangeTrigger = screen.getByRole('button', {
+      name: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ~ \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+    })
+    fireEvent.click(rangeTrigger)
+
+    expect(screen.getByLabelText('Start Time')).toHaveAttribute(
+      'type',
+      'datetime-local'
+    )
+    expect(screen.getByLabelText('End Time')).toHaveAttribute(
+      'type',
+      'datetime-local'
+    )
+    expect(screen.getByRole('button', { name: 'Today' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '7 Days' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'This week' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '30 Days' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Current month' })
+    ).toBeInTheDocument()
+  })
 })

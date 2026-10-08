@@ -137,3 +137,29 @@ test('admin neither sees the channel filter nor requests its options', async () 
   expect(screen.queryByRole('combobox', { name: 'Channel' })).toBeNull()
   expect(api.get).not.toHaveBeenCalledWith('/api/data/channel-list')
 })
+
+test('time filtering uses the common log compact range picker', async () => {
+  const user = userEvent.setup()
+  renderPage(ROLE.ADMIN)
+
+  const rangeTrigger = await screen.findByRole('button', {
+    name: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ~ \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+  })
+  await user.click(rangeTrigger)
+
+  expect(screen.getByLabelText('Start Time')).toHaveAttribute(
+    'type',
+    'datetime-local'
+  )
+  expect(screen.getByLabelText('End Time')).toHaveAttribute(
+    'type',
+    'datetime-local'
+  )
+  expect(screen.getByRole('button', { name: 'Today' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '7 Days' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'This week' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '30 Days' })).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Current month' })
+  ).toBeInTheDocument()
+})

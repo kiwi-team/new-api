@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StaticDataTable } from '@/components/data-table'
-import { DateTimePicker } from '@/components/datetime-picker'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -40,6 +39,7 @@ import {
   getLogClientUidOptions,
   getLogTokenIdOptions,
 } from '@/features/usage-logs/api'
+import { CompactDateTimeRangePicker } from '@/features/usage-logs/components/compact-date-time-range-picker'
 import { LogFilterCombobox } from '@/features/usage-logs/components/log-filter-combobox'
 import { useDebounce } from '@/hooks/use-debounce'
 import { formatTimestampToDate } from '@/lib/format'
@@ -197,13 +197,15 @@ export function ErrorLogsPage() {
         <SectionPageLayout.Content>
           <div className='flex h-full min-h-0 flex-col gap-4'>
             <div className='flex flex-wrap items-end gap-3'>
-              <div className='grid gap-1.5'>
-                <Label>{t('Start Time')}</Label>
-                <DateTimePicker value={startTime} onChange={setStartTime} />
-              </div>
-              <div className='grid gap-1.5'>
-                <Label>{t('End Time')}</Label>
-                <DateTimePicker value={endTime} onChange={setEndTime} />
+              <div className='w-full sm:w-auto sm:min-w-[24rem]'>
+                <CompactDateTimeRangePicker
+                  start={startTime}
+                  end={endTime}
+                  onChange={({ start, end }) => {
+                    setStartTime(start)
+                    setEndTime(end)
+                  }}
+                />
               </div>
               <div className='grid gap-1.5'>
                 <Label htmlFor='el-model'>{t('Model name')}</Label>

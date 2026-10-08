@@ -2,14 +2,15 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -238,6 +239,9 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
 	}
+	if os.Getenv("SAVE_REQUEST_RESPONSE") == "true" {
+		c.Set(string(constant.ContextKeySdkResponseStr), string(awsResp.Body))
+	}
 
 	claudeInfo := &claude.ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
@@ -280,6 +284,8 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	}
 
 	events := stream.Events()
+	saveRequestResponse := os.Getenv("SAVE_REQUEST_RESPONSE") == "true"
+	var responseBuilder strings.Builder
 streamLoop:
 	for {
 		select {
@@ -295,6 +301,12 @@ streamLoop:
 
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
+				if saveRequestResponse {
+					if responseBuilder.Len() > 0 {
+						responseBuilder.WriteByte('\n')
+					}
+					responseBuilder.Write(v.Value.Bytes)
+				}
 				info.SetFirstResponseTime()
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
@@ -311,6 +323,9 @@ streamLoop:
 	}
 
 	_ = stream.Close()
+	if responseBuilder.Len() > 0 {
+		c.Set(string(constant.ContextKeySdkResponseStr), responseBuilder.String())
+	}
 	claude.HandleStreamFinalResponse(c, info, claudeInfo)
 	return nil, claudeInfo.Usage
 }
@@ -325,6 +340,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
+	}
+	if os.Getenv("SAVE_REQUEST_RESPONSE") == "true" {
+		c.Set(string(constant.ContextKeySdkResponseStr), string(awsResp.Body))
 	}
 
 	// 解析Nova响应
@@ -343,7 +361,7 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(awsResp.Body, &novaResp); err != nil {
+	if err := common.Unmarshal(awsResp.Body, &novaResp); err != nil {
 		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
 	}
 

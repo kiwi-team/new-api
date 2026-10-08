@@ -152,6 +152,7 @@
 | `relay/channel/openai/relay_realtime.go` | OpenAI Realtime 下行消息接入统一模型名称重写，上行消息保持不变。 |
 | `relay/channel/gemini_realtime/handler.go` | Gemini Live 下行消息接入统一模型名称重写，支持原生 `modelVersion` 字段。 |
 | `relay/channel/qwen_realtime/handler.go` | Qwen Realtime 下行消息接入统一模型名称重写。 |
+| `controller/user.go` | 移除合并后残留的事务外 `Insert`，创建用户只执行一次包含权限写入的事务插入；保留 prod 的 Leader 角色 `5`，并将上游“非标准角色”回归用例改为真正未定义的角色值。 |
 
 ## Future main merge non-regression contract
 
@@ -176,6 +177,7 @@
 | 日志渠道链路与竞速胜者 | 渠道列不再直接展示各段耗时，hover 信息和 race winner/loser 标记消失；成功的最后一段耗时曾漏记。 | root 渠道列直接展示每个渠道的耗时，hover 展示渠道名称、ID、耗时；竞速日志明确标记胜出/未胜出；`use_channel` 与 `admin_info.use_channel_time` 一一对应并包含最终成功尝试。 | `service/log_info_generate.go`、`controller/relay.go`、日志列组件；`service/text_quota_test.go`、`retry-chain-display.test.tsx`。 |
 | `/v1/videos` 任务 ID 兼容字段 | OpenAI Video 新响应只保留 `id`，删除了旧客户端依赖的 `task_id`，导致既有调用方无法读取任务 ID。 | `POST /v1/videos` 与 `GET /v1/videos/:task_id` 的所有内置 provider 和 Task Plugin 响应必须同时返回 `id`、`task_id`，且两者始终等于同一个公开任务 ID；不得返回上游私有任务 ID，也不得以兼容新版接口为由删除 `task_id`。 | `model/task.go`、`relay/channel/task/*/adaptor.go`、`relay/channel/task/jsplugin/adaptor.go`；`TestTaskToOpenAIVideoDoesNotExposeResultURL`、`TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt`、`TestTaskAdaptorPreservesSoraVideoResponseFields`。 |
 | `/v1/responses` 请求/响应日志 | handler 已捕获请求和完整响应，但 HTTP/WebSocket 共用结算函数把两个参数替换为空串，普通 Responses 日志因此没有原始报文。 | `SAVE_REQUEST_RESPONSE=true` 时，普通及音频 HTTP `/v1/responses` 必须把已捕获请求、响应传入消费日志；`/v1/responses/compact` 保持独立计价日志路径。WebSocket 没有 HTTP body 记录器时不得伪造报文。 | `relay/responses_handler.go`、`relay/responses_websocket.go`；`TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse`。 |
+| 管理员创建用户的原子性与 Leader 角色 | 旧的 `Insert` 与 main 新的 `InsertWithTx` 同时保留，一次请求重复插入用户并因主键冲突失败；main 的新测试还把 prod 的 Leader 角色 `5` 当成非法值。 | 创建用户只在同一个事务中写入用户和管理员权限，成功后再执行缓存/邀请奖励收尾；Leader 角色 `5` 继续是合法角色，未定义角色必须在写库前拒绝。 | `controller/user.go`、`common/constants.go`；`TestAdminUserRoutineEditsDoNotRequireProof`、`TestCreateUserRejectsNonStandardRole`。 |
 
 ### Required merge review procedure
 

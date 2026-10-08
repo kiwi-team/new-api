@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StaticDataTable } from '@/components/data-table'
-import { DateTimePicker } from '@/components/datetime-picker'
 import { SectionPageLayout } from '@/components/layout'
 import { MultiSelect } from '@/components/multi-select'
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +39,7 @@ import {
 } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
 import { searchUserOptions } from '@/features/settlement-config/api'
+import { CompactDateTimeRangePicker } from '@/features/usage-logs/components/compact-date-time-range-picker'
 import { useDebounce } from '@/hooks/use-debounce'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -227,13 +227,15 @@ export function QuotaStatisticsPage() {
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col gap-4'>
           <div className='flex flex-wrap items-end gap-3'>
-            <div className='grid gap-1.5'>
-              <Label>{t('Start Time')}</Label>
-              <DateTimePicker value={startTime} onChange={setStartTime} />
-            </div>
-            <div className='grid gap-1.5'>
-              <Label>{t('End Time')}</Label>
-              <DateTimePicker value={endTime} onChange={setEndTime} />
+            <div className='w-full sm:w-auto sm:min-w-[24rem]'>
+              <CompactDateTimeRangePicker
+                start={startTime}
+                end={endTime}
+                onChange={({ start, end }) => {
+                  setStartTime(start)
+                  setEndTime(end)
+                }}
+              />
             </div>
             <Badge variant='outline' className='mb-2'>
               {t('Total consumption')}: ${totalUSD.toFixed(2)}

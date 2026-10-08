@@ -294,6 +294,7 @@ export function useSidebarData(): SidebarData {
             activeUrls: ['/system-settings'],
             icon: Settings,
             pageKeys: ['setting'],
+            requiredRole: ROLE.SUPER_ADMIN,
           },
         ],
       },

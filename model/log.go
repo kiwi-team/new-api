@@ -1006,6 +1006,7 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		common.SysError("failed to query rpm/tpm stat: " + err.Error())
 		return stat, errors.New("查询统计数据失败")
 	}
+	stat.Quota = quotaResult.Quota
 	stat.Rpm = rateStat.Rpm
 	stat.Tpm = rateStat.Tpm
 

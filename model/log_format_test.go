@@ -242,3 +242,40 @@ func TestLogFormattingPreservesLargeIntegerLexemes(t *testing.T) {
 		assert.Equal(t, unprivileged, adminLogs[0].Other)
 	})
 }
+
+func TestSumUsedQuotaPreservesQuotaAcrossRateScan(t *testing.T) {
+	const (
+		username  = "log-stat-quota-regression"
+		createdAt = int64(1_700_000_000)
+	)
+	t.Cleanup(func() {
+		require.NoError(t, LOG_DB.Where("username = ?", username).Delete(&Log{}).Error)
+	})
+
+	require.NoError(t, createLog(&Log{
+		Username:  username,
+		CreatedAt: createdAt,
+		Type:      LogTypeConsume,
+		Quota:     1_000,
+	}))
+	require.NoError(t, createLog(&Log{
+		Username:  username,
+		CreatedAt: createdAt,
+		Type:      LogTypeRefund,
+		Quota:     150,
+	}))
+
+	stat, err := SumUsedQuota(
+		LogTypeConsume,
+		createdAt-1,
+		createdAt+1,
+		"",
+		username,
+		"",
+		0,
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 850, stat.Quota)
+}

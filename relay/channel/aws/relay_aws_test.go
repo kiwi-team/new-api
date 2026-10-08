@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -319,7 +320,36 @@ func TestAwsHandlersCancelSdkRequestAndSkipRetry(t *testing.T) {
 	}
 }
 
+func TestAwsHandlerStoresSdkResponseForConsumeLog(t *testing.T) {
+	t.Setenv("SAVE_REQUEST_RESPONSE", "true")
+
+	responseBody := []byte(`{"id":"msg_test","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
+	client := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(responseBody)),
+			Request:    request,
+		}, nil
+	}))
+	adaptor := &Adaptor{AwsClient: client, AwsReq: newAwsInvokeModelInput()}
+	c := newAwsTestContext(httptest.NewRecorder(), context.Background())
+	info := newAwsTestRelayInfo()
+	info.IsStream = false
+
+	handlerErr, usage := awsHandler(c, info, adaptor)
+
+	require.Nil(t, handlerErr)
+	require.NotNil(t, usage)
+	stored, exists := c.Get(string(constant.ContextKeySdkResponseStr))
+	require.True(t, exists)
+	assert.JSONEq(t, string(responseBody), stored.(string))
+}
+
 func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
+	t.Setenv("SAVE_REQUEST_RESPONSE", "true")
+
 	originalRelayTimeout := common.RelayTimeout
 	common.RelayTimeout = 0
 	t.Cleanup(func() {
@@ -355,6 +385,11 @@ func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
 	assert.Equal(t, 100, usage.BillingUsage.ClaudeUsage.InputTokens)
 	assert.Equal(t, 423, usage.BillingUsage.ClaudeUsage.OutputTokens)
 	assert.Contains(t, recorder.Body.String(), "[DONE]")
+	stored, exists := c.Get(string(constant.ContextKeySdkResponseStr))
+	require.True(t, exists)
+	for _, event := range events {
+		assert.Contains(t, stored, event)
+	}
 }
 
 func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {

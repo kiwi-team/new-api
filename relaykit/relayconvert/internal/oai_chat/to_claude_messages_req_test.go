@@ -81,23 +81,35 @@ func TestOpenAIChatRequestToClaudeMessagesNormalizesToolInputSchema(t *testing.T
 }
 
 func TestOpenAIChatRequestToClaudeMessagesPreservesAdaptiveThinking(t *testing.T) {
-	maxTokens := uint(128000)
-	got, err := OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
-		Model:           "claude-opus-5",
-		MaxTokens:       &maxTokens,
-		ReasoningEffort: "high",
-		THINKING:        []byte(`{"type":"adaptive","display":"summarized"}`),
-		Messages: []dto.Message{
-			{Role: "user", Content: "question"},
-		},
-	})
+	tests := []struct {
+		model  string
+		effort string
+	}{
+		{model: "claude-opus-5", effort: "high"},
+		{model: "claude-haiku-5-5", effort: "medium"},
+	}
 
-	require.NoError(t, err)
-	require.NotNil(t, got.Thinking)
-	assert.Equal(t, "adaptive", got.Thinking.Type)
-	assert.Equal(t, "summarized", got.Thinking.Display)
-	assert.Nil(t, got.Thinking.BudgetTokens)
-	assert.JSONEq(t, `{"effort":"high"}`, string(got.OutputConfig))
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			maxTokens := uint(128000)
+			got, err := OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
+				Model:           tt.model,
+				MaxTokens:       &maxTokens,
+				ReasoningEffort: tt.effort,
+				THINKING:        []byte(`{"type":"adaptive","display":"summarized"}`),
+				Messages: []dto.Message{
+					{Role: "user", Content: "question"},
+				},
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, got.Thinking)
+			assert.Equal(t, "adaptive", got.Thinking.Type)
+			assert.Equal(t, "summarized", got.Thinking.Display)
+			assert.Nil(t, got.Thinking.BudgetTokens)
+			assert.JSONEq(t, `{"effort":"`+tt.effort+`"}`, string(got.OutputConfig))
+		})
+	}
 }
 
 func TestOpenAIChatRequestToClaudeMessagesPreservesDisabledThinking(t *testing.T) {
