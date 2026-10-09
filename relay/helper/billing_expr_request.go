@@ -46,6 +46,17 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 		return input, err
 	}
 	body := map[string]any{"model": request.Model, "n": count, "size": request.Size, "quality": request.Quality}
+	if len(request.Metadata) > 0 {
+		var metadata struct {
+			Resolution string `json:"resolution"`
+		}
+		if err := common.Unmarshal(request.Metadata, &metadata); err != nil {
+			return input, err
+		}
+		if metadata.Resolution != "" {
+			body["metadata"] = map[string]any{"resolution": metadata.Resolution}
+		}
+	}
 	if request.BillingParameters != nil {
 		body["parameters"] = request.BillingParameters
 	}

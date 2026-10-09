@@ -5,14 +5,20 @@ import "time"
 const (
 	ChannelName         = "fal_sync"
 	DefaultModel        = "flux-2-pro"
+	Flux3Model          = "flux-3-image"
 	DefaultPollInterval = 1 * time.Second
 	DefaultTimeout      = 300 * time.Second
 	MaxRetries          = 3
+
+	flux3TextToImageEndpoint = "blackforestlabs/flux-3/text-to-image"
+	flux3EditImageEndpoint   = "blackforestlabs/flux-3/edit-image"
+	flux3MaxReferenceImages  = 10
 )
 
 // ModelList contains the list of supported FAL models
 var ModelList = []string{
 	"flux-2-pro",
+	Flux3Model,
 	"hunyuan-image-v3",
 	"qwen-image-max",
 	"gemini-3.1-flash-image-preview",

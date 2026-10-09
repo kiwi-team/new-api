@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
@@ -106,7 +107,7 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	t.Cleanup(func() { notifyLimitStore.Delete(notifyKey) })
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	apiErr := types.NewErrorWithStatusCode(errors.New("upstream https://private.example.com/path?token=review-token api_key:review-secret"), types.ErrorCodeChannelNoAvailableKey, http.StatusUnauthorized)
-	ProcessChannelError(c, types.ChannelError{ChannelId: channel.Id, ChannelName: channel.Name, AutoBan: true}, apiErr, nil, "")
+	ProcessChannelError(c, types.ChannelError{ChannelId: channel.Id, ChannelName: channel.Name, AutoBan: true}, apiErr, nil, "", 0, false)
 	var notification WebhookPayload
 	select {
 	case payload := <-notifications:
@@ -123,6 +124,114 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	assert.NotContains(t, notification.Content, "review-token")
 	assert.NotContains(t, notification.Content, "review-secret")
 	assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
+}
+
+func TestProcessChannelErrorSendsFeishuAlerts(t *testing.T) {
+	previousAutoDisable, previousErrorLog := common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
+	previousClient := httpClient
+	previousKeywords := append([]string(nil), operation_setting.AutomaticDisableKeywords...)
+	previousOptionMap := common.OptionMap
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	optionKeys := []string{
+		"feishu_qianfei_webhook_url",
+		"feishu_qianfei_secret",
+		"slow_error_feishu_webhook_url",
+		"slow_error_feishu_secret",
+		"slow_error_threshold_seconds",
+		"ErrorWarningEnvName",
+	}
+	previousOptions := make(map[string]string, len(optionKeys))
+	missingOptions := make(map[string]bool, len(optionKeys))
+	for _, key := range optionKeys {
+		value, exists := common.OptionMap[key]
+		previousOptions[key] = value
+		missingOptions[key] = !exists
+	}
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = previousAutoDisable, previousErrorLog
+		httpClient = previousClient
+		operation_setting.AutomaticDisableKeywords = previousKeywords
+		for _, key := range optionKeys {
+			if missingOptions[key] {
+				delete(common.OptionMap, key)
+				continue
+			}
+			common.OptionMap[key] = previousOptions[key]
+		}
+		common.OptionMap = previousOptionMap
+		potentialArrearsAlertLimiter = channelAlertLimiter{lastSent: make(map[int]time.Time)}
+		slowErrorAlertLimiter = channelAlertLimiter{lastSent: make(map[int]time.Time)}
+	})
+
+	notifications := make(chan []byte, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		notifications <- body
+	}))
+	t.Cleanup(server.Close)
+	httpClient = server.Client()
+	constant.ErrorLogEnabled = false
+
+	t.Run("potential arrears is sent once with sensitive data masked", func(t *testing.T) {
+		potentialArrearsAlertLimiter = channelAlertLimiter{lastSent: make(map[int]time.Time)}
+		common.AutomaticDisableChannelEnabled = true
+		operation_setting.AutomaticDisableKeywords = []string{"quota exhausted"}
+		common.OptionMap["feishu_qianfei_webhook_url"] = server.URL
+		apiErr := types.NewOpenAIError(errors.New("quota exhausted api_key:arrears-secret"), types.ErrorCodeBadResponseStatusCode, http.StatusPaymentRequired)
+		channelError := types.ChannelError{ChannelId: 52, ChannelName: "qwen-tuyang-guan"}
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+		ProcessChannelError(c, channelError, apiErr, nil, "", 0, false)
+		ProcessChannelError(c, channelError, apiErr, nil, "", 0, false)
+
+		var notification kitdto.FeishuNotify
+		select {
+		case payload := <-notifications:
+			require.NoError(t, common.Unmarshal(payload, &notification))
+		case <-time.After(5 * time.Second):
+			t.Fatal("potential channel arrears notification was not delivered")
+		}
+		assert.Contains(t, notification.Content.Text, "【渠道】qwen-tuyang-guan（52） 可能欠费了")
+		assert.Contains(t, notification.Content.Text, "status_code=402")
+		assert.NotContains(t, notification.Content.Text, "arrears-secret")
+		assert.Empty(t, notifications, "the per-channel cooldown must suppress duplicate alerts")
+	})
+
+	t.Run("slow final error includes duration threshold and request id", func(t *testing.T) {
+		slowErrorAlertLimiter = channelAlertLimiter{lastSent: make(map[int]time.Time)}
+		common.AutomaticDisableChannelEnabled = false
+		common.OptionMap["slow_error_feishu_webhook_url"] = server.URL
+		common.OptionMap["slow_error_threshold_seconds"] = "2"
+		common.OptionMap["ErrorWarningEnvName"] = "生产环境"
+		apiErr := types.NewOpenAIError(errors.New("upstream failed api_key:slow-secret"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+		channelError := types.ChannelError{ChannelId: 35, ChannelName: "nu-open-guan"}
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set(common.RequestIdKey, "request-slow-35")
+
+		ProcessChannelError(c, channelError, apiErr, nil, "", 3000, false)
+		ProcessChannelError(c, channelError, apiErr, nil, "", 1999, true)
+		assert.Empty(t, notifications, "non-final and below-threshold errors must not send slow alerts")
+		ProcessChannelError(c, channelError, apiErr, nil, "", 3000, true)
+
+		var notification kitdto.FeishuNotify
+		select {
+		case payload := <-notifications:
+			require.NoError(t, common.Unmarshal(payload, &notification))
+		case <-time.After(5 * time.Second):
+			t.Fatal("slow channel error notification was not delivered")
+		}
+		assert.Contains(t, notification.Content.Text, "生产环境\n【慢错误预警】渠道 nu-open-guan（35）耗时 3 秒后才报错，超过阈值 2 秒")
+		assert.Contains(t, notification.Content.Text, "StatusCode：502")
+		assert.Contains(t, notification.Content.Text, "RequestId：request-slow-35")
+		assert.NotContains(t, notification.Content.Text, "slow-secret")
+	})
 }
 
 func TestDecideRelayRetryReasons(t *testing.T) {

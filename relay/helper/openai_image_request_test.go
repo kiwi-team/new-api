@@ -67,6 +67,7 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
 		require.NoError(t, writer.WriteField("prompt", "edit this image"))
 		require.NoError(t, writer.WriteField("stream", streamValue))
+		require.NoError(t, writer.WriteField("metadata", `{"resolution":"2k"}`))
 		if withImage {
 			part, err := writer.CreateFormFile("image", "input.png")
 			require.NoError(t, err)
@@ -90,6 +91,7 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.NotNil(t, req.Stream)
 		require.True(t, *req.Stream)
 		require.True(t, req.IsStream(c.Request))
+		assert.JSONEq(t, `{"resolution":"2k"}`, string(req.Metadata))
 
 		bodyAfterValidation, err := io.ReadAll(c.Request.Body)
 		require.NoError(t, err)
@@ -102,6 +104,7 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		billing, err := ResolveImageBillingRequestInput(c, &relaycommon.RelayInfo{Request: req}, billingexpr.RequestInput{})
 		require.NoError(t, err)
 		require.Equal(t, 1, *billing.ImageCount)
+		assert.Contains(t, string(billing.Body), `"metadata":{"resolution":"2k"}`)
 		require.NotContains(t, string(billing.Body), "fake image")
 		require.NotContains(t, string(billing.Body), "edit this image")
 	})

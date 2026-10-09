@@ -262,7 +262,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
 			relayInfo.LastError = nil
 			for _, pending := range pendingErrors {
-				processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, false)
+				processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, false, false)
 			}
 			return
 		}
@@ -283,7 +283,8 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 	for i, pending := range pendingErrors {
-		processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, i == len(pendingErrors)-1)
+		finalFailure := i == len(pendingErrors)-1
+		processChannelError(c, pending.channelError, pending.apiError, relayInfo, pending.useTimeMs, pending.upstreamRequestId, finalFailure, finalFailure)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -396,9 +397,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, useTimeMs int64, upstreamRequestId string, includeBody bool) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, useTimeMs int64, upstreamRequestId string, includeBody bool, notifySlowError bool) {
 	recordRelayErrorLog(c, channelError, err, useTimeMs, includeBody)
-	service.ProcessChannelError(c, channelError, err, relayInfo, upstreamRequestId)
+	service.ProcessChannelError(c, channelError, err, relayInfo, upstreamRequestId, useTimeMs, notifySlowError)
 }
 
 func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool) {
@@ -721,7 +722,7 @@ func executeTaskSubmissionWith(
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				taskAPIError,
-				relayInfo, 0, c.GetString(common.UpstreamRequestIdKey), false)
+				relayInfo, 0, c.GetString(common.UpstreamRequestIdKey), false, false)
 		}
 
 		willRetry := decision.Action == "retry"

@@ -7,8 +7,10 @@ package fal_sync
 // FALQueueStatus represents the FAL Queue Status Response
 // Returned when submitting a request to FAL's async API
 type FALQueueStatus struct {
-	RequestID string `json:"request_id"`
-	Status    string `json:"status"` // IN_QUEUE, IN_PROGRESS, COMPLETED
+	RequestID   string `json:"request_id"`
+	Status      string `json:"status"` // IN_QUEUE, IN_PROGRESS, COMPLETED
+	StatusURL   string `json:"status_url,omitempty"`
+	ResponseURL string `json:"response_url,omitempty"`
 }
 
 // FALResultResponse represents the FAL Result Response
@@ -49,6 +51,20 @@ type Flux2ProRequest struct {
 	SafetyTolerance int      `json:"safety_tolerance,omitempty"`
 	OutputFormat    string   `json:"output_format,omitempty"`
 	NumImages       int      `json:"num_images,omitempty"`
+}
+
+// Flux3ImageRequest represents both blackforestlabs/flux-3 image endpoints.
+// ImageURLs is omitted for text-to-image and required for edit-image.
+type Flux3ImageRequest struct {
+	Prompt                string   `json:"prompt"`
+	ImageURLs             []string `json:"image_urls,omitempty"`
+	AspectRatio           string   `json:"aspect_ratio,omitempty"`
+	Resolution            string   `json:"resolution,omitempty"`
+	EnablePromptExpansion *bool    `json:"enable_prompt_expansion,omitempty"`
+	SafetyTolerance       *int     `json:"safety_tolerance,omitempty"`
+	OutputFormat          string   `json:"output_format,omitempty"`
+	SyncMode              *bool    `json:"sync_mode,omitempty"`
+	Version               string   `json:"version,omitempty"`
 }
 
 // HunyuanImageV3Request represents the request for hunyuan-image-v3 model

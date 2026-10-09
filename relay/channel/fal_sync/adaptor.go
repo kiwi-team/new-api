@@ -3,11 +3,11 @@ package fal_sync
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,11 +24,17 @@ import (
 )
 
 // Adaptor implements the channel.Adaptor interface for FAL Sync channel
-type Adaptor struct{}
+type Adaptor struct {
+	flux3Endpoint string
+	statusURL     string
+	responseURL   string
+}
 
 // Init initializes the adaptor with relay info
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
-	// No initialization needed for now
+	a.flux3Endpoint = ""
+	a.statusURL = ""
+	a.responseURL = ""
 }
 
 // GetChannelName returns the channel name
@@ -44,6 +50,7 @@ func (a *Adaptor) GetModelList() []string {
 // GetRequestURL constructs the FAL API submit URL
 // Model name mapping:
 //   - flux-2-pro -> fal-ai/flux-2-pro/edit
+//   - flux-3-image -> blackforestlabs/flux-3/text-to-image or edit-image
 //   - hunyuan-image-v3 -> fal-ai/hunyuan-image/v3/instruct/edit
 //   - qwen-image-max -> fal-ai/qwen-image-edit-2511
 //   - gpt-image-2 -> openai/gpt-image-2/edit
@@ -64,8 +71,21 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		modelName = DefaultModel
 	}
 
-	endpoint := submitEndpoint(modelName, info)
+	endpoint := a.modelEndpoint(modelName, info)
 	return fmt.Sprintf("%s/%s", baseURL, endpoint), nil
+}
+
+func (a *Adaptor) modelEndpoint(modelName string, info *relaycommon.RelayInfo) string {
+	if isFlux3ImageModel(modelName) {
+		if a.flux3Endpoint != "" {
+			return a.flux3Endpoint
+		}
+		if hasInputImages(info) {
+			return flux3EditImageEndpoint
+		}
+		return flux3TextToImageEndpoint
+	}
+	return submitEndpoint(modelName, info)
 }
 
 // submitEndpoint returns the FAL submit endpoint path (without base URL) for the
@@ -80,6 +100,11 @@ func submitEndpoint(modelName string, info *relaycommon.RelayInfo) string {
 		return "fal-ai/nano-banana-2"
 	case isGptImage2Model(modelName):
 		return "openai/gpt-image-2/edit"
+	case isFlux3ImageModel(modelName):
+		if hasInputImages(info) {
+			return flux3EditImageEndpoint
+		}
+		return flux3TextToImageEndpoint
 	case strings.Contains(modelName, "hunyuan"):
 		return "fal-ai/hunyuan-image/v3/instruct/edit"
 	case strings.Contains(modelName, "qwen"):
@@ -194,6 +219,15 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		}
 	}
 
+	var flux3Metadata map[string]any
+	if isFlux3ImageModel(modelName) && len(request.Metadata) > 0 {
+		// Keep provider-only Flux 3 options inside the OpenAI-compatible metadata
+		// object, then flatten only the explicit allowlist into the fal request.
+		if err := common.Unmarshal(request.Metadata, &flux3Metadata); err != nil {
+			return nil, fmt.Errorf("fal_sync adaptor: failed to decode flux-3-image metadata: %w", err)
+		}
+	}
+
 	// Extract image URLs from request (supports both image and images fields).
 	// For JSON requests these are passed through directly to fal (fal downloads
 	// the public URLs itself).
@@ -209,12 +243,34 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		return nil, err
 	}
 	imageURLs = append(imageURLs, formURLs...)
+	if isFlux3ImageModel(modelName) {
+		if len(imageURLs) > flux3MaxReferenceImages {
+			return nil, fmt.Errorf("fal_sync adaptor: flux-3-image accepts at most %d reference images", flux3MaxReferenceImages)
+		}
+		if count, countErr := request.ImageCount(false); countErr != nil {
+			return nil, fmt.Errorf("fal_sync adaptor: invalid image count: %w", countErr)
+		} else if count != 1 {
+			return nil, errors.New("fal_sync adaptor: flux-3-image supports exactly one output image per request")
+		}
+		if len(imageURLs) > 0 {
+			a.flux3Endpoint = flux3EditImageEndpoint
+		} else {
+			a.flux3Endpoint = flux3TextToImageEndpoint
+		}
+	}
 
 	// Extract size field
 	imageSize := strings.TrimSpace(request.Size)
+	outputFormat := ""
+	if isFlux3ImageModel(modelName) && len(request.OutputFormat) > 0 {
+		if err := common.Unmarshal(request.OutputFormat, &outputFormat); err != nil {
+			return nil, fmt.Errorf("fal_sync adaptor: failed to decode output_format: %w", err)
+		}
+		outputFormat = strings.TrimSpace(outputFormat)
+	}
 
 	// Build model-specific request using typed structs
-	converted, err := buildModelRequest(modelName, prompt, imageURLs, imageSize, request.Quality, extraFields, extraMap)
+	converted, err := buildModelRequest(modelName, prompt, imageURLs, imageSize, request.Quality, outputFormat, flux3Metadata, extraFields, extraMap)
 	if err != nil {
 		return nil, err
 	}
@@ -241,13 +297,15 @@ func stashNanoBananaBilling(c *gin.Context, req *NanoBanana2Request) {
 }
 
 // buildModelRequest creates the appropriate typed request struct based on model name
-func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize, quality string, extraFields, extraMap map[string]any) (any, error) {
+func buildModelRequest(modelName, prompt string, imageURLs []string, imageSize, quality, outputFormat string, flux3Metadata, extraFields, extraMap map[string]any) (any, error) {
 	// Determine model type and build appropriate request
 	switch {
 	case isNanoBanana2Model(modelName):
 		return buildNanoBanana2Request(prompt, imageURLs, imageSize, extraFields, extraMap), nil
 	case isGptImage2Model(modelName):
 		return buildGptImage2Request(prompt, imageURLs, imageSize, quality, extraFields, extraMap), nil
+	case isFlux3ImageModel(modelName):
+		return buildFlux3ImageRequest(prompt, imageURLs, imageSize, outputFormat, flux3Metadata)
 	case isFlux2ProModel(modelName):
 		return buildFlux2ProRequest(prompt, imageURLs, imageSize, extraFields, extraMap), nil
 	case isHunyuanImageV3Model(modelName):
@@ -366,7 +424,74 @@ func applyNanoBanana2ExtraFields(req *NanoBanana2Request, extra map[string]any) 
 
 // isFlux2ProModel checks if the model is flux-2-pro
 func isFlux2ProModel(model string) bool {
-	return strings.Contains(model, "flux")
+	return strings.Contains(strings.ToLower(model), "flux-2-pro")
+}
+
+func isFlux3ImageModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == Flux3Model || strings.HasSuffix(model, "/"+Flux3Model)
+}
+
+func buildFlux3ImageRequest(prompt string, imageURLs []string, imageSize, outputFormat string, metadata map[string]any) (*Flux3ImageRequest, error) {
+	req := &Flux3ImageRequest{
+		Prompt:       prompt,
+		ImageURLs:    imageURLs,
+		AspectRatio:  openAISizeToAspectRatio(imageSize),
+		OutputFormat: outputFormat,
+	}
+	if err := applyFlux3Metadata(req, metadata); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func applyFlux3Metadata(req *Flux3ImageRequest, metadata map[string]any) error {
+	for key, val := range metadata {
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		switch key {
+		case "aspect_ratio":
+			if v, ok := val.(string); ok {
+				req.AspectRatio = v
+			}
+		case "resolution":
+			v, ok := val.(string)
+			if !ok {
+				return errors.New("fal_sync adaptor: flux-3-image metadata.resolution must be a string")
+			}
+			switch v {
+			case "512sq", "768sq", "1k", "2k", "4k":
+			default:
+				return errors.New("fal_sync adaptor: flux-3-image metadata.resolution must be one of 512sq, 768sq, 1k, 2k, or 4k")
+			}
+			req.Resolution = v
+		case "enable_prompt_expansion":
+			if v, ok := val.(bool); ok {
+				req.EnablePromptExpansion = &v
+			}
+		case "safety_tolerance":
+			v, ok := val.(float64)
+			if !ok || v != float64(int(v)) || v < 0 || v > 4 {
+				return errors.New("fal_sync adaptor: flux-3-image safety_tolerance must be an integer between 0 and 4")
+			}
+			intValue := int(v)
+			req.SafetyTolerance = &intValue
+		case "output_format":
+			if v, ok := val.(string); ok {
+				req.OutputFormat = v
+			}
+		case "sync_mode":
+			if v, ok := val.(bool); ok {
+				req.SyncMode = &v
+			}
+		case "version":
+			if v, ok := val.(string); ok {
+				req.Version = v
+			}
+		}
+	}
+	return nil
 }
 
 // isGptImage2Model recognises the openai/gpt-image-2 edit model.
@@ -679,6 +804,8 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if err != nil {
 		return nil, err
 	}
+	a.statusURL = sameOriginQueueURL(submitURL, queueStatus.StatusURL)
+	a.responseURL = sameOriginQueueURL(submitURL, queueStatus.ResponseURL)
 
 	var resultBody []byte
 
@@ -761,7 +888,7 @@ func (a *Adaptor) submitRequest(c *gin.Context, client *http.Client, submitURL s
 	}
 
 	var queueStatus FALQueueStatus
-	if err := json.Unmarshal(respBody, &queueStatus); err != nil {
+	if err := common.Unmarshal(respBody, &queueStatus); err != nil {
 		return nil, fmt.Errorf("fal_sync adaptor: failed to parse queue status: %w, body: %s", err, string(respBody))
 	}
 
@@ -778,9 +905,11 @@ func (a *Adaptor) pollUntilComplete(c *gin.Context, client *http.Client, info *r
 	if baseURL == "" {
 		baseURL = "https://queue.fal.run"
 	}
-	modelName := info.UpstreamModelName
-
-	statusURL := buildStatusURL(baseURL, modelName, requestID)
+	endpoint := a.pollingEndpoint(info)
+	statusURL := a.statusURL
+	if statusURL == "" {
+		statusURL = buildStatusURL(baseURL, endpoint, requestID)
+	}
 	timeout := time.After(DefaultTimeout)
 	ticker := time.NewTicker(DefaultPollInterval)
 	defer ticker.Stop()
@@ -800,6 +929,9 @@ func (a *Adaptor) pollUntilComplete(c *gin.Context, client *http.Client, info *r
 
 			switch status.Status {
 			case "COMPLETED":
+				if responseURL := sameOriginQueueURL(statusURL, status.ResponseURL); responseURL != "" {
+					a.responseURL = responseURL
+				}
 				// Step 3: Fetch result - Requirement 3.3
 				return a.fetchResultWithRetry(c, client, info, requestID)
 			case "FAILED":
@@ -854,14 +986,14 @@ func (a *Adaptor) pollStatusWithRetry(c *gin.Context, client *http.Client, statu
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			// Try to parse error
 			var errResp FALErrorResponse
-			if json.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
+			if common.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
 				return nil, fmt.Errorf("fal_sync adaptor: status poll error: %s", errResp.Detail)
 			}
 			return nil, fmt.Errorf("fal_sync adaptor: status poll failed with status %d: %s", resp.StatusCode, string(respBody))
 		}
 
 		var status FALQueueStatus
-		if err := json.Unmarshal(respBody, &status); err != nil {
+		if err := common.Unmarshal(respBody, &status); err != nil {
 			lastErr = err
 			continue
 		}
@@ -878,8 +1010,11 @@ func (a *Adaptor) fetchResultWithRetry(c *gin.Context, client *http.Client, info
 	if baseURL == "" {
 		baseURL = "https://queue.fal.run"
 	}
-	modelName := info.UpstreamModelName
-	resultURL := buildResultURL(baseURL, modelName, requestID)
+	endpoint := a.pollingEndpoint(info)
+	resultURL := a.responseURL
+	if resultURL == "" {
+		resultURL = buildResultURL(baseURL, endpoint, requestID)
+	}
 
 	var lastErr error
 	for retry := 0; retry <= MaxRetries; retry++ {
@@ -917,7 +1052,7 @@ func (a *Adaptor) fetchResultWithRetry(c *gin.Context, client *http.Client, info
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			// Try to parse error - Requirement 6.2
 			var errResp FALErrorResponse
-			if json.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
+			if common.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
 				return nil, fmt.Errorf("fal_sync adaptor: result fetch error: %s", errResp.Detail)
 			}
 			return nil, fmt.Errorf("fal_sync adaptor: result fetch failed with status %d: %s", resp.StatusCode, string(respBody))
@@ -925,7 +1060,7 @@ func (a *Adaptor) fetchResultWithRetry(c *gin.Context, client *http.Client, info
 
 		// Validate that the response is valid JSON before returning
 		var result FALResultResponse
-		if err := json.Unmarshal(respBody, &result); err != nil {
+		if err := common.Unmarshal(respBody, &result); err != nil {
 			// Requirement 6.5: Return parse error with details
 			return nil, fmt.Errorf("fal_sync adaptor: failed to parse result response: %w, body: %s", err, string(respBody))
 		}
@@ -936,31 +1071,62 @@ func (a *Adaptor) fetchResultWithRetry(c *gin.Context, client *http.Client, info
 	return nil, fmt.Errorf("fal_sync adaptor: result fetch failed after %d retries: %w", MaxRetries, lastErr)
 }
 
+func (a *Adaptor) pollingEndpoint(info *relaycommon.RelayInfo) string {
+	if info != nil && isFlux3ImageModel(info.UpstreamModelName) {
+		return a.modelEndpoint(info.UpstreamModelName, info)
+	}
+	if info == nil {
+		return getModelEndpoint("")
+	}
+	return getModelEndpoint(info.UpstreamModelName)
+}
+
 // buildStatusURL constructs the status URL for polling
 // URL format: {base_url}/{fal_endpoint}/requests/{request_id}/status
-func buildStatusURL(baseURL, model, requestID string) string {
+func buildStatusURL(baseURL, endpoint, requestID string) string {
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	endpoint := getModelEndpoint(model)
 	return fmt.Sprintf("%s/%s/requests/%s/status", baseURL, endpoint, requestID)
 }
 
 // buildResultURL constructs the result URL for fetching the final result
 // URL format: {base_url}/{fal_endpoint}/requests/{request_id}
-func buildResultURL(baseURL, model, requestID string) string {
+func buildResultURL(baseURL, endpoint, requestID string) string {
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	endpoint := getModelEndpoint(model)
 	return fmt.Sprintf("%s/%s/requests/%s", baseURL, endpoint, requestID)
 }
 
+// sameOriginQueueURL accepts the operation URLs returned by fal's queue submit
+// response without allowing the channel API key to be sent to another origin.
+func sameOriginQueueURL(referenceURL, operationURL string) string {
+	if strings.TrimSpace(operationURL) == "" {
+		return ""
+	}
+	reference, err := url.Parse(referenceURL)
+	if err != nil || reference.Scheme == "" || reference.Host == "" {
+		return ""
+	}
+	operation, err := url.Parse(operationURL)
+	if err != nil {
+		return ""
+	}
+	operation = reference.ResolveReference(operation)
+	if !strings.EqualFold(operation.Scheme, reference.Scheme) || !strings.EqualFold(operation.Host, reference.Host) {
+		return ""
+	}
+	return operation.String()
+}
+
 // getModelEndpoint returns the FAL API endpoint path for status/result polling.
-// Note: queue status / result endpoints use the base model path (no `/edit`
-// suffix even when the submit URL uses `/edit`).
+// Most queue status / result endpoints use the base model path. Flux 3 is an
+// exception and keeps its complete text-to-image or edit-image endpoint.
 func getModelEndpoint(model string) string {
 	switch {
 	case isNanoBanana2Model(model):
 		return "fal-ai/nano-banana-2"
 	case isGptImage2Model(model):
 		return "openai/gpt-image-2"
+	case isFlux3ImageModel(model):
+		return flux3TextToImageEndpoint
 	case strings.Contains(model, "hunyuan"):
 		return "fal-ai/hunyuan-image"
 	case strings.Contains(model, "qwen"):
@@ -1001,7 +1167,7 @@ func parseErrorResponse(resp *http.Response, operation string) error {
 	}
 
 	var errResp FALErrorResponse
-	if json.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
+	if common.Unmarshal(respBody, &errResp) == nil && errResp.Detail != "" {
 		return fmt.Errorf("fal_sync adaptor: %s error: %s (status %d)", operation, errResp.Detail, resp.StatusCode)
 	}
 
@@ -1024,7 +1190,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 	// Parse FAL result response
 	var falResult FALResultResponse
-	if unmarshalErr := json.Unmarshal(responseBody, &falResult); unmarshalErr != nil {
+	if unmarshalErr := common.Unmarshal(responseBody, &falResult); unmarshalErr != nil {
 		return nil, types.NewError(fmt.Errorf("fal_sync adaptor: failed to decode response: %w", unmarshalErr), types.ErrorCodeBadResponseBody)
 	}
 
@@ -1119,13 +1285,16 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if len(imageResponse.Data) == 0 {
 		return nil, types.NewError(errors.New("fal_sync adaptor: no usable image data"), types.ErrorCodeBadResponse)
 	}
+	if info != nil {
+		info.UpdateImageCount(int64(len(imageResponse.Data)))
+	}
 
 	// Include seed in metadata if available - Requirement 4.5
 	if falResult.Seed != 0 {
 		metadata := map[string]any{
 			"seed": falResult.Seed,
 		}
-		metadataBytes, marshalErr := json.Marshal(metadata)
+		metadataBytes, marshalErr := common.Marshal(metadata)
 		if marshalErr == nil {
 			imageResponse.Metadata = metadataBytes
 		}
@@ -1277,6 +1446,9 @@ func writeGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, falResult 
 
 	if len(parts) == 0 {
 		return nil, types.NewError(errors.New("fal_sync adaptor: no usable image data for gemini response"), types.ErrorCodeBadResponse)
+	}
+	if info != nil && imageCount > 0 {
+		info.UpdateImageCount(int64(imageCount))
 	}
 
 	finishReason := "STOP"

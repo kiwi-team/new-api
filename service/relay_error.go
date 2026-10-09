@@ -2,6 +2,9 @@ package service
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,11 +12,40 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	defaultSlowErrorThresholdSeconds = 180
+	slowErrorAlertCooldown           = 10 * time.Minute
+)
+
+type channelAlertLimiter struct {
+	sync.Mutex
+	lastSent map[int]time.Time
+}
+
+func (l *channelAlertLimiter) allow(channelID int, now time.Time, cooldown time.Duration) bool {
+	l.Lock()
+	defer l.Unlock()
+	if l.lastSent == nil {
+		l.lastSent = make(map[int]time.Time)
+	}
+	if previous, exists := l.lastSent[channelID]; exists && now.Sub(previous) < cooldown {
+		return false
+	}
+	l.lastSent[channelID] = now
+	return true
+}
+
+var (
+	potentialArrearsAlertLimiter = channelAlertLimiter{lastSent: make(map[int]time.Time)}
+	slowErrorAlertLimiter        = channelAlertLimiter{lastSent: make(map[int]time.Time)}
 )
 
 // DecideRelayRetry is the single retry decision for relay attempts. The reason
@@ -61,16 +93,19 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
 	return DecideRelayRetry(c, openaiErr, retryTimes).Action == "retry"
 }
 
-func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, upstreamRequestId string) {
+func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, upstreamRequestId string, attemptUseTimeMs int64, notifySlowError bool) {
 	if err == nil {
 		return
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode())))
-	if ShouldDisableChannel(channelError.ChannelType, err) && channelError.AutoBan {
-		reason := err.MaskSensitiveErrorWithStatusCode()
-		gopool.Go(func() {
-			DisableChannel(channelError, reason)
-		})
+	if ShouldDisableChannel(channelError.ChannelType, err) {
+		if channelError.AutoBan {
+			reason := err.MaskSensitiveErrorWithStatusCode()
+			gopool.Go(func() {
+				DisableChannel(channelError, reason)
+			})
+		}
+		notifyPotentialChannelArrears(channelError, err)
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
@@ -96,4 +131,82 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, upstreamRequestId, other)
 	}
+
+	if notifySlowError {
+		notifySlowChannelError(c, channelError, err, attemptUseTimeMs)
+	}
+}
+
+func notifyPotentialChannelArrears(channelError types.ChannelError, err *types.NewAPIError) {
+	if !IsInAutoDisableList(strings.ToLower(err.Error())) {
+		return
+	}
+	webhookURL := strings.TrimSpace(common.OptionMap["feishu_qianfei_webhook_url"])
+	if webhookURL == "" {
+		return
+	}
+
+	cooldown := time.Minute
+	if strings.Contains(channelError.ChannelName, "海外") ||
+		channelError.ChannelType == constant.ChannelTypeAli ||
+		strings.Contains(channelError.ChannelName, "theapi") ||
+		strings.Contains(err.Error(), "received empty response from Gemini: no meaningful content in candidates") ||
+		strings.Contains(strings.ToLower(err.Error()), "aliyun") {
+		cooldown = time.Hour
+	}
+	if !potentialArrearsAlertLimiter.allow(channelError.ChannelId, time.Now(), cooldown) {
+		return
+	}
+
+	notifyErr := SendFeishuNotify(webhookURL, common.OptionMap["feishu_qianfei_secret"], dto.FeishuNotify{
+		MsgType: "text",
+		Content: dto.FeishuContent{
+			Text: fmt.Sprintf("【渠道】%s（%d） 可能欠费了,请及时处理，错误信息：%s", channelError.ChannelName, channelError.ChannelId, err.MaskSensitiveErrorWithStatusCode()),
+		},
+	})
+	if notifyErr != nil {
+		common.SysError("failed to send potential channel arrears feishu notify: " + notifyErr.Error())
+	}
+}
+
+func notifySlowChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, attemptUseTimeMs int64) {
+	webhookURL := strings.TrimSpace(common.OptionMap["slow_error_feishu_webhook_url"])
+	if webhookURL == "" {
+		return
+	}
+
+	thresholdSeconds := defaultSlowErrorThresholdSeconds
+	if configured := strings.TrimSpace(common.OptionMap["slow_error_threshold_seconds"]); configured != "" {
+		if parsed, parseErr := strconv.Atoi(configured); parseErr == nil && parsed > 0 {
+			thresholdSeconds = parsed
+		}
+	}
+	if attemptUseTimeMs < int64(thresholdSeconds)*1000 {
+		return
+	}
+	if !slowErrorAlertLimiter.allow(channelError.ChannelId, time.Now(), slowErrorAlertCooldown) {
+		return
+	}
+
+	content := fmt.Sprintf("【慢错误预警】渠道 %s（%d）耗时 %d 秒后才报错，超过阈值 %d 秒\nStatusCode：%d\nRequestId：%s\n错误信息：%s",
+		channelError.ChannelName,
+		channelError.ChannelId,
+		attemptUseTimeMs/1000,
+		thresholdSeconds,
+		err.StatusCode,
+		c.GetString(common.RequestIdKey),
+		err.MaskSensitiveErrorWithStatusCode(),
+	)
+	if envName := strings.TrimSpace(common.OptionMap["ErrorWarningEnvName"]); envName != "" {
+		content = envName + "\n" + content
+	}
+	secret := common.OptionMap["slow_error_feishu_secret"]
+	gopool.Go(func() {
+		if notifyErr := SendFeishuNotify(webhookURL, secret, dto.FeishuNotify{
+			MsgType: "text",
+			Content: dto.FeishuContent{Text: content},
+		}); notifyErr != nil {
+			common.SysError("failed to send slow error feishu notify: " + notifyErr.Error())
+		}
+	})
 }
