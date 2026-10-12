@@ -216,6 +216,7 @@ test('restores request path, response model, and Vertex bucket settings in the c
     setting: JSON.stringify({
       google_file_bucket: 'vertex-media',
       model_output_mapping: '{"upstream-model":"public-model"}',
+      response_model_use_request_model: true,
       path_whitelist: ['/v1/messages', '/v1/chat'],
       path_blacklist: ['/v1/embeddings'],
     }),
@@ -234,6 +235,9 @@ test('restores request path, response model, and Vertex bucket settings in the c
   expect(screen.getByLabelText('Model output mapping')).toHaveValue(
     '{"upstream-model":"public-model"}'
   )
+  expect(
+    screen.getByRole('switch', { name: 'Return requested model name' })
+  ).toBeChecked()
   expect(screen.getByLabelText('Path whitelist')).toHaveValue(
     '/v1/messages\n/v1/chat'
   )
@@ -246,6 +250,7 @@ test('restores request path, response model, and Vertex bucket settings in the c
     expect.objectContaining({
       google_file_bucket: 'vertex-media',
       model_output_mapping: '{"upstream-model":"public-model"}',
+      response_model_use_request_model: true,
       path_whitelist: ['/v1/messages', '/v1/chat'],
       path_blacklist: ['/v1/embeddings'],
     })

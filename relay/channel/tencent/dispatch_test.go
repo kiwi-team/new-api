@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -173,6 +174,101 @@ func TestTokenHubASRRequestAndResponse(t *testing.T) {
 	})
 }
 
+func TestTokenHubHyImageV35RequestAndResponse(t *testing.T) {
+	t.Run("native chat request is sent to the image endpoint", func(t *testing.T) {
+		body := `{
+			"model":"hy-image-v3.5-preview",
+			"session":"demo-session-001",
+			"size":"4096x4096",
+			"seed":0,
+			"generate_max_pixels":4194304,
+			"resize_max_pixels":1048576,
+			"footnote":"new-api",
+			"use_search_tool":{"value":false},
+			"messages":[
+				{"role":"assistant","reasoning":"keep this","tool_calls":[{"id":"generate@call_0","type":"function","function":{"name":"generate","arguments":"{}"}}]},
+				{"role":"tool","tool_call_id":"generate@call_0","content":[{"type":"image_url","image_url":{"url":"https://example.com/previous.png"},"is_generate":true}]},
+				{"role":"user","content":[{"type":"text","text":"draw a cat"}]}
+			]
+		}`
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		request := &dto.GeneralOpenAIRequest{}
+		require.NoError(t, common.UnmarshalBodyReusable(ctx, request))
+		info := tokenHubImageRelayInfo()
+		adaptor := &TokenHubAdaptor{}
+
+		converted, err := adaptor.ConvertOpenAIRequest(ctx, info, request)
+		require.NoError(t, err)
+		encoded, err := common.Marshal(converted)
+		require.NoError(t, err)
+		assert.Equal(t, hyImageV35Model, gjson.GetBytes(encoded, "model").String())
+		assert.Equal(t, "demo-session-001", gjson.GetBytes(encoded, "session").String())
+		assert.True(t, gjson.GetBytes(encoded, "seed").Exists())
+		assert.Equal(t, int64(0), gjson.GetBytes(encoded, "seed").Int())
+		assert.True(t, gjson.GetBytes(encoded, "use_search_tool.value").Exists())
+		assert.False(t, gjson.GetBytes(encoded, "use_search_tool.value").Bool())
+		assert.True(t, gjson.GetBytes(encoded, "messages.1.content.0.is_generate").Bool())
+		assert.Equal(t, "keep this", gjson.GetBytes(encoded, "messages.0.reasoning").String())
+
+		requestURL, err := adaptor.GetRequestURL(info)
+		require.NoError(t, err)
+		assert.Equal(t, tokenHubBaseURL+tokenHubHyImageV35Path, requestURL)
+		header := http.Header{}
+		require.NoError(t, adaptor.SetupRequestHeader(ctx, &header, info))
+		assert.Equal(t, "Bearer tokenhub-key", header.Get("Authorization"))
+		assert.Equal(t, "application/json", header.Get("Content-Type"))
+	})
+
+	t.Run("request validation rejects unsupported values", func(t *testing.T) {
+		tests := []struct {
+			name string
+			body string
+		}{
+			{"streaming", `{"model":"hy-image-v3.5-preview","stream":true,"messages":[{"role":"user","content":"cat"}]}`},
+			{"invalid size", `{"model":"hy-image-v3.5-preview","size":"8192x8192","messages":[{"role":"user","content":"cat"}]}`},
+			{"negative seed", `{"model":"hy-image-v3.5-preview","seed":-1,"messages":[{"role":"user","content":"cat"}]}`},
+			{"oversized generate pixels", `{"model":"hy-image-v3.5-preview","generate_max_pixels":4194305,"messages":[{"role":"user","content":"cat"}]}`},
+			{"long footnote", `{"model":"hy-image-v3.5-preview","footnote":"12345678901234567","messages":[{"role":"user","content":"cat"}]}`},
+			{"missing search value", `{"model":"hy-image-v3.5-preview","use_search_tool":{},"messages":[{"role":"user","content":"cat"}]}`},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tt.body))
+				ctx.Request.Header.Set("Content-Type", "application/json")
+				request := &dto.GeneralOpenAIRequest{}
+				require.NoError(t, common.UnmarshalBodyReusable(ctx, request))
+				_, err := (&TokenHubAdaptor{}).ConvertOpenAIRequest(ctx, tokenHubImageRelayInfo(), request)
+				require.Error(t, err)
+			})
+		}
+	})
+
+	t.Run("successful response is preserved and TokenHub usage is billed", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		responseBody := `{
+			"id":"image-id","object":"image.chat.completion.chunk","model":"HY-Image-3.5-preview-4090-Tob-v1.2",
+			"choices":[{"index":0,"delta":{"type":"image","image":{"url":"https://example.com/result.png","width":4096,"height":4096}},"finish_reason":null}],
+			"usage":{"total_tokens":19000},"tokenhub_usage":{"total_tokens":20000},
+			"assembled_history":[{"role":"assistant","reasoning":"preserved"}]
+		}`
+		response := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+		}
+		usageValue, apiErr := (&TokenHubAdaptor{}).DoResponse(ctx, response, tokenHubImageRelayInfo())
+		require.Nil(t, apiErr)
+		usage := usageValue.(*dto.Usage)
+		assert.Equal(t, 20000, usage.PromptTokens)
+		assert.Equal(t, 20000, usage.TotalTokens)
+		assert.JSONEq(t, responseBody, recorder.Body.String())
+	})
+}
+
 func TestHyASRTokenEstimateUsesProviderTokenRate(t *testing.T) {
 	wav := oneSecondPCM16WAV()
 	var body bytes.Buffer
@@ -202,6 +298,19 @@ func tokenHubASRRelayInfo(request *dto.AudioRequest) *relaycommon.RelayInfo {
 			ApiKey:            "tokenhub-key",
 			ChannelBaseUrl:    tokenHubBaseURL,
 			UpstreamModelName: hyASRModel,
+		},
+	}
+}
+
+func tokenHubImageRelayInfo() *relaycommon.RelayInfo {
+	return &relaycommon.RelayInfo{
+		OriginModelName: hyImageV35Model,
+		RelayMode:       relayconstant.RelayModeChatCompletions,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeTencent,
+			ApiKey:            "tokenhub-key",
+			ChannelBaseUrl:    tokenHubBaseURL,
+			UpstreamModelName: hyImageV35Model,
 		},
 	}
 }

@@ -215,6 +215,7 @@ type RelayInfo struct {
 	// high-frequency realtime frames do not reparse the mapping each time.
 	modelOutputMappingRaw    string
 	modelOutputMapper        *ModelOutputMapper
+	modelOutputUseRequest    bool
 	modelOutputMappingErr    error
 	modelOutputMappingParsed bool
 	// responsesToolState is written by request conversion and read by the

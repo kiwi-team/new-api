@@ -317,6 +317,7 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_ignored_models',
   'google_file_bucket',
   'model_output_mapping',
+  'response_model_use_request_model',
   'path_whitelist',
   'path_blacklist',
 ] satisfies (keyof ChannelFormValues)[]
@@ -3128,6 +3129,29 @@ export function ChannelMutateDrawer({
                 )}
               </FormDescription>
               <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name='response_model_use_request_model'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between px-4 py-3'>
+              <div className='space-y-0.5'>
+                <FormLabel>{t('Return requested model name')}</FormLabel>
+                <FormDescription>
+                  {t(
+                    'When the upstream returns the mapped model, replace it with the model name from the client request'
+                  )}
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  disabled={sensitiveLocked}
+                  checked={field.value === true}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
             </FormItem>
           )}
         />

@@ -24,6 +24,9 @@ type ChannelSettings struct {
 	// ModelOutputMapping 输出模型重命名：键为上游响应中返回的模型名称，值为返回给用户的模型名称。
 	// 存储为 JSON 字符串，例如：{"zai-org/glm-4.7-flash": "glm-4.7"}
 	ModelOutputMapping string `json:"model_output_mapping,omitempty"`
+	// ResponseModelUseRequestModel 在上游返回实际请求模型时，将响应中的模型名恢复为客户端原始请求模型。
+	// 启用后此规则优先于 ModelOutputMapping 中针对实际请求模型的静态映射。
+	ResponseModelUseRequestModel bool `json:"response_model_use_request_model,omitempty"`
 	// ClaudeCodeGuardEnabled 是否开启 Claude Code 客户端检测（仅 Anthropic 渠道有效）。
 	// 开启后，分配到该渠道的请求会先经过 CC 真伪校验，不通过则视为该渠道请求失败，
 	// 记录 error_logs 并转由其他渠道重试。默认关闭。

@@ -70,11 +70,14 @@ func (a *TokenHubAdaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, er
 	if isTokenHubASR(info) {
 		return strings.TrimRight(info.ChannelBaseUrl, "/") + tokenHubSyncASRPath, nil
 	}
+	if isTokenHubHyImageV35(info) {
+		return strings.TrimRight(info.ChannelBaseUrl, "/") + tokenHubHyImageV35Path, nil
+	}
 	return a.Adaptor.GetRequestURL(info)
 }
 
 func (a *TokenHubAdaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
-	if !isTokenHubASR(info) {
+	if !isTokenHubASR(info) && !isTokenHubHyImageV35(info) {
 		return a.Adaptor.SetupRequestHeader(c, header, info)
 	}
 	header.Set("Content-Type", "application/json")
@@ -157,14 +160,24 @@ func (a *TokenHubAdaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.
 	return bytes.NewReader(body), nil
 }
 
+func (a *TokenHubAdaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	if isTokenHubHyImageV35(info) {
+		return convertTokenHubHyImageV35Request(c, request)
+	}
+	return a.Adaptor.ConvertOpenAIRequest(c, info, request)
+}
+
 func (a *TokenHubAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	if isTokenHubASR(info) {
+	if isTokenHubASR(info) || isTokenHubHyImageV35(info) {
 		return channel.DoApiRequest(a, c, info, requestBody)
 	}
 	return a.Adaptor.DoRequest(c, info, requestBody)
 }
 
 func (a *TokenHubAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NewAPIError) {
+	if isTokenHubHyImageV35(info) {
+		return tokenHubHyImageV35Handler(c, info, resp)
+	}
 	if !isTokenHubASR(info) {
 		return a.Adaptor.DoResponse(c, resp, info)
 	}

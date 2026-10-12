@@ -119,12 +119,21 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 // 优先使用渠道配置的「输出模型重命名」(ModelOutputMapping，上游模型名转为小写后精确匹配)，
 // 未命中时回退到内置的 glm 重命名逻辑以保持向后兼容。
 func remapResponseModelName(info *relaycommon.RelayInfo, model string) string {
-	normalizedModel := strings.ToLower(model)
+	trimmedModel := strings.TrimSpace(model)
+	if info.ChannelSetting.ResponseModelUseRequestModel &&
+		!strings.EqualFold(info.UpstreamModelName, info.OriginModelName) &&
+		strings.EqualFold(trimmedModel, strings.TrimSpace(info.UpstreamModelName)) {
+		return strings.TrimSpace(info.OriginModelName)
+	}
+	normalizedModel := strings.ToLower(trimmedModel)
 	if mapping := info.ChannelSetting.ModelOutputMapping; mapping != "" && mapping != "{}" {
 		modelMap := make(map[string]string)
 		if err := common.UnmarshalJsonStr(mapping, &modelMap); err != nil {
 			common.SysError("error unmarshalling model_output_mapping: " + err.Error())
 		} else if mapped, ok := modelMap[normalizedModel]; ok && mapped != "" {
+			if mapped == relaycommon.RequestedModelOutputValue && strings.TrimSpace(info.OriginModelName) != "" {
+				return strings.TrimSpace(info.OriginModelName)
+			}
 			return mapped
 		}
 	}

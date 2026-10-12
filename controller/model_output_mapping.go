@@ -10,18 +10,24 @@ import (
 type modelOutputMappingResponseWriter struct {
 	gin.ResponseWriter
 	mapper *common.ModelOutputMapper
+	info   *common.RelayInfo
 }
 
-func newModelOutputMappingResponseWriter(writer gin.ResponseWriter, rawMapping string) (*modelOutputMappingResponseWriter, error) {
+func newModelOutputMappingResponseWriter(writer gin.ResponseWriter, rawMapping string, info *common.RelayInfo) (*modelOutputMappingResponseWriter, error) {
 	mapper, err := common.NewModelOutputMapper(rawMapping)
 	if err != nil {
 		return nil, err
 	}
-	return &modelOutputMappingResponseWriter{ResponseWriter: writer, mapper: mapper}, nil
+	return &modelOutputMappingResponseWriter{ResponseWriter: writer, mapper: mapper, info: info}, nil
 }
 
 func (w *modelOutputMappingResponseWriter) Write(data []byte) (int, error) {
-	rewritten := w.mapper.RewritePayload(data)
+	var rewritten []byte
+	if w.info != nil {
+		rewritten = w.mapper.RewritePayloadForRequest(data, w.info.UpstreamModelName, w.info.OriginModelName, w.info.ChannelSetting.ResponseModelUseRequestModel)
+	} else {
+		rewritten = w.mapper.RewritePayload(data)
+	}
 	written, err := w.ResponseWriter.Write(rewritten)
 	if err != nil {
 		return 0, err

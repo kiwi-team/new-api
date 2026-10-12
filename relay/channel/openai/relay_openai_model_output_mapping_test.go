@@ -37,4 +37,22 @@ func TestRemapResponseModelNameMatchesLowercaseRule(t *testing.T) {
 			assert.Equal(t, tt.want, remapResponseModelName(info, tt.upstreamModel))
 		})
 	}
+
+	t.Run("requested model takes priority for mapped upstream model", func(t *testing.T) {
+		info.OriginModelName = "deepseek-flash"
+		info.UpstreamModelName = "deepseek-v4-1-flash-260910"
+		info.ChannelSetting.ResponseModelUseRequestModel = true
+		info.ChannelSetting.ModelOutputMapping = `{"deepseek-v4-1-flash-260910":"fixed-alias"}`
+
+		assert.Equal(t, "deepseek-flash", remapResponseModelName(info, "DeepSeek-V4-1-Flash-260910"))
+	})
+
+	t.Run("requested model placeholder resolves without global switch", func(t *testing.T) {
+		info.OriginModelName = "deepseek-flash"
+		info.UpstreamModelName = "deepseek-v4-1-flash-260910"
+		info.ChannelSetting.ResponseModelUseRequestModel = false
+		info.ChannelSetting.ModelOutputMapping = `{"deepseek-v4-1-flash-260910":"$requested_model"}`
+
+		assert.Equal(t, "deepseek-flash", remapResponseModelName(info, "DeepSeek-V4-1-Flash-260910"))
+	})
 }

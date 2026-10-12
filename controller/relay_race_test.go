@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	hostdto "github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaykitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -100,7 +103,7 @@ func TestModelOutputMappingResponseWriterRewritesAllResponseFormats(t *testing.T
 				"claude-3-7-sonnet":"public-claude",
 				"gpt-5.1":"public-gpt",
 				"gemini-2.5-pro":"public-gemini"
-			}`)
+			}`, nil)
 			require.NoError(t, err)
 			ctx.Writer = writer
 			ctx.Writer.Header().Set("Content-Length", "999")
@@ -115,6 +118,68 @@ func TestModelOutputMappingResponseWriterRewritesAllResponseFormats(t *testing.T
 			} else {
 				assert.Equal(t, testCase.want, recorder.Body.String())
 			}
+		})
+	}
+}
+
+func TestModelOutputMappingResponseWriterRestoresRequestedModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const upstreamModel = "deepseek-v4-1-flash-260910"
+	tests := []struct {
+		name          string
+		requestModel  string
+		responseModel string
+		mapping       string
+		disableAuto   bool
+		want          string
+	}{
+		{name: "first alias", requestModel: "deepseek-v4-1-flash", responseModel: upstreamModel, want: "deepseek-v4-1-flash"},
+		{name: "second alias", requestModel: "deepseek-flash", responseModel: upstreamModel, want: "deepseek-flash"},
+		{name: "different upstream response remains visible", requestModel: "deepseek-flash", responseModel: "deepseek-other", want: "deepseek-other"},
+		{
+			name:          "requested model takes priority over static mapping",
+			requestModel:  "deepseek-flash",
+			responseModel: upstreamModel,
+			mapping:       `{"deepseek-v4-1-flash-260910":"public-deepseek"}`,
+			want:          "deepseek-flash",
+		},
+		{
+			name:          "static mapping remains fallback for another response model",
+			requestModel:  "deepseek-flash",
+			responseModel: "provider-deepseek",
+			mapping:       `{"provider-deepseek":"public-deepseek"}`,
+			want:          "public-deepseek",
+		},
+		{
+			name:          "requested model placeholder works without global switch",
+			requestModel:  "deepseek-flash",
+			responseModel: upstreamModel,
+			mapping:       `{"deepseek-v4-1-flash-260910":"$requested_model"}`,
+			disableAuto:   true,
+			want:          "deepseek-flash",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: testCase.requestModel,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: upstreamModel,
+					ChannelSetting: relaykitdto.ChannelSettings{
+						ModelOutputMapping:           testCase.mapping,
+						ResponseModelUseRequestModel: !testCase.disableAuto,
+					},
+				},
+			}
+			writer, err := newModelOutputMappingResponseWriter(ctx.Writer, testCase.mapping, info)
+			require.NoError(t, err)
+
+			_, err = writer.WriteString(fmt.Sprintf(`{"model":%q}`, testCase.responseModel))
+			require.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(`{"model":%q}`, testCase.want), recorder.Body.String())
 		})
 	}
 }

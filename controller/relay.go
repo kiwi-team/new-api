@@ -234,8 +234,8 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		c.Set(common.UpstreamRequestIdKey, "")
 		originalWriter := c.Writer
 		channelSetting, _ := common.GetContextKeyType[relaykitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
-		if mapping := channelSetting.ModelOutputMapping; mapping != "" && mapping != "{}" {
-			mappingWriter, mappingErr := newModelOutputMappingResponseWriter(originalWriter, mapping)
+		if mapping := channelSetting.ModelOutputMapping; (mapping != "" && mapping != "{}") || channelSetting.ResponseModelUseRequestModel {
+			mappingWriter, mappingErr := newModelOutputMappingResponseWriter(originalWriter, mapping, relayInfo)
 			if mappingErr != nil {
 				logger.LogError(c, "invalid channel model output mapping: "+mappingErr.Error())
 			} else {

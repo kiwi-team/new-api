@@ -7,10 +7,10 @@ export const meta = {
     en: "Shengshu Vidu video generation (text-to-video, image-to-video, first-and-last-frame, and reference-to-video)",
     zh: "生数 Vidu 视频生成（文生视频、图生视频、首尾帧、参考生视频）",
   },
-  version: "1.0.2",
+  version: "1.1.0",
   author: { name: "QuantumNous" },
   channelTypes: [55],
-  models: ["viduq2", "viduq1", "vidu2.0", "vidu1.5"],
+  models: ["viduq4-preview", "viduq2", "viduq1", "vidu2.0", "vidu1.5"],
   fetchMode: "per_task",
   usageSchema: {
     // estimated/actual Vidu credits
@@ -27,12 +27,14 @@ export const meta = {
     },
     // Requested output video resolution.
     resolution: {
-      enum: ["360p", "540p", "720p", "1080p"],
+      enum: ["360p", "540p", "720p", "1080p", "2K", "4K"],
       enumLabels: {
         "360p": { en: "360p", zh: "360p" },
         "540p": { en: "540p", zh: "540p" },
         "720p": { en: "720p", zh: "720p" },
         "1080p": { en: "1080p", zh: "1080p" },
+        "2K": { en: "2K", zh: "2K" },
+        "4K": { en: "4K", zh: "4K" },
       },
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
@@ -40,6 +42,7 @@ export const meta = {
   // credits is 0 in examples because this plugin does not estimate vendor credits;
   // schema completeness requires the key. Actual credits arrive from upstream.
   usageExamples: [
+    { label: "Q4 Preview · 5s · 720p", facts: { credits: 0, duration: 5, resolution: "720p" } },
     { label: "q2 5s 720p", facts: { credits: 0, duration: 5, resolution: "720p" } },
     { label: "q1 5s 1080p", facts: { credits: 0, duration: 5, resolution: "1080p" } },
     { label: "2.0 4s 360p", facts: { credits: 0, duration: 4, resolution: "360p" } },
@@ -50,6 +53,20 @@ export const meta = {
 };
 
 const RESOLUTIONS = ["360p", "540p", "720p", "1080p"];
+const Q4_RESOLUTIONS = ["540p", "720p", "1080p", "2K", "4K"];
+const Q4_PASSTHROUGH_FIELDS = [
+  "is_rec",
+  "audio",
+  "aspect_ratio",
+  "sounds",
+  "seed",
+  "payload",
+  "watermark",
+  "wm_position",
+  "wm_url",
+  "meta_data",
+  "callback_url",
+];
 
 function trimmed(value) {
   return String(value || "").trim();
@@ -59,12 +76,17 @@ function isQ2Model(model) {
   return String(model || "").indexOf("viduq2") === 0;
 }
 
+function isQ4Model(model) {
+  return model === "viduq4-preview";
+}
+
 function defaultDuration(model) {
   if (model === "vidu2.0") return 4;
   return 5;
 }
 
 function defaultResolution(model) {
+  if (isQ4Model(model)) return "720p";
   if (isQ2Model(model)) return "720p";
   if (model === "vidu2.0") return "360p";
   return "1080p";
@@ -73,6 +95,11 @@ function defaultResolution(model) {
 function normalizeResolution(value, model) {
   if (model === "viduq1") return "1080p";
   const raw = trimmed(value).toLowerCase();
+  if (isQ4Model(model)) {
+    if (raw === "2k") return "2K";
+    if (raw === "4k") return "4K";
+    if (Q4_RESOLUTIONS.indexOf(raw) >= 0) return raw;
+  }
   if (RESOLUTIONS.indexOf(raw) >= 0) return raw;
   const parts = raw.replace("*", "x").split("x");
   if (parts.length === 2) {
@@ -80,6 +107,13 @@ function normalizeResolution(value, model) {
     const height = Number(parts[1]);
     if (width > 0 && height > 0) {
       const max = Math.max(width, height);
+      if (isQ4Model(model)) {
+        if (max >= 3840) return "4K";
+        if (max >= 2560) return "2K";
+        if (max >= 1920) return "1080p";
+        if (max >= 1280) return "720p";
+        return "540p";
+      }
       if (max >= 1920) return "1080p";
       if (max >= 1280) return "720p";
       if (max >= 960) return "540p";
@@ -109,7 +143,23 @@ function hasViduImages(req, hasInputReferenceFile) {
   return Boolean(trimmed(req && req.input_reference) || trimmed(req && req.image));
 }
 
-function validateViduCombo(model, duration, resolution, hasImages) {
+function validateViduCombo(model, duration, resolution, imageCount, action, prompt) {
+  const hasImages = imageCount > 0;
+  if (isQ4Model(model)) {
+    if (!hasImages) throw new Error("viduq4-preview requires at least one image");
+    if (imageCount > 15) throw new Error("viduq4-preview supports at most 15 images");
+    if (action !== "image_to_video" && action !== "reference_to_video") {
+      throw new Error("viduq4-preview only supports image-to-video and reference-to-video");
+    }
+    if (action === "image_to_video" && imageCount !== 1) throw new Error("viduq4-preview image-to-video requires exactly one image");
+    if (action === "reference_to_video" && !trimmed(prompt)) throw new Error("viduq4-preview reference-to-video requires a prompt");
+    const n = duration === undefined ? defaultDuration(model) : Number(duration);
+    if (!Number.isInteger(n) || n < 3 || n > 16) throw new Error("viduq4-preview duration must be between 3 and 16");
+    if (Q4_RESOLUTIONS.indexOf(resolution) < 0) {
+      throw new Error("viduq4-preview resolution must be 540p, 720p, 1080p, 2K, or 4K");
+    }
+    return;
+  }
   if (model === "vidu2.0" && !hasImages) {
     throw new Error("vidu2.0 does not support text-to-video");
   }
@@ -195,7 +245,7 @@ function responsesVideoText(ctx) {
   return '<video controls src="' + escaped + '"></video>';
 }
 
-function actionFor(req) {
+function actionFor(req, model) {
   if (req.metadata && req.metadata.action) {
     const aliases = {
       generate: "image_to_video",
@@ -207,6 +257,7 @@ function actionFor(req) {
     return aliases[req.metadata.action] || req.metadata.action;
   }
   if (!req.images || req.images.length === 0) return "text_to_video";
+  if (isQ4Model(model)) return req.images.length === 1 ? "image_to_video" : "reference_to_video";
   if (req.images.length === 2) return "first_tail_to_video";
   if (req.images.length > 2) return "reference_to_video";
   return "image_to_video";
@@ -221,22 +272,26 @@ function pathFor(action) {
 
 export function buildSubmitRequest(ctx) {
   const req = ctx.requestBody;
-  const action = actionFor(req);
-  const metadata = req.metadata || {};
   let model = ctx.upstreamModel || "viduq1";
+  const action = actionFor(req, model);
+  const metadata = req.metadata || {};
   if (action === "reference_to_video" && model.includes("viduq2")) model = "viduq2";
   const images = Array.isArray(req.images) ? req.images.map(filePlaceholder) : null;
-  const body = Object.assign(
-    {
-      model: model,
-      images: images,
-      prompt: req.prompt || null,
-      duration: outboundDuration(req, model),
-      resolution: outboundResolution(req, model),
-      movement_amplitude: "auto",
-    },
-    metadata
-  );
+  const body = {
+    model: model,
+    images: images,
+    prompt: req.prompt || null,
+    duration: outboundDuration(req, model),
+    resolution: outboundResolution(req, model),
+  };
+  if (isQ4Model(model)) {
+    for (const field of Q4_PASSTHROUGH_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(req, field)) body[field] = req[field];
+    }
+  } else {
+    body.movement_amplitude = "auto";
+  }
+  Object.assign(body, metadata);
   delete body.action;
   if (!body.prompt) delete body.prompt;
   if (!body.bgm) delete body.bgm;
@@ -336,8 +391,9 @@ export const protocols = {
       if (Object.prototype.hasOwnProperty.call(req, "size")) requestBody.size = req.size;
       if (Object.prototype.hasOwnProperty.call(req, "metadata")) requestBody.metadata = req.metadata;
       const duration = requestBody.duration === undefined ? undefined : Number(requestBody.duration);
-      validateViduCombo(model, duration, outboundResolution(requestBody, model), images.length > 0);
-      return { kind: "submit", model: model, action: actionFor(requestBody), requestBody: requestBody };
+      const action = actionFor(requestBody, model);
+      validateViduCombo(model, duration, outboundResolution(requestBody, model), images.length, action, prompt);
+      return { kind: "submit", model: model, action: action, requestBody: requestBody };
     },
     renderEvents: function (ctx, task, previousState) {
       const status = String(task.status || "UNKNOWN").toUpperCase();
@@ -437,12 +493,13 @@ protocols.openai_video = {
       if (image && (!Array.isArray(req.images) || req.images.length === 0)) req.images = [image];
     }
     req.resolution = outboundResolution(req, model);
-    const hasImages = hasViduImages(req, hasInputReferenceFile);
-    validateViduCombo(model, req.duration, req.resolution, hasImages);
+    const imageCount = hasInputReferenceFile ? 1 : Array.isArray(req.images) ? req.images.length : hasViduImages(req, false) ? 1 : 0;
+    const action = actionFor(req, model);
+    validateViduCombo(model, req.duration, req.resolution, imageCount, action, req.prompt);
     return {
       kind: "submit",
       model: ctx.model,
-      action: actionFor(req),
+      action: action,
       requestBody: Object.assign({}, req, { model: ctx.model }),
     };
   },

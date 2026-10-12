@@ -22,8 +22,9 @@ var builtinBillingExpr = map[string]string{
 	"typesafe/jev-1.13":    `tier("standard", p * 0.042 + c * 0)`,
 	// https://cloud.tencent.com/document/product/1823/130055 (2026-09-10):
 	// CNY 10 / 1M tokens. Converted at the 2026-09-21 PBOC midpoint of
-	// USD 1 = CNY 6.7487. TokenHub reports the billable ASR tokens as input.
-	"hy-asr-3.0-preview": `tier("standard", p * 1.481766859)`,
+	// USD 1 = CNY 6.7487. TokenHub reports each model's billable total as input.
+	"hy-asr-3.0-preview":    `tier("standard", p * 1.481766859)`,
+	"hy-image-v3.5-preview": `tier("standard", p * 1.481766859)`,
 	// https://platform.qianwenai.com/docs/api-reference/world-model/happyoyster-adventure-openapi-reference.md
 	// HappyOyster Adventure OpenAPI pricing, checked 2026-09-22. `price_scope`
 	// is selected explicitly on the channel (international or global).

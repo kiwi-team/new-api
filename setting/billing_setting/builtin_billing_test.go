@@ -168,6 +168,19 @@ func TestHyASRBuiltinBillingUsesReportedInputTokens(t *testing.T) {
 	assert.Equal(t, 740_883, result.ActualQuotaAfterGroup)
 }
 
+func TestHyImageV35BuiltinBillingUsesReportedTokens(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("hy-image-v3.5-preview")
+	require.True(t, ok)
+	assert.Equal(t, `tier("standard", p * 1.481766859)`, expression)
+	usage := &dto.Usage{PromptTokens: 20_000, TotalTokens: 20_000}
+	result, err := billingexpr.ComputeTieredQuota(
+		&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500_000},
+		service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 14_818, result.ActualQuotaAfterGroup)
+}
+
 func TestHappyOysterBuiltinBillingUsesProtocolUsage(t *testing.T) {
 	expression, ok := billing_setting.GetBuiltinBillingExpr("happyoyster-1.0-adventure")
 	require.True(t, ok)

@@ -13,8 +13,13 @@ type ModelOutputMapper struct {
 	names map[string]string
 }
 
+const RequestedModelOutputValue = "$requested_model"
+
 func NewModelOutputMapper(raw string) (*ModelOutputMapper, error) {
 	configured := make(map[string]string)
+	if strings.TrimSpace(raw) == "" {
+		raw = "{}"
+	}
 	if err := hostcommon.UnmarshalJsonStr(raw, &configured); err != nil {
 		return nil, err
 	}
@@ -34,14 +39,16 @@ func (info *RelayInfo) ResponseModelOutputMapper() (*ModelOutputMapper, error) {
 		return nil, nil
 	}
 	raw := info.ChannelSetting.ModelOutputMapping
-	if info.modelOutputMappingParsed && info.modelOutputMappingRaw == raw {
+	useRequestModel := info.ChannelSetting.ResponseModelUseRequestModel
+	if info.modelOutputMappingParsed && info.modelOutputMappingRaw == raw && info.modelOutputUseRequest == useRequestModel {
 		return info.modelOutputMapper, info.modelOutputMappingErr
 	}
 	info.modelOutputMappingRaw = raw
+	info.modelOutputUseRequest = useRequestModel
 	info.modelOutputMappingParsed = true
 	info.modelOutputMapper = nil
 	info.modelOutputMappingErr = nil
-	if raw == "" || raw == "{}" {
+	if (raw == "" || raw == "{}") && !useRequestModel {
 		return nil, nil
 	}
 	info.modelOutputMapper, info.modelOutputMappingErr = NewModelOutputMapper(raw)
@@ -51,10 +58,26 @@ func (info *RelayInfo) ResponseModelOutputMapper() (*ModelOutputMapper, error) {
 // RewritePayload handles both plain JSON responses and complete SSE data
 // lines. Unrecognized or partial payloads pass through unchanged.
 func (m *ModelOutputMapper) RewritePayload(data []byte) []byte {
-	if m == nil || len(m.names) == 0 || len(data) == 0 {
+	return m.rewritePayload(data, "", "", false)
+}
+
+// RewritePayloadForRequest restores the client-requested model when the
+// provider returned the actual upstream model used for this request. Static
+// output mappings remain the fallback for other returned model names.
+func (m *ModelOutputMapper) RewritePayloadForRequest(data []byte, upstreamModel, requestModel string, restoreRequestModel bool) []byte {
+	upstreamModel = strings.TrimSpace(upstreamModel)
+	requestModel = strings.TrimSpace(requestModel)
+	if restoreRequestModel && strings.EqualFold(upstreamModel, requestModel) {
+		return m.rewritePayload(data, "", "", false)
+	}
+	return m.rewritePayload(data, upstreamModel, requestModel, restoreRequestModel)
+}
+
+func (m *ModelOutputMapper) rewritePayload(data []byte, upstreamModel, requestModel string, restoreRequestModel bool) []byte {
+	if m == nil || (len(m.names) == 0 && (upstreamModel == "" || requestModel == "")) || len(data) == 0 {
 		return data
 	}
-	if rewritten, changed := m.rewriteJSON(data); changed {
+	if rewritten, changed := m.rewriteJSON(data, upstreamModel, requestModel, restoreRequestModel); changed {
 		return rewritten
 	}
 	if !bytes.Contains(data, []byte("data:")) {
@@ -81,7 +104,7 @@ func (m *ModelOutputMapper) RewritePayload(data []byte) []byte {
 		if len(content) > prefixLength && content[prefixLength] == ' ' {
 			prefixLength++
 		}
-		rewritten, lineChanged := m.rewriteJSON(content[prefixLength:])
+		rewritten, lineChanged := m.rewriteJSON(content[prefixLength:], upstreamModel, requestModel, restoreRequestModel)
 		if !lineChanged {
 			continue
 		}
@@ -94,7 +117,7 @@ func (m *ModelOutputMapper) RewritePayload(data []byte) []byte {
 	return bytes.Join(lines, nil)
 }
 
-func (m *ModelOutputMapper) rewriteJSON(data []byte) ([]byte, bool) {
+func (m *ModelOutputMapper) rewriteJSON(data []byte, upstreamModel, requestModel string, restoreRequestModel bool) ([]byte, bool) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return data, false
@@ -102,14 +125,14 @@ func (m *ModelOutputMapper) rewriteJSON(data []byte) ([]byte, bool) {
 	switch trimmed[0] {
 	case '{':
 		object := make(map[string]hostcommon.RawMessage)
-		if err := hostcommon.Unmarshal(trimmed, &object); err != nil || !m.rewriteObject(object) {
+		if err := hostcommon.Unmarshal(trimmed, &object); err != nil || !m.rewriteObject(object, upstreamModel, requestModel, restoreRequestModel) {
 			return data, false
 		}
 		rewritten, err := hostcommon.Marshal(object)
 		return rewrittenOrOriginal(data, rewritten, err)
 	case '[':
 		var items []hostcommon.RawMessage
-		if err := hostcommon.Unmarshal(trimmed, &items); err != nil || !m.rewriteArray(items) {
+		if err := hostcommon.Unmarshal(trimmed, &items); err != nil || !m.rewriteArray(items, upstreamModel, requestModel, restoreRequestModel) {
 			return data, false
 		}
 		rewritten, err := hostcommon.Marshal(items)
@@ -126,13 +149,25 @@ func rewrittenOrOriginal(original, rewritten []byte, err error) ([]byte, bool) {
 	return rewritten, true
 }
 
-func (m *ModelOutputMapper) rewriteObject(object map[string]hostcommon.RawMessage) bool {
+func (m *ModelOutputMapper) rewriteObject(object map[string]hostcommon.RawMessage, upstreamModel, requestModel string, restoreRequestModel bool) bool {
 	changed := false
 	for key, child := range object {
 		if key == "model" || key == "modelVersion" || key == "model_version" {
 			var modelName string
 			if err := hostcommon.Unmarshal(child, &modelName); err == nil {
-				if mapped, exists := m.names[strings.ToLower(modelName)]; exists {
+				mapped := ""
+				exists := false
+				if restoreRequestModel && upstreamModel != "" && requestModel != "" && strings.EqualFold(strings.TrimSpace(modelName), upstreamModel) {
+					mapped = requestModel
+					exists = true
+				} else {
+					mapped, exists = m.names[strings.ToLower(modelName)]
+					if exists && mapped == RequestedModelOutputValue {
+						mapped = requestModel
+						exists = requestModel != ""
+					}
+				}
+				if exists {
 					encoded, err := hostcommon.Marshal(mapped)
 					if err == nil {
 						object[key] = encoded
@@ -141,7 +176,7 @@ func (m *ModelOutputMapper) rewriteObject(object map[string]hostcommon.RawMessag
 				}
 			}
 		}
-		if rewritten, childChanged := m.rewriteJSON(child); childChanged {
+		if rewritten, childChanged := m.rewriteJSON(child, upstreamModel, requestModel, restoreRequestModel); childChanged {
 			object[key] = rewritten
 			changed = true
 		}
@@ -149,10 +184,10 @@ func (m *ModelOutputMapper) rewriteObject(object map[string]hostcommon.RawMessag
 	return changed
 }
 
-func (m *ModelOutputMapper) rewriteArray(items []hostcommon.RawMessage) bool {
+func (m *ModelOutputMapper) rewriteArray(items []hostcommon.RawMessage, upstreamModel, requestModel string, restoreRequestModel bool) bool {
 	changed := false
 	for i, item := range items {
-		if rewritten, itemChanged := m.rewriteJSON(item); itemChanged {
+		if rewritten, itemChanged := m.rewriteJSON(item, upstreamModel, requestModel, restoreRequestModel); itemChanged {
 			items[i] = rewritten
 			changed = true
 		}

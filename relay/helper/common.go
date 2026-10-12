@@ -183,7 +183,12 @@ func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 func WssResponseString(c *gin.Context, info *relaycommon.RelayInfo, ws *websocket.Conn, str string) error {
 	mapper, err := info.ResponseModelOutputMapper()
 	if err == nil && mapper != nil {
-		str = string(mapper.RewritePayload([]byte(str)))
+		str = string(mapper.RewritePayloadForRequest(
+			[]byte(str),
+			info.UpstreamModelName,
+			info.OriginModelName,
+			info.ChannelSetting.ResponseModelUseRequestModel,
+		))
 	}
 	return WssString(c, ws, str)
 }

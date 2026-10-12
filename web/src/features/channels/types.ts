@@ -98,6 +98,8 @@ export interface ChannelSettings {
   google_file_bucket?: string
   /** JSON map of upstream model name -> name returned to the client */
   model_output_mapping?: string
+  /** Restore the client-requested model when the upstream returns the mapped model */
+  response_model_use_request_model?: boolean
   /** Anthropic channels: verify the request really comes from Claude Code */
   claude_code_guard_enabled?: boolean
   claude_code_billing_header?: string

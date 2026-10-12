@@ -68,7 +68,12 @@ const CONFIGURATION_BLOCKS = {
   },
   requestPolicy: {
     section: 'request',
-    fields: ['model_output_mapping', 'path_whitelist', 'path_blacklist'],
+    fields: [
+      'model_output_mapping',
+      'response_model_use_request_model',
+      'path_whitelist',
+      'path_blacklist',
+    ],
   },
   fieldPassthrough: {
     section: 'request',
@@ -166,6 +171,7 @@ export function getChannelConfigurationState(
     ),
     requestPolicy: Boolean(
       values.model_output_mapping?.trim() ||
+      values.response_model_use_request_model ||
       values.path_whitelist?.trim() ||
       values.path_blacklist?.trim()
     ),

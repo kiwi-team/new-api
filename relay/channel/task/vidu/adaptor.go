@@ -221,7 +221,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{"viduq2", "viduq1", "vidu2.0", "vidu1.5"}
+	return []string{"viduq4-preview", "viduq2", "viduq1", "vidu2.0", "vidu1.5"}
 }
 
 func (a *TaskAdaptor) GetChannelName() string {

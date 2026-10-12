@@ -280,6 +280,7 @@ export const channelFormSchema = z
       .string()
       .optional()
       .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    response_model_use_request_model: z.boolean().optional(),
     claude_code_guard_enabled: z.boolean().optional(),
     claude_code_billing_header: z.string().optional(),
     // Edited as one path per line; stored as arrays.
@@ -481,6 +482,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   google_file_upload: '',
   google_file_bucket: '',
   model_output_mapping: '',
+  response_model_use_request_model: false,
   claude_code_guard_enabled: false,
   claude_code_billing_header: '',
   path_whitelist: '',
@@ -533,6 +535,7 @@ export function transformChannelToFormDefaults(
     google_file_upload: '',
     google_file_bucket: '',
     model_output_mapping: '',
+    response_model_use_request_model: false,
     claude_code_guard_enabled: false,
     claude_code_billing_header: '',
     path_whitelist: '',
@@ -562,6 +565,8 @@ export function transformChannelToFormDefaults(
         google_file_upload: parsed.google_file_upload || '',
         google_file_bucket: parsed.google_file_bucket || '',
         model_output_mapping: parsed.model_output_mapping || '',
+        response_model_use_request_model:
+          parsed.response_model_use_request_model === true,
         claude_code_guard_enabled: parsed.claude_code_guard_enabled || false,
         claude_code_billing_header: parsed.claude_code_billing_header || '',
         path_whitelist: linesFromList(parsed.path_whitelist),
@@ -716,6 +721,8 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     google_file_bucket: formData.google_file_bucket?.trim() || '',
     google_file_upload: formData.google_file_upload?.trim() || '',
     model_output_mapping: formData.model_output_mapping?.trim() || '',
+    response_model_use_request_model:
+      formData.response_model_use_request_model === true,
     claude_code_guard_enabled: formData.claude_code_guard_enabled || false,
     claude_code_billing_header:
       formData.claude_code_billing_header?.trim() || '',
