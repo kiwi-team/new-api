@@ -112,7 +112,7 @@ export const CHANNEL_TYPES = {
   79: 'vLLM',
   80: 'SGLang',
   81: 'TypeSafe',
-  82: 'HappyOyster Adventure',
+  82: 'HappyOyster',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -214,8 +214,7 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   80: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
   81: { descriptionKey: 'Connect to TypeSafe System One decision models' },
   82: {
-    descriptionKey:
-      'Create and explore interactive worlds with HappyOyster Adventure',
+    descriptionKey: 'Create and explore interactive worlds with HappyOyster',
   },
 }
 

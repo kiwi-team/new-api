@@ -393,6 +393,7 @@ func migrateDB() error {
 		&HappyOysterTicket{},
 		&HappyOysterTravel{},
 		&HappyOysterClientToken{},
+		&HappyOysterInstruction{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -432,6 +433,9 @@ func migrateDB() error {
 		&UserAccessToken{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := MigrateHappyOysterModels(DB); err != nil {
 		return err
 	}
 	if err := createProjectAllocationUniqueIndex(); err != nil {

@@ -207,6 +207,16 @@ func SmokeTestExpr(exprStr string) error {
 // SmokeTestModelExpr validates built-in protocol usage dimensions that are not
 // provided by JavaScript task plugins.
 func SmokeTestModelExpr(modelName, exprStr string) error {
+	if modelName == "happyoyster-1.0-directing" {
+		return SmokeTestTaskExpr(exprStr, map[string]jsplugin.UsageFieldSchema{
+			"price_scope":                       {Type: "string", Enum: []string{"international", "global"}},
+			"world_creations_without_reference": {Type: "number", Unit: "count"},
+			"world_creations_with_reference":    {Type: "number", Unit: "count"},
+			"instruction_injections":            {Type: "number", Unit: "count"},
+			"experience_480p_seconds":           {Type: "number", Unit: "second"},
+			"experience_720p_seconds":           {Type: "number", Unit: "second"},
+		})
+	}
 	if modelName != "happyoyster-1.0-adventure" {
 		return smokeTestExpr(exprStr)
 	}

@@ -207,6 +207,44 @@ func TestHappyOysterBuiltinBillingUsesProtocolUsage(t *testing.T) {
 	}
 }
 
+func TestHappyOysterDirectingBuiltinBilling(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("happyoyster-1.0-directing")
+	require.True(t, ok)
+	require.NoError(t, billing_setting.SmokeTestModelExpr("happyoyster-1.0-directing", expression))
+	for _, tc := range []struct {
+		scope, dimension string
+		quantity         int
+		usd              float64
+	}{
+		{"international", "world_creations_without_reference", 1, .3113},
+		{"international", "world_creations_with_reference", 1, .0077},
+		{"international", "instruction_injections", 1, .0154},
+		{"international", "experience_480p_seconds", 180, 9.702},
+		{"international", "experience_720p_seconds", 180, 15.444},
+		{"global", "world_creations_without_reference", 1, .3113},
+		{"global", "world_creations_with_reference", 1, .0077},
+		{"global", "instruction_injections", 1, .0154},
+		{"global", "experience_480p_seconds", 100, 5.39},
+		{"global", "experience_720p_seconds", 100, 8.58},
+	} {
+		t.Run(tc.scope+tc.dimension, func(t *testing.T) {
+			usage := map[string]any{"price_scope": tc.scope, "world_creations_without_reference": 0, "world_creations_with_reference": 0, "instruction_injections": 0, "experience_480p_seconds": 0, "experience_720p_seconds": 0}
+			usage[tc.dimension] = tc.quantity
+			cost, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: usage})
+			require.NoError(t, err)
+			assert.InDelta(t, tc.usd, cost, 1e-9)
+			assert.Equal(t, "international", trace.MatchedTier)
+			result, _, err := service.EvaluateTaskCompletionUsage(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+				GroupRatio: 1, QuotaPerUnit: 500_000, TaskUsageBilling: true, UsageFacts: usage,
+			}, map[string]any{tc.dimension: tc.quantity})
+			require.NoError(t, err)
+			assert.Nil(t, result.Clamp)
+			assert.Equal(t, common.QuotaRound(tc.usd*500_000), result.ActualQuotaAfterGroup)
+		})
+	}
+}
+
 func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings

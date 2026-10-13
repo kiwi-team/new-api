@@ -112,7 +112,13 @@ func TestHappyOysterAdventureRoutesMatchOfficialAPI(t *testing.T) {
 		http.MethodGet + " " + prefix + "/travels/artifacts",
 	} {
 		assert.True(t, routes[route], route)
+		assert.True(t, routes[strings.Replace(route, "happyoyster-1.0-adventure", "happyoyster-1.0-directing", 1)], route)
 	}
+	for _, operation := range []string{"pause", "resume", "rewind", "instruct", "update-script"} {
+		assert.True(t, routes[http.MethodPost+" /api/v2/apps/happyoyster-1.0-directing/openapi/v1/travels/"+operation])
+		assert.False(t, routes[http.MethodPost+" "+prefix+"/travels/"+operation])
+	}
+	assert.True(t, routes["POST /api/v1/tokens"])
 }
 
 func setupRelayRouterTestDB(t *testing.T) {

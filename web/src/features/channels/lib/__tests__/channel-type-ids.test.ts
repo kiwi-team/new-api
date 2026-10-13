@@ -77,6 +77,13 @@ const BACKEND_CHANNEL_IDS = {
 } as const
 
 describe('channel type IDs match the backend', () => {
+  test('HappyOyster keeps ID 82 and offers both world models', () => {
+    assert.equal(getChannelTypeLabel(82), 'HappyOyster')
+    assert.deepEqual(getChannelTypeConfig(82).supportedModels, [
+      'happyoyster-1.0-adventure',
+      'happyoyster-1.0-directing',
+    ])
+  })
   test('every backend channel is selectable in the UI', () => {
     for (const [name, id] of Object.entries(BACKEND_CHANNEL_IDS)) {
       assert.ok(

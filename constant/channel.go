@@ -256,7 +256,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",
 	ChannelTypeTypeSafe:       "TypeSafe",
-	ChannelTypeHappyOyster:    "HappyOyster Adventure",
+	ChannelTypeHappyOyster:    "HappyOyster",
 }
 
 func GetChannelTypeName(channelType int) string {

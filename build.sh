@@ -1,5 +1,9 @@
 #!/bin/zsh
 
+cd ./web
+./build.sh
+cd ..
+
 arch=$1
 ldflags=$2
 if [ -z "$arch" ]; then

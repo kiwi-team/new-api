@@ -3,6 +3,11 @@ package billing_setting
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// https://www.alibabacloud.com/help/en/model-studio/happyoyster-1-0-directing
+	// Singapore USD per call / second, checked 2026-10-13. Directing defaults
+	// intentionally use Singapore prices for every channel region. Protocol usage
+	// expressions use quantities directly (not token-per-million scaling).
+	"happyoyster-1.0-directing": `tier("international", u("world_creations_without_reference") * 0.3113 + u("world_creations_with_reference") * 0.0077 + u("instruction_injections") * 0.0154 + u("experience_480p_seconds") * 0.0539 + u("experience_720p_seconds") * 0.0858)`,
 	// https://developers.openai.com/api/docs/pricing (Standard, 2026-09-09).
 	// The Images API reports image output in output_tokens, normalized to c.
 	"gpt-image-2":            `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`,

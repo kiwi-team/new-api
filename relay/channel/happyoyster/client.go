@@ -8,14 +8,22 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 )
 
 const APIPath = "/api/v2/apps/happyoyster-1.0-adventure/openapi/v1"
 
-func Do(ctx *http.Request, baseURL, key, proxy string, settings dto.ChannelSettings, method, path string, query url.Values, body []byte) (int, []byte, error) {
-	return do(ctx, baseURL, key, proxy, settings, method, APIPath+path, query, body)
+func Do(ctx *http.Request, baseURL, key, proxy string, settings dto.ChannelSettings, method, path string, query url.Values, body []byte, models ...string) (int, []byte, error) {
+	name := constant.HappyOysterAdventure
+	if len(models) > 0 {
+		name = constant.HappyOysterModel(models[0])
+	}
+	if name != constant.HappyOysterAdventure && name != constant.HappyOysterDirecting {
+		return 0, nil, fmt.Errorf("unsupported HappyOyster model")
+	}
+	return do(ctx, baseURL, key, proxy, settings, method, constant.HappyOysterAPIPath(name)+path, query, body)
 }
 
 func GenerateTemporaryAPIKey(ctx *http.Request, baseURL, key, proxy string, settings dto.ChannelSettings, expireInSeconds int) (int, []byte, error) {
@@ -35,6 +43,9 @@ func do(ctx *http.Request, baseURL, key, proxy string, settings dto.ChannelSetti
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if agent := ctx.Header.Get("User-Agent"); agent != "" {
+		req.Header.Set("User-Agent", agent)
+	}
 	client, err := service.GetHttpClientWithProxySettings(proxy, settings)
 	if err != nil {
 		return 0, nil, err

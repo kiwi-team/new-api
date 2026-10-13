@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -50,11 +51,20 @@ func HappyOysterClientTokenAuth() gin.HandlerFunc {
 
 func HappyOysterModelAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		name := constant.HappyOysterModel(c.GetString("resolved_task_model"))
+		if value, exists := c.Get(ContextKeyHappyOysterClientToken); exists {
+			token, valid := value.(*model.HappyOysterClientToken)
+			scope := constant.HappyOysterClientScope(name, strings.TrimPrefix(c.FullPath(), constant.HappyOysterAPIPath(name)))
+			if !valid || constant.HappyOysterModel(token.Model) != name || scope == "" || !slices.Contains(strings.Split(token.Scopes, ","), scope) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 403003, "message": "temporary API key is not allowed to use this model or endpoint", "data": nil})
+				return
+			}
+		}
 		if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
 			value, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 			limits, valid := value.(map[string]bool)
-			if !ok || !valid || !limits["happyoyster-1.0-adventure"] {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "API token is not allowed to use happyoyster-1.0-adventure", "data": nil})
+			if !ok || !valid || !limits[name] {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "API token is not allowed to use " + name, "data": nil})
 				return
 			}
 		}

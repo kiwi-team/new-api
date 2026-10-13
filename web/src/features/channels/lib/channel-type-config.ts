@@ -56,11 +56,11 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     id: CHANNEL_TYPE_HAPPY_OYSTER,
     name: CHANNEL_TYPES[CHANNEL_TYPE_HAPPY_OYSTER],
     icon: 'qwen',
-    supportedModels: ['happyoyster-1.0-adventure'],
+    supportedModels: ['happyoyster-1.0-adventure', 'happyoyster-1.0-directing'],
     hints: {
       baseUrl: 'HappyOyster workspace API host, without the OpenAPI path',
       key: 'HappyOyster workspace API key',
-      models: 'happyoyster-1.0-adventure',
+      models: 'happyoyster-1.0-adventure, happyoyster-1.0-directing',
       other: 'Billing price scope: international or global',
     },
   },

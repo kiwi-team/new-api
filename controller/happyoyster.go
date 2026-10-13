@@ -36,6 +36,14 @@ import (
 
 const happyOysterModel = "happyoyster-1.0-adventure"
 
+func happyOysterRequestModel(c *gin.Context) string {
+	return constant.HappyOysterModel(c.GetString("resolved_task_model"))
+}
+
+func happyOysterRequestPath(c *gin.Context) string {
+	return strings.TrimPrefix(c.FullPath(), constant.HappyOysterAPIPath(happyOysterRequestModel(c)))
+}
+
 type happyOysterEnvelope struct {
 	Code    *int            `json:"code"`
 	Message any             `json:"message"`
@@ -109,6 +117,7 @@ type happyOysterTravelData struct {
 	DurationSec            *int   `json:"durationSec"`
 	EndedAt                string `json:"endedAt"`
 	ErrorCode              string `json:"errorCode"`
+	ErrorMessage           string `json:"errorMessage"`
 	MaxExperienceTimeSec   *int   `json:"maxExperienceTimeSec"`
 	NoStreamAutoEndTimeout *int   `json:"noStreamAutoEndTimeoutSec"`
 }
@@ -156,6 +165,9 @@ func happyOysterClientTokenAllowsWorld(c *gin.Context, world *model.HappyOysterW
 	if !scoped {
 		return true
 	}
+	if constant.HappyOysterModel(token.Model) != constant.HappyOysterModel(world.Model) {
+		return false
+	}
 	if token.WorldId != 0 {
 		return token.WorldId == world.Id
 	}
@@ -169,6 +181,9 @@ func happyOysterClientTokenAllowsTravel(c *gin.Context, travel *model.HappyOyste
 	token, scoped := happyOysterClientToken(c)
 	if !scoped {
 		return true
+	}
+	if constant.HappyOysterModel(token.Model) != constant.HappyOysterModel(travel.Model) {
+		return false
 	}
 	if token.WorldId != 0 {
 		return token.WorldId == travel.WorldRecordId
@@ -192,6 +207,10 @@ func happyOysterBody(c *gin.Context) ([]byte, error) {
 }
 
 func validateHappyOysterFirstFrame(rawURL, encoded string) error {
+	return validateHappyOysterImage(rawURL, encoded, true)
+}
+
+func validateHappyOysterImage(rawURL, encoded string, landscape bool) error {
 	if rawURL != "" {
 		if len(rawURL) > 4096 {
 			return fmt.Errorf("firstFrameImage.url is too long")
@@ -236,7 +255,7 @@ func validateHappyOysterFirstFrame(rawURL, encoded string) error {
 		return fmt.Errorf("firstFrameImage has invalid image data")
 	}
 	ratio := float64(width) / float64(height)
-	if ratio < 1.5 || ratio > 2.0 {
+	if landscape && (ratio < 1.5 || ratio > 2.0) {
 		return fmt.Errorf("firstFrameImage aspect ratio must be between 1.5 and 2.0")
 	}
 	return nil
@@ -271,6 +290,7 @@ func happyOysterAccountHash(baseURL, key string) string {
 }
 
 func happyOysterRelayInfo(c *gin.Context) (*relaycommon.RelayInfo, error) {
+	happyOysterModel := happyOysterRequestModel(c)
 	common.SetContextKey(c, constant.ContextKeyOriginalModel, happyOysterModel)
 	c.Set("original_model", happyOysterModel)
 	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
@@ -288,11 +308,15 @@ func happyOysterRelayInfo(c *gin.Context) (*relaycommon.RelayInfo, error) {
 func happyOysterPriceScope(configured, baseURL string) (string, error) {
 	scope := strings.ToLower(strings.TrimSpace(configured))
 	if scope == "" {
-		host := strings.ToLower(baseURL)
+		parsed, err := url.Parse(baseURL)
+		if err != nil {
+			return "", err
+		}
+		host := strings.ToLower(parsed.Hostname())
 		switch {
-		case strings.Contains(host, ".ap-southeast-1.maas.aliyuncs.com"):
+		case strings.HasSuffix(host, ".ap-southeast-1.maas.aliyuncs.com"):
 			return "international", nil
-		case strings.Contains(host, ".cn-beijing.maas.aliyuncs.com"), strings.Contains(host, ".us-east-1.maas.aliyuncs.com"):
+		case strings.HasSuffix(host, ".cn-beijing.maas.aliyuncs.com"), strings.HasSuffix(host, ".us-east-1.maas.aliyuncs.com"):
 			return "global", nil
 		default:
 			return "", fmt.Errorf("channel Other must specify international or global when the API host region cannot be inferred")
@@ -305,6 +329,7 @@ func happyOysterPriceScope(configured, baseURL string) (string, error) {
 }
 
 func happyOysterPrice(c *gin.Context, info *relaycommon.RelayInfo, configuredScope, baseURL string, worlds, seconds int) (int, error) {
+	happyOysterModel := happyOysterRequestModel(c)
 	scope, err := happyOysterPriceScope(configuredScope, baseURL)
 	if err != nil {
 		return 0, err
@@ -314,6 +339,10 @@ func happyOysterPrice(c *gin.Context, info *relaycommon.RelayInfo, configuredSco
 		return 0, fmt.Errorf("HappyOyster billing expression is not configured")
 	}
 	facts := map[string]any{"price_scope": scope, "world_creations": worlds, "experience_seconds": seconds}
+	if happyOysterModel == constant.HappyOysterDirecting {
+		facts = happyOysterDirectingUsage(c.GetString("happyoyster_resolution"), c.GetBool("happyoyster_reference"), worlds, seconds, c.GetInt("happyoyster_instructions"))
+		facts["price_scope"] = scope
+	}
 	cost, trace, err := billingexpr.RunExprWithRequest(expr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
 	if err != nil || cost < 0 {
 		if err == nil {
@@ -385,12 +414,12 @@ func middlewareSetupHappyOysterContext(c *gin.Context, channel *model.Channel, k
 }
 
 func happyOysterProxy(c *gin.Context, channel *model.Channel, key, method, path string, query url.Values, body []byte) (int, []byte, happyOysterEnvelope, error) {
-	if value, exists := c.Get(middleware.ContextKeyHappyOysterUpstreamToken); exists && happyOysterTemporaryAPIKeyAllows(path) {
+	if value, exists := c.Get(middleware.ContextKeyHappyOysterUpstreamToken); exists && constant.HappyOysterClientScope(happyOysterRequestModel(c), path) != "" {
 		if temporaryKey, ok := value.(string); ok && temporaryKey != "" {
 			key = temporaryKey
 		}
 	}
-	status, payload, err := happyoyster.Do(c.Request, common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl), key, channel.GetSetting().Proxy, channel.GetSetting(), method, path, query, body)
+	status, payload, err := happyoyster.Do(c.Request, common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl), key, channel.GetSetting().Proxy, channel.GetSetting(), method, path, query, body, happyOysterRequestModel(c))
 	var envelope happyOysterEnvelope
 	if err == nil && status >= 200 && status < 300 {
 		var requestId string
@@ -417,54 +446,55 @@ func HappyOysterCreateWorld(c *gin.Context) {
 		happyOysterBusinessError(c, 400000, err.Error())
 		return
 	}
-	var req struct {
-		Async           *bool  `json:"async,omitempty"`
-		Perspective     string `json:"perspective"`
-		Prompt          string `json:"prompt"`
-		CreationModel   string `json:"creationModel,omitempty"`
-		UploadMode      string `json:"uploadMode,omitempty"`
-		RefWorldId      string `json:"refWorldId,omitempty"`
-		FirstFrameImage struct {
-			URL    string `json:"url,omitempty"`
-			Base64 string `json:"base64,omitempty"`
-		} `json:"firstFrameImage"`
-	}
+	var req happyOysterCreateRequest
 	if err := common.Unmarshal(body, &req); err != nil {
 		happyOysterBusinessError(c, 400000, "invalid JSON body")
 		return
 	}
-	if req.Perspective != "first_person" && req.Perspective != "third_person" {
-		happyOysterBusinessError(c, 400000, "perspective must be first_person or third_person")
-		return
+	if happyOysterRequestModel(c) == constant.HappyOysterDirecting {
+		if err := req.validateDirecting(); err != nil {
+			happyOysterBusinessError(c, 400000, err.Error())
+			return
+		}
+	} else {
+		if req.Perspective != "first_person" && req.Perspective != "third_person" {
+			happyOysterBusinessError(c, 400000, "perspective must be first_person or third_person")
+			return
+		}
+		if strings.TrimSpace(req.Prompt) == "" || len([]rune(req.Prompt)) > 2000 {
+			happyOysterBusinessError(c, 400000, "prompt must contain 1 to 2000 characters")
+			return
+		}
+		if (req.FirstFrameImage.URL == "") == (req.FirstFrameImage.Base64 == "") {
+			happyOysterBusinessError(c, 400000, "firstFrameImage must contain exactly one of url or base64")
+			return
+		}
+		if req.CreationModel != "" && req.CreationModel != "simple" {
+			happyOysterBusinessError(c, 400000, "creationModel must be simple")
+			return
+		}
+		if len(req.RefWorldId) > 512 {
+			happyOysterBusinessError(c, 400000, "refWorldId is too long")
+			return
+		}
+		if req.UploadMode != "" && req.UploadMode != "first_frame" {
+			happyOysterBusinessError(c, 400000, "uploadMode must be first_frame")
+			return
+		}
+		if err := validateHappyOysterFirstFrame(req.FirstFrameImage.URL, req.FirstFrameImage.Base64); err != nil {
+			happyOysterBusinessError(c, 400000, err.Error())
+			return
+		}
 	}
-	if strings.TrimSpace(req.Prompt) == "" || len([]rune(req.Prompt)) > 2000 {
-		happyOysterBusinessError(c, 400000, "prompt must contain 1 to 2000 characters")
-		return
+	if req.CreationModel == "" {
+		req.CreationModel = "simple"
 	}
-	if (req.FirstFrameImage.URL == "") == (req.FirstFrameImage.Base64 == "") {
-		happyOysterBusinessError(c, 400000, "firstFrameImage must contain exactly one of url or base64")
-		return
-	}
-	if req.CreationModel != "" && req.CreationModel != "simple" {
-		happyOysterBusinessError(c, 400000, "creationModel must be simple")
-		return
-	}
-	if len(req.RefWorldId) > 512 {
-		happyOysterBusinessError(c, 400000, "refWorldId is too long")
-		return
-	}
-	if req.UploadMode != "" && req.UploadMode != "first_frame" {
-		happyOysterBusinessError(c, 400000, "uploadMode must be first_frame")
-		return
-	}
-	if err := validateHappyOysterFirstFrame(req.FirstFrameImage.URL, req.FirstFrameImage.Base64); err != nil {
-		happyOysterBusinessError(c, 400000, err.Error())
-		return
-	}
+	c.Set("happyoyster_resolution", req.Resolution)
+	c.Set("happyoyster_reference", req.hasReferenceImage())
 	var channel *model.Channel
 	var key string
 	if req.RefWorldId != "" {
-		refWorld, lookupErr := model.GetHappyOysterWorld(common.GetContextKeyInt(c, constant.ContextKeyUserId), req.RefWorldId)
+		refWorld, lookupErr := model.GetHappyOysterWorld(common.GetContextKeyInt(c, constant.ContextKeyUserId), req.RefWorldId, happyOysterRequestModel(c))
 		if lookupErr != nil {
 			happyOysterBusinessError(c, 403001, "refWorldId is not available to this account")
 			return
@@ -476,7 +506,7 @@ func HappyOysterCreateWorld(c *gin.Context) {
 		}
 	}
 	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) != constant.ChannelTypeHappyOyster {
-		happyOysterError(c, 400, "selected channel is not HappyOyster Adventure")
+		happyOysterError(c, 400, "selected channel is not HappyOyster")
 		return
 	}
 	info, err := happyOysterRelayInfo(c)
@@ -503,6 +533,11 @@ func HappyOysterCreateWorld(c *gin.Context) {
 		return
 	}
 	status, payload, envelope, err := happyOysterProxy(c, channel, key, http.MethodPost, "/worlds", nil, body)
+	if happyOysterRequestModel(c) == constant.HappyOysterDirecting && (err != nil || status >= 500) {
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation outcome unknown; reconciliation required", "", "", happyOysterLogPayload{Request: string(body), Response: string(payload)})
+		happyOysterError(c, 502, "world creation outcome unknown; reconciliation required before retry")
+		return
+	}
 	if err != nil || status < 200 || status >= 300 || !envelope.successful() {
 		if info.Billing != nil {
 			info.Billing.Refund(c)
@@ -529,7 +564,8 @@ func HappyOysterCreateWorld(c *gin.Context) {
 	}
 	world := model.HappyOysterWorld{UserId: info.UserId, TokenId: info.TokenId, EncryptedWorldId: data.EncryptedWorldId, ChannelId: channel.Id,
 		ChannelMultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex), ChannelAccountHash: happyOysterAccountHash(baseURL, key),
-		BaseURL: baseURL, Status: data.Status, Name: data.Name, Perspective: req.Perspective, CreationModel: "simple", UploadMode: "first_frame", FirstFrame: firstFrame}
+		BaseURL: baseURL, Status: data.Status, Name: data.Name, Perspective: req.Perspective, CreationModel: req.CreationModel, UploadMode: "first_frame", FirstFrame: firstFrame,
+		Model: happyOysterRequestModel(c), Resolution: req.Resolution, HasReferenceImage: req.hasReferenceImage()}
 	if err := model.DB.Create(&world).Error; err != nil {
 		_ = service.SettleBilling(c, info, quota)
 		_, _ = happyOysterLog(c, info, quota, "HappyOyster world creation routing persistence failure", data.EncryptedWorldId, "", happyOysterLogPayload{Request: string(body), Response: string(payload)})
@@ -542,8 +578,7 @@ func HappyOysterCreateWorld(c *gin.Context) {
 }
 
 func HappyOysterWorldOperation(c *gin.Context) {
-	path := c.FullPath()
-	suffix := strings.TrimPrefix(path, happyoyster.APIPath)
+	suffix := happyOysterRequestPath(c)
 	if _, scoped := happyOysterClientToken(c); scoped && suffix != "/worlds/build-status" {
 		happyOysterBusinessError(c, 403003, "temporary API keys cannot call this endpoint")
 		return
@@ -561,18 +596,20 @@ func HappyOysterWorldOperation(c *gin.Context) {
 		var v struct {
 			EncryptedWorldId string `json:"encryptedWorldId"`
 		}
-		if common.Unmarshal(body, &v) == nil && v.EncryptedWorldId != "" {
-			worldId = v.EncryptedWorldId
+		if common.Unmarshal(body, &v) != nil {
+			happyOysterBusinessError(c, 400000, "invalid JSON body")
+			return
 		}
+		worldId = v.EncryptedWorldId
 	}
 	if worldId == "" || len(worldId) > 512 {
 		happyOysterBusinessError(c, 400000, "encryptedWorldId is required and must not exceed 512 characters")
 		return
 	}
-	world, err := model.GetHappyOysterWorld(userId, worldId)
+	world, err := model.GetHappyOysterWorld(userId, worldId, happyOysterRequestModel(c))
 	if err != nil {
 		if suffix == "/worlds/delete" {
-			if _, deletedErr := model.GetDeletedHappyOysterWorld(userId, worldId); deletedErr == nil {
+			if _, deletedErr := model.GetDeletedHappyOysterWorld(userId, worldId, happyOysterRequestModel(c)); deletedErr == nil {
 				c.JSON(http.StatusOK, gin.H{"code": 0, "message": nil, "data": gin.H{"encryptedWorldId": worldId, "deleted": false}})
 				return
 			}
@@ -613,6 +650,7 @@ func HappyOysterWorldOperation(c *gin.Context) {
 			model.DB.Model(&model.HappyOysterClientToken{}).Where("world_id = ? AND revoked_at = 0", world.Id).Update("revoked_at", time.Now().Unix())
 		}
 		if suffix == "/worlds/get-travel-credential" {
+			c.Header("Cache-Control", "no-store")
 			var data happyOysterTicketData
 			decodeErr := common.Unmarshal(envelope.Data, &data)
 			credentialMismatch := data.EncryptedWorldId != "" && data.EncryptedWorldId != world.EncryptedWorldId
@@ -631,6 +669,7 @@ func HappyOysterWorldOperation(c *gin.Context) {
 }
 
 func HappyOysterEnterTravel(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	body, err := happyOysterBody(c)
 	if err != nil {
 		happyOysterError(c, 400, err.Error())
@@ -669,7 +708,7 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		return
 	}
 	var world model.HappyOysterWorld
-	if model.DB.First(&world, ticket.WorldId).Error != nil {
+	if model.DB.First(&world, ticket.WorldId).Error != nil || world.Deleted || constant.HappyOysterModel(world.Model) != happyOysterRequestModel(c) {
 		happyOysterError(c, 404, "world not found")
 		return
 	}
@@ -687,6 +726,10 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		happyOysterError(c, 500, err.Error())
 		return
 	}
+	if happyOysterRequestModel(c) == constant.HappyOysterDirecting {
+		duration = 180
+	}
+	c.Set("happyoyster_resolution", world.Resolution)
 	quota, err := happyOysterPrice(c, info, channel.Other, world.BaseURL, 0, duration)
 	if err != nil {
 		happyOysterError(c, 400, err.Error())
@@ -704,7 +747,15 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		happyOysterError(c, 400, "ticket is invalid, expired, or already used")
 		return
 	}
+	// Subscription funding may reserve one quota unit even for a zero-price
+	// expression. Persist the actual reservation so completion refunds it too.
+	quota = info.FinalPreConsumedQuota
 	status, payload, envelope, err := happyOysterProxy(c, channel, key, http.MethodPost, "/travels/enter-travel", nil, body)
+	if happyOysterRequestModel(c) == constant.HappyOysterDirecting && (err != nil || status >= 500) {
+		_, _ = happyOysterLog(c, info, quota, "HappyOyster enter-travel outcome unknown; reconciliation required", world.EncryptedWorldId, "", happyOysterLogPayload{})
+		happyOysterError(c, 502, "enter-travel outcome unknown; reconciliation required before retry")
+		return
+	}
 	if err != nil || status < 200 || status >= 300 || !envelope.successful() {
 		if info.Billing != nil {
 			info.Billing.Refund(c)
@@ -726,7 +777,7 @@ func HappyOysterEnterTravel(c *gin.Context) {
 		return
 	}
 	adoptedDuration := duration
-	if data.MaxExperienceTimeSec != nil {
+	if data.MaxExperienceTimeSec != nil && happyOysterRequestModel(c) == constant.HappyOysterAdventure {
 		adoptedDuration = *data.MaxExperienceTimeSec
 		if adoptedDuration != 60 && adoptedDuration != 90 && adoptedDuration != 120 {
 			_ = service.SettleBilling(c, info, quota)
@@ -737,6 +788,7 @@ func HappyOysterEnterTravel(c *gin.Context) {
 	}
 	snapshot, _ := common.Marshal(info.TieredBillingSnapshot)
 	travel := model.HappyOysterTravel{UserId: userId, TokenId: info.TokenId, WorldRecordId: world.Id, EncryptedWorldId: world.EncryptedWorldId, EncryptedTravelId: data.EncryptedTravelId,
+		Model: happyOysterRequestModel(c), Resolution: world.Resolution, CreationModel: world.CreationModel,
 		ChannelId: world.ChannelId, ChannelMultiKeyIndex: world.ChannelMultiKeyIndex, ChannelAccountHash: world.ChannelAccountHash, BaseURL: world.BaseURL, Status: "pending",
 		MaxExperienceSeconds: adoptedDuration, PreConsumedQuota: quota, BillingSource: info.BillingSource, SubscriptionId: info.SubscriptionId, BillingSnapshot: string(snapshot), UsingGroup: info.UsingGroup, SettlementState: model.HappyOysterSettlementPending}
 	travel.ClientUserId = common.GetContextKeyString(c, constant.ContextKeyClientUserId)
@@ -755,7 +807,7 @@ func HappyOysterEnterTravel(c *gin.Context) {
 }
 
 func HappyOysterTravelOperation(c *gin.Context) {
-	if _, scoped := happyOysterClientToken(c); scoped && !happyOysterTemporaryAPIKeyAllows(strings.TrimPrefix(c.FullPath(), happyoyster.APIPath)) {
+	if _, scoped := happyOysterClientToken(c); scoped && constant.HappyOysterClientScope(happyOysterRequestModel(c), happyOysterRequestPath(c)) == "" {
 		happyOysterBusinessError(c, 403003, "temporary API keys cannot call this endpoint")
 		return
 	}
@@ -769,18 +821,24 @@ func HappyOysterTravelOperation(c *gin.Context) {
 			happyOysterError(c, 400, err.Error())
 			return
 		}
-		var v struct {
-			EncryptedTravelId string `json:"encryptedTravelId"`
+		var v happyOysterControlRequest
+		if common.Unmarshal(body, &v) != nil {
+			happyOysterBusinessError(c, 400000, "invalid JSON body")
+			return
 		}
-		if common.Unmarshal(body, &v) == nil && v.EncryptedTravelId != "" {
-			travelId = v.EncryptedTravelId
+		travelId = v.EncryptedTravelId
+		if happyOysterRequestModel(c) == constant.HappyOysterDirecting {
+			if err := v.validate(happyOysterRequestPath(c)); err != nil {
+				happyOysterBusinessError(c, 400000, err.Error())
+				return
+			}
 		}
 	}
 	if travelId == "" || len(travelId) > 512 {
 		happyOysterBusinessError(c, 400000, "encryptedTravelId is required and must not exceed 512 characters")
 		return
 	}
-	travel, err := model.GetHappyOysterTravel(userId, travelId)
+	travel, err := model.GetHappyOysterTravel(userId, travelId, happyOysterRequestModel(c))
 	if err != nil {
 		happyOysterError(c, 404, "travel not found")
 		return
@@ -789,12 +847,24 @@ func HappyOysterTravelOperation(c *gin.Context) {
 		happyOysterError(c, 403, "temporary API key and Travel belong to different channel accounts")
 		return
 	}
+	suffix := happyOysterRequestPath(c)
+	if suffix == "/travels/instruct" && travel.CreationModel != "simple" {
+		happyOysterBusinessError(c, 403006, "instruction injection requires simple creationModel")
+		return
+	}
+	if suffix == "/travels/update-script" && travel.CreationModel != "scriptlist" {
+		happyOysterBusinessError(c, 409000, "script update requires scriptlist creationModel")
+		return
+	}
 	channel, key, err := happyOysterPinned(c, travel.ChannelId, travel.ChannelMultiKeyIndex, travel.ChannelAccountHash, travel.BaseURL)
 	if err != nil {
 		happyOysterError(c, 503, err.Error())
 		return
 	}
-	suffix := strings.TrimPrefix(c.FullPath(), happyoyster.APIPath)
+	if suffix == "/travels/instruct" {
+		happyOysterInstruct(c, travel, channel, key, body)
+		return
+	}
 	status, payload, envelope, err := happyOysterProxy(c, channel, key, c.Request.Method, suffix, c.Request.URL.Query(), body)
 	if err != nil {
 		happyOysterError(c, 502, err.Error())
@@ -809,6 +879,10 @@ func HappyOysterTravelOperation(c *gin.Context) {
 			}
 			if data.DurationSec != nil {
 				updates["duration_seconds"] = *data.DurationSec
+				updates["duration_known"] = true
+			}
+			if data.Status == "failed" {
+				updates["error_code"], updates["error_message"] = data.ErrorCode, data.ErrorMessage
 			}
 			if data.EndedAt != "" {
 				updates["ended_at"] = data.EndedAt
@@ -822,7 +896,7 @@ func HappyOysterTravelOperation(c *gin.Context) {
 					duration = *data.DurationSec
 				}
 				happyOysterSettleTravel(c, travel, duration, data.Status)
-			} else if data.Status == "completed" && data.DurationSec != nil {
+			} else if data.Status == "completed" && data.DurationSec != nil && travel.Model != constant.HappyOysterDirecting {
 				happyOysterSettleTravel(c, travel, *data.DurationSec, data.Status)
 			}
 		}
@@ -842,7 +916,11 @@ func happyOysterSettleTravel(ctx context.Context, travel *model.HappyOysterTrave
 	if common.Unmarshal([]byte(travel.BillingSnapshot), &snap) != nil {
 		return
 	}
-	result, _, err := service.EvaluateTaskCompletionUsage(&snap, map[string]any{"experience_seconds": seconds})
+	usage := map[string]any{"experience_seconds": seconds}
+	if travel.Model == constant.HappyOysterDirecting {
+		usage = happyOysterDirectingUsage(travel.Resolution, false, 0, seconds, 0)
+	}
+	result, _, err := service.EvaluateTaskCompletionUsage(&snap, usage)
 	if err != nil || result.Clamp != nil {
 		return
 	}
@@ -904,7 +982,7 @@ func happyOysterSettleTravel(ctx context.Context, travel *model.HappyOysterTrave
 		logType, amount = model.LogTypeRefund, -delta
 	}
 	if delta != 0 {
-		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: travel.UserId, LogType: logType, Content: "HappyOyster travel settlement", ChannelId: travel.ChannelId, ModelName: happyOysterModel, Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
+		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: travel.UserId, LogType: logType, Content: "HappyOyster travel settlement", ChannelId: travel.ChannelId, ModelName: constant.HappyOysterModel(travel.Model), Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
 	}
 }
 
@@ -916,6 +994,7 @@ func RunHappyOysterPollingOnce(ctx context.Context) int {
 		if ctx.Err() != nil {
 			break
 		}
+		model.DB.Model(&travel).Update("last_polled_at", time.Now().Unix())
 		channel, err := model.GetChannelById(travel.ChannelId, true)
 		if err != nil || channel.Type != constant.ChannelTypeHappyOyster || channel.Status != common.ChannelStatusEnabled {
 			continue
@@ -938,7 +1017,7 @@ func RunHappyOysterPollingOnce(ctx context.Context) int {
 			continue
 		}
 		query := url.Values{"encryptedTravelId": []string{travel.EncryptedTravelId}}
-		status, payload, err := happyoyster.Do(req, travel.BaseURL, key, channel.GetSetting().Proxy, channel.GetSetting(), http.MethodGet, "/travels/status", query, nil)
+		status, payload, err := happyoyster.Do(req, travel.BaseURL, key, channel.GetSetting().Proxy, channel.GetSetting(), http.MethodGet, "/travels/status", query, nil, travel.Model)
 		if err != nil || status < 200 || status >= 300 {
 			continue
 		}
@@ -956,6 +1035,10 @@ func RunHappyOysterPollingOnce(ctx context.Context) int {
 		}
 		if data.DurationSec != nil {
 			updates["duration_seconds"] = *data.DurationSec
+			updates["duration_known"] = true
+		}
+		if data.Status == "failed" {
+			updates["error_code"], updates["error_message"] = data.ErrorCode, data.ErrorMessage
 		}
 		if data.EndedAt != "" {
 			updates["ended_at"] = data.EndedAt
@@ -969,10 +1052,10 @@ func RunHappyOysterPollingOnce(ctx context.Context) int {
 				duration = *data.DurationSec
 			}
 			happyOysterSettleTravel(ctx, &travel, duration, data.Status)
-		} else if data.Status == "completed" && data.DurationSec != nil {
+		} else if data.Status == "completed" && data.DurationSec != nil && travel.Model != constant.HappyOysterDirecting {
 			happyOysterSettleTravel(ctx, &travel, *data.DurationSec, data.Status)
 		} else if data.Status == "completed" {
-			artifactStatus, artifactPayload, artifactErr := happyoyster.Do(req, travel.BaseURL, key, channel.GetSetting().Proxy, channel.GetSetting(), http.MethodGet, "/travels/artifacts", query, nil)
+			artifactStatus, artifactPayload, artifactErr := happyoyster.Do(req, travel.BaseURL, key, channel.GetSetting().Proxy, channel.GetSetting(), http.MethodGet, "/travels/artifacts", query, nil, travel.Model)
 			if artifactErr == nil && artifactStatus >= 200 && artifactStatus < 300 {
 				_, artifactEnvelope, _, decodeErr := decodeHappyOysterResponse(artifactPayload)
 				var artifacts happyOysterArtifactsData
@@ -1011,18 +1094,26 @@ func happyOysterList(c *gin.Context, worlds bool) {
 	}
 	userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
 	if worlds {
-		if mode := c.Query("mode"); mode != "" && mode != "1" {
-			happyOysterBusinessError(c, 400000, "mode must be 1 for HappyOyster Adventure")
+		mode := 1
+		if happyOysterRequestModel(c) == constant.HappyOysterDirecting {
+			mode = 2
+		}
+		if requested := c.Query("mode"); requested != "" && requested != strconv.Itoa(mode) {
+			happyOysterBusinessError(c, 400000, fmt.Sprintf("mode must be %d for this model", mode))
 			return
 		}
-		rows, total, err := model.ListHappyOysterWorlds(userId, page, size, c.Query("status"))
+		rows, total, err := model.ListHappyOysterWorlds(userId, page, size, c.Query("status"), happyOysterRequestModel(c))
 		if err != nil {
 			happyOysterError(c, 500, err.Error())
 			return
 		}
 		items := make([]gin.H, 0, len(rows))
 		for _, row := range rows {
-			items = append(items, gin.H{"encryptedWorldId": row.EncryptedWorldId, "name": row.Name, "status": row.Status, "mode": 1, "previewUrl": nil, "createdAt": time.Unix(row.CreatedAt, 0).UTC().Format(time.RFC3339), "perspective": row.Perspective, "creationModel": row.CreationModel, "uploadMode": row.UploadMode})
+			var perspective, upload any = row.Perspective, row.UploadMode
+			if mode == 2 {
+				perspective, upload = nil, nil
+			}
+			items = append(items, gin.H{"encryptedWorldId": row.EncryptedWorldId, "name": row.Name, "status": row.Status, "mode": mode, "previewUrl": nil, "createdAt": time.Unix(row.CreatedAt, 0).UTC().Format(time.RFC3339), "perspective": perspective, "creationModel": row.CreationModel, "uploadMode": upload})
 		}
 		c.JSON(200, gin.H{"code": 0, "message": nil, "data": gin.H{"items": items, "pagination": gin.H{"page": page, "pageSize": size, "total": total, "hasMore": int64(page*size) < total}}})
 		return
@@ -1036,12 +1127,12 @@ func happyOysterList(c *gin.Context, worlds bool) {
 			happyOysterBusinessError(c, 400000, "encryptedWorldId is too long")
 			return
 		}
-		if _, err := model.GetHappyOysterWorld(userId, worldId); err != nil {
+		if _, err := model.GetHappyOysterWorld(userId, worldId, happyOysterRequestModel(c)); err != nil {
 			happyOysterError(c, 403, "world is not available to this account")
 			return
 		}
 	}
-	rows, total, err := model.ListHappyOysterTravels(userId, page, size, c.Query("status"), c.Query("encryptedWorldId"))
+	rows, total, err := model.ListHappyOysterTravels(userId, page, size, c.Query("status"), c.Query("encryptedWorldId"), happyOysterRequestModel(c))
 	if err != nil {
 		happyOysterError(c, 500, err.Error())
 		return
@@ -1053,10 +1144,18 @@ func happyOysterList(c *gin.Context, worlds bool) {
 		if row.EndedAt != "" {
 			endedAt = row.EndedAt
 		}
-		if row.DurationSeconds > 0 {
+		if row.DurationKnown || row.DurationSeconds > 0 {
 			duration = row.DurationSeconds
 		}
-		items = append(items, gin.H{"encryptedTravelId": row.EncryptedTravelId, "status": row.Status, "mode": 1, "encryptedWorldId": row.EncryptedWorldId, "durationSec": duration, "createdAt": time.Unix(row.CreatedAt, 0).UTC().Format(time.RFC3339), "endedAt": endedAt})
+		mode := 1
+		if row.Model == constant.HappyOysterDirecting {
+			mode = 2
+		}
+		item := gin.H{"encryptedTravelId": row.EncryptedTravelId, "status": row.Status, "mode": mode, "encryptedWorldId": row.EncryptedWorldId, "durationSec": duration, "createdAt": time.Unix(row.CreatedAt, 0).UTC().Format(time.RFC3339), "endedAt": endedAt}
+		if row.Status == "failed" {
+			item["errorCode"], item["errorMessage"] = row.ErrorCode, row.ErrorMessage
+		}
+		items = append(items, item)
 	}
 	c.JSON(200, gin.H{"code": 0, "message": nil, "data": gin.H{"items": items, "pagination": gin.H{"page": page, "pageSize": size, "total": total, "hasMore": int64(page*size) < total}}})
 }
@@ -1076,7 +1175,7 @@ func HappyOysterIssueTemporaryAPIKey(c *gin.Context) {
 		return
 	}
 	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) != constant.ChannelTypeHappyOyster {
-		happyOysterError(c, http.StatusBadRequest, "selected channel is not HappyOyster Adventure")
+		happyOysterError(c, http.StatusBadRequest, "selected channel is not HappyOyster")
 		return
 	}
 	channelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
@@ -1106,9 +1205,13 @@ func HappyOysterIssueTemporaryAPIKey(c *gin.Context) {
 	}
 	sum := sha256.Sum256([]byte(response.Token))
 	record := model.HappyOysterClientToken{
+		Model:     happyOysterRequestModel(c),
 		TokenHash: hex.EncodeToString(sum[:]), UserId: common.GetContextKeyInt(c, constant.ContextKeyUserId), TokenId: common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		ChannelId: channelId, ChannelMultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex), ChannelAccountHash: happyOysterAccountHash(baseURL, key),
 		BaseURL: baseURL, Scopes: "world:build-status,travel:enter,travel:status,travel:end", ExpiresAt: response.ExpiresAt,
+	}
+	if record.Model == constant.HappyOysterDirecting {
+		record.Scopes += ",travel:rewind,travel:pause,travel:resume,travel:instruct,travel:update-script"
 	}
 	if model.DB.Create(&record).Error != nil {
 		happyOysterError(c, http.StatusInternalServerError, "failed to persist temporary API key")
@@ -1120,8 +1223,9 @@ func HappyOysterIssueTemporaryAPIKey(c *gin.Context) {
 }
 
 func happyOysterLog(c *gin.Context, info *relaycommon.RelayInfo, quota int, content, worldId, travelId string, payload happyOysterLogPayload) (string, int) {
+	happyOysterModel := happyOysterRequestModel(c)
 	other := model.NewLogOther()
-	other.SetPublic("protocol", "happyoyster-adventure")
+	other.SetPublic("protocol", strings.Replace(happyOysterModel, "-1.0", "", 1))
 	other.SetPublic("world_id", worldId)
 	if travelId != "" {
 		other.SetPublic("travel_id", travelId)

@@ -101,9 +101,9 @@ func init() {
 			OwnedBy: ltxAdaptor.GetChannelName(),
 		})
 	}
-	openAIModels = append(openAIModels, dto.OpenAIModels{
-		Id: happyOysterModel, Object: "model", Created: 1626777600, OwnedBy: "HappyOyster Adventure",
-	})
+	for _, name := range []string{constant.HappyOysterAdventure, constant.HappyOysterDirecting} {
+		openAIModels = append(openAIModels, dto.OpenAIModels{Id: name, Object: "model", Created: 1626777600, OwnedBy: "HappyOyster"})
+	}
 	openAIModelsMap = make(map[string]dto.OpenAIModels)
 	for _, aiModel := range openAIModels {
 		openAIModelsMap[aiModel.Id] = aiModel
@@ -111,7 +111,7 @@ func init() {
 	channelId2Models = make(map[int][]string)
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
 		if i == constant.ChannelTypeHappyOyster {
-			channelId2Models[i] = []string{happyOysterModel}
+			channelId2Models[i] = []string{constant.HappyOysterAdventure, constant.HappyOysterDirecting}
 			continue
 		}
 		apiType, success := common.ChannelType2APIType(i)
