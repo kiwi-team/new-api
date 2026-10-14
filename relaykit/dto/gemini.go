@@ -2,7 +2,9 @@ package dto
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -25,7 +27,9 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 	type Alias GeminiChatRequest
 	var aux struct {
 		Alias
-		SystemInstructionSnake *GeminiChatContent `json:"system_instruction,omitempty"`
+		SystemInstructionSnake *GeminiChatContent          `json:"system_instruction,omitempty"`
+		GenerationConfigCamel  *GeminiChatGenerationConfig `json:"generationConfig"`
+		GenerationConfigSnake  *GeminiChatGenerationConfig `json:"generation_config"`
 	}
 
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
@@ -33,6 +37,15 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 	}
 
 	*r = GeminiChatRequest(aux.Alias)
+	if aux.GenerationConfigCamel != nil && aux.GenerationConfigSnake != nil && !reflect.DeepEqual(aux.GenerationConfigCamel, aux.GenerationConfigSnake) {
+		return fmt.Errorf("conflicting generationConfig and generation_config")
+	}
+	if aux.GenerationConfigCamel != nil {
+		r.GenerationConfig = *aux.GenerationConfigCamel
+	}
+	if aux.GenerationConfigSnake != nil {
+		r.GenerationConfig = *aux.GenerationConfigSnake
+	}
 
 	if aux.SystemInstructionSnake != nil {
 		r.SystemInstructions = aux.SystemInstructionSnake
@@ -87,8 +100,16 @@ func (r *GeminiChatRequest) GetTokenCountMeta() *types.TokenCountMeta {
 			if part.Text != "" {
 				inputTexts = append(inputTexts, part.Text)
 			}
-			if source := part.InlineData.ToFileSource(); source != nil {
-				mimeType := part.InlineData.MimeType
+			var source types.FileSource
+			var mimeType string
+			if part.InlineData != nil {
+				source = part.InlineData.ToFileSource()
+				mimeType = part.InlineData.MimeType
+			} else if part.FileData != nil && part.FileData.FileUri != "" {
+				source = types.NewURLFileSource(part.FileData.FileUri)
+				mimeType = part.FileData.MimeType
+			}
+			if source != nil {
 				var fileType types.FileType
 				if strings.HasPrefix(mimeType, "image/") {
 					fileType = types.FileTypeImage
@@ -226,25 +247,24 @@ func (d *GeminiInlineData) ToFileSource() types.FileSource {
 
 // UnmarshalJSON custom unmarshaler for GeminiInlineData to support snake_case and camelCase for MimeType
 func (g *GeminiInlineData) UnmarshalJSON(data []byte) error {
-	type Alias GeminiInlineData // Use type alias to avoid recursion
-	var aux struct {
-		Alias
-		MimeTypeSnake string `json:"mime_type"`
+	var value struct {
+		Data          string  `json:"data"`
+		MimeType      *string `json:"mimeType"`
+		MimeTypeSnake *string `json:"mime_type"`
 	}
-
-	if err := kitutil.Unmarshal(data, &aux); err != nil {
+	if err := kitutil.Unmarshal(data, &value); err != nil {
 		return err
 	}
-
-	*g = GeminiInlineData(aux.Alias) // Copy other fields if any in future
-
-	// Prioritize snake_case if present
-	if aux.MimeTypeSnake != "" {
-		g.MimeType = aux.MimeTypeSnake
-	} else if aux.MimeType != "" { // Fallback to camelCase from Alias
-		g.MimeType = aux.MimeType
+	if value.MimeType != nil && value.MimeTypeSnake != nil && *value.MimeType != *value.MimeTypeSnake {
+		return fmt.Errorf("conflicting mimeType and mime_type")
 	}
-	// g.Data would be populated by aux.Alias.Data
+	*g = GeminiInlineData{Data: value.Data}
+	if value.MimeType != nil {
+		g.MimeType = *value.MimeType
+	}
+	if value.MimeTypeSnake != nil {
+		g.MimeType = *value.MimeTypeSnake
+	}
 	return nil
 }
 
@@ -290,6 +310,38 @@ type GeminiFileData struct {
 	FileUri  string `json:"fileUri,omitempty"`
 }
 
+func (f *GeminiFileData) UnmarshalJSON(data []byte) error {
+	var value struct {
+		MimeType      *string `json:"mimeType"`
+		FileURI       *string `json:"fileUri"`
+		MimeTypeSnake *string `json:"mime_type"`
+		FileURISnake  *string `json:"file_uri"`
+	}
+	if err := kitutil.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.MimeType != nil && value.MimeTypeSnake != nil && *value.MimeType != *value.MimeTypeSnake {
+		return fmt.Errorf("conflicting mimeType and mime_type")
+	}
+	if value.FileURI != nil && value.FileURISnake != nil && *value.FileURI != *value.FileURISnake {
+		return fmt.Errorf("conflicting fileUri and file_uri")
+	}
+	*f = GeminiFileData{}
+	if value.MimeType != nil {
+		f.MimeType = *value.MimeType
+	}
+	if value.MimeTypeSnake != nil {
+		f.MimeType = *value.MimeTypeSnake
+	}
+	if value.FileURI != nil {
+		f.FileUri = *value.FileURI
+	}
+	if value.FileURISnake != nil {
+		f.FileUri = *value.FileURISnake
+	}
+	return nil
+}
+
 type GeminiPart struct {
 	Text             string                  `json:"text,omitempty"`
 	Thought          bool                    `json:"thought,omitempty"`
@@ -312,6 +364,7 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	var aux struct {
 		Alias
 		InlineDataSnake *GeminiInlineData `json:"inline_data,omitempty"` // snake_case variant
+		FileDataSnake   *GeminiFileData   `json:"file_data,omitempty"`
 	}
 
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
@@ -320,12 +373,24 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 
 	// Assign fields from alias
 	*p = GeminiPart(aux.Alias)
+	if aux.FileDataSnake != nil {
+		if p.FileData != nil && *p.FileData != *aux.FileDataSnake {
+			return fmt.Errorf("conflicting fileData and file_data")
+		}
+		p.FileData = aux.FileDataSnake
+	}
+	if p.InlineData != nil && aux.InlineDataSnake != nil && *p.InlineData != *aux.InlineDataSnake {
+		return fmt.Errorf("conflicting inlineData and inline_data")
+	}
 
 	// Prioritize snake_case for InlineData if present
 	if aux.InlineDataSnake != nil {
 		p.InlineData = aux.InlineDataSnake
 	} else if aux.InlineData != nil { // Fallback to camelCase from Alias
 		p.InlineData = aux.InlineData
+	}
+	if p.FileData != nil && p.InlineData != nil {
+		return fmt.Errorf("a Gemini part cannot contain both fileData and inlineData")
 	}
 	// Other fields like Text, FunctionCall etc. are already populated via aux.Alias
 
@@ -406,6 +471,9 @@ func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if aux.MaxOutputTokens != nil && aux.MaxOutputTokensSnake != nil && *aux.MaxOutputTokens != *aux.MaxOutputTokensSnake {
+		return fmt.Errorf("conflicting maxOutputTokens and max_output_tokens")
+	}
 	*c = GeminiChatGenerationConfig(aux.Alias)
 
 	// Prioritize snake_case if present

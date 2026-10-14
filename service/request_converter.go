@@ -22,6 +22,16 @@ func converterContext(c *gin.Context) context.Context {
 
 func init() {
 	relayconvert.SetMediaResolver(relayconvert.MediaResolver{
+		ResolveGeminiMedia: func(ctx context.Context, source types.FileSource, mi, pi int) (*relayconvert.GeminiMedia, error) {
+			ginCtx, _ := ctx.(*gin.Context)
+			if ginCtx == nil && ctx != nil {
+				ginCtx, _ = ctx.Value(converterGinContextKey{}).(*gin.Context)
+			}
+			if plan := GetGeminiFilePlan(ginCtx); plan != nil {
+				return plan.MediaForPosition(source, mi, pi)
+			}
+			return nil, nil
+		},
 		// relayconvert is gin-free; recover the gin context when the caller
 		// passed one so file caching/cleanup keeps working.
 		GetBase64Data: func(ctx context.Context, source types.FileSource, reason ...string) (string, string, error) {

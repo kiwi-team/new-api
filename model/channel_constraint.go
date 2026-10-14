@@ -1,16 +1,22 @@
 package model
 
 import (
+	"net/url"
 	"slices"
+	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+	dto.FilterGeminiFiles,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -89,6 +95,52 @@ func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind
 
 func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
 	switch filter.Kind {
+	case dto.FilterGeminiFiles:
+		if filter.GeminiDeveloperAPIOnly && ch.Type != constant.ChannelTypeGemini {
+			return false
+		}
+		if !ch.SupportsModel(modelName) {
+			return false
+		}
+		upstreamModel := modelName
+		var mapping map[string]string
+		if raw := ch.GetModelMapping(); raw != "" {
+			if common.UnmarshalJsonStr(raw, &mapping) != nil {
+				return false
+			}
+			visited := make(map[string]bool)
+			for {
+				if visited[upstreamModel] {
+					return false
+				}
+				visited[upstreamModel] = true
+				mapped := mapping[upstreamModel]
+				if mapped == "" {
+					mapped = mapping[hostreasoning.BaseModelName(upstreamModel)]
+				}
+				if mapped == "" || mapped == upstreamModel {
+					break
+				}
+				upstreamModel = mapped
+			}
+		}
+		if !strings.HasPrefix(strings.TrimPrefix(upstreamModel, "models/"), "gemini-") {
+			return false
+		}
+		if ch.Type != constant.ChannelTypeGemini && ch.Type != constant.ChannelTypeVertexAi {
+			return false
+		}
+		if !filter.RequiresFileStorage {
+			return true
+		}
+		if !slices.Contains(filter.ChannelIDs, ch.Id) {
+			return false
+		}
+		if filter.GeminiFileMode == "forward" {
+			u, err := url.Parse(ch.GetBaseURL())
+			return ch.Type == constant.ChannelTypeGemini && err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == ""
+		}
+		return filter.GeminiFileMode == "process" && ch.Type == constant.ChannelTypeVertexAi && ch.GetSetting().GoogleFileBucket != "" && ch.GetOtherSettings().VertexKeyType != relaydto.VertexKeyTypeAPIKey
 	case dto.FilterRequestPath:
 		if filter.RequestPath == "" {
 			return true

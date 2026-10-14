@@ -48,7 +48,14 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	adaptor.Init(info)
+	filePlan := service.GetGeminiFilePlan(c)
+	if fileErr := service.PrepareGeminiFileAttempt(c, info); fileErr != nil {
+		return fileErr
+	}
 
+	if err := service.ApplyGeminiFilePlan(c, request); err != nil {
+		return newConvertRequestFailedError(c, info, err)
+	}
 	if info.ChannelSetting.SystemPrompt != "" {
 		if request.SystemInstructions == nil {
 			request.SystemInstructions = &dto.GeminiChatContent{
@@ -93,7 +100,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	requestStr := ""
 	responseStr := ""
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if filePlan == nil && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -118,6 +125,10 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		var beforeFileOverride []byte
+		if filePlan != nil {
+			beforeFileOverride = append([]byte(nil), jsonData...)
+		}
 		// apply param override
 		if len(info.ParamOverride) > 0 {
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
@@ -126,7 +137,20 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
-		logger.LogDebug(c, "Gemini request body: %s", jsonData)
+		if filePlan != nil {
+			if fileErr := service.ValidateGeminiFileForwardingHeaders(c, info); fileErr != nil {
+				return fileErr
+			}
+			var fileErr *types.NewAPIError
+			jsonData, fileErr = service.FinalizeGeminiFileBody(c, jsonData, beforeFileOverride, model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled)
+			if fileErr != nil {
+				return fileErr
+			}
+			if helper.ValidateGeminiGenerationBody(jsonData) != nil {
+				return service.FileRoutingError("invalid_file_input", "invalid effective Gemini generation parameters", 400)
+			}
+		}
+		logger.LogDebug(c, "Gemini request body: %s", service.RedactGeminiFileRequest(c, string(jsonData)))
 		// 序列化 textRequest 为 JSON 字符串
 		if saveRequestResponse {
 			requestStr = string(jsonData)
@@ -144,8 +168,15 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	// 创建流式响应记录器（如果需要记录响应）
 	var streamRecorder *helper.StreamResponseRecorder
 
+	requestStr = service.RedactGeminiFileRequest(c, requestStr)
+	if filePlan != nil {
+		filePlan.Submitted = true
+	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if filePlan != nil {
+			return service.FileRoutingError("file_inference_failed", "Gemini file inference transport failed", 502)
+		}
 		logger.LogError(c, "Do gemini request failed: "+err.Error())
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
@@ -157,6 +188,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
+			if filePlan != nil {
+				return service.GeminiFileUpstreamError(httpResp)
+			}
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newAPIError, statusCodeMappingStr)

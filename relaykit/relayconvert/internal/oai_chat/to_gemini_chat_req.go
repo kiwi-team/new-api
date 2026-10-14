@@ -196,7 +196,7 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 
 	toolCallIDs := make(map[string]string)
 	var systemContent []string
-	for _, message := range textRequest.Messages {
+	for messageIndex, message := range textRequest.Messages {
 		if message.Role == "system" || message.Role == "developer" {
 			systemContent = append(systemContent, message.StringContent())
 			continue
@@ -274,7 +274,7 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		}
 
 		openaiContent := message.ParseContent()
-		for _, part := range openaiContent {
+		for partIndex, part := range openaiContent {
 			if part.Type == dto.ContentTypeText {
 				if part.Text == "" {
 					continue
@@ -334,21 +334,21 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 				if source == nil {
 					continue
 				}
-				base64Data, mimeType, err := relaymedia.ResolveBase64Data(c, source, "formatting image for Gemini")
+				resolved, err := relaymedia.ResolveGeminiMedia(c, source, messageIndex, partIndex)
 				if err != nil {
-					return nil, fmt.Errorf("get file data from 2'%s' failed: %w", source.GetIdentifier(), err)
+					return nil, fmt.Errorf("resolve messages[%d].content[%d]: %w", messageIndex, partIndex, err)
 				}
 
-				if _, ok := sharedgemini.SupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
-					return nil, fmt.Errorf("mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", mimeType, source.GetIdentifier(), sharedgemini.SupportedMimeTypesList())
+				if _, ok := sharedgemini.SupportedMimeTypes[strings.ToLower(resolved.MIMEType)]; !ok {
+					return nil, fmt.Errorf("MIME type is not supported by Gemini: %q", resolved.MIMEType)
 				}
-
-				parts = append(parts, dto.GeminiPart{
-					InlineData: &dto.GeminiInlineData{
-						MimeType: mimeType,
-						Data:     base64Data,
-					},
-				})
+				mediaPart := dto.GeminiPart{}
+				if resolved.URI != "" {
+					mediaPart.FileData = &dto.GeminiFileData{MimeType: resolved.MIMEType, FileUri: resolved.URI}
+				} else {
+					mediaPart.InlineData = &dto.GeminiInlineData{MimeType: resolved.MIMEType, Data: resolved.Base64}
+				}
+				parts = append(parts, mediaPart)
 			}
 		}
 

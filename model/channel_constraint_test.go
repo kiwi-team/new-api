@@ -231,3 +231,41 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, dto.FilterRequestPath, kind)
 }
+
+func TestGeminiFileChannelConstraints(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, model, mapping, base, bucket string
+		kind, id                                 int
+		large, allowed                           bool
+	}{
+		{name: "forward explicit HTTPS Gemini", mode: "forward", model: "gemini-test", base: "https://overseas.example", kind: constant.ChannelTypeGemini, id: 2, large: true, allowed: true},
+		{name: "forward rejects outside rule", mode: "forward", model: "gemini-test", base: "https://overseas.example", kind: constant.ChannelTypeGemini, id: 3, large: true},
+		{name: "forward rejects HTTP", mode: "forward", model: "gemini-test", base: "http://overseas.example", kind: constant.ChannelTypeGemini, id: 2, large: true},
+		{name: "process requires bucket", mode: "process", model: "gemini-test", kind: constant.ChannelTypeVertexAi, id: 2, large: true},
+		{name: "process Vertex with bucket", mode: "process", model: "gemini-test", kind: constant.ChannelTypeVertexAi, id: 2, bucket: "files", large: true, allowed: true},
+		{name: "small files use ordinary Gemini", mode: "process", model: "gemini-test", kind: constant.ChannelTypeGemini, id: 3, allowed: true},
+		{name: "small files reject incompatible channel", mode: "process", model: "gemini-test", kind: constant.ChannelTypeOpenAI, id: 3},
+		{name: "alias chain", mode: "process", model: "alias", mapping: `{"alias":"intermediate","intermediate":"gemini-test"}`, kind: constant.ChannelTypeVertexAi, id: 2, bucket: "files", large: true, allowed: true},
+		{name: "alias cycle", mode: "process", model: "alias", mapping: `{"alias":"other","other":"alias"}`, kind: constant.ChannelTypeVertexAi, id: 2, bucket: "files", large: true},
+		{name: "non Gemini model", mode: "process", model: "alias", mapping: `{"alias":"claude-test"}`, kind: constant.ChannelTypeVertexAi, id: 2, bucket: "files", large: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel := &Channel{Id: tc.id, Type: tc.kind, Models: tc.model, ModelMapping: common.GetPointer(tc.mapping), BaseURL: common.GetPointer(tc.base)}
+			channel.SetSetting(kitdto.ChannelSettings{GoogleFileBucket: tc.bucket})
+			filter := dto.ChannelFilter{Kind: dto.FilterGeminiFiles, ChannelIDs: []int{2}, GeminiFileMode: tc.mode, RequiresFileStorage: tc.large}
+			allowed, _ := ChannelSatisfiesFilters(channel, tc.model, []dto.ChannelFilter{filter})
+			assert.Equal(t, tc.allowed, allowed)
+			allowed, _ = ChannelSatisfiesFilters(channel, "another-model", []dto.ChannelFilter{filter})
+			assert.False(t, allowed, "rule membership does not grant model support")
+		})
+	}
+}
+
+func TestGeminiFilesAPIReferenceExcludesVertex(t *testing.T) {
+	filter := dto.ChannelFilter{Kind: dto.FilterGeminiFiles, GeminiDeveloperAPIOnly: true}
+	for _, kind := range []int{constant.ChannelTypeGemini, constant.ChannelTypeVertexAi} {
+		ch := &Channel{Type: kind, Models: "gemini-test"}
+		allowed, _ := ChannelSatisfiesFilters(ch, "gemini-test", []dto.ChannelFilter{filter})
+		assert.Equal(t, kind == constant.ChannelTypeGemini, allowed)
+	}
+}

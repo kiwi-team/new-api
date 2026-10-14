@@ -179,7 +179,7 @@ func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, strea
 
 func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relaycommon.RelayInfo) (int, error) {
 	// 是否统计token
-	if !constant.CountToken {
+	if !constant.CountToken && GetGeminiFilePlan(c) == nil {
 		return 0, nil
 	}
 	return CountRequestToken(c, meta, info)
@@ -348,6 +348,18 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 		shouldFetchFiles = false
 	}
 
+	filePlan := GetGeminiFilePlan(c)
+	if filePlan != nil {
+		shouldFetchFiles = false
+		for _, file := range meta.Files {
+			for _, planned := range filePlan.Files {
+				if file.Source != nil && file.Source.GetRawData() == planned.Source.GetRawData() {
+					file.FileType = DetectFileType(planned.MIMEType)
+					break
+				}
+			}
+		}
+	}
 	// 使用统一的文件服务获取文件类型
 	for _, file := range meta.Files {
 		if file.Source == nil {
@@ -355,7 +367,7 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 		}
 
 		// 如果文件类型未知且需要获取，通过 MIME 类型检测
-		if file.FileType == "" || (file.Source.IsURL() && shouldFetchFiles) {
+		if filePlan == nil && (file.FileType == "" || (file.Source.IsURL() && shouldFetchFiles)) {
 			// 注意：这里我们直接调用 LoadFileSource 而不是 GetMimeType
 			// 因为 GetMimeType 内部可能会调用 GetFileTypeFromUrl (HEAD 请求)
 			// 而我们这里既然要计算 token，通常需要完整数据
@@ -373,7 +385,7 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 	for i, file := range meta.Files {
 		switch file.FileType {
 		case types.FileTypeImage:
-			if common.IsOpenAITextModel(model) {
+			if filePlan == nil && common.IsOpenAITextModel(model) {
 				token, err := getImageToken(c, file, model, info.IsStream)
 				if err != nil {
 					return 0, fmt.Errorf("error counting image token, media index[%d], identifier[%s], err: %v", i, file.GetIdentifier(), err)

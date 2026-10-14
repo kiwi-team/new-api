@@ -17,30 +17,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-/**
- * Special-channel routing: which channels serve a request based on the
- * modality tags the relay derived from it.
- *
- * Each option key holds a JSON array of rules (`dto.SpecailChannels`):
- *
- *   [{"model_name": "^gemini-", "channel_ids": [[3, 4], [7]],
- *     "random_type": "order"}]
- *
- * `channel_ids` is a list of tiers; the relay shuffles within a tier and
- * concatenates tiers in order, so tier order is the fallback priority.
- * `model_name` is matched exactly first, then as a regular expression.
- *
- * These rules override a key's own `channel_rules` by default. A key can opt
- * into higher-priority channel rules; see `middleware/distributor.go`.
- */
+import { z } from 'zod'
 
-/** The four option keys, in the order the distributor checks them. */
-export const SPECIAL_CHANNEL_KEYS = [
-  'OnlyTextChannels',
-  'VideoChannels',
-  'OnlyImageChannels',
-  'NoVideoChannels',
-] as const
+export const SPECIAL_CHANNEL_KEYS = ['LargeFileChannels'] as const
+
+export const geminiFileRoutingSchema = z.object({
+  enabled: z.boolean().default(false),
+  mode: z.enum(['forward', 'process']).default('forward'),
+  chat_model_patterns: z.array(z.string().trim().min(1)).default([]),
+  inline_threshold_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16777216)
+    .default(10485760),
+  max_inline_request_bytes: z.number().int().min(1).default(33554432),
+})
+
+export type GeminiFileRouting = z.infer<typeof geminiFileRoutingSchema>
+
+export function parseGeminiFileRouting(raw?: string): GeminiFileRouting {
+  return geminiFileRoutingSchema.parse(raw === undefined ? {} : JSON.parse(raw))
+}
+
+const largeFileRulesSchema = z.array(
+  z.object({
+    model_name: z.string().trim().min(1),
+    random_type: z.enum(['order', 'random']).default('order'),
+    channel_ids: z.array(z.array(z.number().int().positive()).min(1)).min(1),
+  })
+)
 
 export type SpecialChannelKey = (typeof SPECIAL_CHANNEL_KEYS)[number]
 
@@ -61,68 +67,31 @@ export type SpecialChannelRule = {
 let uidCounter = 0
 const nextUid = () => `sc-${(uidCounter += 1)}`
 
-function toIntList(value: unknown): number[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((item) => Number(item))
-    .filter((item) => Number.isFinite(item) && item > 0)
-}
-
-/** Parse one option value. Invalid or non-array input yields `[]`. */
+/** Reject malformed saved configuration instead of presenting it as empty. */
 export function parseSpecialChannelRules(
   raw: string | null | undefined
 ): SpecialChannelRule[] {
-  if (!raw || !raw.trim()) return []
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(parsed)) return []
-
-  return parsed
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') return null
-      const rule = entry as Record<string, unknown>
-      const modelName = String(rule.model_name ?? '').trim()
-      if (!modelName) return null
-      const tiers = Array.isArray(rule.channel_ids)
-        ? rule.channel_ids
-            .map((tier) => ({ uid: nextUid(), ids: toIntList(tier) }))
-            .filter((tier) => tier.ids.length > 0)
-        : []
-      return {
-        uid: nextUid(),
-        modelName,
-        randomType: rule.random_type === 'random' ? 'random' : 'order',
-        tiers,
-      } as SpecialChannelRule
-    })
-    .filter((rule): rule is SpecialChannelRule => rule !== null)
+  if (raw == null) return []
+  return largeFileRulesSchema.parse(JSON.parse(raw)).map((rule) => ({
+    uid: nextUid(),
+    modelName: rule.model_name,
+    randomType: rule.random_type,
+    tiers: rule.channel_ids.map((ids) => ({ uid: nextUid(), ids })),
+  }))
 }
 
-/**
- * Serialize back to the option value.
- *
- * Rules without a model name or without any channel are dropped: the
- * distributor treats an empty id list as "no special routing", so keeping them
- * would only be a silent no-op in the UI.
- */
 export function serializeSpecialChannelRules(
   rules: SpecialChannelRule[]
 ): string {
-  const payload = rules
-    .map((rule) => ({
-      model_name: rule.modelName.trim(),
-      channel_ids: rule.tiers
-        .map((tier) => tier.ids)
-        .filter((ids) => ids.length > 0),
-      random_type: rule.randomType,
-    }))
-    .filter((rule) => rule.model_name && rule.channel_ids.length > 0)
-
-  return JSON.stringify(payload)
+  return JSON.stringify(
+    largeFileRulesSchema.parse(
+      rules.map((rule) => ({
+        model_name: rule.modelName.trim(),
+        channel_ids: rule.tiers.map((tier) => tier.ids),
+        random_type: rule.randomType,
+      }))
+    )
+  )
 }
 
 export function createEmptySpecialChannelRule(): SpecialChannelRule {

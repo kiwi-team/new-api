@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +17,11 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -107,6 +108,46 @@ func Distribute() func(c *gin.Context) {
 			return
 		}
 		modelName := modelRequest.Model
+		modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+		if modelLimitEnable {
+			s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+			if !ok {
+				// token model limit is empty, all models are not allowed
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess), types.ErrorCodeAccessDenied)
+				return
+			}
+			var tokenModelLimit map[string]bool
+			tokenModelLimit, ok = s.(map[string]bool)
+			if !ok {
+				tokenModelLimit = map[string]bool{}
+			}
+			if !TokenModelLimitAllows(tokenModelLimit, modelRequest.Model) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}), types.ErrorCodeAccessDenied)
+				return
+			}
+		}
+		// Validate multiplier bounds and request structure before fetching any source.
+		if config, configErr := model_setting.GetGeminiFileRouting(); configErr == nil && config.Enabled {
+			var validationErr error
+			path := c.Request.URL.Path
+			if path == "/v1/chat/completions" {
+				_, validationErr = helper.GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
+			} else if (strings.HasPrefix(path, "/v1beta/models/") || strings.HasPrefix(path, "/v1/models/")) && (strings.HasSuffix(path, ":generateContent") || strings.HasSuffix(path, ":streamGenerateContent")) {
+				_, validationErr = helper.GetAndValidateGeminiRequest(c)
+			}
+			if validationErr != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "invalid inference request", types.ErrorCodeInvalidRequest)
+				return
+			}
+		}
+		filePlan, fileErr := service.PlanGeminiFiles(c, modelName)
+		if filePlan != nil {
+			defer filePlan.Close(c)
+		}
+		if fileErr != nil {
+			abortWithOpenAiMessage(c, fileErr.StatusCode, fileErr.Error(), fileErr.GetErrorCode())
+			return
+		}
 		channelRulesMapAny, hasChannelRules := c.Get("token_channel_rules")
 		channelRulesMap := make(map[string]taskdto.ChannelRulesItem)
 		if hasChannelRules {
@@ -163,18 +204,23 @@ func Distribute() func(c *gin.Context) {
 		}
 
 		var specialChannelIds []int
-		switch {
-		case slices.Contains(tags, "video"):
-			specialChannelIds, _ = getSpecialChannels(c, modelName, "VideoChannels")
-		case len(tags) == 1 && tags[0] == "image":
-			specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyImageChannels")
-		case len(tags) > 0:
-			specialChannelIds, _ = getSpecialChannels(c, modelName, "NoVideoChannels")
-		default:
-			specialChannelIds, _ = getSpecialChannels(c, modelName, "OnlyTextChannels")
+		if filePlan != nil {
+			if filePlan.RequiresStorage {
+				specialChannelIds, err = getSpecialChannels(c, modelName, model_setting.LargeFileChannelsKey)
+				if err != nil {
+					abortWithOpenAiMessage(c, 503, "invalid large file routing configuration", types.ErrorCode("large_file_routing_config_invalid"))
+					return
+				}
+			}
+			constraints.AddFilter(taskdto.ChannelFilter{Kind: taskdto.FilterGeminiFiles, ChannelIDs: specialChannelIds, GeminiFileMode: filePlan.Config.Mode, RequiresFileStorage: filePlan.RequiresStorage, GeminiDeveloperAPIOnly: filePlan.DeveloperAPIOnly})
 		}
-		hasSpecialChannelRule := len(specialChannelIds) > 0
-		specialChannelIds = filterExplicitChannelCandidates(specialChannelIds, modelName, false, tags, constraints)
+		hasSpecialChannelRule := filePlan != nil && filePlan.RequiresStorage
+		fmt.Printf("specialChannelIds: %v\n", specialChannelIds)
+		specialChannelIds = filterExplicitChannelCandidates(specialChannelIds, modelName, true, tags, constraints)
+		if hasSpecialChannelRule && len(specialChannelIds) == 0 {
+			abortWithOpenAiMessage(c, 503, "no compatible large file channel", types.ErrorCode("large_file_channel_unavailable"))
+			return
+		}
 		var channelIds []int
 		var raceGroups []taskdto.ChannelRaceGroup
 		if enforcedRoute.Matched && !hasPinnedChannel {
@@ -220,6 +266,9 @@ func Distribute() func(c *gin.Context) {
 				c.Set("new_retry_times", retryTimes)
 			}
 		}
+		if filePlan != nil {
+			raceGroups = nil
+		}
 		if len(raceGroups) > 0 {
 			allowed := make(map[int]struct{}, len(channelIds))
 			for _, channelId := range channelIds {
@@ -252,24 +301,6 @@ func Distribute() func(c *gin.Context) {
 		if !pinned {
 			// Select a channel for the user
 			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess), types.ErrorCodeAccessDenied)
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				if !TokenModelLimitAllows(tokenModelLimit, modelRequest.Model) {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}), types.ErrorCodeAccessDenied)
-					return
-				}
-			}
 
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
@@ -341,13 +372,17 @@ func Distribute() func(c *gin.Context) {
 }
 
 func getSpecialChannels(c *gin.Context, modelName string, key string) ([]int, error) {
-	specialChannelsConfigStr := common.OptionMap[key]
+	common.OptionMapRWMutex.RLock()
+	specialChannelsConfigStr, exists := common.OptionMap[key]
+	common.OptionMapRWMutex.RUnlock()
 	ids := make([]int, 0)
-	if len(specialChannelsConfigStr) == 0 {
-		return ids, nil
+	if exists && strings.TrimSpace(specialChannelsConfigStr) == "" {
+		return nil, fmt.Errorf("large file rules must be a JSON array")
 	}
-	specialChannels := []taskdto.SpecailChannels{}
-	err := json.Unmarshal([]byte(specialChannelsConfigStr), &specialChannels)
+	specialChannels, err := model_setting.ParseLargeFileChannels(specialChannelsConfigStr)
+	if err != nil {
+		return nil, err
+	}
 	if err == nil {
 		for _, item := range specialChannels {
 			if item.ModelName == modelName {

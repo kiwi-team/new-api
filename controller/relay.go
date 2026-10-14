@@ -410,7 +410,7 @@ func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *t
 	body := ""
 	if requestStorage, storageErr := common.GetBodyStorage(c); storageErr == nil && requestStorage != nil {
 		if requestBytes, readErr := requestStorage.Bytes(); readErr == nil {
-			body = string(requestBytes)
+			body = service.RedactGeminiFileRequest(c, string(requestBytes))
 		}
 	}
 	if rawState, ok := c.Get(raceLogStateKey); ok {

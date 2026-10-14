@@ -101,3 +101,27 @@ func TestSGLangMinTokensBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiFileEffectiveGenerationBounds(t *testing.T) {
+	for _, body := range []string{
+		`{"contents":[{"parts":[{"text":"hi"}]}],"generation_config":{"max_output_tokens":18446744073709551615}}`,
+		`{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":18446744073709551615}}`,
+	} {
+		require.Error(t, ValidateGeminiGenerationBody([]byte(body)))
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-test:generateContent", bytes.NewBufferString(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		defer common.CleanupBodyStorage(c)
+		_, err := GetAndValidateGeminiRequest(c)
+		require.Error(t, err)
+	}
+	require.NoError(t, ValidateGeminiGenerationBody([]byte(`{"generation_config":{"max_output_tokens":0}}`)))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-test:generateContent", bytes.NewBufferString(`{"contents":[{"parts":[{"text":"hi"}]}],"generation_config":{"max_output_tokens":0}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	defer common.CleanupBodyStorage(c)
+	request, err := GetAndValidateGeminiRequest(c)
+	require.NoError(t, err)
+	require.NotNil(t, request.GenerationConfig.MaxOutputTokens)
+	require.Zero(t, *request.GenerationConfig.MaxOutputTokens)
+}

@@ -284,9 +284,9 @@ func (r *GeneralOpenAIRequest) GetTokenCountMeta() *types.TokenCountMeta {
 						if img := m.GetImageMedia(); img != nil {
 							meta.Detail = img.Detail
 						}
-					case ContentTypeInputAudio:
+					case ContentTypeInputAudio, ContentTypeAudioUrl:
 						meta.FileType = types.FileTypeAudio
-					case ContentTypeFile:
+					case ContentTypeFile, ContentTypePDFURL:
 						meta.FileType = types.FileTypeFile
 					case ContentTypeVideoUrl:
 						meta.FileType = types.FileTypeVideo
@@ -518,25 +518,30 @@ type Message struct {
 }
 
 type MediaContent struct {
-	Type       string `json:"type"`
-	Text       string `json:"text,omitempty"`
-	ImageUrl   any    `json:"image_url,omitempty"`
-	InputAudio any    `json:"input_audio,omitempty"`
-	File       any    `json:"file,omitempty"`
-	VideoUrl   any    `json:"video_url,omitempty"`
-	AudioUrl   any    `json:"audio_url,omitempty"`
-	InputVideo any    `json:"input_video,omitempty"`
-	Thinking   string `json:"thinking,omitempty"`
-	Signature  string `json:"signature,omitempty"`
+	Type       string         `json:"type"`
+	Text       string         `json:"text,omitempty"`
+	ImageUrl   any            `json:"image_url,omitempty"`
+	InputAudio any            `json:"input_audio,omitempty"`
+	File       any            `json:"file,omitempty"`
+	VideoUrl   any            `json:"video_url,omitempty"`
+	AudioUrl   any            `json:"audio_url,omitempty"`
+	PDFURL     *MessagePDFURL `json:"pdf_url,omitempty"`
+	InputVideo any            `json:"input_video,omitempty"`
+	Thinking   string         `json:"thinking,omitempty"`
+	Signature  string         `json:"signature,omitempty"`
 	// OpenRouter Params
 	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
 
 func (m *MediaContent) GetAudioMedia() *MessageAudioUrl {
-	if m.AudioUrl != nil {
-		if _, ok := m.AudioUrl.(*MessageAudioUrl); ok {
-			return m.AudioUrl.(*MessageAudioUrl)
-		}
+	switch value := m.AudioUrl.(type) {
+	case *MessageAudioUrl:
+		return value
+	case string:
+		return &MessageAudioUrl{Url: value}
+	case map[string]any:
+		url, _ := value["url"].(string)
+		return &MessageAudioUrl{Url: url}
 	}
 	return nil
 }
@@ -651,6 +656,17 @@ func (m *MediaContent) ToFileSource() types.FileSource {
 			return nil
 		}
 		return types.NewFileSourceFromData(video.Url, "")
+	case ContentTypeAudioUrl:
+		audio := m.GetAudioMedia()
+		if audio == nil || audio.Url == "" {
+			return nil
+		}
+		return types.NewFileSourceFromData(audio.Url, "")
+	case ContentTypePDFURL:
+		if m.PDFURL == nil || m.PDFURL.URL == "" {
+			return nil
+		}
+		return types.NewFileSourceFromData(m.PDFURL.URL, "application/pdf")
 	}
 	return nil
 }
@@ -682,6 +698,10 @@ type MessageAudioUrl struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type MessagePDFURL struct {
+	URL string `json:"url"`
+}
+
 const (
 	ContentTypeText       = "text"
 	ContentTypeThinking   = "thinking"
@@ -690,6 +710,7 @@ const (
 	ContentTypeFile       = "file"
 	ContentTypeVideoUrl   = "video_url" // 阿里百炼视频识别
 	ContentTypeAudioUrl   = "audio_url" // 阿里百炼视频识别
+	ContentTypePDFURL     = "pdf_url"
 )
 
 func (m *Message) GetReasoningContent() string {
@@ -892,9 +913,9 @@ func (m *Message) ParseContent() []MediaContent {
 						},
 					})
 				} else {
-					fileName, ok1 := fileData["filename"].(string)
+					fileName, _ := fileData["filename"].(string)
 					fileDataStr, ok2 := fileData["file_data"].(string)
-					if ok1 && ok2 {
+					if ok2 {
 						contentList = append(contentList, MediaContent{
 							Type: ContentTypeFile,
 							File: &MessageFile{
@@ -903,6 +924,12 @@ func (m *Message) ParseContent() []MediaContent {
 							},
 						})
 					}
+				}
+			}
+		case ContentTypePDFURL:
+			if pdf, ok := contentItem["pdf_url"].(map[string]any); ok {
+				if url, ok := pdf["url"].(string); ok {
+					contentList = append(contentList, MediaContent{Type: ContentTypePDFURL, PDFURL: &MessagePDFURL{URL: url}})
 				}
 			}
 		case ContentTypeVideoUrl:

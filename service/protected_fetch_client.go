@@ -25,10 +25,12 @@ type protectedFetchDialer struct {
 }
 
 type ssrfProtectedRoundTripper struct {
-	resolver      ssrfResolver
-	dialContext   func(ctx context.Context, network, address string) (net.Conn, error)
-	getProtection func() (*common.SSRFProtection, bool, error)
-	proxy         func(*http.Request) (*url.URL, error)
+	responseHeaderTimeout time.Duration
+	tlsHandshakeTimeout   time.Duration
+	resolver              ssrfResolver
+	dialContext           func(ctx context.Context, network, address string) (net.Conn, error)
+	getProtection         func() (*common.SSRFProtection, bool, error)
+	proxy                 func(*http.Request) (*url.URL, error)
 
 	mutex      sync.Mutex
 	transports map[string]*http.Transport
@@ -154,12 +156,14 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 	}
 
 	transport := &http.Transport{
-		MaxIdleConns:        common.RelayMaxIdleConns,
-		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
-		ForceAttemptHTTP2:   true,
-		Proxy:               proxyFunc,
-		DialContext:         dialContext,
+		ResponseHeaderTimeout: t.responseHeaderTimeout,
+		TLSHandshakeTimeout:   t.tlsHandshakeTimeout,
+		MaxIdleConns:          common.RelayMaxIdleConns,
+		MaxIdleConnsPerHost:   common.RelayMaxIdleConnsPerHost,
+		IdleConnTimeout:       time.Duration(common.RelayIdleConnTimeout) * time.Second,
+		ForceAttemptHTTP2:     true,
+		Proxy:                 proxyFunc,
+		DialContext:           dialContext,
 	}
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()

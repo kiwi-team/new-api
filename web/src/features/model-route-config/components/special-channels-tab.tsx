@@ -18,10 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { GripVertical, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,7 +35,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import {
   getSystemOptions,
   updateSystemOption,
@@ -41,8 +44,9 @@ import {
 
 import { getChannelNameList } from '../api'
 import {
-  SPECIAL_CHANNEL_KEYS,
-  type SpecialChannelKey,
+  parseGeminiFileRouting,
+  geminiFileRoutingSchema,
+  type GeminiFileRouting,
   type SpecialChannelRule,
   createEmptySpecialChannelRule,
   createEmptySpecialChannelTier,
@@ -50,21 +54,11 @@ import {
   serializeSpecialChannelRules,
 } from '../lib/special-channels'
 
-/** Explains which requests each option key applies to. */
-const KEY_DESCRIPTIONS: Record<SpecialChannelKey, string> = {
-  OnlyTextChannels: 'Text-only requests (no modality tag)',
-  VideoChannels: 'Video requests (video tag)',
-  OnlyImageChannels: 'Image-only requests (image tag)',
-  NoVideoChannels: 'Multimodal requests without video',
-}
-
 export function SpecialChannelsTab() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [activeKey, setActiveKey] = useState<SpecialChannelKey>(
-    SPECIAL_CHANNEL_KEYS[0]
-  )
-  const [rules, setRules] = useState<SpecialChannelRule[]>([])
+  const [ruleDraft, setRuleDraft] = useState<SpecialChannelRule[] | null>(null)
+  const [configDraft, setConfigDraft] = useState<GeminiFileRouting | null>(null)
   const [drag, setDrag] = useState<{ rule: number; tier: number } | null>(null)
 
   const optionsQuery = useQuery({
@@ -78,12 +72,29 @@ export function SpecialChannelsTab() {
   })
 
   const optionValue = optionsQuery.data?.data?.find(
-    (option) => option.key === activeKey
+    (option) => option.key === 'LargeFileChannels'
   )?.value
-
-  useEffect(() => {
-    setRules(parseSpecialChannelRules(optionValue))
-  }, [optionValue, activeKey])
+  const configValue = optionsQuery.data?.data?.find(
+    (option) => option.key === 'GeminiFileRouting'
+  )?.value
+  const parsed = useMemo(() => {
+    try {
+      return {
+        rules: parseSpecialChannelRules(optionValue),
+        config: parseGeminiFileRouting(configValue),
+        error: false,
+      }
+    } catch {
+      return { rules: [], config: parseGeminiFileRouting(), error: true }
+    }
+  }, [optionValue, configValue])
+  const rules = ruleDraft ?? parsed.rules
+  const config = configDraft ?? parsed.config
+  const setRules = (
+    update: (current: SpecialChannelRule[]) => SpecialChannelRule[]
+  ) => setRuleDraft((current) => update(current ?? parsed.rules))
+  const patchConfig = (patch: Partial<GeminiFileRouting>) =>
+    setConfigDraft((current) => ({ ...(current ?? parsed.config), ...patch }))
 
   const channelOptions = (channelList ?? []).map((channel) => ({
     label: `${channel.name} (${channel.id})`,
@@ -91,11 +102,26 @@ export function SpecialChannelsTab() {
   }))
 
   const saveMutation = useMutation({
-    mutationFn: (next: SpecialChannelRule[]) =>
-      updateSystemOption({
-        key: activeKey,
-        value: serializeSpecialChannelRules(next),
-      }),
+    mutationFn: async () => {
+      const nextConfig = geminiFileRoutingSchema.parse({
+        ...config,
+        chat_model_patterns: config.chat_model_patterns
+          .map((pattern) => pattern.trim())
+          .filter(Boolean),
+      })
+      const nextRules = serializeSpecialChannelRules(rules)
+      const result = await updateSystemOption({
+        key: 'LargeFileChannels',
+        value: nextRules,
+      })
+      if (!result.success) return result
+      return updateSystemOption({
+        key: 'GeminiFileRouting',
+        value: JSON.stringify(nextConfig),
+      })
+    },
+    onError: () =>
+      toast.error(t('Check the file routing settings and try again.')),
     onSuccess: async (res) => {
       if (!res.success) {
         toast.error(res.message || t('Operation failed'))
@@ -103,6 +129,8 @@ export function SpecialChannelsTab() {
       }
       toast.success(t('Saved successfully'))
       await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      setRuleDraft(null)
+      setConfigDraft(null)
     },
   })
 
@@ -120,24 +148,117 @@ export function SpecialChannelsTab() {
     setDrag(null)
   }
 
+  if (parsed.error || optionsQuery.isError) {
+    return (
+      <ErrorState
+        description={t(
+          'File routing configuration is invalid. Correct the saved configuration before editing.'
+        )}
+        onRetry={() => void optionsQuery.refetch()}
+      />
+    )
+  }
+
   return (
     <div className='flex h-full min-h-0 flex-col gap-4'>
-      <Tabs
-        value={activeKey}
-        onValueChange={(key) => setActiveKey(key as SpecialChannelKey)}
-      >
-        <TabsList>
-          {SPECIAL_CHANNEL_KEYS.map((key) => (
-            <TabsTrigger key={key} value={key}>
-              {key}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <div className='grid gap-3 rounded-lg border p-3'>
+        <div className='flex items-center justify-between'>
+          <Label htmlFor='gemini-file-enabled'>{t('Large file routing')}</Label>
+          <Switch
+            id='gemini-file-enabled'
+            checked={config.enabled}
+            onCheckedChange={(enabled) => patchConfig({ enabled })}
+          />
+        </div>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Only URL attachments use the file size threshold. Base64 stays inline and does not trigger large file routing.'
+          )}
+        </p>
+        <div className='grid gap-3 sm:grid-cols-3'>
+          <div className='grid gap-1.5'>
+            <Label htmlFor='gemini-file-mode'>
+              {t('File processing mode')}
+            </Label>
+            <Select
+              value={config.mode}
+              onValueChange={(mode) =>
+                patchConfig({
+                  mode: mode === 'process' ? 'process' : 'forward',
+                })
+              }
+              items={[
+                { value: 'forward', label: t('Forward to another site') },
+                { value: 'process', label: t('Upload to GCS locally') },
+              ]}
+            >
+              <SelectTrigger id='gemini-file-mode'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='forward'>
+                  {t('Forward to another site')}
+                </SelectItem>
+                <SelectItem value='process'>
+                  {t('Upload to GCS locally')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className='grid gap-1.5'>
+            <Label htmlFor='gemini-file-threshold'>
+              {t('URL file threshold (bytes)')}
+            </Label>
+            <Input
+              id='gemini-file-threshold'
+              type='number'
+              min={1}
+              max={16777216}
+              value={config.inline_threshold_bytes}
+              onChange={(event) =>
+                patchConfig({
+                  inline_threshold_bytes: Number(event.target.value),
+                })
+              }
+            />
+          </div>
+          <div className='grid gap-1.5'>
+            <Label htmlFor='gemini-file-request-limit'>
+              {t('Upstream request limit (bytes)')}
+            </Label>
+            <Input
+              id='gemini-file-request-limit'
+              type='number'
+              min={1}
+              value={config.max_inline_request_bytes}
+              onChange={(event) =>
+                patchConfig({
+                  max_inline_request_bytes: Number(event.target.value),
+                })
+              }
+            />
+          </div>
+        </div>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='gemini-file-models'>
+            {t('Chat model patterns (one per line)')}
+          </Label>
+          <Textarea
+            id='gemini-file-models'
+            value={config.chat_model_patterns.join('\n')}
+            placeholder='^gemini-'
+            onChange={(event) =>
+              patchConfig({
+                chat_model_patterns: event.target.value.split('\n'),
+              })
+            }
+          />
+        </div>
+      </div>
 
       <div className='flex items-center justify-between gap-2'>
         <p className='text-muted-foreground text-sm'>
-          {t(KEY_DESCRIPTIONS[activeKey])}
+          {t('Large file channels')}
         </p>
         <div className='flex gap-2'>
           <Button
@@ -155,8 +276,13 @@ export function SpecialChannelsTab() {
           </Button>
           <Button
             size='sm'
-            disabled={saveMutation.isPending}
-            onClick={() => saveMutation.mutate(rules)}
+            disabled={
+              saveMutation.isPending ||
+              optionsQuery.isPending ||
+              parsed.error ||
+              optionsQuery.isError
+            }
+            onClick={() => saveMutation.mutate()}
           >
             {t('Save')}
           </Button>
@@ -165,15 +291,18 @@ export function SpecialChannelsTab() {
 
       <p className='text-muted-foreground text-xs'>
         {t(
-          'These rules override a key’s own channel rules. Model name is matched exactly first, then as a regular expression.'
+          'Large file requests stay within these channels, including retries and higher priority key rules. Models match exactly first, then by regular expression.'
         )}
       </p>
 
       <div className='min-h-0 flex-1 space-y-3 overflow-auto'>
         {rules.length === 0 && (
-          <p className='text-muted-foreground py-8 text-center text-sm'>
-            {t('No rules yet. All models use the default routing.')}
-          </p>
+          <EmptyState
+            title={t('No large file rules')}
+            description={t(
+              'Large file requests fail when routing is enabled without a matching rule.'
+            )}
+          />
         )}
 
         {rules.map((rule, ruleIndex) => (
@@ -208,10 +337,7 @@ export function SpecialChannelsTab() {
                     { value: 'random', label: t('Random') },
                   ]}
                 >
-                  <SelectTrigger
-                    id={`sc-random-${ruleIndex}`}
-                    className='w-32'
-                  >
+                  <SelectTrigger id={`sc-random-${ruleIndex}`} className='w-32'>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

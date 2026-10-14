@@ -16,116 +16,87 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
 import {
+  parseGeminiFileRouting,
   parseSpecialChannelRules,
   serializeSpecialChannelRules,
 } from '../special-channels'
 
-describe('parseSpecialChannelRules', () => {
-  test('reads model name, tiers, and selection mode', () => {
-    const rules = parseSpecialChannelRules(
-      '[{"model_name":"^gemini-","channel_ids":[[3,4],[7]],"random_type":"random"}]'
-    )
-
-    assert.equal(rules.length, 1)
-    assert.equal(rules[0].modelName, '^gemini-')
-    assert.equal(rules[0].randomType, 'random')
-    assert.deepEqual(
-      rules[0].tiers.map((tier) => tier.ids),
-      [[3, 4], [7]]
-    )
+describe('large file routing configuration', () => {
+  test('missing settings are disabled and cleared rules remain an empty array', () => {
+    expect(parseGeminiFileRouting()).toEqual({
+      enabled: false,
+      mode: 'forward',
+      chat_model_patterns: [],
+      inline_threshold_bytes: 10485760,
+      max_inline_request_bytes: 33554432,
+    })
+    expect(parseSpecialChannelRules(undefined)).toEqual([])
+    expect(serializeSpecialChannelRules([])).toBe('[]')
   })
 
-  test('defaults selection mode to order', () => {
-    const rules = parseSpecialChannelRules(
-      '[{"model_name":"gpt-4o","channel_ids":[[1]]}]'
-    )
-
-    assert.equal(rules[0].randomType, 'order')
+  test('round trips multiple models with tier priority and selection modes', () => {
+    const raw =
+      '[{"model_name":"^gemini-","channel_ids":[[3,4],[7]],"random_type":"random"},{"model_name":"alias","channel_ids":[[9]],"random_type":"order"}]'
+    expect(
+      JSON.parse(serializeSpecialChannelRules(parseSpecialChannelRules(raw)))
+    ).toEqual(JSON.parse(raw))
   })
 
-  test('returns no rules for empty, malformed, or non-array input', () => {
-    assert.deepEqual(parseSpecialChannelRules(''), [])
-    assert.deepEqual(parseSpecialChannelRules(null), [])
-    assert.deepEqual(parseSpecialChannelRules('not json'), [])
-    assert.deepEqual(parseSpecialChannelRules('{"a":1}'), [])
+  test('an omitted selection mode defaults to order', () => {
+    expect(
+      parseSpecialChannelRules(
+        '[{"model_name":"alias","channel_ids":[[1]]}]'
+      )[0].randomType
+    ).toBe('order')
   })
 
-  test('drops rules with no model name and tiers with no channel', () => {
-    const rules = parseSpecialChannelRules(
-      '[{"model_name":"  ","channel_ids":[[1]]},{"model_name":"gpt-4o","channel_ids":[[],[0],[9]]}]'
-    )
-
-    assert.equal(rules.length, 1)
-    assert.deepEqual(
-      rules[0].tiers.map((tier) => tier.ids),
-      [[9]]
-    )
-  })
-})
-
-describe('serializeSpecialChannelRules', () => {
-  test('round-trips a rule unchanged', () => {
-    const original =
-      '[{"model_name":"^gemini-","channel_ids":[[3,4],[7]],"random_type":"order"}]'
-
-    const restored = serializeSpecialChannelRules(
-      parseSpecialChannelRules(original)
-    )
-
-    assert.deepEqual(JSON.parse(restored), JSON.parse(original))
+  test('accepts an upstream request limit above 256 MiB', () => {
+    expect(
+      parseGeminiFileRouting('{"max_inline_request_bytes":335544320}')
+        .max_inline_request_bytes
+    ).toBe(335544320)
   })
 
-  test('preserves tier order, which decides fallback priority', () => {
-    const json = serializeSpecialChannelRules([
-      {
-        uid: 'r1',
-        modelName: 'gpt-4o',
-        randomType: 'order',
-        tiers: [
-          { uid: 't1', ids: [5] },
-          { uid: 't2', ids: [1, 2] },
-          { uid: 't3', ids: [9] },
-        ],
-      },
-    ])
+  test.each([
+    '',
+    'null',
+    'not json',
+    '{}',
+    '[{"model_name":" ","channel_ids":[[1]]}]',
+    '[{"model_name":"x","channel_ids":[[]]}]',
+    '[{"model_name":"x","channel_ids":[[0]]}]',
+  ])(
+    'rejects malformed saved rules %s instead of silently clearing them',
+    (raw) => {
+      expect(() => parseSpecialChannelRules(raw)).toThrow()
+    }
+  )
 
-    assert.deepEqual(JSON.parse(json)[0].channel_ids, [[5], [1, 2], [9]])
+  test('rejects incomplete drafts instead of dropping them on save', () => {
+    expect(() =>
+      serializeSpecialChannelRules([
+        {
+          uid: '1',
+          modelName: '',
+          randomType: 'order',
+          tiers: [{ uid: '2', ids: [1] }],
+        },
+      ])
+    ).toThrow()
   })
 
-  test('drops rules that could never match', () => {
-    const json = serializeSpecialChannelRules([
-      {
-        uid: 'a',
-        modelName: '  ',
-        randomType: 'order',
-        tiers: [{ uid: 't1', ids: [1] }],
-      },
-      {
-        uid: 'b',
-        modelName: 'gpt-4o',
-        randomType: 'order',
-        tiers: [{ uid: 't2', ids: [] }],
-      },
-      {
-        uid: 'c',
-        modelName: 'claude',
-        randomType: 'order',
-        tiers: [{ uid: 't3', ids: [3] }],
-      },
-    ])
-
-    assert.deepEqual(JSON.parse(json), [
-      { model_name: 'claude', channel_ids: [[3]], random_type: 'order' },
-    ])
-  })
-
-  test('serializes an empty list as an empty array, not an empty string', () => {
-    // The option value is always valid JSON so the backend's Unmarshal of a
-    // cleared key yields an empty slice rather than a parse error.
-    assert.equal(serializeSpecialChannelRules([]), '[]')
+  test.each([
+    'null',
+    '{"mode":"other"}',
+    '{"inline_threshold_bytes":0}',
+    '{"max_inline_request_bytes":0}',
+    '{"max_inline_request_bytes":-1}',
+    '{"max_inline_request_bytes":1.5}',
+    '{"chat_model_patterns":[""]}',
+  ])('rejects invalid file policy %s', (raw) => {
+    expect(() => parseGeminiFileRouting(raw)).toThrow()
   })
 })

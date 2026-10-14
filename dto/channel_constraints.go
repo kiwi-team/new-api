@@ -39,9 +39,14 @@ const (
 	FilterRequestPath        ChannelFilterKind = "request_path"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	FilterGeminiFiles        ChannelFilterKind = "gemini_files"
 )
 
 type ChannelFilter struct {
+	ChannelIDs             []int
+	GeminiFileMode         string
+	RequiresFileStorage    bool
+	GeminiDeveloperAPIOnly bool
 	Kind                   ChannelFilterKind
 	RequestPath            string
 	TaskPluginKey          string

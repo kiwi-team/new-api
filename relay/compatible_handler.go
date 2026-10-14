@@ -94,9 +94,13 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	filePlan := service.GetGeminiFilePlan(c)
+	if fileErr := service.PrepareGeminiFileAttempt(c, info); fileErr != nil {
+		return fileErr
+	}
 
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
-	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
+	if filePlan == nil && info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
@@ -121,7 +125,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	var requestBody io.Reader
 
-	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
+	if filePlan == nil && (passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -158,6 +162,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			//common.PrintJson("Anthropic upstream request", common.RawMessage(jsonData))
 		}
 
+		var beforeFileOverride []byte
+		if filePlan != nil {
+			beforeFileOverride = append([]byte(nil), jsonData...)
+		}
 		// apply param override
 		if len(info.ParamOverride) > 0 {
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
@@ -166,7 +174,20 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
-		logger.LogDebug(c, "text request body: %s", jsonData)
+		if filePlan != nil {
+			if fileErr := service.ValidateGeminiFileForwardingHeaders(c, info); fileErr != nil {
+				return fileErr
+			}
+			var fileErr *types.NewAPIError
+			jsonData, fileErr = service.FinalizeGeminiFileBody(c, jsonData, beforeFileOverride, passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled)
+			if fileErr != nil {
+				return fileErr
+			}
+			if helper.ValidateGeminiGenerationBody(jsonData) != nil {
+				return service.FileRoutingError("invalid_file_input", "invalid effective Gemini generation parameters", 400)
+			}
+		}
+		logger.LogDebug(c, "text request body: %s", service.RedactGeminiFileRequest(c, string(jsonData)))
 
 		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
@@ -178,8 +199,15 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	var httpResp *http.Response
+	requestStr = service.RedactGeminiFileRequest(c, requestStr)
+	if filePlan != nil {
+		filePlan.Submitted = true
+	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if filePlan != nil {
+			return service.FileRoutingError("file_inference_failed", "Gemini file inference transport failed", 502)
+		}
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
@@ -189,6 +217,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
+			if filePlan != nil {
+				return service.GeminiFileUpstreamError(httpResp)
+			}
 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)

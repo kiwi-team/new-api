@@ -412,6 +412,24 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 	return textRequest, nil
 }
 
+// ValidateGeminiGenerationBody checks the effective serialized body without
+// decoding another copy of potentially large inline attachments.
+func ValidateGeminiGenerationBody(body []byte) error {
+	var request struct {
+		GenerationConfig      *dto.GeminiChatGenerationConfig `json:"generationConfig"`
+		GenerationConfigSnake *dto.GeminiChatGenerationConfig `json:"generation_config"`
+	}
+	if err := common.Unmarshal(body, &request); err != nil {
+		return errors.New("invalid Gemini generation parameters")
+	}
+	for _, config := range []*dto.GeminiChatGenerationConfig{request.GenerationConfig, request.GenerationConfigSnake} {
+		if config != nil && ExceedsMaxTokensLimit(config.MaxOutputTokens) {
+			return errors.New("maxOutputTokens is invalid")
+		}
+	}
+	return nil
+}
+
 func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error) {
 	request := &dto.GeminiChatRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
