@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.1.0",
+  version: "1.1.1",
   channelTypes: [58, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -157,6 +157,15 @@ export function parseTaskResult(ctx, body) {
   };
   const mapped = statuses[body.status];
   const result = { status: mapped || "UNKNOWN" };
+  if (result.status === "SUCCESS") {
+    // Cascaded gateways can return a direct video URL alongside the OpenAI fields.
+    for (const value of [body.video_url, body.result_url, body.url]) {
+      if (typeof value === "string" && value.trim()) {
+        result.url = value.trim();
+        break;
+      }
+    }
+  }
   if (!mapped) result.reason = "unrecognized status: " + String(body.status || "");
   if (body.progress > 0 && body.progress < 100) result.progress = body.progress + "%";
   if (result.status === "FAILURE") result.reason = body.error && body.error.message ? body.error.message : "task failed";

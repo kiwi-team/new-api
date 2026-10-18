@@ -55,6 +55,7 @@ const (
 	RelayModeAlphaSearch
 
 	RelayModeSystemOne
+	RelayModeDecisions
 )
 
 func Path2RelayMode(path string) int {
@@ -83,6 +84,8 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeAlphaSearch
 	} else if strings.HasPrefix(path, "/v1/systemone") {
 		relayMode = RelayModeSystemOne
+	} else if path == "/v1/decisions" {
+		relayMode = RelayModeDecisions
 	} else if strings.HasPrefix(path, "/v1/audio/speech") {
 		relayMode = RelayModeAudioSpeech
 	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") {

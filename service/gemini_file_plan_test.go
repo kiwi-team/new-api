@@ -54,6 +54,65 @@ func configureGeminiFileTest(t *testing.T, config string) {
 	t.Cleanup(func() { common.OptionMapRWMutex.Lock(); common.OptionMap = previous; common.OptionMapRWMutex.Unlock() })
 }
 
+func TestGeminiFilePlanChatContent(t *testing.T) {
+	configureGeminiFileTest(t, `{"enabled":true,"chat_model_patterns":["^gemini-"]}`)
+	for _, tc := range []struct {
+		name, body, wantError string
+		wantPositions         []string
+	}{
+		{
+			name: "string content",
+			body: `{"model":"gemini-3-flash-preview","messages":[{"role":"user","content":"你是谁"}],"temperature":0.01,"max_tokens":100000,"chat_template_kwargs":{"enable_thinking":false},"thinking":{"type":"disabled"}}`,
+		},
+		{
+			name: "text array",
+			body: `{"messages":[{"role":"user","content":[{"type":"text","text":"你是谁"}]}]}`,
+		},
+		{
+			name:          "string message before attachments",
+			body:          `{"messages":[{"role":"system","content":"Describe the image"},{"role":"user","content":[{"type":"text","text":"What is this?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]}`,
+			wantPositions: []string{"messages[1].content[1]"},
+		},
+		{
+			name:      "embedded markdown image",
+			body:      `{"messages":[{"role":"user","content":"![image](data:image/png;base64,iVBORw0KGgo=)"}]}`,
+			wantError: "messages[0]: use image_url for embedded markdown images",
+		},
+		{
+			name:      "unsupported array content",
+			body:      `{"messages":[{"role":"user","content":[{"type":"unknown"}]}]}`,
+			wantError: "messages[0].content[0]: unsupported content type",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := geminiFileTestContext(t, "/v1/chat/completions", tc.body)
+			plan, apiErr := PlanGeminiFiles(c, "gemini-3-flash-preview")
+			if tc.wantError != "" {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+				assert.Equal(t, types.ErrorCode("unsupported_file_input"), apiErr.GetErrorCode())
+				assert.EqualError(t, apiErr, tc.wantError)
+				return
+			}
+			require.Nil(t, apiErr)
+			storage, err := common.GetBodyStorage(c)
+			require.NoError(t, err)
+			body, err := storage.Bytes()
+			require.NoError(t, err)
+			assert.Equal(t, tc.body, string(body), "file planning must preserve the request body")
+			if len(tc.wantPositions) == 0 {
+				assert.Nil(t, plan)
+				return
+			}
+			require.NotNil(t, plan)
+			require.Len(t, plan.Files, len(tc.wantPositions))
+			for i, position := range tc.wantPositions {
+				assert.Equal(t, position, plan.Files[i].Position)
+			}
+		})
+	}
+}
+
 func TestGeminiInlineFilesStayInlineAndPreserveChatConversion(t *testing.T) {
 	configureGeminiFileTest(t, `{"enabled":true,"mode":"forward","chat_model_patterns":["^gemini-"],"inline_threshold_bytes":64}`)
 	previousCountToken := constant.CountToken
@@ -155,9 +214,90 @@ func TestGeminiInlineFilesStillRespectBodyLimit(t *testing.T) {
 	require.NotNil(t, ValidateGeminiFileForwardingHeaders(c, info), "runtime overrides cannot substitute the caller credential")
 }
 
+func TestGeminiFileMIMEPreservesDeclaredType(t *testing.T) {
+	configureGeminiFileTest(t, `{"enabled":true,"chat_model_patterns":["gemini-test"]}`)
+	for _, tc := range []struct {
+		name, declared, data, want string
+	}{
+		{"different image signature", "image/jpeg", "\x89PNG\r\n\x1a\n", "image/jpeg"},
+		{"AAC signature detected as MPEG", "audio/x-aac", "\xff\xf1\x50\x80", "audio/x-aac"},
+		{"unrecognized signature", "application/pdf", "\x00\x01\x02\x03", "application/pdf"},
+		{"MIME alias", "audio/x-wav", "\x00\x01\x02\x03", "audio/wav"},
+		{"generic MIME falls back to signature", "application/octet-stream", "%PDF-1.7\n", "application/pdf"},
+		{"missing MIME falls back to signature", "", "\x89PNG\r\n\x1a\n", "image/png"},
+	} {
+		for _, native := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/native=%t", tc.name, native), func(t *testing.T) {
+				encoded := base64.StdEncoding.EncodeToString([]byte(tc.data))
+				path := "/v1/models/gemini-test:generateContent"
+				body := fmt.Sprintf(`{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":%q,"data":%q}}]}]}`, tc.declared, encoded)
+				if !native {
+					path = "/v1/chat/completions"
+					body = fmt.Sprintf(`{"model":"gemini-test","messages":[{"role":"user","content":[{"type":"file","file":{"file_data":%q}}]}]}`, "data:"+tc.declared+";base64,"+encoded)
+				}
+				c := geminiFileTestContext(t, path, body)
+				plan, apiErr := PlanGeminiFiles(c, "gemini-test")
+				require.Nil(t, apiErr)
+				require.NotNil(t, plan)
+				assert.False(t, plan.RequiresStorage)
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeGemini, UpstreamModelName: "gemini-test"}, RelayFormat: types.RelayFormatOpenAI}
+				require.Nil(t, PrepareGeminiFileAttempt(c, info))
+				var result dto.GeminiChatRequest
+				if native {
+					require.NoError(t, common.UnmarshalJsonStr(body, &result))
+					require.NoError(t, ApplyGeminiFilePlan(c, &result))
+				} else {
+					var request dto.GeneralOpenAIRequest
+					require.NoError(t, common.UnmarshalJsonStr(body, &request))
+					converted, err := ConvertRequest(c, info, types.RelayFormatGemini, &request)
+					require.NoError(t, err)
+					result = *converted.Value.(*dto.GeminiChatRequest)
+				}
+				require.Len(t, result.Contents, 1)
+				require.Len(t, result.Contents[0].Parts, 1)
+				require.NotNil(t, result.Contents[0].Parts[0].InlineData)
+				assert.Equal(t, tc.want, result.Contents[0].Parts[0].InlineData.MimeType)
+				assert.Equal(t, encoded, result.Contents[0].Parts[0].InlineData.Data)
+			})
+		}
+	}
+}
+
+func TestGeminiFileURLMIMEFallback(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	system_setting.GetFetchSetting().AllowPrivateIp = true
+	for _, tc := range []struct {
+		name, declared, received, data, want string
+	}{
+		{"declaration takes precedence", "image/jpeg", "image/png", "\x89PNG\r\n\x1a\n", "image/jpeg"},
+		{"response MIME takes precedence over signature", "", "audio/x-aac", "\xff\xf1\x50\x80", "audio/x-aac"},
+		{"generic declaration uses response MIME", "application/octet-stream", "audio/x-wav", "\x00\x01\x02\x03", "audio/wav"},
+		{"generic response falls back to signature", "", "application/octet-stream", "%PDF-1.7\n", "application/pdf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.received)
+				_, _ = w.Write([]byte(tc.data))
+			}))
+			defer source.Close()
+			parsed, err := url.Parse(source.URL)
+			require.NoError(t, err)
+			system_setting.GetFetchSetting().AllowedPorts = []string{parsed.Port()}
+			plan := &GeminiFilePlan{Config: model_setting.GeminiFileRouting{InlineThresholdBytes: 64}, client: source.Client()}
+			file := &GeminiPlannedFile{Source: types.NewURLFileSource(source.URL), MIMEType: tc.declared}
+			require.Nil(t, plan.probe(context.Background(), file))
+			require.NotNil(t, file.resolved)
+			assert.Equal(t, tc.want, file.resolved.MIMEType)
+			assert.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.data)), file.resolved.Base64)
+		})
+	}
+}
+
 func TestGeminiFilePlanRejectsInvalidOrUnsupportedAttachments(t *testing.T) {
 	configureGeminiFileTest(t, `{"enabled":true,"chat_model_patterns":["gemini-test"]}`)
 	cases := []struct{ name, path, body, model string }{
+		{"unsupported declared MIME", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"inlineData":{"mimeType":"application/zip","data":"JVBERi0xLjcK"}}]}]}`, "gemini-test"},
+		{"unrecognized file without MIME", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"inlineData":{"data":"AAECAw=="}}]}]}`, "gemini-test"},
 		{"invalid PDF structure", "/v1/chat/completions", `{"messages":[{"role":"user","content":[{"type":"pdf_url","pdf_url":"https://example.com/file"}]}]}`, "gemini-test"},
 		{"disabled model PDF", "/v1/chat/completions", `{"messages":[{"role":"user","content":[{"type":"pdf_url","pdf_url":{"url":"https://example.com/file"}}]}]}`, "other"},
 		{"role would drop attachment", "/v1/chat/completions", `{"messages":[{"role":"system","content":[{"type":"pdf_url","pdf_url":{"url":"https://example.com/file"}}]}]}`, "gemini-test"},

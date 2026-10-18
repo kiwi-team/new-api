@@ -111,6 +111,12 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		if matched := resolveBillingModelName(info.GetOriginModelName()); matched != "" && matched != info.OriginModelName {
 			info.BillingModelName = matched
 		}
+		// Keep Decisions defaults separate from the same model's Chat/Responses
+		// prices. An explicitly priced client model continues to take precedence.
+		if info.RelayFormat == types.RelayFormatOpenAIDecisions && info.OriginModelName == "gpt-6-luna" &&
+			!HasPriceOrRatioEntry(info.GetBillingModelName()) {
+			info.BillingModelName = "gpt-6-luna-decisions"
+		}
 	}
 	billingModelName := info.GetBillingModelName()
 	modelPrice, usePrice := ratio_setting.GetModelPrice(billingModelName, false)

@@ -761,6 +761,13 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
 		}
 		info = genBaseRelayInfo(c, request)
 		info.RelayFormat = types.RelayFormatTypeSafe
+	case types.RelayFormatOpenAIDecisions:
+		if _, ok := request.(*dto.DecisionsRequest); !ok {
+			return nil, errors.New("request is not a DecisionsRequest")
+		}
+		info = genBaseRelayInfo(c, request)
+		info.RelayMode = relayconstant.RelayModeDecisions
+		info.RelayFormat = types.RelayFormatOpenAIDecisions
 	case types.RelayFormatTask:
 		info = genBaseRelayInfo(c, nil)
 		info.TaskRelayInfo = &TaskRelayInfo{}

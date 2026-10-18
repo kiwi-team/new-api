@@ -2,6 +2,7 @@ package vertex
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -156,7 +157,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	req := v.(relaycommon.TaskSubmitReq)
 
 	// Omni models bill per second of generated video and have no resolution tier.
-	if geminitask.IsOmniModel(info.OriginModelName) {
+	if geminitask.IsOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
 		return geminitask.OmniSecondsRatio(req.Seconds)
 	}
 
@@ -179,8 +180,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	req := v.(relaycommon.TaskSubmitReq)
 
 	// Omni models use the interactions API with a different payload shape.
-	if geminitask.IsOmniModel(info.OriginModelName) {
-		data, err := geminitask.BuildOmniRequestBody(c, req, info.OriginModelName)
+	if geminitask.IsOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
+		data, err := geminitask.BuildOmniRequestBody(c, req, cmp.Or(info.UpstreamModelName, info.OriginModelName))
 		if err != nil {
 			return nil, err
 		}
@@ -255,7 +256,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	// Omni interactions API returns an interaction object with an `id`.
-	if geminitask.IsOmniModel(info.OriginModelName) {
+	if geminitask.IsOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
 		var os struct {
 			ID     string `json:"id"`
 			Status string `json:"status"`
@@ -276,7 +277,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		if err := common.Unmarshal([]byte(a.apiKey), adc); err != nil {
 			return "", nil, service.TaskErrorWrapper(err, "decode_credentials_failed", http.StatusInternalServerError)
 		}
-		modelName := info.OriginModelName
+		modelName := cmp.Or(info.UpstreamModelName, info.OriginModelName)
 		region := vertexcore.GetModelRegion(info.ApiVersion, modelName)
 		if strings.TrimSpace(region) == "" {
 			region = "global"
@@ -288,7 +289,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		ov.ID = info.PublicTaskID
 		ov.TaskID = info.PublicTaskID
 		ov.Status = dto.VideoStatusQueued
-		ov.Model = modelName
+		ov.Model = info.OriginModelName
 		c.JSON(http.StatusOK, ov)
 		return localID, responseBody, nil
 	}
@@ -319,6 +320,7 @@ func (a *TaskAdaptor) GetModelList() []string {
 		"veo-3.1-generate-preview",
 		"veo-3.1-fast-generate-preview",
 		"gemini-omni-flash-preview",
+		"gemini-omni-1.1-flash-preview",
 	}
 }
 func (a *TaskAdaptor) GetChannelName() string { return "vertex" }
@@ -513,7 +515,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	modelName := ""
-	if geminitask.IsOmniTaskID(task.TaskID) {
+	if geminitask.IsOmniTaskID(task.GetUpstreamTaskID()) {
 		modelName = task.Properties.OriginModelName
 		if strings.TrimSpace(modelName) == "" {
 			modelName = "gemini-omni-flash-preview"

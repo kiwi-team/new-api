@@ -15,6 +15,7 @@ const (
 	RelayFormatRerank                                = "rerank"
 	RelayFormatEmbedding                             = "embedding"
 	RelayFormatTypeSafe                              = "typesafe"
+	RelayFormatOpenAIDecisions                       = "openai_decisions"
 
 	RelayFormatTask    = "task"
 	RelayFormatMjProxy = "mj_proxy"

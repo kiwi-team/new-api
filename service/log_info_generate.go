@@ -300,6 +300,8 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other *model
 			chain = append(chain, "TypeSafe System One")
 		case types.RelayFormatOpenAIResponses:
 			chain = append(chain, "OpenAI Responses")
+		case types.RelayFormatOpenAIDecisions:
+			chain = append(chain, "OpenAI Decisions")
 		default:
 			chain = append(chain, string(f))
 		}

@@ -163,10 +163,14 @@ func PlanGeminiFiles(c *gin.Context, modelName string) (*GeminiFilePlan, *types.
 			if supported && hasNoncanonicalFileFields(message, "content", "role") {
 				return nil, FileRoutingError("invalid_file_input", fmt.Sprintf("messages[%d]: invalid attachment field casing", mi), 400)
 			}
-			if supported && message.Get("content").Type == gjson.String && strings.Contains(message.Get("content").String(), "](data:") {
-				return nil, FileRoutingError("unsupported_file_input", fmt.Sprintf("messages[%d]: use image_url for embedded markdown images", mi), 400)
+			content := message.Get("content")
+			if content.Type == gjson.String {
+				if supported && strings.Contains(content.String(), "](data:") {
+					return nil, FileRoutingError("unsupported_file_input", fmt.Sprintf("messages[%d]: use image_url for embedded markdown images", mi), 400)
+				}
+				continue
 			}
-			for pi, part := range message.Get("content").Array() {
+			for pi, part := range content.Array() {
 				kind := part.Get("type").String()
 				position := fmt.Sprintf("messages[%d].content[%d]", mi, pi)
 				if kind == dto.ContentTypePDFURL && !supported {
@@ -441,54 +445,46 @@ func geminiFileMIME(prefix []byte, declared, received string) (string, error) {
 	if len(prefix) == 0 {
 		return "", fmt.Errorf("empty file")
 	}
-	detected := http.DetectContentType(prefix)
-	if bytes.HasPrefix(prefix, []byte("fLaC")) {
-		detected = "audio/flac"
+	// Honor the supplied MIME type; content sniffing only fills in missing types.
+	// The upstream provider validates whether the content matches that type.
+	mimeType := normalizeGeminiMIME(declared)
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = normalizeGeminiMIME(received)
 	}
-	if bytes.HasPrefix(prefix, []byte("OggS")) {
-		detected = "audio/ogg"
-	}
-	if len(prefix) >= 2 && prefix[0] == 0xff && prefix[1]&0xe0 == 0xe0 {
-		detected = "audio/mpeg"
-	}
-	if detected == "video/webm" && (declared == "audio/webm" || received == "audio/webm") {
-		detected = "audio/webm"
-	}
-	if bytes.HasPrefix(prefix, []byte("%PDF-")) {
-		detected = "application/pdf"
-	}
-	if len(prefix) >= 12 && string(prefix[4:8]) == "ftyp" {
-		detected = "video/mp4"
-		switch string(prefix[8:12]) {
-		case "heic", "heix", "mif1":
-			detected = "image/heic"
-		case "M4A ":
-			detected = "audio/mp4"
-		case "qt  ":
-			detected = "video/quicktime"
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = http.DetectContentType(prefix)
+		if bytes.HasPrefix(prefix, []byte("fLaC")) {
+			mimeType = "audio/flac"
 		}
+		if bytes.HasPrefix(prefix, []byte("OggS")) {
+			mimeType = "audio/ogg"
+		}
+		if len(prefix) >= 2 && prefix[0] == 0xff && prefix[1]&0xe0 == 0xe0 {
+			mimeType = "audio/mpeg"
+		}
+		if bytes.HasPrefix(prefix, []byte("%PDF-")) {
+			mimeType = "application/pdf"
+		}
+		if len(prefix) >= 12 && string(prefix[4:8]) == "ftyp" {
+			mimeType = "video/mp4"
+			switch string(prefix[8:12]) {
+			case "heic", "heix", "mif1":
+				mimeType = "image/heic"
+			case "M4A ":
+				mimeType = "audio/mp4"
+			case "qt  ":
+				mimeType = "video/quicktime"
+			}
+		}
+		mimeType = normalizeGeminiMIME(mimeType)
 	}
-
-	detected, declared, received = normalizeGeminiMIME(detected), normalizeGeminiMIME(declared), normalizeGeminiMIME(received)
-	if declared == "application/octet-stream" {
-		declared = ""
-	}
-	if received == "application/octet-stream" {
-		received = ""
-	}
-	if declared != "" && detected != declared {
-		return "", fmt.Errorf("file content does not match its MIME type")
-	}
-	if detected == "application/octet-stream" || strings.HasPrefix(detected, "text/") {
+	if mimeType == "application/octet-stream" || strings.HasPrefix(mimeType, "text/") {
 		return "", fmt.Errorf("unsupported or unrecognized file format")
 	}
-	if received != "" && received != detected {
-		return "", fmt.Errorf("file content does not match response MIME type")
-	}
-	if !strings.HasPrefix(detected, "image/") && !strings.HasPrefix(detected, "audio/") && !strings.HasPrefix(detected, "video/") && detected != "application/pdf" {
+	if !strings.HasPrefix(mimeType, "image/") && !strings.HasPrefix(mimeType, "audio/") && !strings.HasPrefix(mimeType, "video/") && mimeType != "application/pdf" {
 		return "", fmt.Errorf("unsupported file format")
 	}
-	return detected, nil
+	return mimeType, nil
 }
 
 func normalizeGeminiMIME(value string) string {

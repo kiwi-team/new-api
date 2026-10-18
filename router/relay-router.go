@@ -126,6 +126,9 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/systemone", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatTypeSafe)
 		})
+		httpRouter.POST("/decisions", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIDecisions)
+		})
 
 		// response related routes
 		httpRouter.POST("/responses/compact", func(c *gin.Context) {

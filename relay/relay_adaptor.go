@@ -257,9 +257,45 @@ func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, strin
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
 	if ok {
-		return jspluginadaptor.New(plugin)
+		adaptor := jspluginadaptor.New(plugin)
+		if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)) || platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)) {
+			return &googleVideoTaskAdaptor{TaskAdaptor: adaptor, platform: platform}
+		}
+		return adaptor
 	}
 	return getLegacyTaskAdaptor(platform)
+}
+
+// Numeric Google platforms can contain both plugin Veo tasks and native Omni
+// interactions. Resolve each stored task without changing its platform or the
+// plugin identity recorded at submission.
+type googleVideoTaskAdaptor struct {
+	*jspluginadaptor.TaskAdaptor
+	platform constant.TaskPlatform
+}
+
+func (a *googleVideoTaskAdaptor) adaptorForTask(task *model.Task) channel.TaskAdaptor {
+	if task != nil && taskGemini.IsOmniTaskID(task.GetUpstreamTaskID()) &&
+		(task.PrivateData.Execution == nil || task.PrivateData.Execution.TaskPlugin == nil) {
+		return getLegacyTaskAdaptor(a.platform)
+	}
+	return a.TaskAdaptor
+}
+
+func (a *googleVideoTaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
+	return a.adaptorForTask(task).FetchTask(baseURL, key, task, proxy)
+}
+
+func (a *googleVideoTaskAdaptor) ParseTaskResult(task *model.Task, response *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+	return a.adaptorForTask(task).ParseTaskResult(task, response, body)
+}
+
+func (a *googleVideoTaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycommon.TaskInfo) int {
+	return a.adaptorForTask(task).AdjustBillingOnComplete(task, result)
+}
+
+func (a *googleVideoTaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	return a.adaptorForTask(task).(channel.OpenAIVideoConverter).ConvertToOpenAIVideo(task)
 }
 
 type legacyTaskAdaptor interface {
@@ -311,6 +347,14 @@ func (a *legacyTaskAdaptorBridge) FetchTask(baseURL, key string, task *model.Tas
 
 func (a *legacyTaskAdaptorBridge) ParseTaskResult(_ *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
 	return a.legacyTaskAdaptor.ParseTaskResult(body)
+}
+
+func (a *legacyTaskAdaptorBridge) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	converter, ok := a.legacyTaskAdaptor.(channel.OpenAIVideoConverter)
+	if !ok {
+		return nil, fmt.Errorf("video conversion is not supported by %s", a.GetChannelName())
+	}
+	return converter.ConvertToOpenAIVideo(task)
 }
 
 func bridgeLegacyTaskAdaptor(adaptor legacyTaskAdaptor) channel.TaskAdaptor {
@@ -390,7 +434,7 @@ func getLegacyTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 // getTaskAdaptorForRequest preserves the exact plugin object pinned by the
 // declarative or shared-endpoint router. Legacy task routes are pinned here
 // from one registry generation before the adaptor is returned.
-func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (constant.TaskPlatform, channel.TaskAdaptor) {
+func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform, upstreamModel string) (constant.TaskPlatform, channel.TaskAdaptor) {
 	if c != nil {
 		if value, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin); exists {
 			if pinned, ok := value.(pluginruntime.PinnedPlugin); ok && pinned.Plugin != nil {
@@ -413,6 +457,12 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (c
 			}
 			return platform, nil
 		}
+	}
+	// The Google/Vertex plugins implement Veo's predictLongRunning protocol.
+	// Unclaimed Omni models must keep using the existing Interactions adaptor.
+	if taskGemini.IsOmniModel(upstreamModel) &&
+		(platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)) || platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi))) {
+		return platform, getLegacyTaskAdaptor(platform)
 	}
 	generation := pluginruntime.DefaultRegistry.Generation()
 	plugin, ok := ResolveTaskPluginForPlatform(generation, platform)

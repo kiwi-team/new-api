@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate); taskErr != nil {
 		return taskErr
 	}
-	if !isOmniModel(info.OriginModelName) {
+	if !isOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
 		return nil
 	}
 	req, err := relaycommon.GetTaskRequest(c)
@@ -90,7 +91,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	modelName := info.OriginModelName
+	modelName := cmp.Or(info.UpstreamModelName, info.OriginModelName)
 	version := model_setting.GetGeminiVersionSetting(modelName)
 
 	// Omni models use the interactions endpoint instead of predictLongRunning.
@@ -127,8 +128,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	// Omni models use the interactions API with a different payload shape.
-	if isOmniModel(info.OriginModelName) {
-		data, err := BuildOmniRequestBody(c, req, info.OriginModelName)
+	if isOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
+		data, err := BuildOmniRequestBody(c, req, cmp.Or(info.UpstreamModelName, info.OriginModelName))
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +204,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	// Omni interactions API returns an interaction object with an `id`.
-	if isOmniModel(info.OriginModelName) {
+	if isOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
 		var os omniSubmitResponse
 		if err := common.Unmarshal(responseBody, &os); err != nil {
 			return "", nil, service.TaskErrorWrapper(err, "unmarshal_response_failed", http.StatusInternalServerError)
@@ -274,7 +275,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	// Gemini Omni has mixed token prices. ModelPrice is configured as the 720p
 	// output price per second; this ratio turns the request estimate into a
 	// pre-charge. Completion settlement uses the upstream modality usage.
-	if isOmniModel(info.OriginModelName) {
+	if isOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
 		return OmniBillingEstimate(req, info.PriceData.ModelPrice)
 	}
 
@@ -405,7 +406,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	modelName := ""
-	if IsOmniTaskID(task.TaskID) {
+	if IsOmniTaskID(task.GetUpstreamTaskID()) {
 		modelName = task.Properties.OriginModelName
 		if strings.TrimSpace(modelName) == "" {
 			modelName = "gemini-omni-flash-preview"

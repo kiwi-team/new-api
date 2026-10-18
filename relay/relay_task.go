@@ -214,12 +214,22 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	}
 
+	// Resolve mapping before selecting the protocol: an alias mapped to Omni
+	// needs the Interactions adaptor even while the Veo plugin is enabled.
+	mappedBeforeValidate := info.OriginModelName != ""
+	if mappedBeforeValidate {
+		info.UpstreamModelName = info.OriginModelName
+		if err := helper.ModelMappedHelper(c, info, nil); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+		}
+	}
+
 	// 1. 确定 platform → 创建适配器 → 验证请求
 	platform := constant.TaskPlatform(c.GetString("platform"))
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
-	platform, adaptor := getTaskAdaptorForRequest(c, platform)
+	platform, adaptor := getTaskAdaptorForRequest(c, platform, info.UpstreamModelName)
 	if adaptor == nil {
 		code, message := TaskPlatformUnavailableError(platform)
 		return nil, service.TaskErrorWrapperLocal(errors.New(message), code, http.StatusBadRequest)
@@ -230,19 +240,6 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PublicTaskID = model.GenerateTaskID()
 	}
 	adaptor.Init(info)
-	// Plugin submit hooks run during ValidateRequestAndSetAction and cache the
-	// upstream body. OriginModelName is already seeded on that line (protocol
-	// resolved_task_model, legacy submit, or GenRelayInfo original_model), so
-	// map before validation. The empty-name CoverTaskActionToModelName
-	// synthesis happens after validate and cannot move; skip the late block
-	// when early mapping ran so a chain is never applied twice.
-	mappedBeforeValidate := info.OriginModelName != ""
-	if mappedBeforeValidate {
-		info.UpstreamModelName = info.OriginModelName
-		if err := helper.ModelMappedHelper(c, info, nil); err != nil {
-			return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
-		}
-	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
@@ -533,26 +530,23 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-	// 已成功并且结果已落到自有存储（S3）时直接复用，不再回源。
-	// omni 的 GET interactions 每次都会返回完整视频，重复拉取会反复上传 S3。
-	if originTask.Status == model.TaskStatusSuccess && strings.HasPrefix(originTask.GetResultURL(), "https://") {
-		if isOpenAIVideoAPI {
-			return openAIVideoRespBody(originTask)
-		}
-		return simpleVideoRespBody(originTask, nil, ""), nil
-	}
-
-	// 其余情况向上游实时拉取最新状态
-	if realtimeResp, done := tryRealtimeFetch(c, originTask, isOpenAIVideoAPI); done {
-		respBody = realtimeResp
-		if len(respBody) != 0 {
-			return
+	// 已有直链（如 S3）时复用，避免 Omni 重复拉取完整视频并转存。
+	// 本机 /content 只是兜底地址，旧任务也应有机会重新取得上游直链。
+	if taskcommon.ExternalResultURL(originTask) == "" {
+		if realtimeResp, done := tryRealtimeFetch(c, originTask, isOpenAIVideoAPI); done {
+			respBody = realtimeResp
+			if len(respBody) != 0 {
+				return
+			}
 		}
 	}
 
 	// OpenAI Video API 格式: 走各 adaptor 的 ConvertToOpenAIVideo
 	if isOpenAIVideoAPI {
 		return openAIVideoRespBody(originTask)
+	}
+	if originTask.Status == model.TaskStatusSuccess {
+		return simpleVideoRespBody(originTask, nil, ""), nil
 	}
 
 	// 通用 TaskDto 格式
@@ -667,6 +661,10 @@ func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (
 
 	ti, err := adaptor.ParseTaskResult(task, resp, body)
 	if err != nil || ti == nil {
+		return nil, false
+	}
+	// 已完成任务只补取结果地址；上游记录过期或查询失败不能撤销成功态、触发退款。
+	if task.Status == model.TaskStatusSuccess && ti.Status != model.TaskStatusSuccess {
 		return nil, false
 	}
 

@@ -3,6 +3,12 @@ package billing_setting
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// https://developers.openai.com/api/docs/guides/decisions and
+	// https://developers.openai.com/api/docs/models/gpt-6-luna (2026-10-15).
+	// Decisions prices differ from Chat/Responses. Global processing defaults;
+	// cache reads, cache writes and output are free, including long context.
+	"gpt-6-luna-decisions":        `len <= 272000 ? tier("standard", p * 0.1 + cr * 0 + cc * 0 + c * 0) : tier("long_context", p * 0.2 + cr * 0 + cc * 0 + c * 0)`,
+	"openai/gpt-6-luna-decisions": `len <= 272000 ? tier("standard", p * 0.1 + cr * 0 + cc * 0 + c * 0) : tier("long_context", p * 0.2 + cr * 0 + cc * 0 + c * 0)`,
 	// https://www.alibabacloud.com/help/en/model-studio/happyoyster-1-0-directing
 	// Singapore USD per call / second, checked 2026-10-13. Directing defaults
 	// intentionally use Singapore prices for every channel region. Protocol usage

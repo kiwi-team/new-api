@@ -52,6 +52,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		err = relay.AlphaSearchHelper(c, info)
 	case relayconstant.RelayModeSystemOne:
 		err = relay.TypeSafeHelper(c, info)
+	case relayconstant.RelayModeDecisions:
+		err = relay.DecisionsHelper(c, info)
 	default:
 		err = relay.TextHelper(c, info)
 	}

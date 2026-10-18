@@ -121,6 +121,17 @@ func TestHappyOysterAdventureRoutesMatchOfficialAPI(t *testing.T) {
 	assert.True(t, routes["POST /api/v1/tokens"])
 }
 
+func TestDecisionsRouteRequiresToken(t *testing.T) {
+	engine := gin.New()
+	SetRelayRouter(engine)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/decisions", strings.NewReader(`{"model":"gpt-6-luna"}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "error")
+}
+
 func setupRelayRouterTestDB(t *testing.T) {
 	t.Helper()
 

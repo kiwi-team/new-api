@@ -7,6 +7,7 @@ const (
 	BillingUsageSourceGeminiChat     = "gemini_chat"
 	BillingUsageSourceOAIChat        = "oai_chat"
 	BillingUsageSourceOAIResponses   = "oai_responses"
+	BillingUsageSourceOAIDecisions   = "oai_decisions"
 	BillingUsageSourceSystemOne      = "systemone"
 
 	BillingUsageSemanticAnthropic = "anthropic"
