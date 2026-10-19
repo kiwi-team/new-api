@@ -114,7 +114,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 		if containAudioTokens && containsAudioRatios {
-			service.PostAudioConsumeQuota(c, info, usage, "", "", "")
+			service.PostAudioConsumeQuota(c, info, usage, nil, "", "")
 		} else {
 			//extraContent := []string{}
 			//postConsumeQuota(c, info, usage, extraContent, "", "")
@@ -264,7 +264,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 	if containAudioTokens && containsAudioRatios {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), nil, requestStr, responseStr)
 	} else {
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil, requestStr, responseStr)
 	}

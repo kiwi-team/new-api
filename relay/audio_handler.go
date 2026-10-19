@@ -90,9 +90,9 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		postConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
 	*/
 	// todo fix tts
-	extraContent := []string{}
+	var extraContent []*common.Message
 	if usage.(*dto.Usage).CompletionTokenDetails.AudioTokens > 0 || usage.(*dto.Usage).PromptTokensDetails.AudioTokens > 0 {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "", requestStr, responseStr)
+		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), nil, requestStr, responseStr)
 	} else {
 		common.SetContextKey(c, constant.ContextKeyTTSCount, utf8.RuneCountInString(audioReq.Input))
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)

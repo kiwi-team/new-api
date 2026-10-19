@@ -7,7 +7,6 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
-	"os"
 	"slices"
 	"strings"
 
@@ -16,32 +15,31 @@ import (
 
 	//"github.com/QuantumNous/new-api//types"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"gorm.io/gorm"
 )
 
 type ErrorLog struct {
-	Id             int     `json:"id"`
-	UserId         int     `json:"user_id" gorm:"index"`
-	CreatedAt      int64   `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
-	ChannelId      int     `json:"channel_id" gorm:"index"`
-	ChannelName    string  `json:"channel_name" gorm:"default:''"`
-	TokenId        int     `json:"token_id" gorm:"index"`
-	TokenName      string  `json:"token_name"`
-	ModelName      string  `json:"model_name" gorm:"default:''"`
-	Message        string  `json:"message" gorm:"default:''"`
-	Type           string  `json:"type" gorm:"default:''"`
-	Param          string  `json:"param" gorm:"default:''"`
-	Code           string  `json:"code" gorm:"default:''"`
-	RequestId      string  `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
-	StatusCode     int     `json:"status_code" gorm:"default:0"`
-	UseTimeMs      int64   `json:"use_time_ms" gorm:"default:0"`
-	Body           string  `json:"body" gorm:"default:''"`
-	Ip             string  `json:"ip" gorm:"default:''"`
-	ClientUserId   string  `json:"client_user_id" gorm:"default:''"`
-	ClientScenairo string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	SessionId      string  `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
-	Extra          *string `json:"extra,omitempty" gorm:"type:jsonb"`
-	Header         *string `json:"header,omitempty" gorm:"type:jsonb"`
+	Id             int      `json:"id"`
+	UserId         int      `json:"user_id" gorm:"index"`
+	CreatedAt      int64    `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
+	ChannelId      int      `json:"channel_id" gorm:"index"`
+	ChannelName    string   `json:"channel_name" gorm:"default:''"`
+	TokenId        int      `json:"token_id" gorm:"index"`
+	TokenName      string   `json:"token_name"`
+	ModelName      string   `json:"model_name" gorm:"default:''"`
+	Message        string   `json:"message" gorm:"default:''"`
+	Type           string   `json:"type" gorm:"default:''"`
+	Param          string   `json:"param" gorm:"default:''"`
+	Code           string   `json:"code" gorm:"default:''"`
+	RequestId      string   `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
+	StatusCode     int      `json:"status_code" gorm:"default:0"`
+	UseTimeMs      int64    `json:"use_time_ms" gorm:"default:0"`
+	Body           string   `json:"body" gorm:"default:''"`
+	Ip             string   `json:"ip" gorm:"default:''"`
+	ClientUserId   string   `json:"client_user_id" gorm:"default:''"`
+	ClientScenairo string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	SessionId      string   `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
+	Extra          *LogJSON `json:"extra,omitempty"`
+	Header         *LogJSON `json:"header,omitempty"`
 }
 
 // GetErrorLogBody 根据ID获取错误日志的body字段
@@ -79,12 +77,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	}
 	num := pageSize
 	startIdx := (page - 1) * num
-	var query *gorm.DB
-	if os.Getenv("LOG_SQL_DSN") != "" {
-		query = LOG_DB.Model(&ErrorLog{})
-	} else {
-		query = LOG_DB.Model(&ErrorLog{}).Joins("left join tokens on error_logs.token_id = tokens.id").Select("error_logs.*, tokens.name as token_name")
-	}
+	query := LOG_DB.Model(&ErrorLog{})
 	if channelId > 0 {
 		query = query.Where("channel_id = ? ", channelId)
 	}
@@ -119,16 +112,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 			query = query.Where("user_id = ?", req.ScopeUserId)
 		}
 	}
-	// extra 是 PG jsonb 列，按嵌套字段精确匹配（NULL 行天然不命中，符合预期）
-	if req.MtSessionId != "" {
-		query = query.Where("extra->>'mt_session_id' = ?", req.MtSessionId)
-	}
-	if req.TraceId != "" {
-		query = query.Where("extra->>'trace_id' = ?", req.TraceId)
-	}
-	if req.TrajId != "" {
-		query = query.Where("extra->>'traj_id' = ?", req.TrajId)
-	}
+	query = applyLogExtraFilters(query, "error_logs.extra", req.MtSessionId, req.TraceId, req.TrajId)
 	if req.SessionId != "" {
 		query = query.Where("session_id = ?", req.SessionId)
 	}
@@ -143,7 +127,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 		}
 		tokenIds = append(tokenIds, log.TokenId)
 	}
-	if len(tokenIds) > 0 && os.Getenv("LOG_SQL_DSN") != "" {
+	if len(tokenIds) > 0 {
 		var tokens []struct {
 			Id   int    `gorm:"column:id"`
 			Name string `gorm:"column:name"`
@@ -190,14 +174,9 @@ func GetErrorLogsForExport(req *dto.ErrorLogsRequest) ([]*ErrorLog, error) {
 	if req.ClientUserId != "" {
 		query = query.Where("client_user_id = ?", req.ClientUserId)
 	}
-	if req.MtSessionId != "" {
-		query = query.Where("extra->>'mt_session_id' = ?", req.MtSessionId)
-	}
-	if req.TraceId != "" {
-		query = query.Where("extra->>'trace_id' = ?", req.TraceId)
-	}
-	if req.TrajId != "" {
-		query = query.Where("extra->>'traj_id' = ?", req.TrajId)
+	query = applyLogExtraFilters(query, "error_logs.extra", req.MtSessionId, req.TraceId, req.TrajId)
+	if req.SessionId != "" {
+		query = query.Where("session_id = ?", req.SessionId)
 	}
 
 	var errorLogs []*ErrorLog

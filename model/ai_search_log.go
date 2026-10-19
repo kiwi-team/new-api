@@ -27,7 +27,7 @@ type AiSearchLog struct {
 	TargetURL     string `json:"target_url" gorm:"type:varchar(2048);default:''"`
 	ContentTokens int    `json:"content_tokens" gorm:"default:0"`
 	Content       string `json:"content" gorm:"type:text"`
-	Extra         string `json:"extra" gorm:"type:text;default:''"`
+	Extra         string `json:"extra" gorm:"type:text"`
 }
 
 // SearchResultLogger 统一不同引擎响应到 AiSearchLog 的映射。

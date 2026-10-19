@@ -123,7 +123,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor legacyVideoTaskAdaptor, 
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask response: %s", string(responseBody)))
+	logger.LogDebug(ctx, "UpdateVideoSingleTask response: %s", string(responseBody))
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -131,11 +131,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor legacyVideoTaskAdaptor, 
 	if r, ok := tryParseVideoGenerationsResponse(responseBody); ok {
 		// 上游是 new-api 级联/中转，返回 /v1/video/generations 的 {data:{url,status,task_id,format}} 结构。
 		// 该结构里视频地址在 data.url、状态用 succeeded/failed/processing 等语义，需要单独兼容。
-		logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask parsed as video generations response: %+v", r))
+		logger.LogDebug(ctx, "UpdateVideoSingleTask parsed as video generations response: %+v", r)
 		taskResult = r
 		task.Data = responseBody
 	} else if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask parsed as new api response format: %+v", responseItems))
+		logger.LogDebug(ctx, "UpdateVideoSingleTask parsed as new api response format: %+v", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)
@@ -149,7 +149,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor legacyVideoTaskAdaptor, 
 		task.Data = redactVideoResponseBody(responseBody)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("UpdateVideoSingleTask taskResult: %+v", taskResult))
+	logger.LogDebug(ctx, "UpdateVideoSingleTask taskResult: %+v", taskResult)
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
@@ -227,7 +227,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor legacyVideoTaskAdaptor, 
 				logger.LogWarn(ctx, fmt.Sprintf("Failed to get token %d for task %s refund: %s", tokenId, task.TaskID, err.Error()))
 			}
 		}
-		logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
+		logContent := common.NewMessage("Task {{task_id}} failed, refunded {{quota}}", map[string]any{"task_id": task.TaskID, "quota": logger.FormatQuota(quota)})
 		model.RecordLog(task.UserId, model.LogTypeSystem, logContent, quota)
 		// Offset the quota_data entry that was written at submission time
 		if common.DataExportEnabled {
@@ -310,9 +310,14 @@ func resettleVideoTaskByTokens(ctx context.Context, task *model.Task, taskResult
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 		task.Quota = actualQuota // 更新任务记录的实际扣费额度
 
-		logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
-			modelRatio, finalGroupRatio, taskResult.TotalTokens,
-			logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(quotaDelta))
+		logContent := common.NewMessage("Video task settled: model ratio {{model_ratio}}, group ratio {{group_ratio}}, tokens {{tokens}}, reserved {{reserved}}, charged {{charged}}, adjustment {{adjustment}}", map[string]any{
+			"model_ratio": fmt.Sprintf("%.2f", modelRatio),
+			"group_ratio": fmt.Sprintf("%.2f", finalGroupRatio),
+			"tokens":      taskResult.TotalTokens,
+			"reserved":    logger.FormatQuota(preConsumedQuota),
+			"charged":     logger.FormatQuota(actualQuota),
+			"adjustment":  logger.FormatQuota(quotaDelta),
+		})
 		model.RecordLog(task.UserId, model.LogTypeSystem, logContent, actualQuota)
 
 	case quotaDelta < 0:
@@ -331,9 +336,14 @@ func resettleVideoTaskByTokens(ctx context.Context, task *model.Task, taskResult
 		}
 		task.Quota = actualQuota // 更新任务记录的实际扣费额度
 
-		logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
-			modelRatio, finalGroupRatio, taskResult.TotalTokens,
-			logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(refundQuota))
+		logContent := common.NewMessage("Video task settled: model ratio {{model_ratio}}, group ratio {{group_ratio}}, tokens {{tokens}}, reserved {{reserved}}, charged {{charged}}, adjustment {{adjustment}}", map[string]any{
+			"model_ratio": fmt.Sprintf("%.2f", modelRatio),
+			"group_ratio": fmt.Sprintf("%.2f", finalGroupRatio),
+			"tokens":      taskResult.TotalTokens,
+			"reserved":    logger.FormatQuota(preConsumedQuota),
+			"charged":     logger.FormatQuota(actualQuota),
+			"adjustment":  logger.FormatQuota(quotaDelta),
+		})
 		model.RecordLog(task.UserId, model.LogTypeSystem, logContent, refundQuota)
 
 	default:

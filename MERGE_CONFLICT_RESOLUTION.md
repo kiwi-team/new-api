@@ -185,6 +185,12 @@
 | `/v1/responses` 请求/响应日志 | handler 已捕获请求和完整响应，但 HTTP/WebSocket 共用结算函数把两个参数替换为空串，普通 Responses 日志因此没有原始报文。 | `SAVE_REQUEST_RESPONSE=true` 时，普通及音频 HTTP `/v1/responses` 必须把已捕获请求、响应传入消费日志；`/v1/responses/compact` 保持独立计价日志路径。WebSocket 没有 HTTP body 记录器时不得伪造报文。 | `relay/responses_handler.go`、`relay/responses_websocket.go`；`TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse`。 |
 | 管理员创建用户的原子性与 Leader 角色 | 旧的 `Insert` 与 main 新的 `InsertWithTx` 同时保留，一次请求重复插入用户并因主键冲突失败；main 的新测试还把 prod 的 Leader 角色 `5` 当成非法值。 | 创建用户只在同一个事务中写入用户和管理员权限，成功后再执行缓存/邀请奖励收尾；Leader 角色 `5` 继续是合法角色，未定义角色必须在写库前拒绝。 | `controller/user.go`、`common/constants.go`；`TestAdminUserRoutineEditsDoNotRequireProof`、`TestCreateUserRejectsNonStandardRole`。 |
 
+| 日志导出协议与权限（2026-10-18） | 两侧同时注册 `GET /api/log/export`，Gin 启动 panic；直接接受 main 的管理员导出会泄露本分支仅 root 可见的渠道/原始报文。 | 保留 root CSV `/api/log/export`；管理员 NDJSON 使用 `/api/log/export/stream`，用户使用 `/api/log/self/export`。列表、流式导出共用过滤器，保留 UID/组织范围及用户历史天数；普通管理员清除 request/response/usage/header 和渠道链路，root 保留完整数据。 | `router/api-router.go`、`controller/log.go`、`model/log.go`、日志导出前端 API；`TestLogExportDatabaseMatrix`、`TestLogExportRules`、`TestAccessTokenRouteRulesCoverEveryDashboardRoute`。 |
+| 结构化日志与额度（2026-10-18） | main 把日志内容从字符串改为 `common.Message`，直接覆盖会丢失本分支显式额度、Realtime 分模态用量和 TTS 字符说明。 | 内容使用固定英文键与参数，并在七语言前端翻译；`RecordLog` 保留可选显式额度；音频/文本共用结算入口保留 HTTP 报文；Realtime 保留真实分模态用量，不以日志重构改变扣费。 | `model/log.go`、`service/quota.go`、`service/text_quota.go`、`controller/task_video.go`、`controller/happyoyster.go`；`TestLogExportDatabaseMatrix`、`TestTiered*`、`TestConsumeResponsesQuotaRecordsCapturedRequestAndResponse`。 |
+| 日志 JSON 跨库（2026-10-18） | `extra/header` 固定 `jsonb` 无法在 MySQL 建表，PG 专用 JSON 运算符不能直接用于所有日志库；ClickHouse 建表漏掉分支日志列。 | PostgreSQL 保留原 jsonb 列；SQLite 使用 text，MySQL 使用 longtext，ClickHouse 使用 Nullable(String)。JSON API 仍输出字符串，空值仍为 NULL；consume/error 列表和导出共用按方言的精确 JSON 筛选。ClickHouse 已有 logs 表以幂等 ADD COLUMN 补齐分支字段。 | `model/log.go`、`model/error_log.go`、`model/main.go`；`TestLogExportDatabaseMatrix` 的 fresh/upgrade、报文/JSON 筛选及重复迁移用例。 |
+| 内存限流令牌隔离（2026-10-18） | main 将限流主体改为用户/分组并改用成功请求预留，可能覆盖本分支同用户不同 Key 的独立额度。 | 内存主体同时包含用户、已配置独立额度的分组和 token_id；保留 main 的成功请求预留、失败流释放及标准 429 响应；Redis 保持既有用户/分组粒度。 | `middleware/model-rate-limit.go`；`TestModelMemoryRateLimitIsolatesTokensWithinConfiguredGroup`、`TestModelMemoryRateLimitReservesConcurrentSuccessAdmission`、`TestModelRateLimitCountsConfiguredGroupsSeparately`。 |
+| 自定义管理路由的个人令牌边界（2026-10-18） | main 新增全路由权限声明检查，自定义管理路由未声明；简单开放任意 token 会扩大新权限令牌授权，改为 session-only 又会中断旧令牌。 | 自定义管理路由显式声明 legacy 规则：浏览器会话不变，旧令牌仍受原截止日期和角色校验，新 scoped token 拒绝；不能用 `any` 规则代替未定义的授权。 | `middleware/access_token_routes.go`、`middleware/auth.go`；`TestUserAuthAppliesAccessTokenRouteRules`、`TestAccessTokenRouteRulesCoverEveryDashboardRoute`。 |
+
 ### Required merge review procedure
 
 1. 合并前先按上表定位受 `main` 修改影响的文件，并比较行为，不只比较是否仍能编译。
@@ -268,3 +274,78 @@
 - `cd web && bun run typecheck`、`bun test src/features/channels/lib/__tests__/channel-type-ids.test.ts`（7 个用例）、`bun run build`、`bun run i18n:sync` 均通过。修改的 TypeScript 文件通过 oxlint；sync 脚本只有既存 warning。全仓库 `bun run format:check` 因范围外既有格式问题失败，未批量修改无关文件。
 - 鉴权检查参考 [OWASP ASVS 5.0.0](https://owasp.org/projects/asvs)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 和 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。本次控制点为服务端模型/资源/端点权限、临时凭证摘要存储与原令牌校验、单次票据、防重放以及凭证不写日志；不声称完成整个应用的 ASVS 合规认证。
 - 尚未调用真实付费上游；价格取自 [Directing 官方美元价格](https://www.alibabacloud.com/help/en/model-studio/happyoyster-1-0-directing)。参考图分类按请求中的 firstFrameImage/inputImages/主体 refImage 判断，最终仍须真实账单核对。`update-script` 当前不单独收费；Directing 使用原生 REST + RTC，不支持 OpenAI StreamOptions。网络中断、异常成功响应等无法确定上游结果时保留预扣并要求人工对账，不自动重放计费动作。
+
+## 2026-10-18 merge main 冲突修复
+
+### 范围与原则
+
+- 起点 HEAD `ca378c068c35f9406f76678da31aa94d5606e55b`，合入 main `6cf0d90b5ff27f901697dddd61e0c28aba8efefc`；接手时 90 个未合并文件、303 个文本冲突块。
+- 按本文件既有非回归契约、2026-09-29 合并记录和 2026-10-13 HappyOyster 记录处理。保留 main 的消息国际化、流式日志导出、安全校验、tokenkit 计数和 UI 拆分，同时把本分支路由、计费、日志、组织范围与配置入口移植到新接口。
+- 原冲突内容备份到工作区外 `/tmp/new-api-merge-20261018/original/`。本轮仅解决并暂存冲突，不创建 merge commit，不处理用户原有未跟踪文件。
+
+### 解决方案与原因
+
+| 范围 | 最终方案及原因 |
+|---|---|
+| 公共上下文、初始化、pprof、入口 | 合并上下文键和两侧环境配置；保留本分支静态限流、告警环境、pprof 阈值/冷却与堆栈，并采用 main 的服务端 LogText 和退出信号处理，避免诊断配置回退。 |
+| 用户、MFA、令牌、设置 | 保留 verified email 唯一性校验和服务端角色限制，同时保留注册 UID、Leader 角色及账号模型限制；保存设置从原设置合并。Token 合入 `AllowUserQuotaQuery`，并保留渠道规则、高优先级、倍率和告警字段；Redis Lua 参数与 TTL 索引同步调整，避免新增字段被当作 TTL。 |
+| 普通日志、审计和导出 | 采用 main 的结构化消息及 `LogFilter`，保留原始报文、Header、session/project/client UID、渠道链路、首字时间及显式 quota。查询与导出统一筛选和组织范围，root CSV 与新 NDJSON 地址分开注册，后端清理 root 专属字段。quota 与 RPM/TPM 的独立 Scan 继续正确回填。 |
+| 日志数据库 | 三库实测发现原有 PG-only jsonb 建表及筛选。引入字符串型 `LogJSON`，按方言选择存储类型，保持 PostgreSQL jsonb 不降级；错误日志复用同一 JSON 筛选逻辑。ClickHouse 迁移补齐自定义消费日志字段，Scanner/Valuer 保留 NULL；查询不把从主库补充的 channel_name 当作 ClickHouse 物理列。完整启动还发现 AiSearchLog.Extra 的 TEXT 默认值被 MySQL 拒绝，移除该无效默认值，应用写入仍由 Go 零值保存空串；不更换 GORM/driver 版本。 |
+| 配额、充值、兑换、任务 | 改用 `common.Message` 与参数，保留业务额度、异步任务补扣/退款、原始用量、project/plan/session 和原始报文。文本、音频、Realtime、TTS、视频及 HappyOyster 的旧字符串日志迁移到固定英文键，新增 19 个键的七语言翻译，避免只修类型编译而丢计费说明。 |
+| 路由与协议 | 保留 TypeSafe/Decisions、显式渠道顺序/随机/竞速和 Responses WS 每次分配；合入 DeepSeek tools、错误地址脱敏、WebSocket close code/reason。保留原生 Gemini Omni 与 Veo 插件分流及公开 video task_id/直链逻辑；原有完整测试继续作为锚点。 |
+| Gemini 与 tokenkit | 采用 tokenkit 计数和 main 的工具/多模态 function response 支持；保留大 URL 文件路由及 file plan，计数阶段不提前下载或重复上传。统一 DTO 中 MIME 内部提示不输出到上游；schema 清理同时保留 enum 的 Allowed values 说明。 |
+| 阿里、Vidu 与插件 | 阿里新增 Responses 地址与原 ASR/图像路由共存；插件固定渠道绑定合并新增 xAI。Vidu 保留 Q4 支持，但 metadata 不能覆盖已计价的 model/duration/resolution，避免预扣参数与实际请求分离。插件描述仍按 API v1 的计费主体+单价约定审查。 |
+| 限流 | 保留 main 的并发成功请求预留、失败流释放与 429 错误；内存 bucket 同时按用户、已配置分组和 token_id 隔离。删去已无调用的旧 key 构造函数，增加同用户同组不同令牌回归。 |
+| 前端组件 | 复用现有 Key drawer、MultiSelect、日志筛选/报文弹窗；保留 root Key 配置、账号模型限制与关联日志筛选。日志维护页采用 main 的 `HistoryLogCleanup`/`ServerLogFiles`，保留用户历史天数控制。日期组件保留整日起止模式，并合入秒级时间编辑。没有新建重复业务组件。 |
+| 前端测试与依赖 | Drawer/通知页测试接入实际所需 Router/QueryClient provider；同时断言 main 新字段和本分支字段。Bun lock 由安装重新解析，保留本分支 lobehub/ui，采用 main 的 icons 版本约束。 |
+| 国际化 | YAML 和后端常量取有效并集，保留分支旧消息；前端三方合并时 main 单独修改采用 main、本分支明确修改及独有键保留，再通过指定脚本补键与 i18n:sync。保留项目身份和版权文本。 |
+
+自动合并未标记冲突的修复包括：重复日志导出路由；旧日志调用签名；缺失 fmt 导入/新 LogDebug 格式参数；自定义路由权限声明；ClickHouse 自定义日志列；日志 JSON 跨库类型与运算符、错误日志列表的 `SELECT error_logs.*` 绕过 `Omit(body)`（改为先查日志，再批量补充主库令牌名称）。Video 路由测试补齐本分支 ModelRouteConfig 表与 i18n 初始化，避免测试依赖其他文件的执行顺序。WebSocket 脱敏测试的代理失败改为受控拨号错误，仍验证真实选定的代理地址，避免依赖本机 DNS/代理网络的错误文本。
+
+### 原始冲突文件清单
+
+- common/：`common/gin.go`、`common/init.go`、`common/pprof.go`。
+- controller/：`controller/access_token_audit_test.go`、`controller/checkin.go`、`controller/log.go`、`controller/misc.go`、`controller/performance.go`、`controller/relay.go`、`controller/relay_error_log_test.go`、`controller/responses_websocket.go`、`controller/token_test.go`、`controller/twofa.go`、`controller/user.go`、`controller/user_manage_test.go`。
+- i18n/：`i18n/keys.go`、`i18n/locales/en.yaml`、`i18n/locales/zh-CN.yaml`、`i18n/locales/zh-TW.yaml`。
+- middleware/：`middleware/model-rate-limit.go`。
+- model/：`model/log.go`、`model/redemption.go`、`model/subscription.go`、`model/token.go`、`model/token_auto_groups_cache_test.go`、`model/token_cache.go`、`model/topup.go`、`model/usedata.go`、`model/user.go`。
+- plugins/：`plugins/builtin_plugins_test.go`、`plugins/tasks/vidu/plugin.js`、`plugins/vidu_responses_test.go`。
+- relay/：`relay/audio_handler.go`、`relay/channel/ali/adaptor.go`、`relay/channel/ali/adaptor_test.go`、`relay/channel/gemini/relay-gemini.go`、`relay/channel/moonshot/adaptor_test.go`、`relay/channel/openai/relay-openai.go`、`relay/common/relay_info.go`、`relay/compatible_handler.go`、`relay/constant/relay_mode.go`、`relay/constant/relay_mode_test.go`、`relay/gemini_handler.go`、`relay/helper/valid_request.go`、`relay/responses_handler.go`、`relay/responses_websocket.go`。
+- relaykit/：`relaykit/dto/gemini.go`、`relaykit/dto/openai_request.go`、`relaykit/dto/user_settings.go`、`relaykit/relayconvert/internal/oai_chat/to_gemini_chat_req.go`、`relaykit/relayconvert/internal/shared/gemini/request.go`、`relaykit/relayconvert/internal/shared/gemini/schema.go`。
+- service/：`service/channel.go`、`service/log_info_generate.go`、`service/quota.go`、`service/relay_error.go`、`service/relay_error_test.go`、`service/task_billing.go`、`service/text_quota.go`、`service/text_quota_test.go`、`service/token_counter.go`。
+- setting/：`setting/billing_setting/builtin_billing.go`。
+- web/：`web/bun.lock`、`web/package.json`、`web/src/components/datetime-picker.tsx`、`web/src/features/channels/types.ts`、`web/src/features/keys/components/api-keys-mutate-drawer.tsx`、`web/src/features/keys/lib/__tests__/auto-group-form.test.ts`、`web/src/features/keys/types.ts`、`web/src/features/profile/__tests__/settings.test.tsx`、`web/src/features/profile/components/tabs/notification-tab.tsx`、`web/src/features/profile/lib/user-settings.ts`、`web/src/features/profile/types.ts`、`web/src/features/system-settings/maintenance/log-settings-section.tsx`、`web/src/features/system-settings/operations/index.tsx`、`web/src/features/system-settings/operations/section-registry.tsx`、`web/src/features/system-settings/types.ts`、`web/src/features/usage-logs/api.ts`、`web/src/features/usage-logs/components/__tests__/detail-preview.test.tsx`、`web/src/features/usage-logs/components/common-logs-filter-bar.tsx`、`web/src/features/usage-logs/components/dialogs/details-dialog.tsx`、`web/src/i18n/locales/en.json`、`web/src/i18n/locales/fr.json`、`web/src/i18n/locales/ja.json`、`web/src/i18n/locales/ru.json`、`web/src/i18n/locales/vi.json`、`web/src/i18n/locales/zh-TW.json`、`web/src/i18n/locales/zh.json`。
+- 根目录：`go.mod`、`main.go`。
+
+### 验证与限制
+
+运行环境：Go **1.26.0 darwin/arm64**、Bun **1.3.1**。实机数据库：SQLite **3.50.4**、MySQL **8.0.46**、PostgreSQL **16.15**、ClickHouse **25.8.33.6**。MySQL/PostgreSQL/ClickHouse 使用本轮独立 Podman 容器与隔离测试数据库；未操作既有应用数据库，验证后移除本轮容器。
+
+数据库命令的连接变量（口令仅用于本轮临时测试实例）：
+
+```sh
+export TEST_MYSQL_DSN='root:merge-test-only@tcp(127.0.0.1:33618)/new_api_merge?parseTime=true&clientFoundRows=true'
+export AUDIT_MYSQL_DSN="$TEST_MYSQL_DSN"
+export HAPPYOYSTER_TEST_MYSQL_DSN="$TEST_MYSQL_DSN"
+export TEST_POSTGRES_DSN='postgres://postgres:merge-test-only@127.0.0.1:33619/new_api_merge?sslmode=disable'
+export AUDIT_POSTGRES_DSN="$TEST_POSTGRES_DSN"
+export HAPPYOYSTER_TEST_POSTGRES_DSN="$TEST_POSTGRES_DSN"
+# 独立日志库的专项测试另外设置：
+export AUDIT_CLICKHOUSE_DSN='clickhouse://merge_test:merge-test-only@127.0.0.1:33620/new_api_merge'
+```
+
+| 验证 | 实际命令与结果 |
+|---|---|
+| 根模块完整回归 | 设置上述 MySQL/PostgreSQL 六个变量，`go test ./... -count=1` 最终退出 0；60 个有测试的 package 通过。覆盖保护契约中的渠道/规则、计费、Gemini、AWS SDK 报文、Responses、HappyOyster、任务插件、视频直链、用户/MFA/会话和审计。全量日志保留于 `/tmp/new-api-merge-20261018/go-test-final.log`。 |
+| 数据库启动、审计与独立日志库 | `go test ./controller -run 'TestLogExportDatabaseMatrix\|TestAuditDatabaseMatrix\|TestIndependentAuditLogStores' -count=1 -v` 中，`TestAuditDatabaseMatrix` 的三库 fresh/upgrade 和 `TestIndependentAuditLogStores` 的 MySQL/PostgreSQL/ClickHouse fresh/upgrade 均通过。启动至少重复两次，验证历史用户/日志、权限、凭证唯一性、审计 JSON/角色及 TTL 隔离。该批命令当时在日志导出 ClickHouse 列选择失败；修复后按下一行重新验证，不把该批次整体记为成功。 |
+| 日志与令牌升级最终矩阵 | 设置全部七个连接变量后，`go test ./controller -run '^TestLogExportDatabaseMatrix$' -count=1 -v` 退出 0，四种引擎的 8 个 fresh/upgrade 子用例全部通过。升级 fixture 来自本地最新 release tag `v1.0.0-rc.45` 的 Log/Token 类型及 ClickHouse 建表语句；迁移后验证历史内容/额度、索引、令牌唯一性、默认 quota-query 开关，再重复迁移。另验证 extra/header 字符串与 NULL、消费/错误日志 JSON 筛选、列表不返回错误 body、root 完整报文与管理员清理、`RecordLog` 显式额度。日志：`/tmp/new-api-merge-20261018/db-logs-latest.log`。 |
+| 构建及模块独立性 | 根目录 `GOWORK=off go build ./...`、`cd relaykit && GOWORK=off go build ./...`、`cd tokenkit && GOWORK=off go build ./...` 全部退出 0；`cd relaykit && GOWORK=off go test ./...` 通过。 |
+| 前端类型及生产构建 | `cd web && bun run build:check` 通过，Rsbuild 2.1.6 构建完成；最终测试改动后再次 `bun run typecheck` 通过。 |
+| 前端交互回归 | `bun run test channel-configuration api-keys-mutate-drawer api-key-listing channel-rules-editor-dialog group-filter filter-combobox log-type-filter detail-preview retry-chain-display settings.test.tsx sidebar-config special-channels datetime-picker log-settings export-dialog export.test.ts --maxWorkers=2`：24 个文件，336/337 用例首次通过，日志详情的一个语言切换用例超时。随后 `bun run test detail-preview --maxWorkers=1` 的 33 个用例全部通过；新增管理员流式地址断言后，`bun run test export-dialog --maxWorkers=1` 的 7 个用例全部通过。没有修改超时阈值或删除断言。 |
+| Key/渠道固定编号 | `bun run test auto-group-form --maxWorkers=2` 的 13 个用例通过；`bun test src/features/channels/lib/__tests__/channel-type-ids.test.ts src/features/keys/lib/__tests__/channel-rules.test.ts` 的 22 个用例通过。 |
+| 国际化、lint 与格式 | `bun run i18n:sync` 通过，七语言各 7938 个键并同步 zh-CN 镜像，临时补键脚本已删除。受影响 TS/TSX 文件 oxlint 无 error；保留一条已有 JSON 序列化 fixture 的 structuredClone 建议，因为测试明确验证 undefined 字段在传输中被省略。按项目版权保护方式检查修改文件格式通过；Vidu 插件的 oxlint 无 error（保留既有 caught-error cause warning）、oxfmt 检查通过。Go 修改文件已 gofmt。 |
+| 合并状态 | 冲突标记扫描与 `git diff --check` / `git diff --cached --check` 通过；原 90 个冲突文件全部暂存解决，未创建 merge commit。 |
+
+认证相关判断参考 [OWASP ASVS 5.0.0](https://owasp.org/projects/asvs)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 和 [Multifactor Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html)。核对的控制点是服务端角色/证明与资源边界、验证过的邮箱唯一性、会话撤销、旧令牌截止日期、新令牌授权失败关闭及审计不含可用凭证；对应回归随全量测试通过。本记录不声明整个应用已通过 ASVS 合规认证。
+
+验证范围：升级测试使用发布版本的 schema fixture 和代表性数据，不是完整生产数据库副本恢复演练；未运行数据库最低支持版本或真实付费上游调用。ClickHouse 专项覆盖消费日志和审计日志，不宣称本轮扩展了它对所有其他日志模型的支持。测试中间失败及修复原因已记录，不将首次失败或跳过项计为通过。

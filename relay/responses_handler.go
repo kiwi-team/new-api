@@ -137,7 +137,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 // WebSocket Responses usage. Compact requests keep their separate repricing.
 func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, requestStr, responseStr string) {
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
-		service.PostAudioConsumeQuota(c, info, usage, "", requestStr, responseStr)
+		service.PostAudioConsumeQuota(c, info, usage, nil, requestStr, responseStr)
 		return
 	}
 	service.PostTextConsumeQuota(c, info, usage, nil, requestStr, responseStr)

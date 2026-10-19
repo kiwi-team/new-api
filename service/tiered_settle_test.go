@@ -3,6 +3,8 @@ package service
 import (
 	"math"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -388,7 +390,7 @@ func TestTieredRealtimeLogContentDescribesExpressionBilling(t *testing.T) {
 	}
 
 	content := tieredRealtimeLogContent(relayInfo, usage, result)
-	assert.Equal(t, "计费表达式：档位 audio，计费单位 token，输入 183 tokens（文本 0，音频 183，图片 0，视频 0），输出 0 tokens（文本 0，音频 0，图片 0），分组倍率 1.00", content)
+	assert.Equal(t, "Billing expression: tier audio, unit token, input 183 tokens (text 0, audio 183, image 0, video 0), output 0 tokens (text 0, audio 0, image 0), group ratio 1.00", content.Error())
 }
 
 func TestPrepareTieredBillingForSelectedGroupUpdatesReservation(t *testing.T) {
@@ -447,7 +449,8 @@ func TestPrepareTieredBillingForSelectedGroupStartsBillingAfterFreeGroup(t *test
 			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0.20},
 		},
 	}
-	ctx, _ := gin.CreateTestContext(nil)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	require.Nil(t, PrepareTieredBillingForSelectedGroup(ctx, relayInfo))
 	require.NotNil(t, relayInfo.Billing)

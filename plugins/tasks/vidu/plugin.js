@@ -12,6 +12,7 @@ export const meta = {
   channelTypes: [55],
   models: ["viduq4-preview", "viduq2", "viduq1", "vidu2.0", "vidu1.5"],
   fetchMode: "per_task",
+  upstreams: ["vendor", "new_api"],
   usageSchema: {
     // estimated/actual Vidu credits
     credits: {
@@ -49,6 +50,15 @@ export const meta = {
     { label: "2.0 4s 720p", facts: { credits: 0, duration: 4, resolution: "720p" } },
     { label: "2.0 8s 720p", facts: { credits: 0, duration: 8, resolution: "720p" } },
   ],
+  // Vidu request and response bodies, for clients and for a downstream New API
+  // gateway.
+  routes: [
+    { method: "POST", path: "/vidu/ent/v2/text2video", type: "submit", decode: "createTask", render: "taskCreated" },
+    { method: "POST", path: "/vidu/ent/v2/img2video", type: "submit", decode: "createTask", render: "taskCreated" },
+    { method: "POST", path: "/vidu/ent/v2/start-end2video", type: "submit", decode: "createTask", render: "taskCreated" },
+    { method: "POST", path: "/vidu/ent/v2/reference2video", type: "submit", decode: "createTask", render: "taskCreated" },
+    { method: "GET", path: "/vidu/ent/v2/tasks/:task_id/creations", type: "query", render: "taskStatus" },
+  ],
   protocols: [{ name: "openai_responses", supports: ["stream", "sync", "background"] }, "openai_video"],
 };
 
@@ -68,8 +78,36 @@ const Q4_PASSTHROUGH_FIELDS = [
   "callback_url",
 ];
 
+// The submit route names the action; one or two reference images would
+// otherwise read as image-to-video or first-and-last-frame.
+const ROUTE_ACTIONS = {
+  text2video: "text_to_video",
+  img2video: "image_to_video",
+  "start-end2video": "first_tail_to_video",
+  reference2video: "reference_to_video",
+};
+
 function trimmed(value) {
   return String(value || "").trim();
+}
+
+function plainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+// On a New API channel the same plugin answers on another gateway, which
+// serves the Vidu wire format on the prefixed native routes and takes its own
+// token as a Bearer header.
+function viaGateway(ctx) {
+  return Boolean(ctx.upstream && ctx.upstream.kind === "new_api");
+}
+
+function apiRoot(ctx) {
+  return ctx.baseUrl + (viaGateway(ctx) ? "/vidu" : "") + "/ent/v2";
+}
+
+function authorization(ctx) {
+  return (viaGateway(ctx) ? "Bearer " : "Token ") + ctx.apiKey;
 }
 
 function isQ2Model(model) {
@@ -270,6 +308,45 @@ function pathFor(action) {
   return "/text2video";
 }
 
+export const native = {
+  createTask: function (ctx) {
+    if (!ctx.body || ctx.body.kind !== "json") throw new Error("JSON body required");
+    const body = plainObject(ctx.body.value);
+    if (!body) throw new Error("request body must be an object");
+    const model = trimmed(body.model);
+    if (!model) throw new Error("model is required");
+    const action = ROUTE_ACTIONS[ctx.path.slice(ctx.path.lastIndexOf("/") + 1)];
+    // The other Vidu fields ride in metadata, which buildSubmitRequest
+    // spreads back into the body.
+    const metadata = Object.assign({}, body, { action: action });
+    const requestBody = { model: model, metadata: metadata };
+    delete metadata.model;
+    for (const key of ["images", "prompt", "duration", "resolution"]) {
+      delete metadata[key];
+      if (body[key] !== undefined && body[key] !== null) requestBody[key] = body[key];
+    }
+    const duration = requestBody.duration === undefined ? undefined : Number(requestBody.duration);
+    validateViduCombo(model, duration, outboundResolution(requestBody, model), hasViduImages(requestBody, false));
+    return { kind: "submit", model: model, action: action, requestBody: requestBody };
+  },
+  taskCreated: function (ctx, task) {
+    return Object.assign({}, plainObject(task.data) || {}, { task_id: task.task_id });
+  },
+  // The poller can fail a task whose snapshot was still processing; that
+  // snapshot is rendered failed so a downstream gateway reads the same state.
+  taskStatus: function (ctx, task) {
+    const output = Object.assign({}, plainObject(task.data) || {}, { id: task.task_id });
+    if (task.status === "FAILURE" && output.state !== "failed") {
+      output.state = "failed";
+      output.err_code = output.err_code || task.fail_reason || "task failed";
+    }
+    return output;
+  },
+  error: function (ctx, error) {
+    return { code: error.code, message: error.message };
+  },
+};
+
 export function buildSubmitRequest(ctx) {
   const req = ctx.requestBody;
   let model = ctx.upstreamModel || "viduq1";
@@ -291,15 +368,16 @@ export function buildSubmitRequest(ctx) {
   } else {
     body.movement_amplitude = "auto";
   }
-  Object.assign(body, metadata);
+  // Metadata may extend the request but cannot override billed fields.
+  Object.assign(body, metadata, { model, duration: outboundDuration(req, model), resolution: outboundResolution(req, model) });
   delete body.action;
   if (!body.prompt) delete body.prompt;
   if (!body.bgm) delete body.bgm;
   if (Array.isArray(body.images)) body.images = body.images.map(filePlaceholder);
   return {
-    url: ctx.baseUrl + "/ent/v2" + pathFor(action),
+    url: apiRoot(ctx) + pathFor(action),
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: "Token " + ctx.apiKey },
+    headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: authorization(ctx) },
     body: body,
     action: action,
   };
@@ -320,9 +398,9 @@ export function extractUsage(ctx) {
 
 export function buildQueryRequest(ctx) {
   return {
-    url: ctx.baseUrl + "/ent/v2/tasks/" + ctx.taskId + "/creations",
+    url: apiRoot(ctx) + "/tasks/" + ctx.taskId + "/creations",
     method: "GET",
-    headers: { Accept: "application/json", Authorization: "Token " + ctx.apiKey },
+    headers: { Accept: "application/json", Authorization: authorization(ctx) },
   };
 }
 

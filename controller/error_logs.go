@@ -200,11 +200,11 @@ func ExportErrorLogsCSV(c *gin.Context) {
 	// UTF-8 BOM 让 Excel 正确识别中文
 	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 
-	deref := func(p *string) string {
+	deref := func(p *model.LogJSON) string {
 		if p == nil {
 			return ""
 		}
-		return *p
+		return string(*p)
 	}
 
 	w := csv.NewWriter(c.Writer)

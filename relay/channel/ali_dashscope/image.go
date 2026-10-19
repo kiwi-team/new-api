@@ -173,7 +173,7 @@ func wan27ImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		return types.NewError(errors.New(wan27Resp.Message), types.ErrorCodeBadResponse), nil
 	}
 
-	logger.LogDebug(c, "wan27 image result: "+string(responseBody))
+	logger.LogDebug(c, "wan27 image result: %s", common.LocalLogPreview(string(responseBody)))
 
 	// 将 choices 格式转换为 OpenAI ImageResponse
 	imageResponse := dto.ImageResponse{

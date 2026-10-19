@@ -20,6 +20,8 @@ const (
 	accessTokenRuleAny
 	// accessTokenRuleSession rejects every access token, legacy ones included.
 	accessTokenRuleSession
+	// Branch routes keep legacy access until retirement without granting new scopes.
+	accessTokenRuleLegacy
 )
 
 type accessTokenRouteRule struct {
@@ -30,6 +32,7 @@ type accessTokenRouteRule struct {
 var (
 	accessTokenAnyRule     = accessTokenRouteRule{kind: accessTokenRuleAny}
 	accessTokenSessionRule = accessTokenRouteRule{kind: accessTokenRuleSession}
+	accessTokenLegacyRule  = accessTokenRouteRule{kind: accessTokenRuleLegacy}
 )
 
 func accessTokenScopeRule(scope string) accessTokenRouteRule {
@@ -41,6 +44,126 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// Branch-specific management routes have no delegated token scopes.
+	// Keep browser sessions and legacy tokens until their existing retirement deadline.
+	"DELETE /api/cliend_user_quota/:id":                          accessTokenLegacyRule,
+	"DELETE /api/debug/configurations/:id":                       accessTokenLegacyRule,
+	"DELETE /api/debug/logs/:id":                                 accessTokenLegacyRule,
+	"DELETE /api/debug/templates/:id":                            accessTokenLegacyRule,
+	"DELETE /api/debug/test-data/:id":                            accessTokenLegacyRule,
+	"DELETE /api/log/":                                           accessTokenLegacyRule,
+	"DELETE /api/model_route_config/:id":                         accessTokenLegacyRule,
+	"DELETE /api/pricing/model":                                  accessTokenLegacyRule,
+	"DELETE /api/project/plan/:planId":                           accessTokenLegacyRule,
+	"DELETE /api/settlement/config/:id":                          accessTokenLegacyRule,
+	"DELETE /api/sync/environments/:id":                          accessTokenLegacyRule,
+	"GET /api/admin/export/channels":                             accessTokenLegacyRule,
+	"GET /api/admin/export/tokens":                               accessTokenLegacyRule,
+	"GET /api/admin/export/users":                                accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/":                                accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/:id":                             accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/batch-project-budget":            accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/export":                          accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/logs":                            accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/project-allocations":             accessTokenLegacyRule,
+	"GET /api/cliend_user_quota/search":                          accessTokenLegacyRule,
+	"GET /api/data/channel-list":                                 accessTokenLegacyRule,
+	"GET /api/data/channel-monitor":                              accessTokenLegacyRule,
+	"GET /api/data/channel-statistics":                           accessTokenLegacyRule,
+	"GET /api/data/model-usage-analysis":                         accessTokenLegacyRule,
+	"GET /api/data/model-usage-analysis/adjustments/day":         accessTokenLegacyRule,
+	"GET /api/data/project-names":                                accessTokenLegacyRule,
+	"GET /api/data/statistics":                                   accessTokenLegacyRule,
+	"GET /api/data/statistics/export":                            accessTokenLegacyRule,
+	"GET /api/data/token-list":                                   accessTokenLegacyRule,
+	"GET /api/debug/channels":                                    accessTokenLegacyRule,
+	"GET /api/debug/configurations":                              accessTokenLegacyRule,
+	"GET /api/debug/configurations/:id":                          accessTokenLegacyRule,
+	"GET /api/debug/keys":                                        accessTokenLegacyRule,
+	"GET /api/debug/logs":                                        accessTokenLegacyRule,
+	"GET /api/debug/logs/:id":                                    accessTokenLegacyRule,
+	"GET /api/debug/tags":                                        accessTokenLegacyRule,
+	"GET /api/debug/templates":                                   accessTokenLegacyRule,
+	"GET /api/debug/templates/:id":                               accessTokenLegacyRule,
+	"GET /api/debug/test-data":                                   accessTokenLegacyRule,
+	"GET /api/log/:id/header":                                    accessTokenLegacyRule,
+	"GET /api/log/:id/request":                                   accessTokenLegacyRule,
+	"GET /api/log/:id/response":                                  accessTokenLegacyRule,
+	"GET /api/log/error-logs":                                    accessTokenLegacyRule,
+	"GET /api/log/error-logs/:id/body":                           accessTokenLegacyRule,
+	"GET /api/log/error-logs/:id/header":                         accessTokenLegacyRule,
+	"GET /api/log/error-logs/export":                             accessTokenLegacyRule,
+	"GET /api/model_route_config/":                               accessTokenLegacyRule,
+	"GET /api/model_route_config/:id":                            accessTokenLegacyRule,
+	"GET /api/model_route_config/search":                         accessTokenLegacyRule,
+	"GET /api/option/export":                                     accessTokenLegacyRule,
+	"GET /api/orgs/":                                             accessTokenLegacyRule,
+	"GET /api/project/:id/allocations":                           accessTokenLegacyRule,
+	"GET /api/project/:id/plans":                                 accessTokenLegacyRule,
+	"GET /api/project/:id/statistics":                            accessTokenLegacyRule,
+	"GET /api/project/dashboard":                                 accessTokenLegacyRule,
+	"GET /api/project/plan/:planId/allocations":                  accessTokenLegacyRule,
+	"GET /api/projects/":                                         accessTokenLegacyRule,
+	"GET /api/redemption/error-logs":                             accessTokenLegacyRule,
+	"GET /api/settlement/bill/admin":                             accessTokenLegacyRule,
+	"GET /api/settlement/bill/admin/export":                      accessTokenLegacyRule,
+	"GET /api/settlement/bill/self":                              accessTokenLegacyRule,
+	"GET /api/settlement/bill/self/export":                       accessTokenLegacyRule,
+	"GET /api/settlement/bill/tokens":                            accessTokenLegacyRule,
+	"GET /api/settlement/config":                                 accessTokenLegacyRule,
+	"GET /api/settlement/config/all":                             accessTokenLegacyRule,
+	"GET /api/settlement/config/self":                            accessTokenLegacyRule,
+	"GET /api/sync/environments":                                 accessTokenLegacyRule,
+	"GET /api/sync/environments/enabled":                         accessTokenLegacyRule,
+	"GET /api/sync/logs":                                         accessTokenLegacyRule,
+	"GET /api/user/menu":                                         accessTokenLegacyRule,
+	"POST /api/admin/import/channels":                            accessTokenLegacyRule,
+	"POST /api/admin/import/tokens":                              accessTokenLegacyRule,
+	"POST /api/admin/import/users":                               accessTokenLegacyRule,
+	"POST /api/cliend_user_quota/":                               accessTokenLegacyRule,
+	"POST /api/data/model-usage-analysis/adjustments":            accessTokenLegacyRule,
+	"POST /api/data/model-usage-analysis/adjustments/:id/revert": accessTokenLegacyRule,
+	"POST /api/debug/configurations":                             accessTokenLegacyRule,
+	"POST /api/debug/configurations/:id/execute":                 accessTokenLegacyRule,
+	"POST /api/debug/execute":                                    accessTokenLegacyRule,
+	"POST /api/debug/execute/stream":                             accessTokenLegacyRule,
+	"POST /api/debug/logs/batch/tag":                             accessTokenLegacyRule,
+	"POST /api/debug/templates":                                  accessTokenLegacyRule,
+	"POST /api/debug/test-data":                                  accessTokenLegacyRule,
+	"POST /api/file/upload":                                      accessTokenLegacyRule,
+	"POST /api/model_route_config/":                              accessTokenLegacyRule,
+	"POST /api/model_route_config/batch/delete":                  accessTokenLegacyRule,
+	"POST /api/model_route_config/status":                        accessTokenLegacyRule,
+	"POST /api/option/import":                                    accessTokenLegacyRule,
+	"POST /api/pricing/model/migrate-tiered":                     accessTokenLegacyRule,
+	"POST /api/project":                                          accessTokenLegacyRule,
+	"POST /api/project/:id/allocation":                           accessTokenLegacyRule,
+	"POST /api/project/:id/plan":                                 accessTokenLegacyRule,
+	"POST /api/project/allocation/:allocationId/clear":           accessTokenLegacyRule,
+	"POST /api/project/plan/:planId/allocation":                  accessTokenLegacyRule,
+	"POST /api/settlement/config":                                accessTokenLegacyRule,
+	"POST /api/settlement/config/batch":                          accessTokenLegacyRule,
+	"POST /api/sync/channels":                                    accessTokenLegacyRule,
+	"POST /api/sync/channels/preview":                            accessTokenLegacyRule,
+	"POST /api/sync/environments":                                accessTokenLegacyRule,
+	"POST /api/sync/environments/:id/test":                       accessTokenLegacyRule,
+	"POST /api/sync/model-prices":                                accessTokenLegacyRule,
+	"POST /api/token/batch/group":                                accessTokenLegacyRule,
+	"POST /api/token/batch/models":                               accessTokenLegacyRule,
+	"POST /api/user/batch/delete":                                accessTokenLegacyRule,
+	"PUT /api/cliend_user_quota/":                                accessTokenLegacyRule,
+	"PUT /api/debug/configurations/:id":                          accessTokenLegacyRule,
+	"PUT /api/debug/templates/:id":                               accessTokenLegacyRule,
+	"PUT /api/debug/test-data/:id":                               accessTokenLegacyRule,
+	"PUT /api/model_route_config/":                               accessTokenLegacyRule,
+	"PUT /api/pricing/model":                                     accessTokenLegacyRule,
+	"PUT /api/project/:id":                                       accessTokenLegacyRule,
+	"PUT /api/project/:id/active-plan":                           accessTokenLegacyRule,
+	"PUT /api/project/:id/status":                                accessTokenLegacyRule,
+	"PUT /api/project/plan/:planId":                              accessTokenLegacyRule,
+	"PUT /api/settlement/config":                                 accessTokenLegacyRule,
+	"PUT /api/sync/environments/:id":                             accessTokenLegacyRule,
+
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),
@@ -241,6 +364,9 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/log/search":                       accessTokenScopeRule("log:read"),
 	"GET /api/log/self":                         accessTokenScopeRule("usage:read"),
 	"GET /api/log/self/search":                  accessTokenScopeRule("usage:read"),
+	"GET /api/log/export/stream":                accessTokenScopeRule("log:read"),
+	"GET /api/log/export":                       accessTokenScopeRule("log:read"),
+	"GET /api/log/self/export":                  accessTokenScopeRule("usage:read"),
 	"GET /api/data/":                            accessTokenScopeRule("log:read"),
 	"GET /api/data/users":                       accessTokenScopeRule("log:read"),
 	"GET /api/data/self":                        accessTokenScopeRule("usage:read"),
@@ -354,7 +480,7 @@ func (rule accessTokenRouteRule) Scope() string {
 	return rule.scope
 }
 
-// Kind names the rule category: "scope", "any" or "session".
+// Kind names the rule category: "scope", "any", "session" or "legacy".
 func (rule accessTokenRouteRule) Kind() string {
 	switch rule.kind {
 	case accessTokenRuleScope:
@@ -363,6 +489,8 @@ func (rule accessTokenRouteRule) Kind() string {
 		return "any"
 	case accessTokenRuleSession:
 		return "session"
+	case accessTokenRuleLegacy:
+		return "legacy"
 	}
 	return ""
 }

@@ -54,6 +54,7 @@ export const apiKeySchema = z.object({
   channel_rules: z.string().nullish().default(''),
   /** Whether matching key routing rules override special channel rules */
   channel_rules_high_priority: z.boolean().optional().default(false),
+  allow_user_quota_query: z.boolean().optional().default(false),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -105,6 +106,7 @@ export interface ApiKeyFormData {
   model_limits_enabled: boolean
   model_limits: string
   allow_ips: string
+  allow_user_quota_query: boolean
   group: string
   auto_groups: string[]
   cross_group_retry: boolean

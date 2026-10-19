@@ -982,7 +982,7 @@ func happyOysterSettleTravel(ctx context.Context, travel *model.HappyOysterTrave
 		logType, amount = model.LogTypeRefund, -delta
 	}
 	if delta != 0 {
-		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: travel.UserId, LogType: logType, Content: "HappyOyster travel settlement", ChannelId: travel.ChannelId, ModelName: constant.HappyOysterModel(travel.Model), Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
+		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: travel.UserId, LogType: logType, Content: []*common.Message{common.NewMessage("HappyOyster travel settlement")}, ChannelId: travel.ChannelId, ModelName: constant.HappyOysterModel(travel.Model), Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
 	}
 }
 
@@ -1237,7 +1237,7 @@ func happyOysterLog(c *gin.Context, info *relaycommon.RelayInfo, quota int, cont
 	}
 	service.AttachQuotaSaturation(c, info, other)
 	projectName, planId, _ := service.TrackProjectConsumption(c, quota)
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{ChannelId: info.ChannelId, ModelName: happyOysterModel, TokenName: c.GetString("token_name"), Quota: quota, Content: content, TokenId: info.TokenId, Group: info.UsingGroup, Other: other, Request: payload.Request, Response: payload.Response, RequestId: c.GetString(common.RequestIdKey), ClientUserId: common.GetContextKeyString(c, constant.ContextKeyClientUserId), ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo), ProjectName: projectName, PlanId: planId})
+	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{ChannelId: info.ChannelId, ModelName: happyOysterModel, TokenName: c.GetString("token_name"), Quota: quota, Content: []*common.Message{common.NewMessage(content)}, TokenId: info.TokenId, Group: info.UsingGroup, Other: other, Request: payload.Request, Response: payload.Response, RequestId: c.GetString(common.RequestIdKey), ClientUserId: common.GetContextKeyString(c, constant.ContextKeyClientUserId), ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo), ProjectName: projectName, PlanId: planId})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, quota)
 	return projectName, planId

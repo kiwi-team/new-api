@@ -93,7 +93,7 @@ func UpdateQuotaData() {
 	}()
 	for {
 		if common.DataExportEnabled {
-			fmt.Println("正在更新数据看板数据...")
+			common.SysLog(common.LogText("updating dashboard data..."))
 			SaveQuotaDataCache()
 		}
 		time.Sleep(time.Duration(common.DataExportInterval) * time.Minute)
@@ -243,7 +243,7 @@ func SaveQuotaDataCache() {
 	}
 	invalidateMonthlyNonProjectQuotaCache(nonProjectUsers)
 	CacheQuotaData = make(map[string]*QuotaData)
-	common.SysLog(fmt.Sprintf("保存数据看板数据成功，共保存%d条数据\n", size))
+	common.SysLog(common.LogText("saved dashboard data, %d records", size))
 }
 
 // GetMonthlyNonProjectQuota 返回某 uid 自 monthStart 起未打项目标签的消耗（原始 quota 单位）。
@@ -611,7 +611,7 @@ func increaseQuotaData(quotaData *QuotaData) {
 			"token_used": gorm.Expr("token_used + ?", quotaData.TokenUsed),
 		}).Error
 	if err != nil {
-		common.SysLog("increaseQuotaData error:" + err.Error())
+		common.SysLog(common.LogText("increaseQuotaData error: %s", err))
 	}
 }
 

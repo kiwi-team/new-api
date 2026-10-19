@@ -11,8 +11,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,42 +39,68 @@ func parseUnicodeEscape(s string) (string, error) {
 	return buf.String(), nil
 }
 
-func GetAllLogs(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+// logFilterFromQuery reads the log search shared by the log list and the log
+// export. Username and channel are read only for administrators.
+func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	username := c.Query("username")
-	tokenName := c.Query("token_name")
-	modelName := c.Query("model_name")
+	filter := model.LogFilter{
+		Type:              logType,
+		StartTimestamp:    startTimestamp,
+		EndTimestamp:      endTimestamp,
+		ModelName:         c.Query("model_name"),
+		TokenName:         c.Query("token_name"),
+		Group:             c.Query("group"),
+		RequestId:         c.Query("request_id"),
+		UpstreamRequestId: c.Query("upstream_request_id"),
+		ClientUserId:      strings.ReplaceAll(c.Query("client_user_id"), " ", "+"),
+		MtSessionId:       strings.TrimSpace(c.Query("mt_session_id")),
+		TraceId:           strings.TrimSpace(c.Query("trace_id")),
+		TrajId:            strings.TrimSpace(c.Query("traj_id")),
+		SessionId:         strings.TrimSpace(c.Query("session_id")),
+	}
+	if admin {
+		filter.Username = c.Query("username")
+		filter.Channel, _ = strconv.Atoi(c.Query("channel"))
+	} else if user, err := model.GetUserById(c.GetInt("id"), false); err == nil {
+		if service.HasMtFullOrgScope(user) {
+			filter.ScopeUIDs = service.ComputeOrgScope(user).UidSet
+		} else {
+			filter.ScopeUIDs = user.GetScopeUids()
+		}
+	}
+	return filter
+}
+
+// limitLogTimeRange returns the start of a log or dashboard search kept within
+// the longest log time range. A missing start reaches back the whole range, and
+// time after now does not count toward it.
+func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) {
+	maxRange := operation_setting.GetLogSetting().MaxRangeSeconds()
+	end := common.GetTimestamp()
+	if endTimestamp != 0 {
+		end = min(end, endTimestamp)
+	}
+	if startTimestamp == 0 {
+		return end - maxRange, nil
+	}
+	if end-startTimestamp > maxRange {
+		return 0, common.NewMessage("The time range cannot exceed {{days}} days", map[string]any{"days": maxRange / (24 * 60 * 60)})
+	}
+	return startTimestamp, nil
+}
+
+func GetAllLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
 	export := c.Query("export") == "true"
-	// 旧版导出会包含原始上游响应，其中也可能出现映射后的实际模型名称。
-	// 新版导出已有 RootAuth 路由；这里阻止普通管理员绕过该限制。
 	if export && c.GetInt("role") < common.RoleRootUser {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
-	channel, _ := strconv.Atoi(c.Query("channel"))
-	group := c.Query("group")
-	clientUserId := c.Query("client_user_id")
-	// uid(client_user_id) 可能含 + 等特殊符号，URL 解码后 + 会被还原成空格，这里还原回来
-	clientUserId = strings.ReplaceAll(clientUserId, " ", "+")
-	requestId := c.Query("request_id")
-	// extra 嵌套字段筛选；TrimSpace 防止前端漏掉/用户复制带空白
-	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
-	traceId := strings.TrimSpace(c.Query("trace_id"))
-	trajId := strings.TrimSpace(c.Query("traj_id"))
-	sessionId := strings.TrimSpace(c.Query("session_id"))
-	isAdmin := isAdmin(c)
-	upstreamRequestId := c.Query("upstream_request_id")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, clientUserId, requestId, upstreamRequestId, mtSessionId, traceId, trajId, sessionId, export, isAdmin)
-	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group)
-	//requestId := c.Query("request_id")
-	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
-	//channel, _ := strconv.Atoi(c.Query("channel"))
-	//group := c.Query("group")
-	//requestId := c.Query("request_id")
-	//logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
+	filter := logFilterFromQuery(c, true)
+	filter.Export = export
+	logs, total, err := model.GetAllLogs(filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -283,38 +312,17 @@ func limitUserLogStartTimestamp(role int, startTimestamp, now int64) int64 {
 
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	userId := c.GetInt("id")
-	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	tokenName := c.Query("token_name")
-	modelName := c.Query("model_name")
-	group := c.Query("group")
-	isAdmin := isAdmin(c)
-	requestId := c.Query("request_id")
-	upstreamRequestId := c.Query("upstream_request_id")
-	// mt 业务筛选(详见 org.md 4.3):mt org 用户在使用日志页用 UID/MT Session/Trace/Traj 收窄数据
-	clientUserId := c.Query("client_user_id")
-	mtSessionId := strings.TrimSpace(c.Query("mt_session_id"))
-	traceId := strings.TrimSpace(c.Query("trace_id"))
-	trajId := strings.TrimSpace(c.Query("traj_id"))
-	sessionId := strings.TrimSpace(c.Query("session_id"))
-	// 自助视图数据范围:
-	//   - mt-admin: 扩展到 mt 全组织成员的 uid + related_uids 并集(详见 org.md 4.2.1)
-	//   - 其他用户: 沿用 GetScopeUids(自己 uid + 自己 related_uids)
-	//   - 用户没配 uid 时 scopeUids 为空,model.GetUserLogs 兜底为 WHERE user_id = self
-	var scopeUids []string
-	if u, e := model.GetUserById(userId, false); e == nil {
-		if service.HasMtFullOrgScope(u) {
-			// mt-admin / mt-leader 都拥有 mt 全员 uid 范围
-			scope := service.ComputeOrgScope(u)
-			scopeUids = scope.UidSet
-		} else {
-			scopeUids = u.GetScopeUids()
+	filter := logFilterFromQuery(c, false)
+	if c.GetInt("role") < common.RoleAdminUser {
+		startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
+		if err != nil {
+			common.ApiError(c, err)
+			return
 		}
+		filter.StartTimestamp = startTimestamp
 	}
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, isAdmin, requestId, upstreamRequestId, scopeUids, clientUserId, mtSessionId, traceId, trajId, sessionId)
+	filter.StartTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), filter.StartTimestamp, time.Now().Unix())
+	logs, total, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -332,44 +340,104 @@ func GetUserLogs(c *gin.Context) {
 	return
 }
 
-// Deprecated: SearchAllLogs 已废弃，前端未使用该接口。
-func SearchAllLogs(c *gin.Context) {
-	isAdmin := isAdmin(c)
-	keyword := c.Query("keyword")
-	_, err := model.SearchAllLogs(keyword, isAdmin)
+// ExportAllLogs streams every user's logs matching the search.
+func ExportAllLogs(c *gin.Context) {
+	exportLogs(c, true)
+}
+
+// ExportUserLogs streams the caller's own logs matching the search.
+func ExportUserLogs(c *gin.Context) {
+	if c.GetInt("role") < common.RoleAdminUser && !operation_setting.GetLogSetting().UserExportEnabled {
+		common.ApiErrorT(c, "Log export is disabled")
+		return
+	}
+	exportLogs(c, false)
+}
+
+// exportLogs writes one JSON log per line, newest first, and ends with an API
+// response object: success with the log count, or the failure. Each user runs
+// one export at a time, and every export stays within the longest log time
+// range.
+func exportLogs(c *gin.Context, all bool) {
+	filter := logFilterFromQuery(c, all)
+	startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": false,
-		"message": "该接口已废弃",
-	})
+	filter.StartTimestamp = startTimestamp
+	if !all {
+		filter.StartTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), filter.StartTimestamp, time.Now().Unix())
+	}
+
+	userId := c.GetInt("id")
+	release, ok, err := service.AcquireLogExportLock(userId)
+	if err != nil {
+		common.SysError(common.LogText("failed to lock log export: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to export logs")
+		return
+	}
+	if !ok {
+		common.ApiErrorT(c, "Another log export is running. Try again after it finishes.")
+		return
+	}
+	defer release()
+
+	c.Header("Content-Type", "application/x-ndjson; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	count := 0
+	writeLog := func(log *model.Log) error {
+		// Streaming exports obey the same raw-payload and routing visibility as lists.
+		if c.GetInt("role") < common.RoleRootUser {
+			log.Request, log.Response, log.Usage = "", "", ""
+			log.Header = nil
+			sanitizeLogChannelInfoForRole([]*model.Log{log}, c.GetInt("role"))
+		}
+		line, err := common.Marshal(log)
+		if err != nil {
+			return err
+		}
+		if _, err := c.Writer.Write(append(line, '\n')); err != nil {
+			return err
+		}
+		count++
+		return nil
+	}
+	ctx := c.Request.Context()
+	if all {
+		err = model.StreamAllLogs(ctx, filter, c.GetInt("role"), writeLog)
+	} else {
+		err = model.StreamUserLogs(ctx, userId, filter, writeLog)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	// The status is already sent, so the result object becomes the last line.
+	if err != nil {
+		common.SysError(common.LogText("failed to export logs: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to export logs")
+		return
+	}
+	common.ApiSuccess(c, gin.H{"count": count})
+}
+
+// Deprecated: SearchAllLogs 已废弃，前端未使用该接口。
+func SearchAllLogs(c *gin.Context) {
+	common.ApiErrorT(c, "This API is deprecated")
 }
 
 // Deprecated: SearchUserLogs 已废弃，前端未使用该接口。
 func SearchUserLogs(c *gin.Context) {
-	keyword := c.Query("keyword")
-	userId := c.GetInt("id")
-	isAdmin := isAdmin(c)
-	_, err := model.SearchUserLogs(userId, keyword, isAdmin)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": false,
-		"message": "该接口已废弃",
-	})
+	common.ApiErrorT(c, "This API is deprecated")
 }
 
 func GetLogByKey(c *gin.Context) {
 	tokenId := c.GetInt("token_id")
 	if tokenId == 0 {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "无效的令牌",
-		})
+		common.ApiErrorI18n(c, i18n.MsgTokenInvalid)
 		return
 	}
 	logs, err := model.GetLogByTokenId(tokenId)
@@ -423,8 +491,15 @@ func GetLogsSelfStat(c *gin.Context) {
 	userId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if c.GetInt("role") < common.RoleAdminUser {
+		var err error
+		if startTimestamp, err = limitLogTimeRange(startTimestamp, endTimestamp); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	startTimestamp = limitUserLogStartTimestamp(c.GetInt("role"), startTimestamp, time.Now().Unix())
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))

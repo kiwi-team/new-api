@@ -2,7 +2,7 @@ package model
 
 import (
 	"context"
-	"errors"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type Log struct {
@@ -43,25 +44,65 @@ type Log struct {
 	RequestId    string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	RaceResult   string `json:"race_result,omitempty" gorm:"type:varchar(10);default:''"`
 	// UpstreamRequestId 记录上游返回的 request id，便于按上游工单追踪。
-	UpstreamRequestId string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
-	Other             string  `json:"other"`
-	Request           string  `json:"request" gorm:"type:text"`
-	Response          string  `json:"response" gorm:"type:text"`
-	ClientUserId      string  `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
-	ClientScenairo    string  `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	SessionId         string  `json:"session_id" gorm:"index:idx_logs_session_id;size:128;default:''"`
-	ProjectName       string  `json:"project_name" gorm:"index;size:100;default:''"`
-	PlanId            int     `json:"plan_id" gorm:"default:0;index"`
-	Usage             string  `json:"usage" gorm:"type:text"`
-	Extra             *string `json:"extra,omitempty" gorm:"type:jsonb"`
-	Header            *string `json:"header,omitempty" gorm:"type:jsonb"`
+	UpstreamRequestId string   `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	Other             string   `json:"other"`
+	Request           string   `json:"request" gorm:"type:text"`
+	Response          string   `json:"response" gorm:"type:text"`
+	ClientUserId      string   `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
+	ClientScenairo    string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	SessionId         string   `json:"session_id" gorm:"index:idx_logs_session_id;size:128;default:''"`
+	ProjectName       string   `json:"project_name" gorm:"index;size:100;default:''"`
+	PlanId            int      `json:"plan_id" gorm:"default:0;index"`
+	Usage             string   `json:"usage" gorm:"type:text"`
+	Extra             *LogJSON `json:"extra,omitempty"`
+	Header            *LogJSON `json:"header,omitempty"`
+}
+
+// LogJSON stores validated JSON as an API string. Preserve jsonb on PostgreSQL;
+// other databases use text so the same log schema can be migrated everywhere.
+type LogJSON string
+
+func (value *LogJSON) Value() (driver.Value, error) {
+	if value == nil {
+		return nil, nil
+	}
+	return string(*value), nil
+}
+
+func (value *LogJSON) Scan(src any) error {
+	switch src := src.(type) {
+	case nil:
+		*value = ""
+	case string:
+		*value = LogJSON(src)
+	case []byte:
+		*value = LogJSON(src)
+	default:
+		return fmt.Errorf("unsupported log JSON database value %T", src)
+	}
+	return nil
+}
+
+func (LogJSON) GormDataType() string { return "string" }
+
+func (LogJSON) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	switch db.Dialector.Name() {
+	case "postgres":
+		return "jsonb"
+	case "mysql":
+		return "longtext"
+	case "clickhouse":
+		return "Nullable(String)"
+	default:
+		return "text"
+	}
 }
 
 // normalizeJsonbString 把任意字符串规整成可写入 jsonb 列的形态：
 // 空串或非法 JSON 返回 nil（落库为 NULL）——jsonb 列会拒绝空串/非法 JSON，
 // 若直接写入会导致整条日志 INSERT 失败，这里宽容处理避免丢日志。
 // 用于 extra（客户端 extra header 内容）和 header（完整请求头快照）等 jsonb 列。
-func normalizeJsonbString(s string) *string {
+func normalizeJsonbString(s string) *LogJSON {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil
@@ -70,7 +111,8 @@ func normalizeJsonbString(s string) *string {
 	if err := common.UnmarshalJsonStr(s, &probe); err != nil {
 		return nil
 	}
-	return &s
+	value := LogJSON(s)
+	return &value
 }
 
 // sanitizeLogBody 规整 Request/Response 等直接透传上游原始字节的大字段：
@@ -218,22 +260,28 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	return logs, err
 }
 
-func RecordLog(userId int, logType int, content string, quota int) {
+func RecordLog(userId int, logType int, content *common.Message, quotas ...int) {
+	quota := 0
+	if len(quotas) > 0 {
+		quota = quotas[0]
+	}
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
 	}
 	username, _ := GetUsernameById(userId, false)
+	other := NewLogOther()
 	log := &Log{
 		UserId:    userId,
 		Username:  username,
 		CreatedAt: common.GetTimestamp(),
 		Type:      logType,
-		Content:   content,
+		Content:   other.setContent([]*common.Message{content}),
+		Other:     other.JSONString(),
 		Quota:     quota,
 	}
 	err := createLog(log)
 	if err != nil {
-		common.SysLog("failed to record log: " + err.Error())
+		common.SysLog(common.LogText("failed to record log: %s", err.Error()))
 	}
 }
 
@@ -269,13 +317,13 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo *
 	if adminInfo != nil || operation != nil {
 		data, err := common.Marshal(AuditOther{AdminInfo: adminInfo, Op: operation})
 		if err != nil {
-			common.SysError("failed to encode log admin info: " + err.Error())
+			common.SysError(common.LogText("failed to encode log admin info: %s", err.Error()))
 			return
 		}
 		log.Other = string(data)
 	}
 	if err := createLog(log); err != nil {
-		common.SysLog("failed to record log: " + err.Error())
+		common.SysLog(common.LogText("failed to record log: %s", err.Error()))
 	}
 }
 
@@ -321,7 +369,7 @@ func RecordOperationAuditLog(logUserId, actorRole int, content string, ip string
 	RecordAuditLog(c, AuditLog{UserId: logUserId, Username: username, ActorRole: actorRole, Category: category, Action: action, Content: content, Ip: ip, Status: status, Success: success, Other: other})
 }
 
-func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+func RecordTopupLog(userId int, content *common.Message, callerIp string, paymentMethod string, callbackPaymentMethod string) {
 	username, _ := GetUsernameById(userId, false)
 	other := NewLogOther()
 	other.MergeAdmin(map[string]any{
@@ -337,19 +385,19 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 		Username:  username,
 		CreatedAt: common.GetTimestamp(),
 		Type:      LogTypeTopup,
-		Content:   content,
+		Content:   other.setContent([]*common.Message{content}),
 		Ip:        callerIp,
 		Other:     other.JSONString(),
 	}
 	err := createLog(log)
 	if err != nil {
-		common.SysLog("failed to record topup log: " + err.Error())
+		common.SysLog(common.LogText("failed to record topup log: %s", err.Error()))
 	}
 }
 
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, upstreamRequestId string, other *LogOther) {
-	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
+	logger.LogInfo(c, common.LogText("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
@@ -389,7 +437,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	}
 	err := createLog(log)
 	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
+		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
 }
 
@@ -401,30 +449,30 @@ func RecordConsumeLog(c *gin.Context, userId int, channelId int, promptTokens in
 	common.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, 用户调用前余额=%d, channelId=%d, promptTokens=%d, completionTokens=%d, modelName=%s, tokenName=%s, quota=%d, content=%s", userId, userQuota, channelId, promptTokens, completionTokens, modelName, tokenName, quota, content))
 */
 type RecordConsumeLogParams struct {
-	ChannelId                   int       `json:"channel_id"`
-	PromptTokens                int       `json:"prompt_tokens"`
-	CompletionTokens            int       `json:"completion_tokens"`
-	CachedTokens                int       `json:"cached_tokens"`
-	ClaudeCacheCreation5mTokens int       `json:"claude_cache_creation_5_m_tokens"`
-	ClaudeCacheCreation1hTokens int       `json:"claude_cache_creation_1_h_tokens"`
-	ModelName                   string    `json:"model_name"`
-	TokenName                   string    `json:"token_name"`
-	Quota                       int       `json:"quota"`
-	Content                     string    `json:"content"`
-	TokenId                     int       `json:"token_id"`
-	UseTimeSeconds              int       `json:"use_time_seconds"`
-	IsStream                    bool      `json:"is_stream"`
-	Group                       string    `json:"group"`
-	Other                       *LogOther `json:"other"`
-	Request                     string    `json:"request"`
-	Response                    string    `json:"response"`
-	ClientUserId                string    `json:"client_user_id"`
-	ClientScenairo              string    `json:"client_scenairo"`
-	SessionId                   string    `json:"session_id"`
-	RequestId                   string    `json:"request_id"`
-	ProjectName                 string    `json:"project_name"`
-	PlanId                      int       `json:"plan_id"`
-	Usage                       string    `json:"usage"`
+	ChannelId                   int               `json:"channel_id"`
+	PromptTokens                int               `json:"prompt_tokens"`
+	CompletionTokens            int               `json:"completion_tokens"`
+	CachedTokens                int               `json:"cached_tokens"`
+	ClaudeCacheCreation5mTokens int               `json:"claude_cache_creation_5_m_tokens"`
+	ClaudeCacheCreation1hTokens int               `json:"claude_cache_creation_1_h_tokens"`
+	ModelName                   string            `json:"model_name"`
+	TokenName                   string            `json:"token_name"`
+	Quota                       int               `json:"quota"`
+	Content                     []*common.Message `json:"content"`
+	TokenId                     int               `json:"token_id"`
+	UseTimeSeconds              int               `json:"use_time_seconds"`
+	IsStream                    bool              `json:"is_stream"`
+	Group                       string            `json:"group"`
+	Other                       *LogOther         `json:"other"`
+	Request                     string            `json:"request"`
+	Response                    string            `json:"response"`
+	ClientUserId                string            `json:"client_user_id"`
+	ClientScenairo              string            `json:"client_scenairo"`
+	SessionId                   string            `json:"session_id"`
+	RequestId                   string            `json:"request_id"`
+	ProjectName                 string            `json:"project_name"`
+	PlanId                      int               `json:"plan_id"`
+	Usage                       string            `json:"usage"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -438,7 +486,9 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
-	otherStr := params.Other.JSONString()
+	other := params.Other
+	content := other.setContent(params.Content)
+	otherStr := other.JSONString()
 	firstTokenMs := 0
 	if params.IsStream && params.Other != nil {
 		if firstResponseTime, ok := params.Other.Snapshot()["frt"].(float64); ok && firstResponseTime > 0 {
@@ -468,7 +518,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Username:          username,
 		CreatedAt:         createdAt,
 		Type:              LogTypeConsume,
-		Content:           params.Content,
+		Content:           content,
 		PromptTokens:      params.PromptTokens,
 		CompletionTokens:  params.CompletionTokens,
 		TokenName:         params.TokenName,
@@ -536,7 +586,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 type RecordTaskBillingLogParams struct {
 	UserId         int
 	LogType        int
-	Content        string
+	Content        []*common.Message
 	ChannelId      int
 	ModelName      string
 	Quota          int
@@ -562,23 +612,24 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		}
 	}
 	createdAt := common.GetTimestamp()
+	other := params.Other
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
 		CreatedAt: createdAt,
 		Type:      params.LogType,
-		Content:   params.Content,
+		Content:   other.setContent(params.Content),
 		TokenName: tokenName,
 		ModelName: params.ModelName,
 		Quota:     params.Quota,
 		ChannelId: params.ChannelId,
 		TokenId:   params.TokenId,
 		Group:     params.Group,
-		Other:     params.Other.JSONString(),
+		Other:     other.JSONString(),
 	}
 	err := createLog(log)
 	if err != nil {
-		common.SysLog("failed to record task billing log: " + err.Error())
+		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
 	}
 	// 消费和退款都要进 quota_data:消耗统计页(/quota-statistics)与飞书告警都按
 	// SUM(quota) 聚合这张表,只写消费会让退款和差额结算的补扣永远不被冲减,
@@ -610,73 +661,98 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, clientUserId string, requestId string, upstreamRequestId string, mtSessionId string, traceId string, trajId string, sessionId string, export bool, isAdmin bool) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB
-	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
-	}
+// LogFilter is the usage-log search shared by the log list and the log export.
+// Username and Channel are administrator filters.
+type LogFilter struct {
+	Type              int
+	StartTimestamp    int64
+	EndTimestamp      int64
+	ModelName         string
+	Username          string
+	TokenName         string
+	Channel           int
+	Group             string
+	RequestId         string
+	UpstreamRequestId string
+	ClientUserId      string
+	MtSessionId       string
+	TraceId           string
+	TrajId            string
+	SessionId         string
+	ScopeUIDs         []string // Server-derived authorized UID scope, never read from query parameters.
+	Export            bool     // Legacy root-only raw export.
+}
 
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
-		return nil, 0, err
+func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
+	var err error
+	if f.Type != LogTypeUnknown {
+		tx = tx.Where("logs.type = ?", f.Type)
 	}
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
-		return nil, 0, err
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", f.ModelName); err != nil {
+		return nil, err
 	}
-	if tokenName != "" {
-		tx = tx.Where("logs.token_name = ?", tokenName)
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", f.Username); err != nil {
+		return nil, err
 	}
-	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
+	if f.TokenName != "" {
+		tx = tx.Where("logs.token_name = ?", f.TokenName)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if f.RequestId != "" {
+		tx = tx.Where("logs.request_id = ?", f.RequestId)
 	}
-	if startTimestamp != 0 {
-		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	if f.UpstreamRequestId != "" {
+		tx = tx.Where("logs.upstream_request_id = ?", f.UpstreamRequestId)
 	}
-	if endTimestamp != 0 {
-		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	if f.StartTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", f.StartTimestamp)
 	}
-	if channel != 0 {
-		tx = tx.Where("logs.channel_id = ?", channel)
+	if f.EndTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", f.EndTimestamp)
 	}
-	if group != "" {
-		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	if f.Channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", f.Channel)
 	}
-	if clientUserId != "" {
-		tx = tx.Where("logs.client_user_id LIKE ?", "%"+clientUserId+"%")
+	if f.Group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", f.Group)
 	}
-	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
+	if f.ClientUserId != "" {
+		tx = tx.Where("logs.client_user_id LIKE ?", "%"+f.ClientUserId+"%")
 	}
-	// extra 是 PG jsonb 列，按嵌套字段精确匹配（NULL 行天然不命中，符合预期）
-	if mtSessionId != "" {
-		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
+	if f.SessionId != "" {
+		tx = tx.Where("logs.session_id = ?", f.SessionId)
 	}
-	if traceId != "" {
-		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
+	return applyLogExtraFilters(tx, "logs.extra", f.MtSessionId, f.TraceId, f.TrajId), nil
+}
+
+// applyLogExtraFilters shares exact JSON-field matching across consume/error logs
+// and their exports. The column is supplied by the model, never by the client.
+func applyLogExtraFilters(tx *gorm.DB, column, mtSessionID, traceID, trajID string) *gorm.DB {
+	for _, field := range []struct{ key, value string }{{"mt_session_id", mtSessionID}, {"trace_id", traceID}, {"traj_id", trajID}} {
+		if field.value == "" {
+			continue
+		}
+		var expression string
+		switch common.LogDatabaseType() {
+		case common.DatabaseTypePostgreSQL:
+			expression = column + "->>'" + field.key + "' = ?"
+		case common.DatabaseTypeMySQL:
+			expression = "JSON_UNQUOTE(JSON_EXTRACT(" + column + ", '$." + field.key + "')) = ?"
+		case common.DatabaseTypeClickHouse:
+			expression = "JSONExtractString(" + column + ", '" + field.key + "') = ?"
+		default:
+			expression = "json_extract(" + column + ", '$." + field.key + "') = ?"
+		}
+		tx = tx.Where(expression, field.value)
 	}
-	if trajId != "" {
-		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
-	}
-	if sessionId != "" {
-		tx = tx.Where("logs.session_id = ?", sessionId)
-	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	return tx
+}
+
+func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+	tx, err := filter.apply(LOG_DB)
 	if err != nil {
 		return nil, 0, err
 	}
-	if !export {
-		tx = tx.Omit("request", "response", "usage")
-	}
-	if export {
-		//err = tx.Order("logs.id asc").Omit("request", "response").Find(&logs).Error
-		err = tx.Order("logs.id asc").Find(&logs).Error
-	} else {
-		err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
-	}
+	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -684,7 +760,11 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
-	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	if filter.Export {
+		err = tx.Order("logs.id asc").Find(&logs).Error
+	} else {
+		err = tx.Omit("request", "response", "usage", "channel_name").Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -737,53 +817,13 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 // GetLogsForExport 导出日志专用查询：按筛选条件返回日志（不分页），且不携带 request/response/usage 大字段。
 func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, clientUserId string, requestId string, mtSessionId string, traceId string, trajId string, sessionId string) (logs []*Log, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB
-	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
-	}
-	if modelName != "" {
-		tx = tx.Where("logs.model_name like ?", modelName)
-	}
-	if username != "" {
-		tx = tx.Where("logs.username = ?", username)
-	}
-	if tokenName != "" {
-		tx = tx.Where("logs.token_name = ?", tokenName)
-	}
-	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("logs.created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("logs.created_at <= ?", endTimestamp)
-	}
-	if channel != 0 {
-		tx = tx.Where("logs.channel_id = ?", channel)
-	}
-	if group != "" {
-		tx = tx.Where("logs."+logGroupCol+" = ?", group)
-	}
-	if clientUserId != "" {
-		tx = tx.Where("logs.client_user_id LIKE ?", "%"+clientUserId+"%")
-	}
-	if mtSessionId != "" {
-		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
-	}
-	if traceId != "" {
-		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
-	}
-	if trajId != "" {
-		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
-	}
-	if sessionId != "" {
-		tx = tx.Where("logs.session_id = ?", sessionId)
+	filter := LogFilter{Type: logType, StartTimestamp: startTimestamp, EndTimestamp: endTimestamp, ModelName: modelName, Username: username, TokenName: tokenName, Channel: channel, Group: group, ClientUserId: clientUserId, RequestId: requestId, MtSessionId: mtSessionId, TraceId: traceId, TrajId: trajId, SessionId: sessionId}
+	tx, err := filter.apply(LOG_DB)
+	if err != nil {
+		return nil, err
 	}
 
-	err = tx.Omit("request", "response", "usage").Order("logs.id asc").Find(&logs).Error
+	err = tx.Omit("request", "response", "usage", "channel_name").Order("logs.id asc").Find(&logs).Error
 	if err != nil {
 		return nil, err
 	}
@@ -816,108 +856,104 @@ func GetLogsForExport(logType int, startTimestamp int64, endTimestamp int64, mod
 
 const logSearchCountLimit = 10000
 
-// scopeUids 为当前用户关联的 uid(client_user_id) 集合（自身 uid + related_uids，去重去空白）。
-// 行为：
-//   - scopeUids 为空（用户未配置 uid）：按账号自身过滤，WHERE logs.user_id = userId。
-//   - scopeUids 非空（用户配置了 uid）：切换为按 client_user_id 过滤，
-//     WHERE logs.client_user_id IN scopeUids。本账号 client_user_id 不在该集合
-//     的日志（包括未带 uid header 的请求）将不可见，这是预期语义。
-//
-// 额外 4 个 mt 业务筛选(在 scopeUids 命中范围内进一步收窄)：
-//   - clientUserId  — LIKE 模糊匹配 client_user_id (UID 模糊)
-//   - mtSessionId / traceId / trajId — 按 extra jsonb 嵌套字段精确匹配
-//
-// 这些是空串时不施加额外 WHERE,无 org 上下文用户传空也不影响。
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, isAdmin bool, requestId string, upstreamRequestId string, scopeUids []string, clientUserId string, mtSessionId string, traceId string, trajId string, sessionId string) (logs []*Log, total int64, err error) {
-	const logSearchCountLimit = 10000
-
-	var tx *gorm.DB
-	if len(scopeUids) > 0 {
-		tx = LOG_DB.Where("logs.client_user_id IN ?", scopeUids)
-	} else {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
+func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
+	scope := LOG_DB.Where("logs.user_id = ?", userId)
+	if len(filter.ScopeUIDs) > 0 {
+		scope = LOG_DB.Where("logs.client_user_id IN ?", filter.ScopeUIDs)
 	}
-	if logType != LogTypeUnknown {
-		tx = tx.Where("logs.type = ?", logType)
-	}
-
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+	tx, err := filter.apply(scope)
+	if err != nil {
 		return nil, 0, err
-	}
-	if tokenName != "" {
-		tx = tx.Where("logs.token_name = ?", tokenName)
-	}
-	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
-	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("logs.created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("logs.created_at <= ?", endTimestamp)
-	}
-	if group != "" {
-		tx = tx.Where("logs."+logGroupCol+" = ?", group)
-	}
-	// mt 业务筛选:在 scopeUids 之内进一步收窄
-	if clientUserId != "" {
-		tx = tx.Where("logs.client_user_id LIKE ?", "%"+clientUserId+"%")
-	}
-	if mtSessionId != "" {
-		tx = tx.Where("logs.extra->>'mt_session_id' = ?", mtSessionId)
-	}
-	if traceId != "" {
-		tx = tx.Where("logs.extra->>'trace_id' = ?", traceId)
-	}
-	if trajId != "" {
-		tx = tx.Where("logs.extra->>'traj_id' = ?", trajId)
-	}
-	if sessionId != "" {
-		tx = tx.Where("logs.session_id = ?", sessionId)
 	}
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {
-		common.SysError("failed to count user logs: " + err.Error())
-		return nil, 0, errors.New("查询日志失败")
+		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
+		return nil, 0, common.NewMessage("Failed to query logs")
 	}
-	tx = tx.Omit("request", "response", "usage")
-	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	tx = tx.Omit("request", "response", "usage", "channel_name")
 	order := "logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
-		common.SysError("failed to search user logs: " + err.Error())
-		return nil, 0, errors.New("查询日志失败")
+		common.SysError(common.LogText("failed to search user logs: %s", err.Error()))
+		return nil, 0, common.NewMessage("Failed to query logs")
 	}
 
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
 }
 
-func SearchAllLogs(keyword string, isAdmin bool) (logs []*Log, err error) {
-	var tx *gorm.DB
-	tx = LOG_DB.Where("type = ? or content LIKE ?", keyword, keyword+"%")
-	if !isAdmin {
-		tx = tx.Omit("request", "response", "usage")
+// StreamAllLogs calls fn with each log matching filter, newest first, as an
+// administrator with role sees it. Rows are read one at a time, so an export
+// never holds the whole result in memory.
+func StreamAllLogs(ctx context.Context, filter LogFilter, role int, fn func(*Log) error) error {
+	tx, err := filter.apply(LOG_DB.WithContext(ctx))
+	if err != nil {
+		return err
 	}
-	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
-	return logs, err
+	visibility := logOtherVisibilityAdmin
+	if role >= common.RoleRootUser {
+		visibility = logOtherVisibilityRoot
+	}
+	channelNames := make(map[int]string)
+	return streamLogs(tx, "logs.created_at desc, logs.id desc", func(log *Log) error {
+		if log.ChannelId != 0 {
+			name, ok := channelNames[log.ChannelId]
+			if !ok {
+				if channel, err := CacheGetChannel(log.ChannelId); err == nil {
+					name = channel.Name
+				}
+				channelNames[log.ChannelId] = name
+			}
+			log.ChannelName = name
+		}
+		log.Other = formatLogOtherJSON(log.Other, visibility)
+		return fn(log)
+	})
 }
 
-func SearchUserLogs(userId int, keyword string, isAdmin bool) (logs []*Log, err error) {
-	var tx *gorm.DB
-	tx = LOG_DB.Where("user_id = ? and type = ?", userId, keyword)
-	if !isAdmin {
-		tx = tx.Omit("request", "response", "usage")
+// StreamUserLogs is StreamAllLogs for one user's own logs, shaped like the
+// user log list.
+func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*Log) error) error {
+	scope := LOG_DB.WithContext(ctx).Where("logs.user_id = ?", userId)
+	if len(filter.ScopeUIDs) > 0 {
+		scope = LOG_DB.WithContext(ctx).Where("logs.client_user_id IN ?", filter.ScopeUIDs)
 	}
-	err = tx.Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
-	formatUserLogs(logs, 0)
-	return logs, err
+	tx, err := filter.apply(scope)
+	if err != nil {
+		return err
+	}
+	count := 0
+	return streamLogs(tx, "logs.id desc", func(log *Log) error {
+		count++
+		log.Id = count
+		log.ChannelName = ""
+		log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
+		return fn(log)
+	})
+}
+
+func streamLogs(tx *gorm.DB, order string, fn func(*Log) error) error {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("logs.")
+	}
+	rows, err := tx.Model(&Log{}).Order(order).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var log Log
+		if err := LOG_DB.ScanRows(rows, &log); err != nil {
+			return err
+		}
+		if err := fn(&log); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 type Stat struct {
@@ -995,16 +1031,16 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		Quota int
 	}
 	if err := tx.Scan(&quotaResult).Error; err != nil {
-		common.SysError("failed to query log stat: " + err.Error())
-		return stat, errors.New("查询统计数据失败")
+		common.SysError(common.LogText("failed to query log stat: %s", err.Error()))
+		return stat, common.NewMessage("Failed to query statistics")
 	}
 	var rateStat struct {
 		Rpm int
 		Tpm int
 	}
 	if err := rpmTpmQuery.Scan(&rateStat).Error; err != nil {
-		common.SysError("failed to query rpm/tpm stat: " + err.Error())
-		return stat, errors.New("查询统计数据失败")
+		common.SysError(common.LogText("failed to query rpm/tpm stat: %s", err.Error()))
+		return stat, common.NewMessage("Failed to query statistics")
 	}
 	stat.Quota = quotaResult.Quota
 	stat.Rpm = rateStat.Rpm
