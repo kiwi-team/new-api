@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -100,11 +101,49 @@ func UpdateQuotaData() {
 	}
 }
 
-var CacheQuotaData = make(map[string]*QuotaData)
+type quotaDataKey struct {
+	UserID         int
+	Username       string
+	ModelName      string
+	CreatedAt      int64
+	TokenID        int
+	ChannelID      int
+	UseGroup       string
+	NodeName       string
+	ClientUserID   string
+	ClientScenairo string
+	ProjectName    string
+	PlanID         int
+}
+
+var CacheQuotaData = make(map[quotaDataKey]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
+var quotaDataFlushLock sync.Mutex
+
+func (q *QuotaData) accumulate(delta *QuotaData) {
+	q.Count += delta.Count
+	q.Quota += delta.Quota
+	q.TokenUsed += delta.TokenUsed
+	q.PromptTokens += delta.PromptTokens
+	q.CompletionTokens += delta.CompletionTokens
+	q.CachedTokens += delta.CachedTokens
+	q.ClaudeCacheCreation5mTokens += delta.ClaudeCacheCreation5mTokens
+	q.ClaudeCacheCreation1hTokens += delta.ClaudeCacheCreation1hTokens
+	q.CacheWrite5mRequestCount += delta.CacheWrite5mRequestCount
+	q.CacheWrite1hRequestCount += delta.CacheWrite1hRequestCount
+	q.CacheReadRequestCount += delta.CacheReadRequestCount
+	q.StreamRequestCount += delta.StreamRequestCount
+	q.FrtSum += delta.FrtSum
+	q.RequestTimeSum += delta.RequestTimeSum
+}
 
 func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
-	key := fmt.Sprintf("%d-%s-%s-%d-%d-%d-%s-%s-%s-%s-%s-%d", params.UserId, params.Username, params.ModelName, params.TokenId, createdAt, params.ChannelId, params.UseGroup, params.NodeName, params.ClientUserId, params.ClientScenairo, params.ProjectName, params.PlanId)
+	key := quotaDataKey{
+		UserID: params.UserId, Username: params.Username, ModelName: params.ModelName,
+		CreatedAt: createdAt, TokenID: params.TokenId, ChannelID: params.ChannelId,
+		UseGroup: params.UseGroup, NodeName: params.NodeName, ClientUserID: params.ClientUserId,
+		ClientScenairo: params.ClientScenairo, ProjectName: params.ProjectName, PlanID: params.PlanId,
+	}
 	// 按请求派生缓存命中次数：本次调用即一次请求，对应 token 数 > 0 则计一次。
 	cacheWrite5mReq, cacheWrite1hReq, cacheReadReq := 0, 0, 0
 	if params.ClaudeCacheCreation5mTokens > 0 {
@@ -130,52 +169,38 @@ func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
 	if params.IsSettlementAdjustment {
 		requestCount = 0
 	}
-	quotaData, ok := CacheQuotaData[key]
-	if ok {
-		quotaData.Count += requestCount
-		quotaData.Quota += params.Quota
-		quotaData.TokenUsed += params.TokenUsed
-		quotaData.PromptTokens += params.PromptTokens
-		quotaData.CompletionTokens += params.CompletionTokens
-		quotaData.CachedTokens += params.CachedTokens
-		quotaData.ClaudeCacheCreation5mTokens += params.ClaudeCacheCreation5mTokens
-		quotaData.ClaudeCacheCreation1hTokens += params.ClaudeCacheCreation1hTokens
-		quotaData.CacheWrite5mRequestCount += cacheWrite5mReq
-		quotaData.CacheWrite1hRequestCount += cacheWrite1hReq
-		quotaData.CacheReadRequestCount += cacheReadReq
-		quotaData.StreamRequestCount += streamReq
-		quotaData.FrtSum += frtSum
-		quotaData.RequestTimeSum += requestTimeSum
-	} else {
-		quotaData = &QuotaData{
-			UserID:                      params.UserId,
-			Username:                    params.Username,
-			ModelName:                   params.ModelName,
-			CreatedAt:                   createdAt,
-			Count:                       requestCount,
-			Quota:                       params.Quota,
-			TokenUsed:                   params.TokenUsed,
-			TokenName:                   params.TokenName,
-			PromptTokens:                params.PromptTokens,
-			CompletionTokens:            params.CompletionTokens,
-			CachedTokens:                params.CachedTokens,
-			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
-			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
-			CacheWrite5mRequestCount:    cacheWrite5mReq,
-			CacheWrite1hRequestCount:    cacheWrite1hReq,
-			CacheReadRequestCount:       cacheReadReq,
-			StreamRequestCount:          streamReq,
-			FrtSum:                      frtSum,
-			RequestTimeSum:              requestTimeSum,
-			TokenId:                     params.TokenId,
-			ChannelId:                   params.ChannelId,
-			UseGroup:                    params.UseGroup,
-			NodeName:                    params.NodeName,
-			ClientUserId:                params.ClientUserId,
-			ClientScenairo:              params.ClientScenairo,
-			ProjectName:                 params.ProjectName,
-			PlanId:                      params.PlanId,
-		}
+	quotaData := &QuotaData{
+		UserID:                      params.UserId,
+		Username:                    params.Username,
+		ModelName:                   params.ModelName,
+		CreatedAt:                   createdAt,
+		Count:                       requestCount,
+		Quota:                       params.Quota,
+		TokenUsed:                   params.TokenUsed,
+		TokenName:                   params.TokenName,
+		PromptTokens:                params.PromptTokens,
+		CompletionTokens:            params.CompletionTokens,
+		CachedTokens:                params.CachedTokens,
+		ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
+		ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
+		CacheWrite5mRequestCount:    cacheWrite5mReq,
+		CacheWrite1hRequestCount:    cacheWrite1hReq,
+		CacheReadRequestCount:       cacheReadReq,
+		StreamRequestCount:          streamReq,
+		FrtSum:                      frtSum,
+		RequestTimeSum:              requestTimeSum,
+		TokenId:                     params.TokenId,
+		ChannelId:                   params.ChannelId,
+		UseGroup:                    params.UseGroup,
+		NodeName:                    params.NodeName,
+		ClientUserId:                params.ClientUserId,
+		ClientScenairo:              params.ClientScenairo,
+		ProjectName:                 params.ProjectName,
+		PlanId:                      params.PlanId,
+	}
+	if existing := CacheQuotaData[key]; existing != nil {
+		existing.accumulate(quotaData)
+		return
 	}
 	CacheQuotaData[key] = quotaData
 }
@@ -215,35 +240,77 @@ func RefundQuotaData(task *Task) {
 	})
 }
 
-func SaveQuotaDataCache() {
+func SaveQuotaDataCache() error {
+	quotaDataFlushLock.Lock()
+	defer quotaDataFlushLock.Unlock()
+	// Detach this batch so requests can keep recording usage during database I/O.
 	CacheQuotaDataLock.Lock()
-	defer CacheQuotaDataLock.Unlock()
-	size := len(CacheQuotaData)
-	// 如果缓存中有数据，就保存到数据库中
-	// 1. 先查询数据库中是否有数据
-	// 2. 如果有数据，就更新数据
-	// 3. 如果没有数据，就插入数据
+	pending := CacheQuotaData
+	CacheQuotaData = make(map[quotaDataKey]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	saved := 0
+	var flushErr error
 	// 本轮涉及的非项目消耗 uid：落库后要让准入闸门的月度非项目消耗缓存失效，
 	// 否则新写入的消耗要等 TTL 到期才会被看到。
 	nonProjectUsers := make(map[string]struct{})
-	for _, quotaData := range CacheQuotaData {
-		quotaDataDB := &QuotaData{}
-		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(quotaDataDB)
-		if quotaDataDB.Id > 0 {
-			increaseQuotaData(quotaData)
-			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
-		} else {
-			DB.Table("quota_data").Create(quotaData)
-			_ = IncreaseCliendUserUsedQuota(quotaData.ClientUserId, quotaData.Quota)
+	for key, quotaData := range pending {
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			var existing QuotaData
+			err := lockForUpdate(tx).Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
+				quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(&existing).Error
+			switch {
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				// GORM assigns the ID before commit; keep it out of the retry batch.
+				row := *quotaData
+				err = tx.Create(&row).Error
+			case err != nil:
+				return err
+			default:
+				// Update only the matched row, including when legacy duplicates exist.
+				err = tx.Model(&QuotaData{}).Where("id = ?", existing.Id).Updates(map[string]any{
+					"count":                          gorm.Expr("count + ?", quotaData.Count),
+					"quota":                          gorm.Expr("quota + ?", quotaData.Quota),
+					"token_used":                     gorm.Expr("token_used + ?", quotaData.TokenUsed),
+					"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", quotaData.PromptTokens),
+					"completion_tokens":              gorm.Expr("completion_tokens + ?", quotaData.CompletionTokens),
+					"cached_tokens":                  gorm.Expr("cached_tokens + ?", quotaData.CachedTokens),
+					"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", quotaData.ClaudeCacheCreation5mTokens),
+					"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", quotaData.ClaudeCacheCreation1hTokens),
+					"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", quotaData.CacheWrite5mRequestCount),
+					"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", quotaData.CacheWrite1hRequestCount),
+					"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", quotaData.CacheReadRequestCount),
+					"stream_request_count":           gorm.Expr("stream_request_count + ?", quotaData.StreamRequestCount),
+					"frt_sum":                        gorm.Expr("frt_sum + ?", quotaData.FrtSum),
+					"request_time_sum":               gorm.Expr("request_time_sum + ?", quotaData.RequestTimeSum),
+				}).Error
+			}
+			if err != nil {
+				return err
+			}
+			return increaseCliendUserUsedQuota(tx, quotaData.ClientUserId, quotaData.Quota)
+		})
+		if err != nil {
+			flushErr = errors.Join(flushErr, err)
+			CacheQuotaDataLock.Lock()
+			if current := CacheQuotaData[key]; current != nil {
+				current.accumulate(quotaData)
+			} else {
+				CacheQuotaData[key] = quotaData
+			}
+			CacheQuotaDataLock.Unlock()
+			continue
 		}
+		saved++
 		if quotaData.ProjectName == "" && quotaData.ClientUserId != "" {
 			nonProjectUsers[quotaData.ClientUserId] = struct{}{}
 		}
 	}
 	invalidateMonthlyNonProjectQuotaCache(nonProjectUsers)
-	CacheQuotaData = make(map[string]*QuotaData)
-	common.SysLog(common.LogText("saved dashboard data, %d records", size))
+	common.SysLog(common.LogText("saved dashboard data, %d records", saved))
+	if flushErr != nil {
+		common.SysError(common.LogText("failed to save dashboard data; pending records retained for retry: %s", flushErr.Error()))
+	}
+	return flushErr
 }
 
 // GetMonthlyNonProjectQuota 返回某 uid 自 monthStart 起未打项目标签的消耗（原始 quota 单位）。
@@ -601,20 +668,6 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
-func increaseQuotaData(quotaData *QuotaData) {
-	err := DB.Table("quota_data").
-		Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenId, quotaData.ChannelId, quotaData.NodeName).
-		Updates(map[string]any{
-			"count":      gorm.Expr("count + ?", quotaData.Count),
-			"quota":      gorm.Expr("quota + ?", quotaData.Quota),
-			"token_used": gorm.Expr("token_used + ?", quotaData.TokenUsed),
-		}).Error
-	if err != nil {
-		common.SysLog(common.LogText("increaseQuotaData error: %s", err))
-	}
-}
-
 func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
@@ -660,6 +713,9 @@ func GetQuotaByTime(userId int, startTime int64, endTime int64) (int, error) {
 
 // GetCachedQuotaByUser 获取内存缓存中尚未落库的用户消耗额度
 func GetCachedQuotaByUser(userId int, startTime int64, endTime int64) int {
+	// An in-flight batch is temporarily detached until it commits or is restored.
+	quotaDataFlushLock.Lock()
+	defer quotaDataFlushLock.Unlock()
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
 	var total int

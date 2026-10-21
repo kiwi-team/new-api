@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "sora", "sunoapi", "vertex-ai", "vidu", "xai"}
+var expectedKeys = []string{"alibaba", "doubao", "fal", "google", "hailuo", "jimeng", "kling", "omnihuman", "sora", "sunoapi", "vertex-ai", "vidu", "xai"}
 
 func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing.T) {
 	generation := jsplugin.DefaultRegistry.Generation()
@@ -30,6 +30,10 @@ func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing
 		{"GET", "/kling/v1/videos/text2video/:task_id", "kling", jsplugin.RouteTypeQuery, "", "taskStatus"},
 		{"GET", "/kling/v1/videos/image2video/:task_id", "kling", jsplugin.RouteTypeQuery, "", "taskStatus"},
 		{"POST", "/jimeng/", "jimeng", jsplugin.RouteTypeDynamic, "", "renderTask"},
+		{"POST", "/omnihuman/", "omnihuman", jsplugin.RouteTypeDynamic, "", "renderTask"},
+		{"POST", "/fal/bytedance/omnihuman/v2", "fal", jsplugin.RouteTypeSubmit, "", "taskCreated"},
+		{"GET", "/fal/bytedance/omnihuman/requests/:task_id/status", "fal", jsplugin.RouteTypeQuery, "", "taskStatus"},
+		{"GET", "/fal/bytedance/omnihuman/requests/:task_id", "fal", jsplugin.RouteTypeQuery, "", "taskResult"},
 		{"POST", "/suno/submit/:action", "sunoapi", jsplugin.RouteTypeSubmit, "", "renderSubmit"},
 		{"POST", "/suno/fetch", "sunoapi", jsplugin.RouteTypeDynamic, "", "renderTasks"},
 		{"GET", "/suno/fetch/:task_id", "sunoapi", jsplugin.RouteTypeQuery, "", "renderTask"},
@@ -150,7 +154,14 @@ func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {
 }
 
 func TestBuiltInResponsesDecodersEchoChannelMappedAlias(t *testing.T) {
-	bodyOverrides := map[string]map[string]any{}
+	bodyOverrides := map[string]map[string]any{
+		"fal": {"model": "alias-under-test", "input": "a person singing", "metadata": map[string]any{
+			"audio_url": "https://cdn.example/audio.mp3", "image_url": "https://cdn.example/person.png",
+		}},
+		"omnihuman": {"model": "alias-under-test", "input": "a person singing", "metadata": map[string]any{
+			"audio_url": "https://cdn.example/audio.mp3", "image_urls": []string{"https://cdn.example/person.png"},
+		}},
+	}
 	for _, key := range expectedKeys {
 		t.Run(key, func(t *testing.T) {
 			source, sourceErr := Source(key)
@@ -239,6 +250,26 @@ func TestBuiltInPluginsAddressNewAPIUpstreamOnNativeRoutes(t *testing.T) {
 			vendorQuery:        "/?Action=CVSync2AsyncGetResult&Version=2022-08-31",
 			gatewayQuery:       "/jimeng/?Action=CVSync2AsyncGetResult&Version=2022-08-31",
 			legacyKeyHeuristic: true,
+		},
+		{
+			key:              "omnihuman",
+			driver:           map[string]any{"action": "image_to_video", "model": "omnihuman-2.0", "upstreamModel": "omnihuman-2.0", "requestBody": map[string]any{"audio_url": "https://cdn.example/audio.mp3", "image_urls": []string{"https://cdn.example/person.png"}}},
+			vendorKey:        "ak|sk",
+			vendorAuthPrefix: "HMAC-SHA256",
+			vendorSubmit:     "/?Action=CVSync2AsyncSubmitTask&Version=2024-06-06",
+			gatewaySubmit:    "/omnihuman/?Action=CVSync2AsyncSubmitTask&Version=2024-06-06",
+			vendorQuery:      "/?Action=CVSync2AsyncGetResult&Version=2024-06-06",
+			gatewayQuery:     "/omnihuman/?Action=CVSync2AsyncGetResult&Version=2024-06-06",
+		},
+		{
+			key:              "fal",
+			driver:           map[string]any{"action": "image_to_video", "model": "omnihuman-2.0", "upstreamModel": "omnihuman-2.0", "requestBody": map[string]any{"audio_url": "https://cdn.example/audio.mp3", "image_url": "https://cdn.example/person.png"}},
+			vendorKey:        "vendor-key",
+			vendorAuthPrefix: "Key vendor-key",
+			vendorSubmit:     "/bytedance/omnihuman/v2",
+			gatewaySubmit:    "/fal/bytedance/omnihuman/v2",
+			vendorQuery:      "/bytedance/omnihuman/requests/tid/status",
+			gatewayQuery:     "/fal/bytedance/omnihuman/requests/tid/status",
 		},
 		{
 			key:              "sunoapi",

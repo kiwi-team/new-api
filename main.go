@@ -283,10 +283,9 @@ func main() {
 	sig := <-quit
 	common.SysLog(common.LogText("received signal: %v, shutting down...", sig))
 
-	// 退出前刷盘 quota_data 缓存
-	common.SysLog("flushing quota data cache before shutdown...")
-	model.SaveQuotaDataCache()
-	common.SysLog("quota data cache flushed successfully")
+	// Persist completed requests before waiting for long-running relays.
+	// SaveQuotaDataCache logs failures and retains those batches for the final flush.
+	_ = model.SaveQuotaDataCache()
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -295,9 +294,10 @@ func main() {
 	}
 	if !controller.WaitChannelRaceAttempts(ctx) {
 		common.SysLog("channel race attempts did not finish before shutdown timeout")
-	} else {
-		// Race losers can settle after the first shutdown flush.
-		model.SaveQuotaDataCache()
+	}
+	// Flush completed requests even when draining other requests timed out.
+	if err := model.SaveQuotaDataCache(); err != nil {
+		common.SysError(common.LogText("failed to flush quota data before shutdown: %s", err.Error()))
 	}
 	common.SysLog(common.LogText("server exited"))
 }

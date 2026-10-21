@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -553,32 +552,30 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		common.SysLog(fmt.Sprintf("[DIAG] DataExportEnabled=false, skipping LogQuotaData for model=%s", params.ModelName))
 	}
 	if common.DataExportEnabled {
-		gopool.Go(func() {
-			LogQuotaData(&LogQuotaDataCache{
-				UserId:                      userId,
-				Username:                    username,
-				ModelName:                   params.ModelName,
-				Quota:                       params.Quota,
-				CreatedAt:                   common.GetTimestamp(),
-				TokenUsed:                   params.PromptTokens + params.CompletionTokens,
-				TokenName:                   params.TokenName,
-				PromptTokens:                params.PromptTokens,
-				CompletionTokens:            params.CompletionTokens,
-				CachedTokens:                params.CachedTokens,
-				ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
-				ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
-				ChannelId:                   params.ChannelId,
-				TokenId:                     params.TokenId,
-				UseGroup:                    params.Group,
-				NodeName:                    common.NodeName,
-				ClientUserId:                params.ClientUserId,
-				ClientScenairo:              params.ClientScenairo,
-				ProjectName:                 params.ProjectName,
-				PlanId:                      params.PlanId,
-				FirstTokenMs:                firstTokenMs,
-				UseTimeSeconds:              params.UseTimeSeconds,
-			})
-			//LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
+		// Record before returning so shutdown can flush every completed request.
+		LogQuotaData(&LogQuotaDataCache{
+			UserId:                      userId,
+			Username:                    username,
+			ModelName:                   params.ModelName,
+			Quota:                       params.Quota,
+			CreatedAt:                   createdAt,
+			TokenUsed:                   params.PromptTokens + params.CompletionTokens,
+			TokenName:                   params.TokenName,
+			PromptTokens:                params.PromptTokens,
+			CompletionTokens:            params.CompletionTokens,
+			CachedTokens:                params.CachedTokens,
+			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
+			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
+			ChannelId:                   params.ChannelId,
+			TokenId:                     params.TokenId,
+			UseGroup:                    params.Group,
+			NodeName:                    common.NodeName,
+			ClientUserId:                params.ClientUserId,
+			ClientScenairo:              params.ClientScenairo,
+			ProjectName:                 params.ProjectName,
+			PlanId:                      params.PlanId,
+			FirstTokenMs:                firstTokenMs,
+			UseTimeSeconds:              params.UseTimeSeconds,
 		})
 	}
 }

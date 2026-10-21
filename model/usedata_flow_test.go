@@ -135,7 +135,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	truncateTables(t)
 	CacheQuotaDataLock.Lock()
-	CacheQuotaData = make(map[string]*QuotaData)
+	clear(CacheQuotaData)
 	CacheQuotaDataLock.Unlock()
 
 	LogQuotaData(&LogQuotaDataCache{

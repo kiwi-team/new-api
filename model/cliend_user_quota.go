@@ -174,11 +174,15 @@ func getMonthlyNonProjectQuotaCached(clientUserId string, budgetQuota float64) (
 }
 
 func IncreaseCliendUserUsedQuota(clientUserId string, delta int) error {
+	return increaseCliendUserUsedQuota(DB, clientUserId, delta)
+}
+
+func increaseCliendUserUsedQuota(tx *gorm.DB, clientUserId string, delta int) error {
 	if clientUserId == "" || delta == 0 {
 		return nil
 	}
 	var row CliendUserQuota
-	err := DB.Where("client_user_id = ?", clientUserId).First(&row).Error
+	err := tx.Where("client_user_id = ?", clientUserId).First(&row).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return err
 	}
@@ -186,11 +190,11 @@ func IncreaseCliendUserUsedQuota(clientUserId string, delta int) error {
 		row.ClientUserId = clientUserId
 		row.UsedQuota = delta
 		row.UpdatedAt = common.GetTimestamp()
-		return DB.Create(&row).Error
+		return tx.Create(&row).Error
 	}
-	return DB.Model(&CliendUserQuota{}).
+	return tx.Model(&CliendUserQuota{}).
 		Where("client_user_id = ?", clientUserId).
-		Updates(map[string]interface{}{
+		Updates(map[string]any{
 			"used_quota": gorm.Expr("used_quota + ?", delta),
 			"updated_at": common.GetTimestamp(),
 		}).Error
