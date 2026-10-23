@@ -49,9 +49,8 @@ func invalidateTokenCacheForMutation(key string) error {
 
 // cacheInitToken publishes a database snapshot only when no mutation fence is
 // active and the hash is cold. An existing hash only gets its TTL refreshed:
-// its RemainQuota may already be ahead of this snapshot because atomic
-// pre-consume decrements Redis first, so a snapshot must never overwrite any
-// field of a live hash.
+// concurrent snapshots cannot overwrite newer metadata. Cache reads validate
+// the durable authorization version and obtain balances from the database.
 // 返回值：0=被 fence 拦截，1=完成初始化，2=哈希已存在，仅刷新 TTL。
 func cacheInitToken(token Token) (int, error) {
 	if !common.RedisEnabled {
@@ -75,7 +74,8 @@ redis.call('HSET', KEYS[1],
   'UnlimitedQuota', ARGV[8], 'ModelLimitsEnabled', ARGV[9], 'ModelLimits', ARGV[10],
   'AllowIps', ARGV[11], 'Group', ARGV[12], 'CrossGroupRetry', ARGV[13],
   'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16],
-  'ChannelRules', ARGV[17], 'ChannelRulesHighPriority', ARGV[18], 'AllowUserQuotaQuery', ARGV[19])
+  'ChannelRules', ARGV[17], 'ChannelRulesHighPriority', ARGV[18], 'AllowUserQuotaQuery', ARGV[19],
+  'AuthVersion', ARGV[21], 'ChannelRatios', ARGV[22])
 redis.call('EXPIRE', KEYS[1], ARGV[20])
 return 1`
 
@@ -90,6 +90,7 @@ return 1`
 		token.ChannelRules, strconv.FormatBool(token.ChannelRulesHighPriority),
 		strconv.FormatBool(token.AllowUserQuotaQuery),
 		tokenCacheTTLSeconds(),
+		token.AuthVersion, token.ChannelRatios,
 	).Int()
 }
 
@@ -105,6 +106,19 @@ func cacheGetTokenByKey(key string) (*Token, error) {
 	if token.Id <= 0 {
 		return nil, fmt.Errorf("token cache is incomplete")
 	}
+	var authority Token
+	if err := DB.Select("id", commonKeyCol, "auth_version", "remain_quota", "used_quota", "accessed_time", "status", "expired_time").First(&authority, token.Id).Error; err != nil {
+		return nil, err
+	}
+	if authority.Key != key {
+		return nil, fmt.Errorf("token cache binding is stale")
+	}
+	if token.AuthVersion <= 0 || token.AuthVersion != authority.AuthVersion {
+		_ = common.RedisDel(getTokenCacheKey(key))
+		return nil, fmt.Errorf("token cache version is stale")
+	}
+	token.RemainQuota, token.UsedQuota, token.AccessedTime = authority.RemainQuota, authority.UsedQuota, authority.AccessedTime
+	token.Status, token.ExpiredTime = authority.Status, authority.ExpiredTime
 	token.Key = key
 	return &token, nil
 }

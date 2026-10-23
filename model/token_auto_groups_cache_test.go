@@ -9,6 +9,7 @@ import (
 )
 
 func TestTokenAutoGroupsRoundTripThroughRedisHashCache(t *testing.T) {
+	truncateTables(t)
 	useUserCacheMiniRedis(t)
 	token := Token{
 		Id:         42,
@@ -19,6 +20,7 @@ func TestTokenAutoGroupsRoundTripThroughRedisHashCache(t *testing.T) {
 		AutoGroups: `["vip","default"]`,
 	}
 
+	require.NoError(t, DB.Create(&token).Error)
 	require.NoError(t, cacheSetTokenForTest(token))
 	cached, err := cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
@@ -29,6 +31,7 @@ func TestTokenAutoGroupsRoundTripThroughRedisHashCache(t *testing.T) {
 }
 
 func TestTokenChannelRulesPriorityRoundTripsThroughRedisHashCache(t *testing.T) {
+	truncateTables(t)
 	useUserCacheMiniRedis(t)
 	token := Token{
 		Id:                       43,
@@ -39,6 +42,7 @@ func TestTokenChannelRulesPriorityRoundTripsThroughRedisHashCache(t *testing.T) 
 		ChannelRulesHighPriority: true,
 	}
 
+	require.NoError(t, DB.Create(&token).Error)
 	require.NoError(t, cacheSetTokenForTest(token))
 	cached, err := cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
@@ -47,9 +51,11 @@ func TestTokenChannelRulesPriorityRoundTripsThroughRedisHashCache(t *testing.T) 
 }
 
 func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
+	truncateTables(t)
 	server := useUserCacheMiniRedis(t)
 	token := Token{Id: 43, UserId: 7, Key: "token-user-quota-cache-key", Name: "user-quota-cache", AllowUserQuotaQuery: true}
 
+	require.NoError(t, DB.Create(&token).Error)
 	initialized, err := cacheInitToken(token)
 	require.NoError(t, err)
 	require.Equal(t, 1, initialized)

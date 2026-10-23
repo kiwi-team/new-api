@@ -779,6 +779,14 @@ func executeTaskSubmissionWith(
 
 	stage = "insert"
 	task := model.InitTask(result.Platform, relayInfo)
+	// Polling has no request context; keep the submission's billing attribution.
+	task.Properties.TokenId = relayInfo.TokenId
+	task.Properties.TokenName = c.GetString("token_name")
+	task.Properties.ClientUserId = common.GetContextKeyString(c, constant.ContextKeyClientUserId)
+	task.Properties.ClientScenairo = common.GetContextKeyString(c, constant.ContextKeyClientScenairo)
+	task.Properties.ProjectName = common.GetContextKeyString(c, constant.ContextKeyProjectName)
+	task.Properties.ProjectId = common.GetContextKeyInt(c, constant.ContextKeyProjectId)
+	task.Properties.PlanId = common.GetContextKeyInt(c, constant.ContextKeyProjectPlanId)
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.BillingSource = relayInfo.BillingSource

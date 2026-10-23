@@ -19,7 +19,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
+func TestHardDeleteUserPurgesAuthenticationWhenRedisUnavailable(t *testing.T) {
 	truncateTables(t)
 
 	user := User{Username: "hard-delete-user", Password: "password", TelegramId: "hard-delete-telegram"}
@@ -57,11 +57,11 @@ func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 	})
 
 	_, err := HardDeleteUserById(user.Id)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	var count int64
 	require.NoError(t, DB.Unscoped().Model(&User{}).Where("id = ?", user.Id).Count(&count).Error)
-	assert.EqualValues(t, 1, count)
+	assert.Zero(t, count)
 	for _, record := range []any{
 		&Token{},
 		&TwoFA{},
@@ -74,7 +74,7 @@ func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 		&UserAccessToken{},
 	} {
 		require.NoError(t, DB.Unscoped().Model(record).Where("user_id = ?", user.Id).Count(&count).Error)
-		assert.EqualValues(t, 1, count)
+		assert.Zero(t, count)
 	}
 }
 

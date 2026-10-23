@@ -437,8 +437,10 @@ func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *
 		models = append(models, &model.Task{})
 	}
 	database, _ := openTaskDialectDatabase(t, models...)
-	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
-		*events = append(*events, "insert")
+	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Task" {
+			*events = append(*events, "insert")
+		}
 	}))
 	model.DB = database
 	t.Cleanup(func() { model.DB = previousDB })
@@ -511,7 +513,7 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 }
 
 func TestImmediateTaskSettlementDatabase(t *testing.T) {
-	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{})
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.ProjectAllocation{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
@@ -562,11 +564,17 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			initial := int(20 * common.QuotaPerUnit)
 			user := model.User{Username: fmt.Sprintf("task_user_%d", index), AffCode: fmt.Sprintf("task_aff_%d", index), Quota: initial}
 			require.NoError(t, db.Create(&user).Error)
+			allocation := model.ProjectAllocation{ProjectId: index + 1, PlanId: index + 1, ClientUserId: user.Username, AllocatedQuota: 1}
+			require.NoError(t, db.Create(&allocation).Error)
 			ch := model.Channel{Name: "test provider", Type: constant.ChannelTypeTaskPlugin}
 			require.NoError(t, db.Create(&ch).Error)
 			c := taskSubmissionTestContext()
 			c.Set("group", "default")
 			c.Set("username", user.Username)
+			common.SetContextKey(c, constant.ContextKeyClientUserId, user.Username)
+			common.SetContextKey(c, constant.ContextKeyProjectName, "immediate-project")
+			common.SetContextKey(c, constant.ContextKeyProjectId, allocation.ProjectId)
+			common.SetContextKey(c, constant.ContextKeyProjectPlanId, allocation.PlanId)
 			c.Set("task_request", map[string]any{"model": "document-model"})
 			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Plugin: plugin})
 			common.SetContextKey(c, constant.ContextKeyOriginalModel, "document-model")
@@ -601,6 +609,8 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			require.NoError(t, db.First(&updated, user.Id).Error)
 			assert.Equal(t, initial-want, updated.Quota)
 			assert.Equal(t, want, updated.UsedQuota)
+			require.NoError(t, db.First(&allocation, allocation.Id).Error)
+			assert.Equal(t, want, allocation.UsedQuota, "immediate tasks record the final amount, including zero for failure")
 			var logs []model.Log
 			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&logs).Error)
 			require.Len(t, logs, 1)
@@ -656,4 +666,181 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 	assert.Equal(t, []string{"reserve", "refund"}, events)
 	assert.Equal(t, 1, billing.refunds)
 	assert.False(t, c.Writer.Written())
+}
+
+// Submit through the real persistence/billing boundary, then settle a reloaded
+// task without its HTTP context. Every balance and log must retain attribution.
+func TestTaskBillingAttributionDatabase(t *testing.T) {
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{},
+		&model.QuotaData{}, &model.QuotaDataEventRecord{}, &model.QuotaDataAppliedEvent{}, &model.CliendUserQuota{}, &model.ProjectAllocation{})
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = false, false, false, true, true
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = oldRedis, oldMemory, oldBatch, oldConsume, oldExport
+	})
+
+	const initial, reserved = 50_000_000, 10_500_000
+	for index, tc := range []struct {
+		name    string
+		actual  int
+		failure bool
+		project bool
+		budget  int
+	}{
+		{name: "partial refund", actual: 388_757},
+		{name: "failed task", failure: true},
+		{name: "additional charge", actual: 11_000_000},
+		{name: "project partial refund", actual: 388_757, project: true},
+		{name: "project failed task", failure: true, project: true},
+		{name: "project additional charge", actual: 11_000_000, project: true},
+		{name: "project billed overage", actual: 11_000_000, project: true, budget: 21},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			uid := fmt.Sprintf("task-attribution-%d", index)
+			user := model.User{Username: uid, AffCode: uid, Quota: initial}
+			require.NoError(t, db.Create(&user).Error)
+			token := model.Token{UserId: user.Id, Name: "submission token", Key: uid, RemainQuota: initial, Status: common.TokenStatusEnabled}
+			require.NoError(t, db.Create(&token).Error)
+			channel := model.Channel{Name: "task provider", Type: constant.ChannelTypeTaskPlugin}
+			require.NoError(t, db.Create(&channel).Error)
+			c := taskSubmissionTestContext()
+			c.Set(common.RequestIdKey, uid)
+			c.Set("username", user.Username)
+			c.Set("token_name", token.Name)
+			common.SetContextKey(c, constant.ContextKeyClientUserId, uid)
+			common.SetContextKey(c, constant.ContextKeyClientScenairo, "personal_experiment")
+			var allocation model.ProjectAllocation
+			var otherPlan model.ProjectAllocation
+			if tc.project {
+				// The budget is USD, while usage is quota units. Submission must
+				// record the $21 reservation starting from zero usage under $100.
+				allocation = model.ProjectAllocation{ProjectId: index + 1, PlanId: index + 10, ClientUserId: uid, AllocatedQuota: 100}
+				if tc.budget > 0 {
+					allocation.AllocatedQuota = tc.budget
+				}
+				require.NoError(t, db.Create(&allocation).Error)
+				otherPlan = model.ProjectAllocation{ProjectId: allocation.ProjectId, PlanId: allocation.PlanId + 100, ClientUserId: uid, AllocatedQuota: 100, UsedQuota: 2_000_000}
+				require.NoError(t, db.Create(&otherPlan).Error)
+				common.SetContextKey(c, constant.ContextKeyProjectName, "attribution-project")
+				common.SetContextKey(c, constant.ContextKeyProjectId, allocation.ProjectId)
+				common.SetContextKey(c, constant.ContextKeyProjectPlanId, allocation.PlanId)
+			}
+			info := taskSubmissionRelayInfo(nil)
+			info.UserId, info.TokenId, info.TokenKey = user.Id, token.Id, token.Key
+			info.UserGroup, info.UserSetting.BillingPreference = "default", "wallet_only"
+			info.PublicTaskID, info.LockedChannel = model.GenerateTaskID(), &channel
+			info.ChannelId = channel.Id
+			info.PriceData.Quota = reserved
+			require.Nil(t, service.PreConsumeBilling(c, reserved, info))
+			outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+				return &relay.TaskSubmitResult{Platform: constant.TaskPlatform("attribution"), UpstreamTaskID: "vendor-job", Quota: reserved}, nil
+			})
+			require.Nil(t, taskErr)
+			require.NotNil(t, outcome)
+			require.NoError(t, model.SaveQuotaDataCache())
+			if tc.project {
+				require.NoError(t, db.First(&allocation, allocation.Id).Error)
+				assert.Equal(t, reserved, allocation.UsedQuota, "submission records project usage exactly once")
+				require.NoError(t, db.First(&otherPlan, otherPlan.Id).Error)
+				assert.Equal(t, 2_000_000, otherPlan.UsedQuota, "submission leaves other plans unchanged")
+			}
+			var task model.Task
+			require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&task).Error)
+			assert.Equal(t, uid, task.Properties.ClientUserId)
+			assert.Equal(t, "personal_experiment", task.Properties.ClientScenairo)
+			assert.Equal(t, token.Id, task.Properties.TokenId)
+			assert.Equal(t, token.Name, task.Properties.TokenName)
+			assert.Equal(t, allocation.ProjectId, task.Properties.ProjectId)
+			assert.Equal(t, allocation.PlanId, task.Properties.PlanId)
+			task.FinishTime = task.SubmitTime
+			if tc.failure {
+				require.True(t, service.RefundTaskQuota(t.Context(), &task, "provider failure"))
+			} else {
+				service.RecalculateTaskQuota(t.Context(), &task, tc.actual, common.NewMessage("Actual usage settlement"))
+			}
+			require.NoError(t, model.SaveQuotaDataCache())
+			// A repeated terminal settlement must not credit the wallet again.
+			if tc.failure {
+				require.True(t, service.RefundTaskQuota(t.Context(), &task, "provider failure"))
+			} else {
+				service.RecalculateTaskQuota(t.Context(), &task, tc.actual, common.NewMessage("Actual usage settlement"))
+			}
+			require.NoError(t, model.SaveQuotaDataCache())
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, initial-tc.actual, user.Quota)
+			assert.Equal(t, tc.actual, user.UsedQuota)
+			assert.Equal(t, 1, user.RequestCount)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			assert.Equal(t, initial-tc.actual, token.RemainQuota)
+			assert.Equal(t, tc.actual, token.UsedQuota)
+			var budget model.CliendUserQuota
+			require.NoError(t, db.Where("client_user_id = ?", uid).First(&budget).Error)
+			assert.Equal(t, tc.actual, budget.UsedQuota)
+			var rows []model.QuotaData
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&rows).Error)
+			require.Len(t, rows, 1, "submission and settlement use the same bucket")
+			assert.Equal(t, tc.actual, rows[0].Quota)
+			assert.Equal(t, 1, rows[0].Count)
+			assert.Equal(t, uid, rows[0].ClientUserId)
+			assert.Equal(t, "personal_experiment", rows[0].ClientScenairo)
+			assert.Equal(t, allocation.PlanId, rows[0].PlanId)
+			monthly, err := model.GetMonthlyNonProjectQuota(uid, common.BillingMonthStartUnix(task.SubmitTime))
+			require.NoError(t, err)
+			if tc.project {
+				assert.Zero(t, monthly, "project charges do not consume the personal budget")
+				assert.Equal(t, "attribution-project", rows[0].ProjectName)
+				require.NoError(t, db.First(&allocation, allocation.Id).Error)
+				assert.Equal(t, tc.actual, allocation.UsedQuota, "project allocation agrees with net statistical usage")
+				require.NoError(t, db.First(&otherPlan, otherPlan.Id).Error)
+				assert.Equal(t, 2_000_000, otherPlan.UsedQuota, "refunds and additional charges leave other plans unchanged")
+				usedTotal, err := model.GetProjectUsedTotal(allocation.ProjectId)
+				require.NoError(t, err)
+				assert.Equal(t, 2_000_000+tc.actual, usedTotal)
+			} else {
+				assert.EqualValues(t, tc.actual, monthly)
+			}
+			var logs []model.Log
+			require.NoError(t, db.Where("user_id = ?", user.Id).Order("id").Find(&logs).Error)
+			require.Len(t, logs, 2)
+			assert.Equal(t, reserved, logs[0].Quota)
+			assert.Equal(t, tc.actual-reserved, logs[1].Quota)
+			for _, log := range logs {
+				assert.Equal(t, uid, log.ClientUserId)
+				assert.Equal(t, "personal_experiment", log.ClientScenairo)
+				assert.Equal(t, rows[0].ProjectName, log.ProjectName)
+				assert.Equal(t, allocation.PlanId, log.PlanId)
+			}
+		})
+	}
+	t.Run("allocation bounds and plan isolation", func(t *testing.T) {
+		allocation := model.ProjectAllocation{ProjectId: 100, PlanId: 100, ClientUserId: "bounds", AllocatedQuota: 1}
+		otherPlan := model.ProjectAllocation{ProjectId: 100, PlanId: 101, ClientUserId: "bounds", AllocatedQuota: 1, UsedQuota: 200_000}
+		legacy := model.ProjectAllocation{ProjectId: 100, PlanId: 0, ClientUserId: "bounds", AllocatedQuota: 1, UsedQuota: 100_000}
+		otherUID := model.ProjectAllocation{ProjectId: 100, PlanId: 100, ClientUserId: "other", AllocatedQuota: 1, UsedQuota: 50_000}
+		for _, row := range []*model.ProjectAllocation{&allocation, &otherPlan, &legacy, &otherUID} {
+			require.NoError(t, db.Create(row).Error)
+		}
+		require.NoError(t, model.IncreaseUsedQuotaByProjectAndUser(100, 100, "bounds", 500_000))
+		require.NoError(t, model.IncreaseUsedQuotaByProjectAndUser(100, 100, "bounds", 1), "already billed overage must remain visible")
+		require.NoError(t, db.First(&allocation, allocation.Id).Error)
+		assert.Equal(t, 500_001, allocation.UsedQuota)
+		require.NoError(t, model.DecreaseUsedQuotaByProjectAndUser(100, 100, "bounds", 600_000))
+		require.NoError(t, db.First(&allocation, allocation.Id).Error)
+		assert.Zero(t, allocation.UsedQuota, "over-refund clamps only the matching plan")
+		require.NoError(t, model.DecreaseUsedQuotaByProjectAndUser(100, 999, "bounds", 1_000_000))
+		require.Error(t, model.IncreaseUsedQuotaByProjectAndUser(100, 999, "bounds", 1), "a missing plan cannot update another allocation")
+		require.NoError(t, model.DecreaseUsedQuotaByProjectAndUser(100, 0, "bounds", 50_000))
+		for _, row := range []*model.ProjectAllocation{&otherPlan, &legacy, &otherUID} {
+			require.NoError(t, db.First(row, row.Id).Error)
+		}
+		assert.Equal(t, 200_000, otherPlan.UsedQuota)
+		assert.Equal(t, 50_000, legacy.UsedQuota, "plan 0 matches only legacy allocations")
+		assert.Equal(t, 50_000, otherUID.UsedQuota)
+	})
 }

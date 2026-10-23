@@ -100,6 +100,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	// Match the submission statistics before later refunds or additional charges.
+	_, _, _ = TrackProjectConsumption(c, info.PriceData.Quota)
 }
 
 // TaskRequestLogBody 返回异步任务要留档的提交请求体（消费日志的「请求体」列和
@@ -200,9 +202,9 @@ func taskAdjustProjectQuota(ctx context.Context, task *model.Task, delta int) {
 	}
 	var err error
 	if delta > 0 {
-		err = model.IncreaseUsedQuotaByProjectAndUser(props.ProjectId, props.ClientUserId, delta)
+		err = model.IncreaseUsedQuotaByProjectAndUser(props.ProjectId, props.PlanId, props.ClientUserId, delta)
 	} else {
-		err = model.DecreaseUsedQuotaByProjectAndUser(props.ProjectId, props.ClientUserId, -delta)
+		err = model.DecreaseUsedQuotaByProjectAndUser(props.ProjectId, props.PlanId, props.ClientUserId, -delta)
 	}
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("调整项目预算失败 (delta=%d, task=%s): %s", delta, task.TaskID, err.Error()))
@@ -351,6 +353,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("reason", reason)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		EventID:        model.QuotaDataActionID("task-refund", fmt.Sprintf("%d:%s", task.ID, task.TaskID)),
+		CreatedAt:      task.FinishTime,
+		NodeName:       task.PrivateData.NodeName,
 		UserId:         task.UserId,
 		LogType:        model.LogTypeRefund,
 		ChannelId:      task.ChannelId,
@@ -437,6 +442,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		EventID:        model.QuotaDataActionID("task-settlement", fmt.Sprintf("%d:%s:%d:%d", task.ID, task.TaskID, preConsumedQuota, actualQuota)),
+		CreatedAt:      task.FinishTime,
 		UserId:         task.UserId,
 		LogType:        logType,
 		Content:        []*common.Message{reason},

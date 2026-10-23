@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
@@ -116,8 +118,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 	)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (mark=%s): %v", mark, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		memoryRateLimiter(c, maxRequestNum, duration, mark)
 		return
 	}
 	if !allowed {
@@ -146,15 +147,38 @@ func writeRateLimited(c *gin.Context, retryAfterSeconds int64) {
 }
 
 func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
-	if common.RedisEnabled {
-		return func(c *gin.Context) {
-			redisRateLimiter(c, maxRequestNum, duration, mark)
-		}
-	}
-	// It's safe to call multi times.
 	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 	return func(c *gin.Context) {
-		memoryRateLimiter(c, maxRequestNum, duration, mark)
+		if mark == "CT" {
+			securityRateLimiter(c, maxRequestNum, duration, redisIPRateLimitKey(mark, c.ClientIP()))
+		} else if common.RedisEnabled {
+			redisRateLimiter(c, maxRequestNum, duration, mark)
+		} else {
+			memoryRateLimiter(c, maxRequestNum, duration, mark)
+		}
+	}
+}
+
+func securityRateLimiter(c *gin.Context, maximum int, duration int64, key string) {
+	allowed, ttl, err := model.TakeSecurityRateLimit(c.Request.Context(), key, maximum, duration)
+	if err != nil {
+		logger.LogError(c.Request.Context(), common.LogText("Security rate limit authority unavailable"))
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
+	// Redis remains a shared observation cache. It cannot authorize additional
+	// attempts when another node has fallen back to the database.
+	if common.RedisEnabled && common.RDB != nil {
+		_, _, _, _ = redisFixedWindowTake(c.Request.Context(), key, maximum, duration)
+	}
+	if !allowed {
+		if strings.HasPrefix(key, "rateLimit:v2:ip:EV:") {
+			c.Header("Retry-After", strconv.FormatInt(ttl, 10))
+			common.ApiErrorStatus(c, http.StatusTooManyRequests, common.NewMessage("Please wait {{seconds}} seconds before requesting another verification code.", map[string]any{"seconds": ttl}))
+			c.Abort()
+			return
+		}
+		writeRateLimited(c, ttl)
 	}
 }
 
@@ -217,17 +241,6 @@ func UploadRateLimit() func(c *gin.Context) {
 // instead of client IP, making it resistant to proxy rotation attacks.
 // Must be used AFTER authentication middleware (UserAuth).
 func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
-	if common.RedisEnabled {
-		return func(c *gin.Context) {
-			userID := c.GetInt("id")
-			if userID == 0 {
-				c.Status(http.StatusUnauthorized)
-				c.Abort()
-				return
-			}
-			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID))
-		}
-	}
 	// It's safe to call multi times.
 	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 	return func(c *gin.Context) {
@@ -235,6 +248,14 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		if userID == 0 {
 			c.Status(http.StatusUnauthorized)
 			c.Abort()
+			return
+		}
+		if strings.HasPrefix(mark, "UC:") {
+			securityRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID))
+			return
+		}
+		if common.RedisEnabled {
+			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID))
 			return
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userID)
@@ -251,8 +272,9 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (key=%s): %v", key, err))
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			writeRateLimited(c, duration)
+		}
 		return
 	}
 	if !allowed {

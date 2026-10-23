@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,29 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// GetInactiveChannelIDs includes deleted channels, so missed close broadcasts
+// cannot keep their existing sockets active indefinitely.
+func GetInactiveChannelIDs(ctx context.Context, ids []int) ([]int, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var enabled []int
+	if err := DB.WithContext(ctx).Model(&Channel{}).Where("id IN ? AND status = ?", ids, common.ChannelStatusEnabled).Pluck("id", &enabled).Error; err != nil {
+		return nil, err
+	}
+	active := make(map[int]struct{}, len(enabled))
+	for _, id := range enabled {
+		active[id] = struct{}{}
+	}
+	var inactive []int
+	for _, id := range ids {
+		if _, ok := active[id]; !ok {
+			inactive = append(inactive, id)
+		}
+	}
+	return inactive, nil
+}
 
 type Channel struct {
 	Id                 int     `json:"id"`

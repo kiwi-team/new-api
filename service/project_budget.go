@@ -126,14 +126,13 @@ func GetUserTotalBudget(clientUserId string) (int, error) {
 //
 // Parameters:
 // - projectId: The ID of the project
+// - planId: The plan captured when the request was submitted
 // - clientUserId: The client user ID
-// - delta: The amount to increase (must be non-negative)
+// - delta: The already billed amount in quota units (must be non-negative)
 //
-// Returns an error if:
-// - The update would cause used_quota to exceed allocated_quota
-// - There's a concurrent update conflict
-// - The allocation doesn't exist
-func IncreaseProjectUsedQuota(projectId int, clientUserId string, delta int) error {
+// Returns an error if the allocation doesn't exist or persistence fails.
+// The budget is checked at request admission, not when recording billed usage.
+func IncreaseProjectUsedQuota(projectId, planId int, clientUserId string, delta int) error {
 	if projectId == 0 {
 		return errors.New("project id is empty")
 	}
@@ -148,7 +147,7 @@ func IncreaseProjectUsedQuota(projectId int, clientUserId string, delta int) err
 	}
 
 	// Use the model function for atomic update
-	return model.IncreaseUsedQuotaByProjectAndUser(projectId, clientUserId, delta)
+	return model.IncreaseUsedQuotaByProjectAndUser(projectId, planId, clientUserId, delta)
 }
 
 // TrackProjectConsumption tracks project consumption after an API request completes.
@@ -190,7 +189,7 @@ func TrackProjectConsumption(ctx *gin.Context, quota int) (string, int, error) {
 	}
 
 	// Atomically update the project allocation's used_quota
-	err := IncreaseProjectUsedQuota(projectId, clientUserId, quota)
+	err := IncreaseProjectUsedQuota(projectId, planId, clientUserId, quota)
 	if err != nil {
 		common.SysError("TrackProjectConsumption: failed to update project used quota: " + err.Error())
 		return projectName, planId, err

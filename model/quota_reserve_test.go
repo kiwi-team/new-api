@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -103,7 +104,7 @@ func TestTryReserveQuotaWithoutRedis(t *testing.T) {
 	assert.Equal(t, 55, getTokenFromDB(t, token.Id).RemainQuota)
 }
 
-func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
+func TestRedisBatchReservePersistsAuthoritativeBalanceImmediately(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
@@ -113,7 +114,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 8)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id), "batch delta is not flushed yet")
+	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id), "funds must be durable even with batch metrics enabled")
 
 	reserved, err = TryReserveUserQuota(user.Id, 3)
 	require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 3, false)
 	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 9, getTokenFromDB(t, token.Id).RemainQuota)
+	assert.Equal(t, 2, getTokenFromDB(t, token.Id).RemainQuota)
 
 	batchUpdate()
 	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id))
@@ -191,7 +192,43 @@ func TestReserveFallsBackToDatabaseWhenRedisIsUnavailable(t *testing.T) {
 	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
 }
 
-func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
+func TestRedisRecoveryCannotSpendStaleBalances(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
+	useUserCacheMiniRedis(t)
+	healthy := common.RDB
+	broken := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+	require.NoError(t, broken.Close())
+	t.Cleanup(func() { common.RDB = healthy })
+	user := createReserveTestUser(t, 100)
+	token := createReserveTestToken(t, 100)
+	require.NoError(t, populateUserCache(user))
+	require.NoError(t, cacheSetTokenForTest(token))
+	common.RDB = broken
+	common.BatchUpdateEnabled = true
+	reserved, err := TryReserveUserQuota(user.Id, 80)
+	require.NoError(t, err)
+	require.True(t, reserved)
+	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 80, false)
+	require.NoError(t, err)
+	require.True(t, reserved)
+	common.RDB = healthy
+	reserved, err = TryReserveUserQuota(user.Id, 80)
+	require.NoError(t, err)
+	assert.False(t, reserved)
+	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 80, false)
+	require.NoError(t, err)
+	assert.False(t, reserved)
+	assert.Equal(t, 20, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, 20, getTokenFromDB(t, token.Id).RemainQuota)
+	// Refunds also commit before returning even with batching configured.
+	require.NoError(t, IncreaseUserQuota(user.Id, 10, false))
+	require.NoError(t, IncreaseTokenQuota(token.Id, token.Key, 10))
+	assert.Equal(t, 30, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, 30, getTokenFromDB(t, token.Id).RemainQuota)
+}
+
+func TestReserveRejectsDeletedAccountsDespiteCachedBalance(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
@@ -202,10 +239,9 @@ func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
 
 	reserved, err := TryReserveUserQuota(user.Id, 6)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
-	cached, cacheErr := cacheGetUserBase(user.Id)
-	require.NoError(t, cacheErr)
-	assert.Equal(t, 10, cached.Quota)
+	require.NoError(t, err)
+	_, cacheErr := cacheGetUserBase(user.Id)
+	assert.ErrorIs(t, cacheErr, gorm.ErrRecordNotFound)
 
 	token := createReserveTestToken(t, 12)
 	_, err = GetTokenByKey(token.Key, true)
@@ -213,11 +249,9 @@ func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
 	require.NoError(t, DB.Delete(&token).Error)
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 7, false)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
-	cachedToken, cacheErr := cacheGetTokenByKey(token.Key)
-	require.NoError(t, cacheErr)
-	assert.Equal(t, 12, cachedToken.RemainQuota)
-	assert.Zero(t, cachedToken.UsedQuota)
+	require.NoError(t, err)
+	_, cacheErr = cacheGetTokenByKey(token.Key)
+	assert.ErrorIs(t, cacheErr, gorm.ErrRecordNotFound)
 }
 
 func TestTokenCacheInitPreservesLiveQuotaAndFenceBlocksStaleSnapshot(t *testing.T) {
@@ -240,7 +274,7 @@ func TestTokenCacheInitPreservesLiveQuotaAndFenceBlocksStaleSnapshot(t *testing.
 	assert.Equal(t, 2, code)
 	cached, err := cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
-	assert.Equal(t, 30, cached.RemainQuota)
+	assert.Equal(t, 100, cached.RemainQuota, "a cache-only delta must not change the authoritative balance")
 
 	// 变更期间：fence 删除缓存并拦截并发读者手中的过期快照。
 	require.NoError(t, invalidateTokenCacheForMutation(token.Key))

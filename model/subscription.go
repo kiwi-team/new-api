@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/go-redis/redis/v8"
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -87,8 +88,8 @@ func getSubscriptionPlanCache() *cachex.HybridCache[SubscriptionPlan] {
 	subscriptionPlanCacheOnce.Do(func() {
 		ttl := subscriptionPlanCacheTTL()
 		subscriptionPlanCache = cachex.NewHybridCache[SubscriptionPlan](cachex.HybridCacheConfig[SubscriptionPlan]{
-			Namespace: cachex.Namespace(subscriptionPlanCacheNamespace),
-			Redis:     common.RDB,
+			Namespace:   cachex.Namespace(subscriptionPlanCacheNamespace),
+			RedisClient: func() *redis.Client { return common.RDB },
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
 			},
@@ -108,8 +109,8 @@ func getSubscriptionPlanInfoCache() *cachex.HybridCache[SubscriptionPlanInfo] {
 	subscriptionPlanInfoCacheOnce.Do(func() {
 		ttl := subscriptionPlanInfoCacheTTL()
 		subscriptionPlanInfoCache = cachex.NewHybridCache[SubscriptionPlanInfo](cachex.HybridCacheConfig[SubscriptionPlanInfo]{
-			Namespace: cachex.Namespace(subscriptionPlanInfoCacheNamespace),
-			Redis:     common.RDB,
+			Namespace:   cachex.Namespace(subscriptionPlanInfoCacheNamespace),
+			RedisClient: func() *redis.Client { return common.RDB },
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
 			},

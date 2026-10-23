@@ -2,15 +2,8 @@ package model
 
 import (
 	"errors"
-	"strconv"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/pkg/cachex"
-
-	"github.com/samber/hot"
 	"gorm.io/gorm"
 )
 
@@ -65,7 +58,6 @@ func CreateSettlementConfig(config *SettlementConfig) error {
 	if err := DB.Create(config).Error; err != nil {
 		return err
 	}
-	invalidateSettlementConfigCache(config.UserId)
 	return nil
 }
 
@@ -91,7 +83,6 @@ func UpdateSettlementConfig(config *SettlementConfig) error {
 	if err := DB.Model(config).Select("UserId", "ModelName", "InputPrice", "OutputPrice", "RequestPrice", "Discount").Updates(config).Error; err != nil {
 		return err
 	}
-	invalidateSettlementConfigCache(config.UserId)
 	return nil
 }
 
@@ -100,15 +91,9 @@ func DeleteSettlementConfig(id int) error {
 	if id == 0 {
 		return errors.New("id 为空")
 	}
-	// 先取出 user_id 以便删除后失效缓存（记录不存在时不影响主流程）
-	var existing SettlementConfig
-	_ = DB.Select("user_id").First(&existing, "id = ?", id).Error
 	result := DB.Delete(&SettlementConfig{}, "id = ?", id)
 	if result.RowsAffected == 0 {
 		return errors.New("记录不存在")
-	}
-	if result.Error == nil && existing.UserId != 0 {
-		invalidateSettlementConfigCache(existing.UserId)
 	}
 	return result.Error
 }
@@ -182,8 +167,7 @@ func BatchCreateSettlementConfigs(configs []*SettlementConfig) error {
 	if len(configs) == 0 {
 		return nil
 	}
-	userIds := make(map[int]struct{})
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
 		for _, config := range configs {
 			if config.InputPrice < 0 {
 				return errors.New("输入价格不能为负数")
@@ -200,13 +184,12 @@ func BatchCreateSettlementConfigs(configs []*SettlementConfig) error {
 			if err := validateDiscount(config.Discount); err != nil {
 				return err
 			}
-			userIds[config.UserId] = struct{}{}
 			// Check if record already exists
 			var existing SettlementConfig
 			err := tx.Where("user_id = ? AND model_name = ?", config.UserId, config.ModelName).First(&existing).Error
 			if err == nil {
 				// Record exists — update prices
-				err = tx.Model(&existing).Updates(map[string]interface{}{
+				err = tx.Model(&existing).Updates(map[string]any{
 					"input_price":   config.InputPrice,
 					"output_price":  config.OutputPrice,
 					"request_price": config.RequestPrice,
@@ -226,92 +209,6 @@ func BatchCreateSettlementConfigs(configs []*SettlementConfig) error {
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	for userId := range userIds {
-		invalidateSettlementConfigCache(userId)
-	}
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// 折扣热路径查询 + 缓存
-// ---------------------------------------------------------------------------
-
-const settlementConfigCacheNamespace = "new-api:settlement_config:v1"
-
-var (
-	settlementConfigCacheOnce sync.Once
-	settlementConfigCache     *cachex.HybridCache[[]*SettlementConfig]
-)
-
-func settlementConfigCacheTTL() time.Duration {
-	ttlSeconds := common.GetEnvOrDefault("SETTLEMENT_CONFIG_CACHE_TTL", 300)
-	if ttlSeconds <= 0 {
-		ttlSeconds = 300
-	}
-	return time.Duration(ttlSeconds) * time.Second
-}
-
-func settlementConfigCacheCapacity() int {
-	capacity := common.GetEnvOrDefault("SETTLEMENT_CONFIG_CACHE_CAP", 10000)
-	if capacity <= 0 {
-		capacity = 10000
-	}
-	return capacity
-}
-
-func getSettlementConfigCache() *cachex.HybridCache[[]*SettlementConfig] {
-	settlementConfigCacheOnce.Do(func() {
-		ttl := settlementConfigCacheTTL()
-		settlementConfigCache = cachex.NewHybridCache[[]*SettlementConfig](cachex.HybridCacheConfig[[]*SettlementConfig]{
-			Namespace: cachex.Namespace(settlementConfigCacheNamespace),
-			Redis:     common.RDB,
-			RedisEnabled: func() bool {
-				return common.RedisEnabled && common.RDB != nil
-			},
-			RedisCodec: cachex.JSONCodec[[]*SettlementConfig]{},
-			Memory: func() *hot.HotCache[string, []*SettlementConfig] {
-				return hot.NewHotCache[string, []*SettlementConfig](hot.LRU, settlementConfigCacheCapacity()).
-					WithTTL(ttl).
-					WithJanitor().
-					Build()
-			},
-		})
-	})
-	return settlementConfigCache
-}
-
-func settlementConfigCacheKey(userId int) string {
-	return strconv.Itoa(userId)
-}
-
-func invalidateSettlementConfigCache(userId int) {
-	if userId <= 0 {
-		return
-	}
-	cache := getSettlementConfigCache()
-	_, _ = cache.DeleteMany([]string{settlementConfigCacheKey(userId)})
-}
-
-// getSettlementConfigsCached 读取用户全部结算配置（带缓存）。命中缓存直接返回，
-// 未命中则查库并回填。查库为空也缓存空切片，避免未配置折扣的用户每次请求都打库。
-func getSettlementConfigsCached(userId int) ([]*SettlementConfig, error) {
-	if userId <= 0 {
-		return nil, nil
-	}
-	cache := getSettlementConfigCache()
-	key := settlementConfigCacheKey(userId)
-	if configs, found, err := cache.Get(key); err == nil && found {
-		return configs, nil
-	}
-	configs, err := GetSettlementConfigsByUserId(userId)
-	if err != nil {
-		return nil, err
-	}
-	_ = cache.SetWithTTL(key, configs, settlementConfigCacheTTL())
-	return configs, nil
 }
 
 // matchSettlementConfig 给定用户的所有 settlement_config 和一个模型名称，返回匹配的配置。
@@ -335,13 +232,14 @@ func matchSettlementConfig(configs []*SettlementConfig, modelName string) *Settl
 	return bestWildcard
 }
 
-// GetUserModelSettlementDiscount 返回该用户对某模型配置的折扣系数（热路径调用，带缓存）。
-// 未配置、配置无效或查询出错时返回 1（不打折），保证计费不受影响。
+// GetUserModelSettlementDiscount reads the authoritative discount on every pricing lookup.
+// Billing must not use a stale Redis/local snapshot after a failed invalidation or late refill.
+// Missing/invalid configuration or database errors retain the existing fallback of 1.
 func GetUserModelSettlementDiscount(userId int, modelName string) float64 {
 	if userId <= 0 || modelName == "" {
 		return 1
 	}
-	configs, err := getSettlementConfigsCached(userId)
+	configs, err := GetSettlementConfigsByUserId(userId)
 	if err != nil || len(configs) == 0 {
 		return 1
 	}

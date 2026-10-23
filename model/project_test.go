@@ -1227,12 +1227,12 @@ func TestIncreaseUsedQuotaByProjectAndUser_Success(t *testing.T) {
 	}
 	require.NoError(t, CreateOrUpdateAllocation(allocation))
 
-	require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, "user-123", 1000))
+	require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, plan.Id, "user-123", 1000))
 
 	assert.Equal(t, 1000, storedAllocation(t, allocation.Id).UsedQuota)
 }
 
-func TestIncreaseUsedQuotaByProjectAndUser_ExceedsAllocated(t *testing.T) {
+func TestIncreaseUsedQuotaByProjectAndUser_RecordsBilledOverage(t *testing.T) {
 	db := setupProjectTestDB(t)
 	defer cleanupProjectTestDB(t, db)
 
@@ -1246,9 +1246,8 @@ func TestIncreaseUsedQuotaByProjectAndUser_ExceedsAllocated(t *testing.T) {
 	}
 	require.NoError(t, CreateOrUpdateAllocation(allocation))
 
-	err := IncreaseUsedQuotaByProjectAndUser(project.Id, "user-123", 1500)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "project quota exceeded")
+	require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, plan.Id, "user-123", 750_000_000))
+	assert.Equal(t, 750_000_000, storedAllocation(t, allocation.Id).UsedQuota)
 }
 
 // ==================== DecreaseUsedQuotaByProjectAndUser Tests ====================
@@ -1283,9 +1282,9 @@ func TestDecreaseUsedQuotaByProjectAndUser(t *testing.T) {
 				AllocatedQuota: 5000,
 			}
 			require.NoError(t, CreateOrUpdateAllocation(allocation))
-			require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, "user-123", tc.initialUsed))
+			require.NoError(t, IncreaseUsedQuotaByProjectAndUser(project.Id, plan.Id, "user-123", tc.initialUsed))
 
-			require.NoError(t, DecreaseUsedQuotaByProjectAndUser(project.Id, "user-123", tc.delta))
+			require.NoError(t, DecreaseUsedQuotaByProjectAndUser(project.Id, plan.Id, "user-123", tc.delta))
 			assert.Equal(t, tc.expectedUsed, storedAllocation(t, allocation.Id).UsedQuota)
 		})
 	}
@@ -1295,9 +1294,9 @@ func TestDecreaseUsedQuotaByProjectAndUser_RejectsInvalidInput(t *testing.T) {
 	db := setupProjectTestDB(t)
 	defer cleanupProjectTestDB(t, db)
 
-	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(0, "user-123", 100), "project id is empty")
-	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, "", 100), "client user id is empty")
-	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, "user-123", -1), "delta cannot be negative")
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(0, 1, "user-123", 100), "project id is empty")
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, 1, "", 100), "client user id is empty")
+	assert.ErrorContains(t, DecreaseUsedQuotaByProjectAndUser(1, 1, "user-123", -1), "delta cannot be negative")
 }
 
 // ==================== GetUserProjectRemainingQuota Tests ====================

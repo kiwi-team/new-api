@@ -106,13 +106,16 @@ func main() {
 
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
-	wsmanager.StartSubscriber(context.Background())
 
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 
 	// 数据看板
-	go model.UpdateQuotaData()
+	quotaCtx, stopQuotaWorkers := context.WithCancel(context.Background())
+	quotaWorkersDone := model.StartQuotaDataWorkers(quotaCtx)
+	wsmanager.StartSubscriber(quotaCtx)
+	websocketChecksDone := wsmanager.StartChannelReconciler(quotaCtx, model.GetInactiveChannelIDs)
+	defer func() { stopQuotaWorkers(); <-quotaWorkersDone; <-websocketChecksDone }()
 	// UID临时预算过期归零
 	if os.Getenv("ENABLE_RESET_EXPIRED_QUOTA") == "true" {
 		go model.ResetExpiredCliendUserTempQuota()
@@ -283,8 +286,8 @@ func main() {
 	sig := <-quit
 	common.SysLog(common.LogText("received signal: %v, shutting down...", sig))
 
-	// Persist completed requests before waiting for long-running relays.
-	// SaveQuotaDataCache logs failures and retains those batches for the final flush.
+	// Apply accepted inbox events before waiting for long-running relays.
+	// Failed batches remain durable; Redis events remain available to consumers.
 	_ = model.SaveQuotaDataCache()
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -365,6 +368,11 @@ func InitResources() error {
 
 	service.InitHttpClient()
 
+	// Initialize before any model cache can capture the Redis client.
+	if err = common.InitRedisClient(); err != nil {
+		return err
+	}
+
 	// Initialize SQL Database
 	err = model.InitDB()
 	if err != nil {
@@ -400,12 +408,6 @@ func InitResources() error {
 
 	// Initialize SQL Database
 	err = model.InitLogDB()
-	if err != nil {
-		return err
-	}
-
-	// Initialize Redis
-	err = common.InitRedisClient()
 	if err != nil {
 		return err
 	}

@@ -1,11 +1,11 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,10 +15,13 @@ import (
 
 // QuotaData 柱状图数据
 type QuotaData struct {
-	Id                          int    `json:"id"`
+	Id int `json:"id"`
+	// Legacy rows keep NULL keys. BeforeCreate assigns a nonempty key to every
+	// new bucket; the unique index protects those buckets without rewriting history.
+	BucketKey                   string `json:"-" gorm:"size:64;uniqueIndex:idx_quota_data_bucket"`
 	UserID                      int    `json:"user_id" gorm:"index"`
 	Username                    string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName                   string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
+	ModelName                   string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:128;default:''"`
 	CreatedAt                   int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
 	TokenUsed                   int    `json:"token_used" gorm:"default:0"`
 	PromptTokens                int    `json:"prompt_tokens" gorm:"default:0"`
@@ -55,6 +58,8 @@ type QuotaData struct {
 }
 
 type LogQuotaDataCache struct {
+	// EventID identifies a server-side billing action. Replays must reuse its full payload.
+	EventID                     string
 	UserId                      int
 	Username                    string
 	ModelName                   string
@@ -85,22 +90,6 @@ type LogQuotaDataCache struct {
 	IsSettlementAdjustment bool
 }
 
-func UpdateQuotaData() {
-	// recover
-	defer func() {
-		if r := recover(); r != nil {
-			common.SysLog(fmt.Sprintf("UpdateQuotaData panic: %s\n", r))
-		}
-	}()
-	for {
-		if common.DataExportEnabled {
-			common.SysLog(common.LogText("updating dashboard data..."))
-			SaveQuotaDataCache()
-		}
-		time.Sleep(time.Duration(common.DataExportInterval) * time.Minute)
-	}
-}
-
 type quotaDataKey struct {
 	UserID         int
 	Username       string
@@ -116,34 +105,7 @@ type quotaDataKey struct {
 	PlanID         int
 }
 
-var CacheQuotaData = make(map[quotaDataKey]*QuotaData)
-var CacheQuotaDataLock = sync.Mutex{}
-var quotaDataFlushLock sync.Mutex
-
-func (q *QuotaData) accumulate(delta *QuotaData) {
-	q.Count += delta.Count
-	q.Quota += delta.Quota
-	q.TokenUsed += delta.TokenUsed
-	q.PromptTokens += delta.PromptTokens
-	q.CompletionTokens += delta.CompletionTokens
-	q.CachedTokens += delta.CachedTokens
-	q.ClaudeCacheCreation5mTokens += delta.ClaudeCacheCreation5mTokens
-	q.ClaudeCacheCreation1hTokens += delta.ClaudeCacheCreation1hTokens
-	q.CacheWrite5mRequestCount += delta.CacheWrite5mRequestCount
-	q.CacheWrite1hRequestCount += delta.CacheWrite1hRequestCount
-	q.CacheReadRequestCount += delta.CacheReadRequestCount
-	q.StreamRequestCount += delta.StreamRequestCount
-	q.FrtSum += delta.FrtSum
-	q.RequestTimeSum += delta.RequestTimeSum
-}
-
-func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
-	key := quotaDataKey{
-		UserID: params.UserId, Username: params.Username, ModelName: params.ModelName,
-		CreatedAt: createdAt, TokenID: params.TokenId, ChannelID: params.ChannelId,
-		UseGroup: params.UseGroup, NodeName: params.NodeName, ClientUserID: params.ClientUserId,
-		ClientScenairo: params.ClientScenairo, ProjectName: params.ProjectName, PlanID: params.PlanId,
-	}
+func quotaDataDelta(params *LogQuotaDataCache, createdAt int64) *QuotaData {
 	// 按请求派生缓存命中次数：本次调用即一次请求，对应 token 数 > 0 则计一次。
 	cacheWrite5mReq, cacheWrite1hReq, cacheReadReq := 0, 0, 0
 	if params.ClaudeCacheCreation5mTokens > 0 {
@@ -168,6 +130,8 @@ func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
 	requestCount := 1
 	if params.IsSettlementAdjustment {
 		requestCount = 0
+		cacheWrite5mReq, cacheWrite1hReq, cacheReadReq = 0, 0, 0
+		streamReq, frtSum, requestTimeSum = 0, 0, 0
 	}
 	quotaData := &QuotaData{
 		UserID:                      params.UserId,
@@ -198,31 +162,34 @@ func logQuotaDataCache(params *LogQuotaDataCache, createdAt int64) {
 		ProjectName:                 params.ProjectName,
 		PlanId:                      params.PlanId,
 	}
-	if existing := CacheQuotaData[key]; existing != nil {
-		existing.accumulate(quotaData)
-		return
+	if params.IsSettlementAdjustment {
+		quotaData.TokenUsed, quotaData.PromptTokens, quotaData.CompletionTokens = 0, 0, 0
+		quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens = 0, 0, 0
 	}
-	CacheQuotaData[key] = quotaData
+	return quotaData
 }
 
-func LogQuotaData(logQuotaData *LogQuotaDataCache) {
-	// 只精确到小时
-	createdAt := logQuotaData.CreatedAt - (logQuotaData.CreatedAt % 3600)
-
-	CacheQuotaDataLock.Lock()
-	defer CacheQuotaDataLock.Unlock()
-	logQuotaDataCache(logQuotaData, createdAt)
+func LogQuotaData(params *LogQuotaDataCache) error {
+	event, err := newQuotaDataEvent(params)
+	if err == nil {
+		err = enqueueQuotaDataEvent(event)
+	}
+	if err != nil {
+		common.SysError(common.LogText("Failed to persist quota data event: %v", fmt.Errorf("event_id=%s: %w", event.EventID, err)))
+	}
+	return err
 }
 
 // RefundQuotaData writes a negative quota entry to offset the original quota_data record
 // written at task submission time. Called when an async task fails and quota is refunded.
 func RefundQuotaData(task *Task) {
-	if task == nil || task.Quota == 0 {
+	if task == nil || task.Quota == 0 || !common.DataExportEnabled {
 		return
 	}
 	username, _ := GetUsernameById(task.UserId, false)
 	p := task.Properties
 	LogQuotaData(&LogQuotaDataCache{
+		EventID:        QuotaDataActionID("task-refund", fmt.Sprintf("%d:%s", task.ID, task.TaskID)),
 		UserId:         task.UserId,
 		Username:       username,
 		ModelName:      p.OriginModelName,
@@ -231,6 +198,8 @@ func RefundQuotaData(task *Task) {
 		TokenId:        p.TokenId,
 		TokenName:      p.TokenName,
 		ChannelId:      task.ChannelId,
+		UseGroup:       task.Group,
+		NodeName:       task.PrivateData.NodeName,
 		ClientUserId:   p.ClientUserId,
 		ClientScenairo: p.ClientScenairo,
 		ProjectName:    p.ProjectName,
@@ -240,77 +209,22 @@ func RefundQuotaData(task *Task) {
 	})
 }
 
+// SaveQuotaDataCache drains the local spool and database inbox for shutdown and callers
+// of the legacy flush API. Redis events remain recoverable by any live consumer.
 func SaveQuotaDataCache() error {
-	quotaDataFlushLock.Lock()
-	defer quotaDataFlushLock.Unlock()
-	// Detach this batch so requests can keep recording usage during database I/O.
-	CacheQuotaDataLock.Lock()
-	pending := CacheQuotaData
-	CacheQuotaData = make(map[quotaDataKey]*QuotaData)
-	CacheQuotaDataLock.Unlock()
-	saved := 0
-	var flushErr error
-	// 本轮涉及的非项目消耗 uid：落库后要让准入闸门的月度非项目消耗缓存失效，
-	// 否则新写入的消耗要等 TTL 到期才会被看到。
-	nonProjectUsers := make(map[string]struct{})
-	for key, quotaData := range pending {
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			var existing QuotaData
-			err := lockForUpdate(tx).Where("user_id = ? and username = ? and model_name = ? and created_at = ? and token_id = ? and channel_id = ? and use_group = ? and node_name = ? and client_user_id = ? and client_scenairo = ? and project_name = ? and plan_id = ?",
-				quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.TokenId, quotaData.ChannelId, quotaData.UseGroup, quotaData.NodeName, quotaData.ClientUserId, quotaData.ClientScenairo, quotaData.ProjectName, quotaData.PlanId).First(&existing).Error
-			switch {
-			case errors.Is(err, gorm.ErrRecordNotFound):
-				// GORM assigns the ID before commit; keep it out of the retry batch.
-				row := *quotaData
-				err = tx.Create(&row).Error
-			case err != nil:
-				return err
-			default:
-				// Update only the matched row, including when legacy duplicates exist.
-				err = tx.Model(&QuotaData{}).Where("id = ?", existing.Id).Updates(map[string]any{
-					"count":                          gorm.Expr("count + ?", quotaData.Count),
-					"quota":                          gorm.Expr("quota + ?", quotaData.Quota),
-					"token_used":                     gorm.Expr("token_used + ?", quotaData.TokenUsed),
-					"prompt_tokens":                  gorm.Expr("prompt_tokens + ?", quotaData.PromptTokens),
-					"completion_tokens":              gorm.Expr("completion_tokens + ?", quotaData.CompletionTokens),
-					"cached_tokens":                  gorm.Expr("cached_tokens + ?", quotaData.CachedTokens),
-					"claude_cache_creation5m_tokens": gorm.Expr("claude_cache_creation5m_tokens + ?", quotaData.ClaudeCacheCreation5mTokens),
-					"claude_cache_creation1h_tokens": gorm.Expr("claude_cache_creation1h_tokens + ?", quotaData.ClaudeCacheCreation1hTokens),
-					"cache_write_5m_request_count":   gorm.Expr("cache_write_5m_request_count + ?", quotaData.CacheWrite5mRequestCount),
-					"cache_write_1h_request_count":   gorm.Expr("cache_write_1h_request_count + ?", quotaData.CacheWrite1hRequestCount),
-					"cache_read_request_count":       gorm.Expr("cache_read_request_count + ?", quotaData.CacheReadRequestCount),
-					"stream_request_count":           gorm.Expr("stream_request_count + ?", quotaData.StreamRequestCount),
-					"frt_sum":                        gorm.Expr("frt_sum + ?", quotaData.FrtSum),
-					"request_time_sum":               gorm.Expr("request_time_sum + ?", quotaData.RequestTimeSum),
-				}).Error
-			}
-			if err != nil {
-				return err
-			}
-			return increaseCliendUserUsedQuota(tx, quotaData.ClientUserId, quotaData.Quota)
-		})
-		if err != nil {
-			flushErr = errors.Join(flushErr, err)
-			CacheQuotaDataLock.Lock()
-			if current := CacheQuotaData[key]; current != nil {
-				current.accumulate(quotaData)
-			} else {
-				CacheQuotaData[key] = quotaData
-			}
-			CacheQuotaDataLock.Unlock()
-			continue
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for range 32 {
+		spooled, spoolErr := replayQuotaDataSpool(ctx)
+		count, err := consumeQuotaDataInbox(ctx, true)
+		if err != nil || spoolErr != nil {
+			return errors.Join(err, spoolErr)
 		}
-		saved++
-		if quotaData.ProjectName == "" && quotaData.ClientUserId != "" {
-			nonProjectUsers[quotaData.ClientUserId] = struct{}{}
+		if count < quotaDataBatchSize && spooled < quotaDataBatchSize {
+			return nil
 		}
 	}
-	invalidateMonthlyNonProjectQuotaCache(nonProjectUsers)
-	common.SysLog(common.LogText("saved dashboard data, %d records", saved))
-	if flushErr != nil {
-		common.SysError(common.LogText("failed to save dashboard data; pending records retained for retry: %s", flushErr.Error()))
-	}
-	return flushErr
+	return nil
 }
 
 // GetMonthlyNonProjectQuota 返回某 uid 自 monthStart 起未打项目标签的消耗（原始 quota 单位）。
@@ -709,22 +623,6 @@ func GetQuotaByTime(userId int, startTime int64, endTime int64) (int, error) {
 	var quota int
 	err := DB.Table("quota_data").Select("COALESCE(sum(quota), 0) as quota").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Find(&quota).Error
 	return quota, err
-}
-
-// GetCachedQuotaByUser 获取内存缓存中尚未落库的用户消耗额度
-func GetCachedQuotaByUser(userId int, startTime int64, endTime int64) int {
-	// An in-flight batch is temporarily detached until it commits or is restored.
-	quotaDataFlushLock.Lock()
-	defer quotaDataFlushLock.Unlock()
-	CacheQuotaDataLock.Lock()
-	defer CacheQuotaDataLock.Unlock()
-	var total int
-	for _, qd := range CacheQuotaData {
-		if qd.UserID == userId && qd.CreatedAt >= startTime && qd.CreatedAt <= endTime {
-			total += qd.Quota
-		}
-	}
-	return total
 }
 
 // ChannelQuotaStatistics 渠道消耗统计

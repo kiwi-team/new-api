@@ -51,6 +51,24 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestInactiveChannelsIncludeDeletedChannelsWithoutRedis(t *testing.T) {
+	setupChannelStatusTest(t)
+	channel := Channel{Name: "ws-reconciliation", Status: common.ChannelStatusEnabled}
+	require.NoError(t, DB.Create(&channel).Error)
+	ids := []int{channel.Id}
+	inactive, err := GetInactiveChannelIDs(t.Context(), ids)
+	require.NoError(t, err)
+	assert.Empty(t, inactive)
+	require.NoError(t, DB.Model(&channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	inactive, err = GetInactiveChannelIDs(t.Context(), ids)
+	require.NoError(t, err)
+	assert.Equal(t, ids, inactive)
+	require.NoError(t, DB.Delete(&channel).Error)
+	inactive, err = GetInactiveChannelIDs(t.Context(), ids)
+	require.NoError(t, err)
+	assert.Equal(t, ids, inactive)
+}
+
 func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.T) {
 	setupChannelStatusTest(t)
 

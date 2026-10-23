@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
@@ -98,6 +99,8 @@ func TestRedisUserRateLimiterUsesSharedFixedWindow(t *testing.T) {
 
 func TestRedisEmailVerificationRateLimiterPreservesResponseAndTTL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.RateLimitBucket{}))
 	redisServer, _ := useRateLimitMiniRedis(t)
 
 	router := gin.New()
@@ -200,6 +203,8 @@ func TestRedisFixedWindowRepairsCounterWithoutTTL(t *testing.T) {
 
 func TestRedisFailurePolicies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.RateLimitBucket{}))
 	_, redisClient := useRateLimitMiniRedis(t)
 	require.NoError(t, redisClient.Close())
 
@@ -219,10 +224,12 @@ func TestRedisFailurePolicies(t *testing.T) {
 	})
 
 	ipResponse := performRateLimitRequest(router, "/ip", "192.0.2.60:12345")
-	assert.Equal(t, http.StatusInternalServerError, ipResponse.Code)
+	assert.Equal(t, http.StatusNoContent, ipResponse.Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/ip", "192.0.2.60:12345").Code)
 	assert.Empty(t, ipResponse.Body.String())
 	userResponse := performRateLimitRequest(router, "/user", "192.0.2.61:12345")
-	assert.Equal(t, http.StatusInternalServerError, userResponse.Code)
+	assert.Equal(t, http.StatusNoContent, userResponse.Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/user", "192.0.2.61:12345").Code)
 	assert.Empty(t, userResponse.Body.String())
 	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/email", "192.0.2.62:12345").Code)
 }

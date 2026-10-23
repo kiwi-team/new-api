@@ -22,6 +22,7 @@ type HybridCacheConfig[V any] struct {
 
 	// Redis is used when RedisEnabled returns true (or RedisEnabled is nil) and Redis is not nil.
 	Redis        *redis.Client
+	RedisClient  func() *redis.Client
 	RedisCodec   ValueCodec[V]
 	RedisEnabled func() bool
 
@@ -33,9 +34,10 @@ type HybridCacheConfig[V any] struct {
 type HybridCache[V any] struct {
 	ns Namespace
 
-	redis        *redis.Client
-	redisCodec   ValueCodec[V]
-	redisEnabled func() bool
+	redis          *redis.Client
+	clientProvider func() *redis.Client
+	redisCodec     ValueCodec[V]
+	redisEnabled   func() bool
 
 	memOnce sync.Once
 	memInit func() *hot.HotCache[string, V]
@@ -44,11 +46,12 @@ type HybridCache[V any] struct {
 
 func NewHybridCache[V any](cfg HybridCacheConfig[V]) *HybridCache[V] {
 	return &HybridCache[V]{
-		ns:           cfg.Namespace,
-		redis:        cfg.Redis,
-		redisCodec:   cfg.RedisCodec,
-		redisEnabled: cfg.RedisEnabled,
-		memInit:      cfg.Memory,
+		ns:             cfg.Namespace,
+		redis:          cfg.Redis,
+		clientProvider: cfg.RedisClient,
+		redisCodec:     cfg.RedisCodec,
+		redisEnabled:   cfg.RedisEnabled,
+		memInit:        cfg.Memory,
 	}
 }
 
@@ -56,8 +59,15 @@ func (c *HybridCache[V]) FullKey(key string) string {
 	return c.ns.FullKey(key)
 }
 
+func (c *HybridCache[V]) redisClient() *redis.Client {
+	if c.clientProvider != nil {
+		return c.clientProvider()
+	}
+	return c.redis
+}
+
 func (c *HybridCache[V]) redisOn() bool {
-	if c.redis == nil || c.redisCodec == nil {
+	if c.redisClient() == nil || c.redisCodec == nil {
 		return false
 	}
 	if c.redisEnabled == nil {
@@ -88,7 +98,7 @@ func (c *HybridCache[V]) Get(key string) (value V, found bool, err error) {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
 		defer cancel()
 
-		raw, e := c.redis.Get(ctx, full).Result()
+		raw, e := c.redisClient().Get(ctx, full).Result()
 		if e == nil {
 			v, decErr := c.redisCodec.Decode(raw)
 			if decErr != nil {
@@ -121,7 +131,7 @@ func (c *HybridCache[V]) SetWithTTL(key string, v V, ttl time.Duration) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOpTimeout)
 		defer cancel()
-		return c.redis.Set(ctx, full, raw, ttl).Err()
+		return c.redisClient().Set(ctx, full, raw, ttl).Err()
 	}
 
 	c.memCache().SetWithTTL(full, v, ttl)
@@ -143,7 +153,7 @@ func (c *HybridCache[V]) scanKeys(match string) ([]string, error) {
 	var cursor uint64
 	keys := make([]string, 0, 1024)
 	for {
-		k, next, err := c.redis.Scan(ctx, cursor, match, 1000).Result()
+		k, next, err := c.redisClient().Scan(ctx, cursor, match, 1000).Result()
 		if err != nil {
 			return keys, err
 		}
@@ -250,7 +260,7 @@ func (c *HybridCache[V]) DeleteMany(keys []string) (map[string]bool, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisDelTimeout)
 		defer cancel()
 
-		pipe := c.redis.Pipeline()
+		pipe := c.redisClient().Pipeline()
 		cmds := make([]*redis.IntCmd, 0, len(fullKeys))
 		for _, k := range fullKeys {
 			// UNLINK is non-blocking vs DEL for large key batches.

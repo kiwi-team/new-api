@@ -1,8 +1,8 @@
 package service
 
 import (
+	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 var (
 	notifyLimitStore sync.Map
 	cleanupOnce      sync.Once
+	notifyLimitMu    sync.Mutex
 )
 
 type limitCount struct {
@@ -33,6 +34,7 @@ func startCleanupTask() {
 		for {
 			time.Sleep(time.Hour)
 			now := time.Now()
+			notifyLimitMu.Lock()
 			notifyLimitStore.Range(func(key, value any) bool {
 				if limit, ok := value.(limitCount); ok {
 					if now.Sub(limit.Timestamp) >= getDuration() {
@@ -41,6 +43,7 @@ func startCleanupTask() {
 				}
 				return true
 			})
+			notifyLimitMu.Unlock()
 		}
 	})
 }
@@ -49,7 +52,11 @@ func startCleanupTask() {
 // Returns true if the user can send notification, false if limit exceeded
 func CheckNotificationLimit(userId int, notifyType string) (bool, error) {
 	if common.RedisEnabled {
-		return checkRedisLimit(userId, notifyType)
+		allowed, err := checkRedisLimit(userId, notifyType)
+		if err == nil {
+			return allowed, nil
+		}
+		common.SysError(common.LogText("Notification limiter unavailable; using local limits"))
 	}
 	return checkMemoryLimit(userId, notifyType)
 }
@@ -57,36 +64,18 @@ func CheckNotificationLimit(userId int, notifyType string) (bool, error) {
 func checkRedisLimit(userId int, notifyType string) (bool, error) {
 	key := fmt.Sprintf("notify_limit:%d:%s:%s", userId, notifyType, time.Now().Format("2006010215"))
 
-	// Get current count
-	count, err := common.RedisGet(key)
-	if err != nil && err.Error() != "redis: nil" {
-		return false, fmt.Errorf("failed to get notification count: %w", err)
+	if common.RDB == nil {
+		return false, fmt.Errorf("Redis is not configured")
 	}
-
-	// If key doesn't exist, initialize it
-	if count == "" {
-		err = common.RedisSet(key, "1", getDuration())
-		return true, err
-	}
-
-	currentCount, _ := strconv.Atoi(count)
-	limit := constant.NotifyLimitCount
-
-	// Check if limit is already reached
-	if currentCount >= limit {
-		return false, nil
-	}
-
-	// Only increment if under limit
-	err = common.RedisIncr(key, 1)
-	if err != nil {
-		return false, fmt.Errorf("failed to increment notification count: %w", err)
-	}
-
-	return true, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	count, err := common.RDB.Eval(ctx, `local count = redis.call('INCR', KEYS[1]); if count == 1 or redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return count`, []string{key}, int64(getDuration().Seconds())).Int64()
+	return count <= int64(constant.NotifyLimitCount), err
 }
 
 func checkMemoryLimit(userId int, notifyType string) (bool, error) {
+	notifyLimitMu.Lock()
+	defer notifyLimitMu.Unlock()
 	// Ensure cleanup task is started
 	cleanupOnce.Do(startCleanupTask)
 

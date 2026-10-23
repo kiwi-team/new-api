@@ -156,10 +156,13 @@
 
 ## Future main merge non-regression contract
 
-本节记录本次冲突表面解决后实际发生过的功能回退。它不是一次性备注，而是后续合并 `main` 时必须保留的项目契约。`main` 中没有对应实现，不代表这里的功能可以删除；除非用户明确批准行为变更，否则必须把这些能力迁移到上游的新结构中，并运行对应锚点测试。
+本节记录本次冲突表面解决后实际发生过的功能回退，以及用户明确要求保留的现有行为。它不是一次性备注，而是后续合并 `main` 时必须保留的项目契约。`main` 中没有对应实现，不代表这里的功能可以删除；除非用户明确批准行为变更，否则必须把这些能力迁移到上游的新结构中，并运行对应锚点测试。
 
-| 保护能力 | 本次合并后出现过的问题 | 后续合并必须保持的行为 | 主要实现与回归锚点 |
+| 保护能力 | 已发生的问题或保护背景 | 后续合并必须保持的行为 | 主要实现与回归锚点 |
 |---|---|---|---|
+| Claude 转 Chat Completions 的客户端 usage（2026-10-23 用户确认） | 用户确认现有 `/v1/chat/completions` 返回的 `prompt_tokens` 包含缓存读取和缓存写入，并要求固定为后续合并保护；此项是现有行为确认，不是本次新发现的故障。 | Claude 原生响应转换后，`prompt_tokens = 原始 input_tokens + cache_read_input_tokens + 缓存写入总量`，`cached_tokens` 是其中的缓存读取子集；写入总量取上游汇总与 5m/1h 分项之和的较大值，不重复相加。非流式 JSON 与流式最终 usage 帧保持一致，转换后的 `input_tokens = prompt_tokens`，`total_tokens = prompt_tokens + completion_tokens`，保留 `usage_semantic=openai`、`usage_source=anthropic` 和缓存明细。仅转换对外副本，内部 Claude usage 与原始 `BillingUsage` 不得被覆盖；不能按模型名给已有 OpenAI 口径的上游 usage 再加缓存。 | `relay/channel/claude/relay-claude.go` 的 `HandleClaudeResponseData`、`HandleStreamFinalResponse`、`buildOpenAIStyleUsageFromClaudeUsage`；`relaykit/relayconvert/internal/claude_messages/to_oai_chat_resp.go` 的 `UsageFromClaudeUsage`。测试：`TestBuildOpenAIStyleUsageFromClaudeUsage*`、`TestClaudeStreamFinalUsageEstimatesOnlyUncountedUsage`、`TestConvertResponseProviderToOAIChatUsage`；命令和复核要求见下节。 |
+| 异步任务退款与补扣的计费归属（2026-10-23） | 任务提交消费日志有 UID，但创建任务时未持久化 UID、场景等归属；异步退款从空任务属性取值，钱包已退款而 UID 可用额度未恢复。`RecordTaskBillingLog` 还遗漏了将已传入的归属字段写入实际日志行。 | 插入任务前保存原请求的 Token、UID、场景、项目和计划；无 HTTP Context 的差额退款、失败全额退款及补扣均沿用该归属，实际 `logs` 和 `quota_data` 都必须落库。钱包、令牌与 UID 额度分别对账；项目消耗不得进入非项目预算，结算不得重复累计请求或 token 等计数。历史归属修正不得再次退还已到账的钱包或令牌额度。项目分配的已用量必须在提交时记账，退款和补扣仅调整差额；所有分配更新按项目＋计划＋UID 匹配，包括退款归零分支，不能修改同一 UID 的其他计划。已扣费金额不能因预算单位错误或超预算被漏记。 | `controller/relay.go`、`model/task.go`、`service/task_billing.go`、`service/project_budget.go`、`model/project.go`、`model/log.go`、`model/usedata.go`；`controller/relay_task_plugin_test.go` 的 `TestTaskBillingAttributionDatabase`，以及 `TestQuotaDataPersistenceDatabaseMatrix`。受影响合并必须在真实 SQLite/MySQL/PostgreSQL 上验证，不能只检查字段存在或编译通过。 |
+| `quota_data` 完整累计与分组隔离（2026-10-23 追溯） | `00a210716`（2026-09-19 合并）相对第一父提交 `2dc19ee6a`，将 `increaseQuotaData` 的 14 项累计替换为上游的 `count/quota/token_used` 三项，并删除 `client_user_id/client_scenairo/project_name/plan_id` 更新条件。后续批次遗漏输入、输出、缓存与耗时统计，且可能更新其他业务分组。`21b5080b3`（2026-10-22）已恢复完整累计与分组匹配。 | 同一完整聚合身份跨批次写入时，14 项计数必须全部累计；用户、模型、小时、Key、渠道、分组、节点、UID、场景、项目、计划维度不得串组。退款仅修正额度，不重复累计请求、token 或耗时。保留 `/api/data/model-usage-analysis` 的聚合、用户范围和人工调整语义；存储迁移不能被视为自动补齐历史漏记数据。 | `model/usedata.go`、`model/quota_data_event.go`、`model/quota_data_migration.go`；`TestQuotaDataPersistenceDatabaseMatrix` 的 `all counters and refunds`、`all dimensions` 子用例，`TestModelUsageAnalysisCanFilterAndIdentifyUsers`、`TestUsageAdjustmentCorrectsWholeDayWithoutMutatingSource`。后续受影响合并须验证 SQLite/MySQL/PostgreSQL 矩阵。 |
 | HappyOyster 多模型渠道与 Directing | Adventure 专用前缀若残留在 World 操作或后台轮询中，会把 Directing 请求发送到错误地址；按 MySQL 默认排序规则比较指令 ID 会合并大小写不同的请求。 | 渠道名称为 HappyOyster，编号固定为 `82`，同时提供 Adventure 和 Directing。Directing 原生前缀下保留 16 个接口，包含 simple/scriptlist 创建、暂停/恢复/回溯、过程指令和剧本全量更新。模型权限、临时凭证 scope、资源查询、列表和固定渠道账号均按模型隔离；旧资源及旧临时凭证仍属于 Adventure。`/api/v1/tokens?model=happyoyster-1.0-directing` 选择新模型，省略 model 仍为 Adventure。Directing 按分辨率预扣 180 秒，以原片时长结算，不重复计算合成变体；世界创建和指令注入独立计费。指令以 Travel + clientRequestId 摘要唯一登记，重试不重复执行或扣费；上游结果未知时保留预扣及 pending 记录，需人工对账，不自动退款或重放。暂停响应不能作为已暂停的确认；`rewindToSec=0` 必须保留。 | `constant/happyoyster.go`、`controller/happyoyster_directing.go`、共享 HappyOyster 路由/鉴权/模型/轮询；`TestHappyOysterDirectingLifecycleAndInstructionBilling`、`TestHappyOysterDirectingValidation`、`TestHappyOysterModelAndTemporaryScopeIsolation`、`TestHappyOysterDatabaseMatrix`、`TestHappyOysterDirectingBuiltinBilling`、`TestHappyOysterAdventureRoutesMatchOfficialAPI`、`channel-type-ids.test.ts`。 |
 | 固定渠道类型编号与基础常量/DTO | 渠道编号随 `main` 新类型插入而漂移，前后端、任务插件和已有数据库配置可能指向错误 provider。 | prod 已有渠道编号 `0–77` 永久保持；Task Plugin、vLLM、SGLang、TypeSafe、HappyOyster 分别固定使用 `78–82`。前端枚举、后端常量、API type、默认 Base URL、插件绑定和序列化 DTO 必须同步。 | `constant/channel.go`、`common/api_type.go`、`relaykit/dto/channel_settings.go`、`web/src/features/channels/constants.ts`；`constant/channel_test.go`、`common/api_type_task_plugin_test.go`、`web/src/features/channels/lib/__tests__/channel-type-ids.test.ts`。 |
 | HappyOyster Adventure 独立模型接入 | `main` 没有这套非 OpenAI 协议时，合并中容易把专用 router/controller、四张资源表、临时凭证鉴权、原生计费或前端渠道类型当成旁支删除，或强行并入通用任务接口；响应包装差异和加密 ID 前缀假设也曾导致上游成功被误报为 502。 | `happyoyster-1.0-adventure` 必须继续在 HappyOyster 渠道类型 `82` 内以独立协议存在，不得强行兼容 OpenAI/通用 Task submit-fetch。保留官方前缀下 11 个 World/Travel 接口以及 `/api/v1/tokens`；同时支持官方信封和百炼 `{output,request_id}` 包装，资源 ID 视为非空 opaque ID。主 Key 与 `st-` 临时 Key 的端点权限、摘要存储、过期/单次 ticket、用户/渠道账号绑定和资源固定路由必须保留；列表继续按网关用户隔离。保留 `happy_oyster_worlds/tickets/travels/client_tokens` 持久化和迁移、后台状态收敛及幂等差额结算。计费继续使用 `world_creations`、`experience_seconds`、`price_scope` 的内置表达式，进入 Travel 按 60/90/120 秒预扣并按实际时长结算。World 创建消费日志必须把完整请求 JSON（含 prompt、URL 或 Base64）和返回给客户端的完整响应分别写入 `logs.request`/`logs.response`，不受 `SAVE_REQUEST_RESPONSE` 开关影响；不得记录 Authorization 或主/临时 API Key。 | `HAPPY_OYSTER_ADVENTURE_INTEGRATION.md`、`router/happyoyster-router.go`、`middleware/happyoyster_auth.go`、`controller/happyoyster.go`、`model/happyoyster.go`、`relay/channel/happyoyster/client.go`、`setting/billing_setting/builtin_billing.go`、渠道常量/前端渠道配置；`TestHappyOysterAdventureRoutesMatchOfficialAPI`、`TestHappyOyster*`、`TestHappyOysterBuiltinBillingUsesProtocolUsage`、`channel-type-ids.test.ts`。 |
@@ -190,6 +193,21 @@
 | 日志 JSON 跨库（2026-10-18） | `extra/header` 固定 `jsonb` 无法在 MySQL 建表，PG 专用 JSON 运算符不能直接用于所有日志库；ClickHouse 建表漏掉分支日志列。 | PostgreSQL 保留原 jsonb 列；SQLite 使用 text，MySQL 使用 longtext，ClickHouse 使用 Nullable(String)。JSON API 仍输出字符串，空值仍为 NULL；consume/error 列表和导出共用按方言的精确 JSON 筛选。ClickHouse 已有 logs 表以幂等 ADD COLUMN 补齐分支字段。 | `model/log.go`、`model/error_log.go`、`model/main.go`；`TestLogExportDatabaseMatrix` 的 fresh/upgrade、报文/JSON 筛选及重复迁移用例。 |
 | 内存限流令牌隔离（2026-10-18） | main 将限流主体改为用户/分组并改用成功请求预留，可能覆盖本分支同用户不同 Key 的独立额度。 | 内存主体同时包含用户、已配置独立额度的分组和 token_id；保留 main 的成功请求预留、失败流释放及标准 429 响应；Redis 保持既有用户/分组粒度。 | `middleware/model-rate-limit.go`；`TestModelMemoryRateLimitIsolatesTokensWithinConfiguredGroup`、`TestModelMemoryRateLimitReservesConcurrentSuccessAdmission`、`TestModelRateLimitCountsConfiguredGroupsSeparately`。 |
 | 自定义管理路由的个人令牌边界（2026-10-18） | main 新增全路由权限声明检查，自定义管理路由未声明；简单开放任意 token 会扩大新权限令牌授权，改为 session-only 又会中断旧令牌。 | 自定义管理路由显式声明 legacy 规则：浏览器会话不变，旧令牌仍受原截止日期和角色校验，新 scoped token 拒绝；不能用 `any` 规则代替未定义的授权。 | `middleware/access_token_routes.go`、`middleware/auth.go`；`TestUserAuthAppliesAccessTokenRouteRules`、`TestAccessTokenRouteRulesCoverEveryDashboardRoute`。 |
+
+### Claude → Chat Completions usage 合并复核
+
+- 示例：Claude 普通输入 `100`、缓存读取 `30`、缓存写入 `50`、输出 `20`，对外必须返回 `prompt_tokens=180`、`prompt_tokens_details.cached_tokens=30`、`prompt_tokens_details.cache_write_tokens=50`、`total_tokens=200`；内部原始普通输入仍为 `100`。
+- 复核非流式 `HandleClaudeResponseData` 和流式 `HandleStreamFinalResponse` 均实际调用共享转换，且保留现有是否输出 usage 的控制。AWS Bedrock、Vertex 等复用 Claude handler 的路径同样受保护。仅保留转换函数或通过编译不能替代调用链检查；迁移 handler 时补充实际 JSON/SSE 输出的回归验证。
+- 后续受影响合并必须运行下列现有锚点测试；涉及 `relaykit/` 或其公共 API 的改动还须在该模块内执行 `GOWORK=off go build ./...`。
+
+```sh
+# 仓库根目录：客户端总量、缓存写入汇总/分项、纯缓存输入的流式处理
+go test ./relay/channel/claude -run '^(TestBuildOpenAIStyleUsageFromClaudeUsage.*|TestClaudeStreamFinalUsageEstimatesOnlyUncountedUsage)$' -count=1
+# relaykit/ 目录：对外总量、缓存明细与原始 BillingUsage 同时保留
+GOWORK=off go test ./relayconvert -run '^TestConvertResponseProviderToOAIChatUsage$' -count=1
+```
+
+2026-10-23 本次分析已执行第二条 `relaykit` 测试并通过；本次仅记录既有行为，未修改业务代码。第一条为后续受影响合并的必跑命令，不在本次已执行验证范围内。
 
 ### Required merge review procedure
 
@@ -349,3 +367,50 @@ export AUDIT_CLICKHOUSE_DSN='clickhouse://merge_test:merge-test-only@127.0.0.1:3
 认证相关判断参考 [OWASP ASVS 5.0.0](https://owasp.org/projects/asvs)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 和 [Multifactor Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html)。核对的控制点是服务端角色/证明与资源边界、验证过的邮箱唯一性、会话撤销、旧令牌截止日期、新令牌授权失败关闭及审计不含可用凭证；对应回归随全量测试通过。本记录不声明整个应用已通过 ASVS 合规认证。
 
 验证范围：升级测试使用发布版本的 schema fixture 和代表性数据，不是完整生产数据库副本恢复演练；未运行数据库最低支持版本或真实付费上游调用。ClickHouse 专项覆盖消费日志和审计日志，不宣称本轮扩展了它对所有其他日志模型的支持。测试中间失败及修复原因已记录，不将首次失败或跳过项计为通过。
+
+## 2026-10-23 quota_data 历史合并回归追溯
+
+- `37034124e`（2025-06-24）已为数据库增量更新加入 `prompt_tokens/completion_tokens`；合并前的 `2dc19ee6a` 中，`increaseQuotaData` 已完整更新 14 项计数，并按 UID、场景、项目、计划等完整维度匹配。
+- `git diff 00a210716^1 00a210716 -- model/usedata.go` 明确显示：2026-09-19 的合并删除了 11 项累计和上述四个更新条件。对照第二父提交 `5caafd3d8`，合并结果采用了上游三项累计的实现，未保留分支扩展；这是合并造成的功能回退。
+- 2026-10-19 的 `316ac12cc` 合并前，该缺陷已经存在；2026-10-22 的 `21b5080b3` 恢复完整累计和分组匹配。上述日期为 Git 提交日期，不代表线上部署时间。
+- 当前持久化事件实现继续保留全部计数。现有回归 `testQuotaDataCounters` 对同一分组分别记录并落库两次，断言所有计数为两次之和，再验证退款只修改额度；由 `TestQuotaDataPersistenceDatabaseMatrix` 调用。
+- 本次会话已执行 `go test ./model -run '^TestQuotaDataPersistenceDatabaseMatrix$/^sqlite$/^all_counters_and_refunds$' -count=1 -v`，在 SQLite **3.50.4** 通过。本次追溯仅补充记录，不改生产代码或数据库；没有重新执行 MySQL/PostgreSQL 矩阵，也未核实生产部署版本或回填历史数据。
+
+## 2026-10-23 异步任务退款归属修复与合并保护
+
+本节记录同日另一次实际修复及验证，不改变上一节历史追溯的验证范围。后续合并必须保留完整归属链路，不能将“钱包已退款”视为所有预算均已恢复。
+
+### 故障与修复位置
+
+- 本地请求 `toio20261021034353302932000iEgJWFRU` 的 `omnihuman-2.0` 任务预扣 **$21.000000**，成功后实际费用 **$0.777514**，差额退款 **$20.222486** 已回到账户钱包；原消费属于 UID `12345678a`，退款日志和统计却属于空 UID，导致该 UID 仍承担完整预扣额。
+- `controller/relay.go` 的 `executeTaskSubmissionWith` 在任务插入前，从原请求保存 `Properties.TokenId/TokenName/ClientUserId/ClientScenairo/ProjectName/ProjectId/PlanId`。仅在 `LogTaskConsumption` 中读取 Context 并记录提交日志不足以支持异步结算。
+- `service/task_billing.go` 的 `RefundTaskQuota`、`RecalculateTaskQuota` 必须继续从持久化任务取得原归属，传递到 `RecordTaskBillingLog`；轮询请求的账号、UID 或节点上下文不能替代提交快照。
+- `model/log.go` 的 `RecordTaskBillingLog` 必须同时把 `ClientUserId/ClientScenairo/ProjectName/PlanId` 写入实际 `Log` 和统计事件。不得只恢复参数或结构体声明而漏掉赋值。
+- 项目分配曾存在独立的更新缺陷：提交未增加 `project_allocations.used_quota`，退款却会减少；增减 SQL 未限定计划，可能改动同一项目、同一 UID 的多个计划。`LogTaskConsumption` 现按提交结算金额记录项目用量，`TrackProjectConsumption` 与异步差额结算都将已保存的 `PlanId` 传入更新函数，SQL 的正常更新及退款归零均匹配项目、计划和 UID。HappyOyster 使用同一模型函数，其调用也必须传入已保存的计划。
+- `allocated_quota` 是美元，`used_quota` 和差额是内部额度单位。提交后记录的是已经扣除的费用，不能用旧的 `used_quota + delta <= allocated_quota` 判断漏记消费；最终补扣超过预算也必须如实记录。请求前仍由 `ValidateProjectRequest` 按统一单位校验剩余额度。立即完成的任务记录最终金额，立即失败记录零，后台差额不能再次增加请求次数。
+- UID 非项目可用额度依赖原 UID 的月度非项目净消耗，退款必须以负值冲减原 UID；`cliend_user_quota.used_quota` 也需保持一致。项目与计划维度必须保留，项目支出不消耗个人预算。结算只调整额度，不再增加请求、token、缓存或耗时计数。
+
+### 已修复的历史记录与重放边界
+
+这笔本地记录已完成一次归属修正：补齐任务 `110` 的属性和退款日志 `1144` 的归属，将退款统计桶 `4041` 的负额度合并到原统计桶 `4040`，保留其完整桶标识及其他计数；最终净额度为 `388757`（**$0.777514**），请求次数仍为 `1`。UID 已用额度减少 `10111243`（**$20.222486**），并对对应月度消耗缓存执行失效操作。账户钱包与 API 令牌余额未再次调整；修复脚本重复执行未重复冲减。
+
+上述请求未带项目；本次补充的项目／计划修复不自动回填其他历史 `project_allocations.used_quota`。这是一笔已完成的本地数据修复记录，不是后续部署时应自动重放的退款指令。代码修复不会自动补齐其他历史任务；若另行修复旧数据，须先用原消费日志与任务结算结果确定归属和金额，备份后在事务中校验旧值、完整桶身份及全部计数，处理桶合并和 UID 汇总，完成后使相关缓存失效。已经退还的钱包和令牌额度不得再次退款。
+
+### 回归锚点与已执行验证
+
+`controller/relay_task_plugin_test.go` 的 `TestTaskBillingAttributionDatabase` 经真实提交持久化后重新读出任务，在没有原 HTTP Context 的情况下验证个人/项目两类归属的差额退款、失败全额退款和补扣；检查钱包、令牌、UID 汇总、月度非项目消耗、实际日志、统计请求次数及重复结算。项目用例从已用量为零开始，并预置同一项目＋UID 的另一个计划，验证提交增记、差额退款、失败全退、补扣、超预算实际费用、重复结算、项目总用量和其他计划不变；另外覆盖退款归零、缺失计划及计划 0 的隔离。`TestImmediateTaskSettlementDatabase` 同时验证立即完成与立即失败时项目只记录最终金额。配套 `TestQuotaDataPersistenceDatabaseMatrix` 保护全部 14 项累计与 UID、场景、项目、计划隔离。
+
+以下命令在本次修复阶段实际执行并通过。MySQL/PostgreSQL DSN 指向隔离的临时测试数据库，未对业务数据库运行测试迁移；测试后已清理临时数据库和 MySQL 容器。
+
+从仓库根目录执行，MySQL/PostgreSQL 测试事先设置对应的 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN`：
+
+```bash
+TEST_TASK_DB_DIALECT=sqlite go test ./controller -run '^(TestTaskBillingAttributionDatabase|TestImmediateTaskSettlementDatabase|TestExecuteTaskSubmission.*)$' -count=1 -v
+TEST_TASK_DB_DIALECT=mysql go test ./controller -run '^(TestTaskBillingAttributionDatabase|TestImmediateTaskSettlementDatabase|TestExecuteTaskSubmission.*)$' -count=1 -v
+TEST_TASK_DB_DIALECT=postgres go test ./controller -run '^(TestTaskBillingAttributionDatabase|TestImmediateTaskSettlementDatabase|TestExecuteTaskSubmission.*)$' -count=1 -v
+go test ./model -run '^TestQuotaDataPersistenceDatabaseMatrix$' -count=1 -v
+```
+
+前三条分别在 SQLite **3.50.4**、MySQL **8.4.13**、PostgreSQL **18.3** 上通过。最后一条同时设置两个 DSN，在上述三个实际引擎上全部通过，包含 `all counters and refunds`、`all dimensions`。
+
+后续涉及该链路的合并必须重跑上述锚点，确认三种数据库均实际执行；缺少 DSN 导致的跳过不能视为矩阵通过。可按新架构调整实现位置，但不得删除这些可观察行为及其回归覆盖。

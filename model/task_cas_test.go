@@ -17,6 +17,13 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	spoolDir, err := os.MkdirTemp("", "new-api-test-spool-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("QUOTA_DATA_SPOOL_DIR", spoolDir); err != nil {
+		panic(err)
+	}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
@@ -49,6 +56,9 @@ func TestMain(m *testing.M) {
 		&Log{},
 		&Channel{},
 		&QuotaData{},
+		&QuotaDataEventRecord{},
+		&QuotaDataAppliedEvent{},
+		&RateLimitBucket{},
 		&UsageAdjustment{},
 		&Ability{},
 		&TopUp{},
@@ -69,7 +79,9 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(spoolDir)
+	os.Exit(code)
 }
 
 func truncateTables(t *testing.T) {
@@ -89,6 +101,9 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
 		DB.Exec("DELETE FROM quota_data")
+		DB.Exec("DELETE FROM quota_data_events")
+		DB.Exec("DELETE FROM quota_data_applied_events")
+		DB.Exec("DELETE FROM rate_limit_buckets")
 		DB.Exec("DELETE FROM usage_adjustments")
 		DB.Exec("DELETE FROM abilities")
 		DB.Exec("DELETE FROM top_ups")

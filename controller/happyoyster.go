@@ -958,9 +958,9 @@ func happyOysterSettleTravel(ctx context.Context, travel *model.HappyOysterTrave
 		model.UpdateChannelUsedQuota(travel.ChannelId, delta)
 		if travel.ProjectId > 0 && travel.ClientUserId != "" {
 			if delta > 0 {
-				err = model.IncreaseUsedQuotaByProjectAndUser(travel.ProjectId, travel.ClientUserId, delta)
+				err = model.IncreaseUsedQuotaByProjectAndUser(travel.ProjectId, travel.PlanId, travel.ClientUserId, delta)
 			} else {
-				err = model.DecreaseUsedQuotaByProjectAndUser(travel.ProjectId, travel.ClientUserId, -delta)
+				err = model.DecreaseUsedQuotaByProjectAndUser(travel.ProjectId, travel.PlanId, travel.ClientUserId, -delta)
 			}
 			if err != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("HappyOyster settlement project adjustment failed: travel_id=%d project_id=%d delta=%d: %v", travel.Id, travel.ProjectId, delta, err))
@@ -982,7 +982,7 @@ func happyOysterSettleTravel(ctx context.Context, travel *model.HappyOysterTrave
 		logType, amount = model.LogTypeRefund, -delta
 	}
 	if delta != 0 {
-		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: travel.UserId, LogType: logType, Content: []*common.Message{common.NewMessage("HappyOyster travel settlement")}, ChannelId: travel.ChannelId, ModelName: constant.HappyOysterModel(travel.Model), Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
+		model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{EventID: model.QuotaDataActionID("happyoyster-settlement", fmt.Sprint(travel.Id)), UserId: travel.UserId, LogType: logType, Content: []*common.Message{common.NewMessage("HappyOyster travel settlement")}, ChannelId: travel.ChannelId, ModelName: constant.HappyOysterModel(travel.Model), Quota: amount, TokenId: travel.TokenId, Group: travel.UsingGroup, Other: other, ClientUserId: travel.ClientUserId, ClientScenairo: travel.ClientScenairo, ProjectName: travel.ProjectName, PlanId: travel.PlanId})
 	}
 }
 

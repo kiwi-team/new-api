@@ -141,7 +141,12 @@ elseif redis.call('TTL', KEYS[1]) < 0 then
   redis.call('EXPIRE', KEYS[1], ARGV[2])
 end
 return 1`
-	return common.RDB.Eval(context.Background(), script, []string{getUserAuthFenceKey(userId)}, authVersion, userAuthFenceTTLSeconds()).Err()
+	if err := common.RDB.Eval(context.Background(), script, []string{getUserAuthFenceKey(userId)}, authVersion, userAuthFenceTTLSeconds()).Err(); err != nil {
+		// Readers verify the database version; unavailable Redis must not stop a
+		// password change or disable operation from persisting its security state.
+		common.SysError(common.LogText("User auth cache fence unavailable; enforcing the database version"))
+	}
+	return nil
 }
 
 // publishCommittedUserAuthVersion records the durable lower bound used to
@@ -225,7 +230,10 @@ func PublishUserAuthCache(userId int) error {
 	if err != nil {
 		return err
 	}
-	return updateUserCache(*user)
+	if err := updateUserCache(*user); err != nil {
+		common.SysError(common.LogText("User auth cache publication failed; readers will verify the database version"))
+	}
+	return nil
 }
 
 // InitializeUserAuthVersions must run after AutoMigrate when upgrading an

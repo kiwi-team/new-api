@@ -223,7 +223,11 @@ func GetUserSessionCached(sid string) (*UserSession, error) {
 	if common.RedisEnabled {
 		entry, err := getUserSessionCache(sid)
 		if err == nil {
-			return entry.session(), nil
+			if confirmErr := confirmUserSessionActiveSnapshot(entry.session()); confirmErr == nil {
+				return entry.session(), nil
+			} else if !errors.Is(confirmErr, ErrUserSessionInactive) {
+				return nil, confirmErr
+			}
 		}
 		if errors.Is(err, ErrUserSessionInactive) {
 			return nil, err
@@ -397,7 +401,10 @@ func writeUserSessionDenyFence(session *UserSession, status string, now int64, r
 	entry.Status = status
 	entry.RevokedAt = now
 	entry.RevokedReason = reason
-	return writeUserSessionCache(entry, time.Time{})
+	if err := writeUserSessionCache(entry, time.Time{}); err != nil {
+		common.SysError(common.LogText("Session deny cache unavailable; persisting revocation in the database"))
+	}
+	return nil
 }
 
 func ListActiveUserSessions(userID int, currentSID string, now int64) ([]UserSession, error) {

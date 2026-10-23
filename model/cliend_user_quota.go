@@ -11,8 +11,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/go-redis/redis/v8"
 	"github.com/samber/hot"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type CliendUserQuota struct {
@@ -21,7 +23,7 @@ type CliendUserQuota struct {
 	ClientName   string `json:"client_name" gorm:"default:''"`
 	FixedQuota   int    `json:"fixed_quota" gorm:"type:int;default:0"`
 	TempQuota    int    `json:"temp_quota" gorm:"type:int;default:0"`
-	UsedQuota    int    `json:"used_quota" gorm:"type:int;default:0"`
+	UsedQuota    int    `json:"used_quota" gorm:"type:bigint;default:0"`
 	UpdatedAt    int64  `json:"updated_at" gorm:"type:bigint;index"`
 	ExpiredAt    int64  `json:"expired_at" gorm:"type:bigint;index;default:0"`
 }
@@ -115,8 +117,8 @@ func getClientUserNonProjectUsedCache() *cachex.HybridCache[int64] {
 	clientUserNonProjectUsedCacheOnce.Do(func() {
 		ttl := clientUserNonProjectUsedCacheTTL()
 		clientUserNonProjectUsedCache = cachex.NewHybridCache[int64](cachex.HybridCacheConfig[int64]{
-			Namespace: cachex.Namespace(clientUserNonProjectUsedCacheNamespace),
-			Redis:     common.RDB,
+			Namespace:   cachex.Namespace(clientUserNonProjectUsedCacheNamespace),
+			RedisClient: func() *redis.Client { return common.RDB },
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
 			},
@@ -174,28 +176,29 @@ func getMonthlyNonProjectQuotaCached(clientUserId string, budgetQuota float64) (
 }
 
 func IncreaseCliendUserUsedQuota(clientUserId string, delta int) error {
-	return increaseCliendUserUsedQuota(DB, clientUserId, delta)
+	return DB.Transaction(func(tx *gorm.DB) error { return increaseCliendUserUsedQuota(tx, clientUserId, delta) })
 }
 
 func increaseCliendUserUsedQuota(tx *gorm.DB, clientUserId string, delta int) error {
 	if clientUserId == "" || delta == 0 {
 		return nil
 	}
-	var row CliendUserQuota
-	err := tx.Where("client_user_id = ?", clientUserId).First(&row).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	row := CliendUserQuota{ClientUserId: clientUserId}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return err
 	}
-	if row.Id == 0 {
-		row.ClientUserId = clientUserId
-		row.UsedQuota = delta
-		row.UpdatedAt = common.GetTimestamp()
-		return tx.Create(&row).Error
+	row = CliendUserQuota{}
+	if err := lockForUpdate(tx).Where("client_user_id = ?", clientUserId).First(&row).Error; err != nil {
+		return err
+	}
+	total := QuotaData{Quota: row.UsedQuota}
+	if err := total.accumulateChecked(QuotaData{Quota: delta}); err != nil {
+		return err
 	}
 	return tx.Model(&CliendUserQuota{}).
-		Where("client_user_id = ?", clientUserId).
+		Where("id = ?", row.Id).
 		Updates(map[string]any{
-			"used_quota": gorm.Expr("used_quota + ?", delta),
+			"used_quota": total.Quota,
 			"updated_at": common.GetTimestamp(),
 		}).Error
 }

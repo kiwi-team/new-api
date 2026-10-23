@@ -14,7 +14,7 @@ import (
 )
 
 var RDB *redis.Client
-var RedisEnabled = true
+var RedisEnabled bool
 
 func RedisKeyCacheSeconds() int {
 	return SyncFrequency
@@ -22,6 +22,7 @@ func RedisKeyCacheSeconds() int {
 
 // InitRedisClient This function is called after init()
 func InitRedisClient() (err error) {
+	RedisEnabled = false
 	if os.Getenv("REDIS_CONN_STRING") == "" {
 		RedisEnabled = false
 		SysLog(LogText("REDIS_CONN_STRING not set, Redis is not enabled"))
@@ -34,17 +35,26 @@ func InitRedisClient() (err error) {
 	SysLog(LogText("Redis is enabled"))
 	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
 	if err != nil {
-		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
+		// Parse errors can contain credentials. Keep the diagnostic free of the URL.
+		SysError(LogText("Invalid REDIS_CONN_STRING; using database and local fallbacks"))
+		return nil
 	}
 	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
+	opt.DialTimeout = 2 * time.Second
+	opt.ReadTimeout = 2 * time.Second
+	opt.WriteTimeout = 2 * time.Second
+	opt.PoolTimeout = 2 * time.Second
+	opt.MaxRetries = 1
 	RDB = redis.NewClient(opt)
+	RedisEnabled = true // Configuration state; individual operations handle outages.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err = RDB.Ping(ctx).Result()
 	if err != nil {
-		FatalLog(LogText("Redis ping test failed: %s", err.Error()))
+		SysError(LogText("Redis is unavailable; using module fallbacks until the connection recovers"))
+		return nil
 	}
 	if DebugEnabled {
 		SysLog(LogText("Redis connected to %s", opt.Addr))
@@ -54,59 +64,49 @@ func InitRedisClient() (err error) {
 }
 
 func ParseRedisOption() *redis.Options {
-	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
-	if err != nil {
-		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
+	if RDB == nil {
+		return nil
 	}
-	return opt
+	opt := *RDB.Options()
+	return &opt
 }
 
 func RedisSet(key string, value string, expiration time.Duration) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis SET: key=%s, value=%s, expiration=%v", key, value, expiration))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 	return RDB.Set(ctx, key, value, expiration).Err()
 }
 
 func RedisGet(key string) (string, error) {
-	if DebugEnabled {
-		SysLog(LogText("Redis GET: key=%s", key))
+	if !RedisEnabled || RDB == nil {
+		return "", errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 	val, err := RDB.Get(ctx, key).Result()
 	return val, err
 }
 
-//func RedisExpire(key string, expiration time.Duration) error {
-//	ctx := context.Background()
-//	return RDB.Expire(ctx, key, expiration).Err()
-//}
-//
-//func RedisGetEx(key string, expiration time.Duration) (string, error) {
-//	ctx := context.Background()
-//	return RDB.GetSet(ctx, key, expiration).Result()
-//}
-
 func RedisDel(key string) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis DEL: key=%s", key))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 	return RDB.Del(ctx, key).Err()
 }
 
 func RedisDelKey(key string) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis DEL Key: key=%s", key))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 	return RDB.Del(ctx, key).Err()
 }
 
 func RedisHSetObj(key string, obj any, expiration time.Duration) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis HSET: key=%s, obj=%+v, expiration=%v", key, obj, expiration))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 
@@ -159,8 +159,8 @@ func RedisHSetObj(key string, obj any, expiration time.Duration) error {
 }
 
 func RedisHGetObj(key string, obj any) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis HGETALL: key=%s", key))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ctx := context.Background()
 
@@ -240,8 +240,8 @@ func RedisHGetObj(key string, obj any) error {
 
 // RedisIncr Add this function to handle atomic increments
 func RedisIncr(key string, delta int64) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis INCR: key=%s, delta=%d", key, delta))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	// 检查键的剩余生存时间
 	ttlCmd := RDB.TTL(context.Background(), key)
@@ -273,8 +273,8 @@ func RedisIncr(key string, delta int64) error {
 }
 
 func RedisHIncrBy(key, field string, delta int64) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis HINCRBY: key=%s, field=%s, delta=%d", key, field, delta))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ttlCmd := RDB.TTL(context.Background(), key)
 	ttl, err := ttlCmd.Result()
@@ -300,8 +300,8 @@ func RedisHIncrBy(key, field string, delta int64) error {
 }
 
 func RedisHSetField(key, field string, value any) error {
-	if DebugEnabled {
-		SysLog(LogText("Redis HSET field: key=%s, field=%s, value=%v", key, field, value))
+	if !RedisEnabled || RDB == nil {
+		return errors.New("Redis is not configured")
 	}
 	ttlCmd := RDB.TTL(context.Background(), key)
 	ttl, err := ttlCmd.Result()

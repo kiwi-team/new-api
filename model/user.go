@@ -731,7 +731,10 @@ func BindEmailToUser(user *User, email string) error {
 	}); err != nil {
 		return err
 	}
-	return updateUserCache(*user)
+	if err := updateUserCache(*user); err != nil {
+		common.SysError(common.LogText("User auth cache publication failed; readers will verify the database version"))
+	}
+	return nil
 }
 
 func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) error {
@@ -878,7 +881,7 @@ func (user *User) Update(updatePassword bool) error {
 		return err
 	}
 	if err := updateUserCache(*user); err != nil {
-		return err
+		common.SysError(common.LogText("User auth cache publication failed; readers will verify the database version"))
 	}
 	if user.AuthVersion > previousAuthVersion {
 		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
@@ -962,7 +965,7 @@ func (user *User) Edit(updatePassword bool) error {
 		return err
 	}
 	if err := updateUserCache(*user); err != nil {
-		return err
+		common.SysError(common.LogText("User auth cache publication failed; readers will verify the database version"))
 	}
 	if user.AuthVersion > previousAuthVersion {
 		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
@@ -1044,7 +1047,10 @@ func (user *User) ClearBinding(bindingType string) error {
 		return err
 	}
 
-	return updateUserCache(*user)
+	if err := updateUserCache(*user); err != nil {
+		common.SysError(common.LogText("User auth cache publication failed; readers will verify the database version"))
+	}
+	return nil
 }
 
 func (user *User) Delete() (int64, error) {
@@ -1089,12 +1095,15 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 		return 0, err
 	}
 	if err := publishCommittedUserAuthVersion(user.Id, nextAuthVersion); err != nil {
-		return revokedAccessTokens, err
+		common.SysError(common.LogText("failed to publish auth tombstone after deleting user %d: %v", user.Id, err))
 	}
 	if _, err := RevokeAllUserSessions(user.Id, "user_deleted"); err != nil {
 		return revokedAccessTokens, err
 	}
-	return revokedAccessTokens, invalidateUserCache(user.Id)
+	if err := invalidateUserCache(user.Id); err != nil {
+		common.SysError(common.LogText("failed to invalidate user cache after deleting user %d: %v", user.Id, err))
+	}
+	return revokedAccessTokens, nil
 }
 
 func (user *User) HardDelete() (int64, error) {
@@ -1448,23 +1457,14 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if err := common.ValidateWalletQuota(quota); err != nil {
 		return err
 	}
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
-		gopool.Go(func() {
-			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-				common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
-			}
-		})
-		return nil
-	}
+
 	if err := increaseUserQuota(id, quota); err != nil {
 		return err
 	}
-	gopool.Go(func() {
-		if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
-			common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
-		}
-	})
+	if err := invalidateUserCache(id); err != nil {
+		common.SysLog(common.LogText("failed to increase user quota: %s", err.Error()))
+	}
+
 	return nil
 }
 
@@ -1492,17 +1492,13 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	gopool.Go(func() {
-		err := cacheDecrUserQuota(id, int64(quota))
-		if err != nil {
-			common.SysLog(common.LogText("failed to decrease user quota: %s", err.Error()))
-		}
-	})
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
-		return nil
+	if err := decreaseUserQuota(id, quota); err != nil {
+		return err
 	}
-	return decreaseUserQuota(id, quota)
+	if err := invalidateUserCache(id); err != nil {
+		common.SysLog(common.LogText("failed to decrease user quota: %s", err.Error()))
+	}
+	return nil
 }
 
 func decreaseUserQuota(id int, quota int) (err error) {

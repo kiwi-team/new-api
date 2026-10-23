@@ -124,7 +124,7 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Table("logs").AutoMigrate(&releasedLogRC45{}))
 						require.NoError(t, db.Table("logs").Create(&releasedLogRC45{RequestId: "release-log", Content: "preserved", Quota: 123, CreatedAt: 1}).Error)
 					}
-					require.NoError(t, mainDB.AutoMigrate(&model.Channel{}, &model.User{}, &model.Token{}))
+					require.NoError(t, mainDB.AutoMigrate(&model.Channel{}, &model.User{}, &model.Token{}, &model.SystemTaskLock{}))
 					if upgrade && tc.kind != "clickhouse" {
 						for range 2 {
 							require.NoError(t, mainDB.AutoMigrate(&model.Token{}))
@@ -250,7 +250,7 @@ func TestLogExportRules(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, _ := newAuditTestDatabase(t, "sqlite", "")
 	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.User{}, &model.Log{}, &model.QuotaData{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.User{}, &model.Log{}, &model.QuotaData{}, &model.SystemTaskLock{}))
 	now := time.Now().Unix()
 	seedExportLogs(t, db, db, now)
 	logSetting := operation_setting.GetLogSetting()
@@ -297,7 +297,7 @@ func TestLogExportRules(t *testing.T) {
 	})
 
 	t.Run("one export per user", func(t *testing.T) {
-		release, ok, err := service.AcquireLogExportLock(1)
+		_, release, ok, err := service.AcquireLogExportLock(context.Background(), 1)
 		require.NoError(t, err)
 		require.True(t, ok)
 		busy := callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, recent)
@@ -311,6 +311,9 @@ func TestLogExportRules(t *testing.T) {
 }
 
 func TestAcquireLogExportLock(t *testing.T) {
+	db, _ := newAuditTestDatabase(t, "sqlite", "")
+	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	require.NoError(t, db.AutoMigrate(&model.SystemTaskLock{}))
 	for _, useRedis := range []bool{false, true} {
 		t.Run(fmt.Sprintf("redis=%v", useRedis), func(t *testing.T) {
 			previousRedis, previousClient := common.RedisEnabled, common.RDB
@@ -322,18 +325,18 @@ func TestAcquireLogExportLock(t *testing.T) {
 			}
 			t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
 
-			release, ok, err := service.AcquireLogExportLock(1)
+			_, release, ok, err := service.AcquireLogExportLock(context.Background(), 1)
 			require.NoError(t, err)
 			require.True(t, ok)
-			_, ok, err = service.AcquireLogExportLock(1)
+			_, _, ok, err = service.AcquireLogExportLock(context.Background(), 1)
 			require.NoError(t, err)
 			assert.False(t, ok, "a second export of the same user must wait")
-			releaseOther, ok, err := service.AcquireLogExportLock(2)
+			_, releaseOther, ok, err := service.AcquireLogExportLock(context.Background(), 2)
 			require.NoError(t, err)
 			assert.True(t, ok)
 			releaseOther()
 			release()
-			releaseAgain, ok, err := service.AcquireLogExportLock(1)
+			_, releaseAgain, ok, err := service.AcquireLogExportLock(context.Background(), 1)
 			require.NoError(t, err)
 			assert.True(t, ok, "a finished export frees the user")
 			releaseAgain()

@@ -475,9 +475,6 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	if !common.LogConsumeEnabled {
-		return
-	}
 	username := c.GetString("username")
 	requestId := params.RequestId
 	if requestId == "" {
@@ -493,6 +490,44 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		if firstResponseTime, ok := params.Other.Snapshot()["frt"].(float64); ok && firstResponseTime > 0 {
 			firstTokenMs = int(firstResponseTime)
 		}
+	}
+	quotaEventID := c.GetString(common.KeyChannelRaceBillingRequestId)
+	if quotaEventID == "" {
+		quotaEventID = c.GetString(common.RequestIdKey)
+	}
+	if quotaEventID != "" {
+		quotaEventID = QuotaDataActionID("consume", fmt.Sprintf("%s:%d", quotaEventID, params.ChannelId))
+	}
+	if common.DataExportEnabled {
+		// Record before returning so shutdown can flush every completed request.
+		LogQuotaData(&LogQuotaDataCache{
+			EventID:                     quotaEventID,
+			UserId:                      userId,
+			Username:                    username,
+			ModelName:                   params.ModelName,
+			Quota:                       params.Quota,
+			CreatedAt:                   createdAt,
+			TokenUsed:                   params.PromptTokens + params.CompletionTokens,
+			TokenName:                   params.TokenName,
+			PromptTokens:                params.PromptTokens,
+			CompletionTokens:            params.CompletionTokens,
+			CachedTokens:                params.CachedTokens,
+			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
+			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
+			ChannelId:                   params.ChannelId,
+			TokenId:                     params.TokenId,
+			UseGroup:                    params.Group,
+			NodeName:                    common.NodeName,
+			ClientUserId:                params.ClientUserId,
+			ClientScenairo:              params.ClientScenairo,
+			ProjectName:                 params.ProjectName,
+			PlanId:                      params.PlanId,
+			FirstTokenMs:                firstTokenMs,
+			UseTimeSeconds:              params.UseTimeSeconds,
+		})
+	}
+	if !common.LogConsumeEnabled {
+		return
 	}
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -548,39 +583,12 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err := createLog(log); err != nil {
 		logger.LogError(c, "failed to record consume log: "+err.Error())
 	}
-	if !common.DataExportEnabled {
-		common.SysLog(fmt.Sprintf("[DIAG] DataExportEnabled=false, skipping LogQuotaData for model=%s", params.ModelName))
-	}
-	if common.DataExportEnabled {
-		// Record before returning so shutdown can flush every completed request.
-		LogQuotaData(&LogQuotaDataCache{
-			UserId:                      userId,
-			Username:                    username,
-			ModelName:                   params.ModelName,
-			Quota:                       params.Quota,
-			CreatedAt:                   createdAt,
-			TokenUsed:                   params.PromptTokens + params.CompletionTokens,
-			TokenName:                   params.TokenName,
-			PromptTokens:                params.PromptTokens,
-			CompletionTokens:            params.CompletionTokens,
-			CachedTokens:                params.CachedTokens,
-			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
-			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
-			ChannelId:                   params.ChannelId,
-			TokenId:                     params.TokenId,
-			UseGroup:                    params.Group,
-			NodeName:                    common.NodeName,
-			ClientUserId:                params.ClientUserId,
-			ClientScenairo:              params.ClientScenairo,
-			ProjectName:                 params.ProjectName,
-			PlanId:                      params.PlanId,
-			FirstTokenMs:                firstTokenMs,
-			UseTimeSeconds:              params.UseTimeSeconds,
-		})
-	}
+
 }
 
 type RecordTaskBillingLogParams struct {
+	EventID        string
+	CreatedAt      int64
 	UserId         int
 	LogType        int
 	Content        []*common.Message
@@ -598,9 +606,6 @@ type RecordTaskBillingLogParams struct {
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
-	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
-		return
-	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
 	if params.TokenId > 0 {
@@ -608,25 +613,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			tokenName = token.Name
 		}
 	}
-	createdAt := common.GetTimestamp()
-	other := params.Other
-	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   other.setContent(params.Content),
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     other.JSONString(),
-	}
-	err := createLog(log)
-	if err != nil {
-		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
+	createdAt := params.CreatedAt
+	if createdAt == 0 {
+		createdAt = common.GetTimestamp()
 	}
 	// 消费和退款都要进 quota_data:消耗统计页(/quota-statistics)与飞书告警都按
 	// SUM(quota) 聚合这张表,只写消费会让退款和差额结算的补扣永远不被冲减,
@@ -637,6 +626,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			nodeName = common.NodeName
 		}
 		LogQuotaData(&LogQuotaDataCache{
+			EventID:        params.EventID,
 			UserId:         params.UserId,
 			Username:       username,
 			ModelName:      params.ModelName,
@@ -656,6 +646,33 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			IsSettlementAdjustment: true,
 		})
 	}
+	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
+		return
+	}
+	other := params.Other
+	log := &Log{
+		UserId:         params.UserId,
+		Username:       username,
+		CreatedAt:      createdAt,
+		Type:           params.LogType,
+		Content:        other.setContent(params.Content),
+		TokenName:      tokenName,
+		ModelName:      params.ModelName,
+		Quota:          params.Quota,
+		ChannelId:      params.ChannelId,
+		TokenId:        params.TokenId,
+		Group:          params.Group,
+		Other:          other.JSONString(),
+		ClientUserId:   params.ClientUserId,
+		ClientScenairo: params.ClientScenairo,
+		ProjectName:    params.ProjectName,
+		PlanId:         params.PlanId,
+	}
+	err := createLog(log)
+	if err != nil {
+		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
+	}
+
 }
 
 // LogFilter is the usage-log search shared by the log list and the log export.

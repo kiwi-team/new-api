@@ -127,6 +127,42 @@ func StartSubscriber(ctx context.Context) {
 	})
 }
 
+// StartChannelReconciler repairs missed Pub/Sub notifications using persistent
+// channel state. It also works when Redis is disabled on every instance.
+func StartChannelReconciler(ctx context.Context, inactive func(context.Context, []int) ([]int, error)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				mu.Lock()
+				ids := make([]int, 0, len(registry))
+				for id := range registry {
+					ids = append(ids, id)
+				}
+				mu.Unlock()
+				if len(ids) == 0 {
+					continue
+				}
+				checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				closed, err := inactive(checkCtx, ids)
+				cancel()
+				if err != nil {
+					common.SysError(common.LogText("Failed to reconcile active WebSocket channels: %v", err))
+					continue
+				}
+				CloseChannels(closed, defaultCloseReason)
+			}
+		}
+	}()
+	return done
+}
+
 func PublishCloseChannels(ctx context.Context, channelIDs []int, reason string) error {
 	rdb := common.RDB
 	if !common.RedisEnabled || rdb == nil {

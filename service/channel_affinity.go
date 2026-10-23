@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/samber/hot"
 	"github.com/tidwall/gjson"
 )
@@ -92,8 +93,8 @@ func getChannelAffinityCache() *cachex.HybridCache[int] {
 		}
 
 		channelAffinityCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{
-			Namespace: cachex.Namespace(channelAffinityCacheNamespace),
-			Redis:     common.RDB,
+			Namespace:   cachex.Namespace(channelAffinityCacheNamespace),
+			RedisClient: func() *redis.Client { return common.RDB },
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
 			},
@@ -994,8 +995,8 @@ func getChannelAffinityUsageCacheStatsCache() *cachex.HybridCache[ChannelAffinit
 		}
 
 		channelAffinityUsageCacheStatsCache = cachex.NewHybridCache[ChannelAffinityUsageCacheCounters](cachex.HybridCacheConfig[ChannelAffinityUsageCacheCounters]{
-			Namespace: cachex.Namespace(channelAffinityUsageCacheStatsNamespace),
-			Redis:     common.RDB,
+			Namespace:   cachex.Namespace(channelAffinityUsageCacheStatsNamespace),
+			RedisClient: func() *redis.Client { return common.RDB },
 			RedisEnabled: func() bool {
 				return common.RedisEnabled && common.RDB != nil
 			},

@@ -371,7 +371,7 @@ func exportLogs(c *gin.Context, all bool) {
 	}
 
 	userId := c.GetInt("id")
-	release, ok, err := service.AcquireLogExportLock(userId)
+	ctx, release, ok, err := service.AcquireLogExportLock(c.Request.Context(), userId)
 	if err != nil {
 		common.SysError(common.LogText("failed to lock log export: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to export logs")
@@ -390,6 +390,9 @@ func exportLogs(c *gin.Context, all bool) {
 
 	count := 0
 	writeLog := func(log *model.Log) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Streaming exports obey the same raw-payload and routing visibility as lists.
 		if c.GetInt("role") < common.RoleRootUser {
 			log.Request, log.Response, log.Usage = "", "", ""
@@ -406,7 +409,6 @@ func exportLogs(c *gin.Context, all bool) {
 		count++
 		return nil
 	}
-	ctx := c.Request.Context()
 	if all {
 		err = model.StreamAllLogs(ctx, filter, c.GetInt("role"), writeLog)
 	} else {

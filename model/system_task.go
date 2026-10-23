@@ -1,11 +1,13 @@
 package model
 
 import (
+	"context"
 	"errors"
 
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type SystemTaskStatus string
@@ -46,6 +48,38 @@ type SystemTaskLock struct {
 	LockedBy    string `json:"locked_by" gorm:"type:varchar(128);index"`
 	LockedUntil int64  `json:"locked_until" gorm:"bigint;index"`
 	UpdatedAt   int64  `json:"updated_at" gorm:"bigint;index"`
+}
+
+// AcquireResourceLease uses one authority even during partial Redis outages.
+func AcquireResourceLease(ctx context.Context, key, owner string, until int64) (bool, error) {
+	if DB == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	row := SystemTaskLock{Type: key, TaskID: owner, LockedBy: owner}
+	if err := DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+		return false, err
+	}
+	result := DB.WithContext(ctx).Model(&SystemTaskLock{}).Where("type = ? AND locked_until <= ?", key, common.GetTimestamp()).
+		Updates(map[string]any{"task_id": owner, "locked_by": owner, "locked_until": until, "updated_at": common.GetTimestamp()})
+	return result.RowsAffected == 1, result.Error
+}
+
+func RenewResourceLease(ctx context.Context, key, owner string, until int64) error {
+	now := common.GetTimestamp()
+	result := DB.WithContext(ctx).Model(&SystemTaskLock{}).
+		Where("type = ? AND locked_by = ? AND locked_until > ?", key, owner, now).
+		Updates(map[string]any{"locked_until": until, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrSystemTaskLockLost
+	}
+	return nil
+}
+
+func ReleaseResourceLease(ctx context.Context, key, owner string) error {
+	return DB.WithContext(ctx).Where("type = ? AND locked_by = ?", key, owner).Delete(&SystemTaskLock{}).Error
 }
 
 type SystemTaskResponse struct {

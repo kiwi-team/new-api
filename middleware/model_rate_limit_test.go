@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -20,27 +19,16 @@ import (
 )
 
 func TestModelRedisRateLimitUsesUTCRegardlessOfLocalTimezone(t *testing.T) {
-	redisServer, redisClient := useRateLimitMiniRedis(t)
+	require.NoError(t, i18n.Init())
+	useRateLimitMiniRedis(t)
 	previousLocation := time.Local
 	time.Local = time.FixedZone("test-utc-plus-eight", 8*60*60)
 	t.Cleanup(func() { time.Local = previousLocation })
-
-	ctx := context.Background()
-	recordKey := "rateLimit:model-utc-record"
-	recordRedisRequest(ctx, redisClient, recordKey, 2)
-	recorded, err := redisClient.LIndex(ctx, recordKey, 0).Result()
-	require.NoError(t, err)
-	recordedAt, err := time.Parse(modelRateLimitTimeFormat, recorded)
-	require.NoError(t, err)
-	assert.WithinDuration(t, time.Now().UTC(), recordedAt, 2*time.Second)
-
-	checkKey := "rateLimit:model-utc-check"
-	withinWindow := time.Now().UTC().Add(-30 * time.Second).Format(modelRateLimitTimeFormat)
-	_, err = redisServer.Push(checkKey, withinWindow, withinWindow)
-	require.NoError(t, err)
-	allowed, err := checkRedisRateLimit(ctx, redisClient, checkKey, 2, 60)
-	require.NoError(t, err)
-	assert.False(t, allowed, "an existing UTC timestamp inside the window must remain limited on a non-UTC host")
+	router := gin.New()
+	router.GET("/", redisRateLimitHandler("timezone", 60, 2, 0), func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, expected := range []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests} {
+		assert.Equal(t, expected, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+	}
 }
 
 var modelRateLimitTestUsers atomic.Int64
@@ -79,31 +67,40 @@ func TestModelRateLimitStreamFailuresDoNotConsumeSuccessLimit(t *testing.T) {
 	}
 }
 
-func TestModelMemoryRateLimitReservesConcurrentSuccessAdmission(t *testing.T) {
-	require.NoError(t, i18n.Init())
-	subject := strconv.Itoa(7200000 + int(modelRateLimitTestUsers.Add(1)))
-	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	router := gin.New()
-	router.GET("/:outcome", memoryRateLimitHandler(subject, 60, 0, 1), func(c *gin.Context) {
-		if c.Param("outcome") == "failed" {
-			close(entered)
-			<-release
-			status := relaycommon.NewStreamStatus()
-			status.MarkFailed("server_error", "", 0)
-			common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
-		}
-		c.Status(http.StatusOK)
-	})
-	go func() {
-		defer close(finished)
-		assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/failed", "127.0.0.1:1000").Code)
-	}()
-	<-entered
-	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
-	close(release)
-	<-finished
-	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
-	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+func TestModelRateLimitReservesConcurrentSuccessAdmission(t *testing.T) {
+	for _, backend := range []string{"memory", "redis"} {
+		t.Run(backend, func(t *testing.T) {
+			require.NoError(t, i18n.Init())
+			subject := strconv.Itoa(7200000 + int(modelRateLimitTestUsers.Add(1)))
+			entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			router := gin.New()
+			handler := memoryRateLimitHandler(subject, 60, 0, 1)
+			if backend == "redis" {
+				useRateLimitMiniRedis(t)
+				handler = redisRateLimitHandler(subject, 60, 0, 1)
+			}
+			router.GET("/:outcome", handler, func(c *gin.Context) {
+				if c.Param("outcome") == "failed" {
+					close(entered)
+					<-release
+					status := relaycommon.NewStreamStatus()
+					status.MarkFailed("server_error", "", 0)
+					common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
+				}
+				c.Status(http.StatusOK)
+			})
+			go func() {
+				defer close(finished)
+				assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/failed", "127.0.0.1:1000").Code)
+			}()
+			<-entered
+			assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+			close(release)
+			<-finished
+			assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+			assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+		})
+	}
 }
 
 // The memory limiter answers like the Redis limiter: an OpenAI error body
@@ -166,8 +163,7 @@ func TestModelRateLimitCountsConfiguredGroupsSeparately(t *testing.T) {
 		{"b", http.StatusOK}, {"b", http.StatusTooManyRequests},
 		{"c", http.StatusOK}, {"d", http.StatusTooManyRequests},
 	}
-	// The Redis token bucket binds to the first Redis client it sees and another
-	// test already drives it, so the total limit runs on the memory backend only.
+	// Both stores count the same user/token/group dimensions.
 	for _, tc := range []struct {
 		backend, limit string
 		counts         [2]int // [total, success] for groups a and b and for the global limit
@@ -175,6 +171,7 @@ func TestModelRateLimitCountsConfiguredGroupsSeparately(t *testing.T) {
 		{"memory", "success", [2]int{0, 1}},
 		{"redis", "success", [2]int{0, 1}},
 		{"memory", "total", [2]int{1, 1000}},
+		{"redis", "total", [2]int{1, 1000}},
 	} {
 		t.Run(tc.backend+"/"+tc.limit, func(t *testing.T) {
 			if tc.backend == "redis" {

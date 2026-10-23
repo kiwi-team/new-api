@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -10,12 +9,12 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
 
 type Token struct {
 	Id                       int     `json:"id"`
+	AuthVersion              int64   `json:"-" gorm:"not null;default:1"`
 	UserId                   int     `json:"user_id" gorm:"index"`
 	Key                      string  `json:"key" gorm:"type:varchar(128);uniqueIndex"`
 	Status                   int     `json:"status" gorm:"default:1"`
@@ -350,8 +349,13 @@ func (token *Token) Update() (err error) {
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
 	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_rules_high_priority", "channel_ratios", "cross_group_retry", "auto_groups", "alert_threshold", "allow_user_quota_query").Updates(token).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Update("auth_version", gorm.Expr("auth_version + 1")).Error; err != nil {
+			return err
+		}
+		return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+			"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_rules_high_priority", "channel_ratios", "cross_group_retry", "auto_groups", "alert_threshold", "allow_user_quota_query").Updates(token).Error
+	})
 }
 
 func (token *Token) SelectUpdate() (err error) {
@@ -359,7 +363,7 @@ func (token *Token) SelectUpdate() (err error) {
 		common.SysLog(common.LogText("failed to invalidate token cache before status update: %s", cacheErr.Error()))
 	}
 	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+	return DB.Model(token).Updates(map[string]any{"accessed_time": token.AccessedTime, "status": token.Status, "auth_version": gorm.Expr("auth_version + 1")}).Error
 }
 
 func (token *Token) Delete() (err error) {
@@ -395,7 +399,7 @@ func (token *Token) GetChannelRules() map[string]dto.ChannelRulesItem {
 		return nil
 	}
 	var channelRulesMap map[string]dto.ChannelRulesItem
-	err := json.Unmarshal([]byte(channelRules), &channelRulesMap)
+	err := common.Unmarshal([]byte(channelRules), &channelRulesMap)
 	if err != nil {
 		return nil
 	}
@@ -409,7 +413,7 @@ func (token *Token) GetChannelRatios() map[int]float64 {
 	}
 	channelRatioMap := make(map[int]float64)
 	var jsonData map[string]float64
-	err := json.Unmarshal([]byte(channelRatios), &jsonData)
+	err := common.Unmarshal([]byte(channelRatios), &jsonData)
 	if err != nil {
 		return nil
 	}
@@ -453,20 +457,13 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
-			// 绝不创建只有配额字段的残缺哈希。
-			if _, err := cacheApplyTokenQuotaDelta(tokenId, key, int64(quota)); err != nil {
-				common.SysLog(common.LogText("failed to increase token quota: %s", err.Error()))
-			}
-		})
+	if err := increaseTokenQuota(tokenId, quota); err != nil {
+		return err
 	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, tokenId, quota)
-		return nil
+	if err := invalidateTokenCacheForMutation(key); err != nil {
+		common.SysLog(common.LogText("failed to increase token quota: %s", err.Error()))
 	}
-	return increaseTokenQuota(tokenId, quota)
+	return nil
 }
 
 func increaseTokenQuota(id int, quota int) (err error) {
@@ -484,18 +481,13 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
-				common.SysLog(common.LogText("failed to decrease token quota: %s", err.Error()))
-			}
-		})
+	if err := decreaseTokenQuota(id, quota); err != nil {
+		return err
 	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
-		return nil
+	if err := invalidateTokenCacheForMutation(key); err != nil {
+		common.SysLog(common.LogText("failed to decrease token quota: %s", err.Error()))
 	}
-	return decreaseTokenQuota(id, quota)
+	return nil
 }
 
 func decreaseTokenQuota(id int, quota int) (err error) {
@@ -606,7 +598,7 @@ func BatchSetTokenGroup(ids []int, group string, userId int) (int, error) {
 	if userId > 0 {
 		query = query.Where("user_id = ?", userId)
 	}
-	result := query.Update(commonGroupCol, group)
+	result := query.Updates(map[string]any{"group": group, "auth_version": gorm.Expr("auth_version + 1")})
 	if result.Error != nil {
 		return 0, result.Error
 	}
@@ -648,7 +640,8 @@ func BatchAppendTokenModelsByGroup(group string, newModels []string) (int, error
 		}
 		newLimits += strings.Join(toAdd, ",")
 
-		updates := map[string]interface{}{
+		updates := map[string]any{
+			"auth_version":         gorm.Expr("auth_version + 1"),
 			"model_limits":         newLimits,
 			"model_limits_enabled": true,
 		}

@@ -221,3 +221,48 @@ func TestUserAuthVersionFenceAndCommittedFloorAreMonotonic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "5", committed)
 }
+
+func TestRedisPartitionCannotRestoreRevokedAuthentication(t *testing.T) {
+	truncateTables(t)
+	setupUserSessionTest(t)
+	useUserCacheMiniRedis(t)
+	healthy := common.RDB
+	broken := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+	require.NoError(t, broken.Close())
+	t.Cleanup(func() { common.RDB = healthy })
+	user := createReserveTestUser(t, 100)
+	require.NoError(t, populateUserCache(user))
+	token := createReserveTestToken(t, 100)
+	token.Group = "wide"
+	require.NoError(t, DB.Save(&token).Error)
+	require.NoError(t, cacheSetTokenForTest(token))
+	session := newTestUserSession("partition-session", user.Id, time.Now().Unix())
+	require.NoError(t, CreateUserSession(session))
+	_, err := GetUserSessionCached(session.SID)
+	require.NoError(t, err)
+
+	// The writer loses Redis while another instance retains the old cache.
+	common.RDB = broken
+	revoked, err := RevokeUserSession(user.Id, session.SID, "test_partition")
+	require.NoError(t, err)
+	require.True(t, revoked)
+	token.Group = "narrow"
+	require.NoError(t, token.Update())
+	user.Status = common.UserStatusDisabled
+	require.NoError(t, user.Update(false))
+	common.RDB = healthy
+
+	_, err = GetUserSessionCached(session.SID)
+	assert.ErrorIs(t, err, ErrUserSessionInactive)
+	current, err := GetUserCache(user.Id)
+	require.NoError(t, err)
+	assert.Equal(t, common.UserStatusDisabled, current.Status)
+	currentToken, err := GetTokenByKey(token.Key, false)
+	require.NoError(t, err)
+	assert.Equal(t, "narrow", currentToken.Group)
+	common.RDB = broken
+	require.NoError(t, token.Delete())
+	common.RDB = healthy
+	_, err = GetTokenByKey(token.Key, false)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -2040,7 +2041,7 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 			initialUsedQuota := allocation.UsedQuota
 
 			// Simulate consumption tracking by calling IncreaseProjectUsedQuota
-			err := IncreaseProjectUsedQuota(project.Id, clientUserId, consumption)
+			err := IncreaseProjectUsedQuota(project.Id, 0, clientUserId, consumption)
 			if err != nil {
 				t.Logf("IncreaseProjectUsedQuota failed: %v", err)
 				return false
@@ -2246,10 +2247,10 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 					break
 				}
 
-				err := IncreaseProjectUsedQuota(project.Id, clientUserId, consumptionPerRequest)
+				err := IncreaseProjectUsedQuota(project.Id, 0, clientUserId, consumptionPerRequest)
 				if err != nil {
-					// Expected if quota exceeded
-					break
+					t.Logf("Failed to record billed consumption: %v", err)
+					return false
 				}
 				totalConsumed += consumptionPerRequest
 			}
@@ -2327,7 +2328,7 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 			}
 
 			// Track consumption for user1 only
-			err := IncreaseProjectUsedQuota(project.Id, clientUserId1, consumption)
+			err := IncreaseProjectUsedQuota(project.Id, 0, clientUserId1, consumption)
 			if err != nil {
 				t.Logf("IncreaseProjectUsedQuota failed: %v", err)
 				return false
@@ -2417,7 +2418,7 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 			}
 
 			// Track consumption for project1 only
-			err := IncreaseProjectUsedQuota(project1.Id, clientUserId, consumption)
+			err := IncreaseProjectUsedQuota(project1.Id, 0, clientUserId, consumption)
 			if err != nil {
 				t.Logf("IncreaseProjectUsedQuota failed: %v", err)
 				return false
@@ -2480,7 +2481,7 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 			}
 
 			// Track zero consumption
-			err := IncreaseProjectUsedQuota(project.Id, clientUserId, 0)
+			err := IncreaseProjectUsedQuota(project.Id, 0, clientUserId, 0)
 			if err != nil {
 				t.Logf("IncreaseProjectUsedQuota with zero should not fail: %v", err)
 				return false
@@ -2506,8 +2507,8 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 		gen.IntRange(0, 5000),
 	))
 
-	// Property 5.9: Consumption that would exceed quota is rejected
-	properties.Property("consumption exceeding quota is rejected", prop.ForAll(
+	// Property 5.9: Already billed consumption remains recorded even above budget
+	properties.Property("billed consumption exceeding quota is recorded", prop.ForAll(
 		func(projectName string, clientUserId string, allocatedQuota int) bool {
 			// Clean up
 			db.Where("project_name = ?", projectName).Delete(&model.Project{})
@@ -2524,8 +2525,10 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 				return false
 			}
 
-			// Create allocation with used_quota close to allocated_quota
-			usedQuota := allocatedQuota - 10
+			// Convert the USD allocation to the same units as used_quota
+			usedQuota, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(int64(allocatedQuota)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
+			require.NoError(t, err)
+			usedQuota -= 10
 			allocation := model.ProjectAllocation{
 				ProjectId:      project.Id,
 				ClientUserId:   clientUserId,
@@ -2537,25 +2540,25 @@ func TestProperty5_ConsumptionTrackingCorrectness(t *testing.T) {
 				return false
 			}
 
-			// Try to consume more than remaining quota
+			// Record an already billed amount above the remaining quota
 			excessConsumption := 100 // More than the 10 remaining
-			err := IncreaseProjectUsedQuota(project.Id, clientUserId, excessConsumption)
+			err = IncreaseProjectUsedQuota(project.Id, 0, clientUserId, excessConsumption)
 
-			// Should fail because consumption would exceed quota
-			if err == nil {
-				t.Logf("Expected error for consumption exceeding quota")
+			// Budget admission must not discard usage that has already been billed.
+			if err != nil {
+				t.Logf("Failed to record billed consumption: %v", err)
 				return false
 			}
 
-			// Verify used_quota is unchanged
-			var unchangedAllocation model.ProjectAllocation
-			if err := db.Where("id = ?", allocation.Id).First(&unchangedAllocation).Error; err != nil {
+			// Verify the complete billed amount is recorded
+			var updatedAllocation model.ProjectAllocation
+			if err := db.Where("id = ?", allocation.Id).First(&updatedAllocation).Error; err != nil {
 				t.Logf("Failed to retrieve allocation: %v", err)
 				return false
 			}
 
-			if unchangedAllocation.UsedQuota != usedQuota {
-				t.Logf("UsedQuota should be unchanged after rejected consumption: expected %d, got %d", usedQuota, unchangedAllocation.UsedQuota)
+			if updatedAllocation.UsedQuota != usedQuota+excessConsumption {
+				t.Logf("UsedQuota must include billed overage: expected %d, got %d", usedQuota+excessConsumption, updatedAllocation.UsedQuota)
 				return false
 			}
 

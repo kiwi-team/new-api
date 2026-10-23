@@ -354,6 +354,9 @@ func is64BitIntegerType(dbType common.DatabaseType, dataType string) bool {
 }
 
 func migrateDB() error {
+	if err := migrateQuotaDataBuckets(DB); err != nil {
+		return err
+	}
 	if err := migrateTokenKeyUniqueness(DB); err != nil {
 		return err
 	}
@@ -386,6 +389,9 @@ func migrateDB() error {
 		&Midjourney{},
 		&TopUp{},
 		&QuotaData{},
+		&QuotaDataEventRecord{},
+		&QuotaDataAppliedEvent{},
+		&RateLimitBucket{},
 		&UsageAdjustment{},
 		&Task{},
 		&TaskPlugin{},
