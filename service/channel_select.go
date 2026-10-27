@@ -362,9 +362,10 @@ type ChannelSelectError struct {
 
 // SelectChannelForRequest resolves the channel for one attempt with the rules
 // shared by the HTTP distributor and the Responses WebSocket relay: a pinned
-// channel wins, then session affinity (first attempt only), then a random
-// eligible channel; every candidate must satisfy the request's channel
-// filters. The group the channel was chosen from is returned for auto-group
+// channel wins, then an explicit routing plan. Without an explicit plan,
+// session affinity (first attempt only) precedes a random eligible channel.
+// Every candidate must satisfy the request's channel filters.
+// The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
 func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
 	constraints := GetChannelConstraints(c)
@@ -395,7 +396,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 {
+	if len(retry.ChannelIds) == 0 && retry.GetRetry() == 0 {
 		if preferredChannelID, found := GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)

@@ -350,6 +350,16 @@ func TestSelectResponsesWSChannelHonorsStrictSessionBinding(t *testing.T) {
 	_, found = service.GetPreferredChannelByAffinity(seed, "ws-model", "default")
 	assert.False(t, found, "an unusable binding is cleared unless keep_on_channel_disabled is set")
 
+	service.RecordChannelAffinity(seed, bound.Id)
+	explicit := newSessionContext()
+	channel, apiErr = selectResponsesWSChannel(explicit, "ws-model", &service.RetryParam{Ctx: explicit, ModelName: "ws-model", TokenGroup: "default", Retry: common.GetPointer(0), ChannelIds: []int{fallback.Id}})
+	require.Nil(t, apiErr, "an explicit route must not be blocked by an old strict session binding")
+	require.NotNil(t, channel)
+	assert.Equal(t, fallback.Id, channel.Id)
+	assert.False(t, service.ShouldSkipRetryAfterChannelAffinityFailure(explicit))
+	_, found = service.GetPreferredChannelByAffinity(seed, "ws-model", "default")
+	assert.True(t, found, "explicit routes do not read or clear the default routing session binding")
+
 	affinity.SessionMode = "prefer"
 	service.RecordChannelAffinity(seed, bound.Id)
 	prefer := newSessionContext()

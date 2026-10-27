@@ -266,12 +266,14 @@ func Max(a int, b int) int {
 	}
 }
 
-func MessageWithRequestId(message string, id string) string {
+// RewriteErrorMessage applies the configured rules to the original error only.
+func RewriteErrorMessage(message string) string {
+	OptionMapRWMutex.RLock()
 	rewrite := OptionMap["RewriteMessage"]
-	doc := OptionMap["general_setting.docs_link"]
+	OptionMapRWMutex.RUnlock()
 	var ruleArr []string
 	if rewrite != "" {
-		err := json.Unmarshal([]byte(rewrite), &ruleArr)
+		err := UnmarshalJsonStr(rewrite, &ruleArr)
 		if err != nil {
 			SysError("rewrite Unmarshal failed: " + err.Error())
 		}
@@ -279,10 +281,26 @@ func MessageWithRequestId(message string, id string) string {
 	if len(ruleArr) > 0 {
 		for _, rule := range ruleArr {
 			if RegMatch(rule, message) {
-				return fmt.Sprintf("%s (request id: %s)", "请求失败，请稍后再尝试", id)
+				return "请求失败，请稍后再尝试"
 			}
 		}
 	}
+	return message
+}
+
+// An optional original cause lets sanitized protocol messages use the same
+// rewrite rules without matching the public fallback instead of the cause.
+func MessageWithRequestId(message string, id string, original ...string) string {
+	cause := message
+	if len(original) > 0 {
+		cause = original[0]
+	}
+	if rewritten := RewriteErrorMessage(cause); rewritten != cause {
+		message = rewritten
+	}
+	OptionMapRWMutex.RLock()
+	doc := OptionMap["general_setting.docs_link"]
+	OptionMapRWMutex.RUnlock()
 	// 去掉 message 中所有已出现的 "(request id: xxxxxxx)"（包含或不包含前导空格，支持多个）
 	re := regexp.MustCompile(`\s*\(request id: [^\)]+\)`)
 	message = re.ReplaceAllString(message, "")

@@ -74,6 +74,7 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	service.InitRequestErrorLog(c)
 	_, pinned, _ := service.GetChannelConstraints(c).ResolvedPin()
 	if !pinned && !c.GetBool(common.KeyChannelRaceAttempt) {
 		if rawPlan, ok := c.Get(common.KeyChannelRacePlan); ok && rawPlan != nil {
@@ -98,7 +99,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 
-	requestId := c.GetString(common.RequestIdKey)
+	service.InitRequestErrorLog(c)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
@@ -121,7 +122,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
-			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			newAPIError = service.ClientError(c, newAPIError)
 			upstreamURLs := common.UpstreamAddresses(c)
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -168,6 +169,9 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		resultErr := newAPIError
 		if recovered != nil {
 			resultErr = types.NewError(fmt.Errorf("relay panic: %v", recovered), types.ErrorCodeBadResponse)
+		}
+		if resultErr == nil {
+			service.RecordStreamError(c, relayInfo.StreamStatus)
 		}
 		if relayFormat != types.RelayFormatOpenAIRealtime {
 			perfmetrics.RecordRelayResult(c.Request.Context(), relayInfo, resultErr)
@@ -413,12 +417,6 @@ func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *t
 		return
 	}
 
-	body := ""
-	if requestStorage, storageErr := common.GetBodyStorage(c); storageErr == nil && requestStorage != nil {
-		if requestBytes, readErr := requestStorage.Bytes(); readErr == nil {
-			body = service.RedactGeminiFileRequest(c, string(requestBytes))
-		}
-	}
 	if rawState, ok := c.Get(raceLogStateKey); ok {
 		if state, valid := rawState.(*raceLogState); valid && state != nil {
 			state.mu.Lock()
@@ -427,32 +425,7 @@ func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *t
 		}
 	}
 
-	contentType := ""
-	if c.Request != nil {
-		contentType = c.Request.Header.Get("Content-Type")
-	}
-	saveErr := model.SaveErrorLog(
-		c.GetInt("id"),
-		channelError.ChannelId,
-		channelError.ChannelName,
-		common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
-		err.ToOpenAIError(),
-		body,
-		contentType,
-		c.GetString(common.RequestIdKey),
-		c.ClientIP(),
-		common.GetContextKeyInt(c, constant.ContextKeyTokenId),
-		common.GetContextKeyString(c, constant.ContextKeyClientUserId),
-		common.GetContextKeyString(c, constant.ContextKeyClientScenairo),
-		common.GetContextKeyString(c, constant.ContextKeyExtra),
-		common.GetContextKeyString(c, constant.ContextKeyHeader),
-		common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId),
-		useTimeMs,
-		includeBody,
-	)
-	if saveErr != nil {
-		logger.LogError(c, "failed to record error_logs entry: "+saveErr.Error())
-	}
+	service.RecordChannelErrorLog(c, channelError, err, useTimeMs, includeBody)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -853,6 +826,7 @@ func executeTaskSubmissionWith(
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
+		service.RecordTaskRequestError(c, &taskdto.TaskError{Error: insertErr, StatusCode: http.StatusInternalServerError})
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)
 		return nil, taskErr
@@ -864,6 +838,7 @@ func executeTaskSubmissionWith(
 
 	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
+		service.RecordTaskRequestError(c, &taskdto.TaskError{Error: settleErr, StatusCode: http.StatusInternalServerError})
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)
 		diagnostics.failed("settle", "billing_error", taskErr, true)
 		return nil, taskErr
@@ -871,6 +846,7 @@ func executeTaskSubmissionWith(
 	if task.Status != model.TaskStatusFailure {
 		service.MarkRequestPolicySuccess(c, nil)
 	} else {
+		service.RecordTaskRequestError(c, &taskdto.TaskError{Message: task.FailReason, StatusCode: http.StatusBadGateway})
 		policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
 	}
 	service.LogTaskConsumption(c, relayInfo, task)
@@ -933,6 +909,7 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 }
 
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
+	service.RecordTaskRequestError(c, taskErr)
 	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
 	if middleware.RespondTaskPluginError(c, taskErr) {
@@ -943,10 +920,13 @@ func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
 func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
+	service.RecordTaskRequestError(c, taskErr)
+	clientErr := *taskErr
 	if taskErr.StatusCode == http.StatusTooManyRequests {
-		taskErr.Message = i18n.T(c, i18n.MsgRelayGroupUpstreamSaturated)
+		clientErr.Message = i18n.T(c, i18n.MsgRelayGroupUpstreamSaturated)
 	}
-	c.JSON(taskErr.StatusCode, taskErr)
+	clientErr.Message = service.ClientErrorMessage(c, clientErr.Message)
+	c.JSON(clientErr.StatusCode, &clientErr)
 }
 
 // taskSubmissionAPIError adapts a task error for the shared relay error paths.

@@ -1,10 +1,17 @@
 package plugins_test
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +21,11 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
 	taskplugin "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,6 +228,63 @@ func TestOmniHumanRequestSurfacesAndSigning(t *testing.T) {
 	})
 }
 
+func TestOmniHumanSignedRequestSurvivesHTTPTransport(t *testing.T) {
+	service.InitHttpClient()
+	plugin := loadOmniHumanPlugin(t)
+	type receivedRequest struct {
+		body    string
+		headers http.Header
+		query   string
+		err     error
+	}
+	received := make(chan receivedRequest, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		received <- receivedRequest{body: string(body), headers: r.Header.Clone(), query: r.URL.RawQuery, err: err}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":10000,"data":{"task_id":"test-task"}}`)
+	}))
+	t.Cleanup(server.Close)
+	client := service.GetHttpClient()
+	original := *client
+	t.Cleanup(func() { *client = original })
+	client.Transport = server.Client().Transport
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: server.URL, ApiKey: "test-ak|test-sk", UpstreamModelName: "omnihuman-2.0",
+		},
+		OriginModelName: "omnihuman-2.0",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public", Action: "image_to_video"},
+	}
+	body := omniHumanBody()
+	body["prompt"] = "根据图片和音频，生成一个奶茶的广告，还要有一个可爱的女孩"
+	// The reference hook signs the same payload before host conversion/transport.
+	expected, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"baseUrl": server.URL, "apiKey": info.ApiKey, "model": info.OriginModelName, "requestBody": body,
+	})
+	require.NoError(t, err)
+	descriptor := expected.(map[string]any)
+	adaptor := taskplugin.New(plugin)
+	adaptor.Init(info)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set("task_request", body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	reader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	response, err := adaptor.DoRequest(c, info, reader)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	wire := <-received
+	require.NoError(t, wire.err)
+	assert.Equal(t, descriptor["body"], wire.body, "the signed UTF-8 body must not be re-encoded by the gateway")
+	assert.Equal(t, "Action=CVSync2AsyncSubmitTask&Version=2024-06-06", wire.query)
+	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(wire.body))), wire.headers.Get("X-Content-Sha256"))
+	for name, value := range descriptor["headers"].(map[string]any) {
+		assert.Equal(t, value, wire.headers.Get(name), name)
+	}
+}
+
 func TestOmniHumanRejectsInvalidInputsAndCredentials(t *testing.T) {
 	plugin := loadOmniHumanPlugin(t)
 	for _, tc := range []struct {
@@ -353,14 +420,6 @@ func TestOmniHumanUsageCannotBeOverriddenByRequest(t *testing.T) {
 		assert.Equal(t, 350000, reserved.ActualQuotaAfterGroup, "ten seconds at $0.07 reserves $0.70")
 		snap.EstimatedQuotaAfterGroup = reserved.ActualQuotaAfterGroup
 
-		task := &model.Task{Properties: model.Properties{OriginModelName: "omnihuman-2.0"}}
-		result, err := taskplugin.New(plugin).ParseTaskResult(task, &http.Response{StatusCode: http.StatusOK}, []byte(`{"code":10000,"data":{"status":"done","video_url":"https://cdn.example/video.mp4"}}`))
-		require.NoError(t, err)
-		assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
-		assert.Equal(t, map[string]any{"seconds": float64(10), "videos": float64(1)}, result.UsageFacts)
-		settled, _, err := service.EvaluateTaskCompletionUsage(snap, result.UsageFacts)
-		require.NoError(t, err)
-		assert.Equal(t, 350000, settled.ActualQuotaAfterGroup, "completion keeps the agreed ten-second charge")
 	}
 	// Existing per-video expressions still validate; legacy per-call pricing
 	// must not acquire a tenfold multiplier from the new seconds fact.
@@ -372,5 +431,329 @@ func TestOmniHumanUsageCannotBeOverriddenByRequest(t *testing.T) {
 		value, err = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{}, map[string]any{"status": status})
 		require.NoError(t, err)
 		assert.Nil(t, value)
+	}
+}
+
+type omniHumanMediaTransport func(*http.Request) (*http.Response, error)
+
+func (f omniHumanMediaTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func omniHumanMP4Box(kind string, payload []byte) []byte {
+	header := make([]byte, 8)
+	binary.BigEndian.PutUint32(header, uint32(8+len(payload)))
+	copy(header[4:], kind)
+	return append(header, payload...)
+}
+
+func omniHumanMovie(version byte, scale uint32, ticks uint64) []byte {
+	payload := make([]byte, 112)
+	payload[0] = version
+	if version == 1 {
+		binary.BigEndian.PutUint32(payload[20:], scale)
+		binary.BigEndian.PutUint64(payload[24:], ticks)
+	} else {
+		binary.BigEndian.PutUint32(payload[12:], scale)
+		binary.BigEndian.PutUint32(payload[16:], uint32(ticks))
+	}
+	return omniHumanMP4Box("moov", omniHumanMP4Box("mvhd", payload))
+}
+
+func TestOmniHumanSettlesOnVideoDuration(t *testing.T) {
+	service.InitHttpClient()
+	plugin := loadOmniHumanPlugin(t)
+	ftyp := omniHumanMP4Box("ftyp", []byte("isom\x00\x00\x02\x00isomiso2mp41"))
+	mdat := omniHumanMP4Box("mdat", make([]byte, 300<<10))
+	tail := bytes.Join([][]byte{ftyp, mdat, omniHumanMovie(1, 1000, 12500)}, nil)
+	largeHeader := make([]byte, 16)
+	binary.BigEndian.PutUint32(largeHeader, 1)
+	copy(largeHeader[4:], "moov")
+	v1 := omniHumanMovie(1, 1000, 8000)[8:]
+	binary.BigEndian.PutUint64(largeHeader[8:], uint64(16+len(v1)))
+	for _, tc := range []struct {
+		name       string
+		file       []byte
+		status     int
+		whole      bool
+		seconds    float64
+		wantQuota  int
+		wantReads  int
+		wantSource string
+	}{
+		{"short video refunds", omniHumanMovie(0, 1000, 6000), 200, true, 6, 210000, 1, "video_metadata"},
+		{"tail moov rounds up fractional seconds and charges extra", tail, 200, false, 13, 455000, 2, "video_metadata"},
+		{"extended box size", append(largeHeader, v1...), 200, false, 8, 280000, 1, "video_metadata"},
+		{"zero timescale", omniHumanMovie(0, 0, 6000), 200, false, 10, 350000, 1, "default"},
+		{"zero duration", omniHumanMovie(0, 1000, 0), 200, false, 10, 350000, 1, "default"},
+		{"duration above provider limit", omniHumanMovie(0, 1, 301), 200, false, 10, 350000, 1, "default"},
+		{"overflow duration", omniHumanMovie(1, 1, ^uint64(0)), 200, false, 10, 350000, 1, "default"},
+		{"unsupported version", omniHumanMovie(2, 1000, 6000), 200, false, 10, 350000, 1, "default"},
+		{"invalid file", []byte("not a video"), 200, false, 10, 350000, 1, "default"},
+		{"expired media URL", nil, 403, false, 10, 350000, 1, "default"},
+		{"redirect is not followed", nil, 302, false, 10, 350000, 1, "default"},
+		{"oversized unbounded response", make([]byte, jsplugin.MaxFetchBodyBytes+1), 200, true, 10, 350000, 1, "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := service.GetSSRFProtectedHTTPClient()
+			original := *client
+			t.Cleanup(func() { *client = original })
+			assetURL := "https://93.184.216.34/output.mp4?signature=asset-token"
+			asset, err := url.Parse(assetURL)
+			require.NoError(t, err)
+			client.Jar, err = cookiejar.New(nil)
+			require.NoError(t, err)
+			client.Jar.SetCookies(asset, []*http.Cookie{{Name: "session", Value: "must-not-leak"}})
+			var ranges []string
+			// Intercept only the media client's transport: policy checks, the
+			// adaptor, ranged reads and settlement still run through real code.
+			client.Transport = omniHumanMediaTransport(func(r *http.Request) (*http.Response, error) {
+				assert.Equal(t, assetURL, r.URL.String())
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Empty(t, r.Header.Get("Authorization"))
+				assert.Empty(t, r.Header.Get("Cookie"))
+				ranges = append(ranges, r.Header.Get("Range"))
+				recorder := httptest.NewRecorder()
+				if tc.status != http.StatusOK {
+					recorder.Header().Set("Location", "http://127.0.0.1/private")
+					recorder.WriteHeader(tc.status)
+				} else if tc.whole {
+					_, _ = recorder.Write(tc.file)
+				} else {
+					http.ServeContent(recorder, r, "output.mp4", time.Time{}, bytes.NewReader(tc.file))
+				}
+				return recorder.Result(), nil
+			})
+			adaptor := taskplugin.New(plugin)
+			adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: "https://cv.byteplusapi.com", ApiKey: "ak|sk", UpstreamModelName: "omnihuman-2.0",
+			}})
+			body, err := common.Marshal(map[string]any{"code": 10000, "data": map[string]any{"status": "done", "video_url": assetURL}})
+			require.NoError(t, err)
+			task := &model.Task{Properties: model.Properties{OriginModelName: "omnihuman-2.0"}}
+			if tc.wantSource == "video_metadata" {
+				task.PrivateData.PluginState = []byte(`{"input_audio_url":"https://93.184.216.34/audio.mp3"}`)
+			}
+			result, err := adaptor.ParseTaskResult(task, &http.Response{StatusCode: http.StatusOK}, body)
+			require.NoError(t, err)
+			assert.Equal(t, "SUCCESS", result.Status)
+			assert.JSONEq(t, fmt.Sprintf(`{"billing_seconds":%g,"billing_duration_source":%q}`, tc.seconds, tc.wantSource), string(result.PluginState))
+			facts := map[string]any{"videos": float64(1)}
+			if tc.wantSource == "video_metadata" {
+				facts["seconds"] = tc.seconds
+			}
+			assert.Equal(t, facts, result.UsageFacts)
+			snapshot := &billingexpr.BillingSnapshot{
+				ExprString: `tier("base", u("seconds") * 0.07)`, TaskUsageBilling: true, GroupRatio: 1, QuotaPerUnit: 500000,
+				UsageFacts: map[string]any{"seconds": 10, "videos": 1}, EstimatedQuotaAfterGroup: 350000,
+			}
+			settled, _, err := service.EvaluateTaskCompletionUsage(snapshot, result.UsageFacts)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantQuota, settled.ActualQuotaAfterGroup)
+			assert.Len(t, ranges, tc.wantReads)
+			if tc.wantReads == 2 {
+				offset := len(ftyp) + len(mdat)
+				assert.Equal(t, []string{"bytes=0-65535", fmt.Sprintf("bytes=%d-%d", offset, offset+65535)}, ranges)
+			}
+		})
+	}
+}
+
+func TestOmniHumanMediaFetchRestrictions(t *testing.T) {
+	service.InitHttpClient()
+	settings := system_setting.GetFetchSetting()
+	original := *settings
+	t.Cleanup(func() { *settings = original })
+	*settings = system_setting.FetchSetting{EnableSSRFProtection: true, AllowedPorts: []string{"80", "443"}, ApplyIPFilterForDomain: true}
+	client := service.GetSSRFProtectedHTTPClient()
+	originalClient := *client
+	t.Cleanup(func() { *client = originalClient })
+	client.Transport = omniHumanMediaTransport(func(*http.Request) (*http.Response, error) {
+		t.Error("rejected fetch must not reach the transport")
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	source, err := builtinplugins.Source("omnihuman")
+	require.NoError(t, err)
+	// Exercise the same host fetch binding with intentionally invalid requests.
+	source = strings.Replace(source, "export function parseTaskResult(ctx, body) {", "export function parseTaskResult(ctx, body) { return utils.fetch(body); }\nfunction originalResult(ctx, body) {", 1)
+	plugin, err := jsplugin.NewRegistry().RegisterFactory(source, jsplugin.Options{Key: "omnihuman"})
+	require.NoError(t, err)
+	adaptor := taskplugin.New(plugin)
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://cv.byteplusapi.com"}})
+	for _, tc := range []struct {
+		name    string
+		request map[string]any
+		want    string
+	}{
+		{"private address", map[string]any{"url": "http://127.0.0.1/secret?token=hidden", "credentialless": true}, "fetch policy"},
+		{"IPv6 loopback", map[string]any{"url": "http://[::1]/secret", "credentialless": true}, "fetch policy"},
+		{"cloud metadata", map[string]any{"url": "http://169.254.169.254/secret", "credentialless": true}, "fetch policy"},
+		{"URL credentials", map[string]any{"url": "https://user:hidden@93.184.216.34/", "credentialless": true}, "credentials or a fragment"},
+		{"authorization header", map[string]any{"url": "https://93.184.216.34/", "credentialless": true, "headers": map[string]any{"authorization": "Bearer hidden"}}, "only Range and Accept"},
+		{"cookie header", map[string]any{"url": "https://93.184.216.34/", "credentialless": true, "headers": map[string]any{"Cookie": "session=hidden"}}, "only Range and Accept"},
+		{"ordinary fetch still needs allowed host", map[string]any{"url": "https://93.184.216.34/", "credentialless": false}, "not allowed"},
+		{"invalid flag", map[string]any{"url": "https://93.184.216.34/", "credentialless": "true"}, "must be a boolean"},
+		{"audio needs credentialless request", map[string]any{"url": "https://93.184.216.34/", "responseType": "audio_duration"}, "requires a credentialless GET"},
+		{"audio HEAD is not a duration", map[string]any{"url": "https://93.184.216.34/", "responseType": "audio_duration", "credentialless": true, "method": "HEAD"}, "requires a credentialless GET"},
+		{"partial audio must not underbill", map[string]any{"url": "https://93.184.216.34/", "responseType": "audio_duration", "credentialless": true, "headers": map[string]any{"Range": "bytes=0-100"}}, "does not allow partial audio"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := common.Marshal(tc.request)
+			require.NoError(t, err)
+			_, err = adaptor.ParseTaskResult(&model.Task{}, &http.Response{StatusCode: 200}, body)
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "hidden")
+		})
+	}
+}
+
+func TestOmniHumanReservesAudioThenSettlesVideo(t *testing.T) {
+	service.InitHttpClient()
+	plugin := loadOmniHumanPlugin(t)
+	wav := func(seconds float64, sampleRate uint32) []byte {
+		dataBytes := uint32(seconds * float64(sampleRate) * 2)
+		body := make([]byte, 44+dataBytes)
+		copy(body, "RIFF")
+		binary.LittleEndian.PutUint32(body[4:], 36+dataBytes)
+		copy(body[8:], "WAVEfmt ")
+		binary.LittleEndian.PutUint32(body[16:], 16)
+		binary.LittleEndian.PutUint16(body[20:], 1)
+		binary.LittleEndian.PutUint16(body[22:], 1)
+		binary.LittleEndian.PutUint32(body[24:], sampleRate)
+		binary.LittleEndian.PutUint32(body[28:], sampleRate*2)
+		binary.LittleEndian.PutUint16(body[32:], 2)
+		binary.LittleEndian.PutUint16(body[34:], 16)
+		copy(body[36:], "data")
+		binary.LittleEndian.PutUint32(body[40:], dataBytes)
+		return body
+	}
+	// MPEG-1 Layer III, 44.1 kHz: each frame carries 1152 samples even
+	// when its bitrate changes. This catches duration guesses from file size.
+	var mp3 []byte
+	for range 100 {
+		for _, frame := range []struct{ header, length int }{{0x90, 417}, {0xb0, 626}} {
+			data := make([]byte, frame.length)
+			copy(data, []byte{0xff, 0xfb, byte(frame.header), 0})
+			mp3 = append(mp3, data...)
+		}
+	}
+	for _, tc := range []struct {
+		name       string
+		audio      []byte
+		status     int
+		reserved   float64
+		videoTicks uint64
+		seconds    float64
+		quota      int
+		wantSource string
+	}{
+		{"WAV reserves rounded audio below default", wav(8.25, 8000), 200, 9, 0, 9, 315000, "audio_metadata"},
+		{"WAV above 1 MiB reserves rounded audio", wav(12.5, 48000), 200, 13, 0, 13, 455000, "audio_metadata"},
+		{"integer audio does not gain a second", wav(10, 8000), 200, 10, 0, 10, 350000, "audio_metadata"},
+		{"maximum audio stays within limit", wav(300, 8000), 200, 300, 0, 300, 10500000, "audio_metadata"},
+		{"variable bitrate MP3 counts frames then rounds up", mp3, 200, 6, 0, 6, 210000, "audio_metadata"},
+		{"longer video charges the rounded difference", wav(11.1, 8000), 200, 12, 12001, 13, 455000, "video_metadata"},
+		{"shorter video refunds the rounded difference", wav(12.5, 8000), 200, 13, 8250, 9, 315000, "video_metadata"},
+		{"same rounded duration keeps charge", wav(8.25, 8000), 200, 9, 8750, 9, 315000, "video_metadata"},
+		{"integer video does not gain a second", wav(10.1, 8000), 200, 11, 10000, 10, 350000, "video_metadata"},
+		{"video corrects default when audio unavailable", nil, 403, 10, 12500, 13, 455000, "video_metadata"},
+		{"out of range duration keeps default", wav(301, 8000), 200, 10, 0, 10, 350000, "default"},
+		{"invalid audio keeps default", []byte("not audio"), 200, 10, 0, 10, 350000, "default"},
+		{"empty audio keeps default", nil, 200, 10, 0, 10, 350000, "default"},
+		{"expired audio keeps default", nil, 403, 10, 0, 10, 350000, "default"},
+		{"unsolicited partial audio keeps default", mp3, 206, 10, 0, 10, 350000, "default"},
+		{"oversized audio keeps default", make([]byte, jsplugin.MaxFetchAudioBodyBytes+1), 200, 10, 0, 10, 350000, "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := service.GetSSRFProtectedHTTPClient()
+			original := *client
+			t.Cleanup(func() { *client = original })
+			var paths []string
+			client.Transport = omniHumanMediaTransport(func(r *http.Request) (*http.Response, error) {
+				paths = append(paths, r.URL.Path)
+				assert.Empty(t, r.Header.Get("Authorization"))
+				assert.Empty(t, r.Header.Get("Cookie"))
+				response := httptest.NewRecorder()
+				if r.URL.Path == "/video.mp4" {
+					if tc.videoTicks == 0 {
+						response.WriteHeader(http.StatusForbidden)
+					} else {
+						http.ServeContent(response, r, "video.mp4", time.Time{}, bytes.NewReader(omniHumanMovie(0, 1000, tc.videoTicks)))
+					}
+				} else {
+					assert.Equal(t, "/audio", r.URL.Path, "detect audio by content, not the signed URL extension")
+					assert.Empty(t, r.Header.Get("Range"))
+					response.WriteHeader(tc.status)
+					_, _ = response.Write(tc.audio)
+				}
+				return response.Result(), nil
+			})
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelBaseUrl: "https://cv.byteplusapi.com", ApiKey: "ak|sk", UpstreamModelName: "omnihuman-2.0"},
+				OriginModelName: "omnihuman-2.0",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public", Action: "image_to_video"},
+			}
+			adaptor := taskplugin.New(plugin)
+			adaptor.Init(info)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			request := omniHumanBody()
+			request["audio_url"] = "https://93.184.216.34/audio?signature=private"
+			request["state"] = map[string]any{"billing_seconds": 1, "billing_duration_source": "audio_metadata"}
+			c.Set("task_request", request)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			reserved, err := adaptor.ExtractUsageFactsValidated(c, info)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]any{"seconds": tc.reserved, "videos": float64(1)}, reserved)
+			// Repeated validation/usage reads reuse preparation, without reading
+			// mutable audio again or letting client state replace measured facts.
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			repeated, err := adaptor.ExtractUsageFactsValidated(c, info)
+			require.NoError(t, err)
+			assert.Equal(t, reserved, repeated)
+			assert.Equal(t, []string{"/audio"}, paths, "audio is measured before submission and pre-consumption")
+			snapshot := &billingexpr.BillingSnapshot{
+				ExprString: `tier("base", u("seconds") * 0.07)`, TaskUsageBilling: true, GroupRatio: 1, QuotaPerUnit: 500000,
+				UsageFacts: reserved,
+			}
+			preConsumed, err := billingexpr.ComputeTieredQuotaWithRequest(snapshot, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: reserved})
+			require.NoError(t, err)
+			assert.EqualValues(t, tc.reserved*35000, preConsumed.ActualQuotaAfterGroup)
+			snapshot.EstimatedQuotaAfterGroup = preConsumed.ActualQuotaAfterGroup
+			accepted, taskErr := adaptor.ParseResponse(c, &http.Response{
+				StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":10000,"data":{"task_id":"upstream-id"}}`)),
+			}, info)
+			require.Nil(t, taskErr)
+			require.NotNil(t, accepted)
+			var submissionState map[string]any
+			require.NoError(t, common.Unmarshal(accepted.PluginState, &submissionState))
+			assert.Equal(t, tc.reserved, submissionState["billing_seconds"])
+			assert.NotContains(t, submissionState, "input_audio_url")
+			// Rebuild the adaptor like a background poll after restart: only
+			// persisted state supplies the frozen audio measurement.
+			poller := taskplugin.New(plugin)
+			poller.Init(info)
+			task := &model.Task{
+				Properties:  model.Properties{OriginModelName: "omnihuman-2.0"},
+				PrivateData: model.TaskPrivateData{PluginState: accepted.PluginState},
+			}
+			result, err := poller.ParseTaskResult(task, &http.Response{StatusCode: 200}, []byte(`{"code":10000,"data":{"status":"done","video_url":"https://93.184.216.34/video.mp4"}}`))
+			require.NoError(t, err)
+			assert.Equal(t, "SUCCESS", result.Status)
+			var state map[string]any
+			require.NoError(t, common.Unmarshal(result.PluginState, &state))
+			assert.Equal(t, tc.wantSource, state["billing_duration_source"])
+			assert.Equal(t, tc.seconds, state["billing_seconds"])
+			assert.NotContains(t, state, "input_audio_url")
+			if tc.wantSource == "video_metadata" {
+				assert.Equal(t, tc.seconds, result.UsageFacts["seconds"])
+			} else {
+				assert.NotContains(t, result.UsageFacts, "seconds")
+			}
+			settled, _, err := service.EvaluateTaskCompletionUsage(snapshot, result.UsageFacts)
+			require.NoError(t, err)
+			assert.Equal(t, tc.quota, settled.ActualQuotaAfterGroup)
+			assert.Equal(t, []string{"/audio", "/video.mp4"}, paths)
+		})
 	}
 }

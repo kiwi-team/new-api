@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -256,9 +257,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	}
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
-		if token.Status == common.TokenStatusExhausted ||
-			token.Status == common.TokenStatusExpired ||
-			token.Status != common.TokenStatusEnabled {
+		if token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusExhausted {
 			return token, ErrTokenInvalid
 		}
 		if token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp() {
@@ -271,23 +270,23 @@ func ValidateUserToken(key string) (token *Token, err error) {
 			}
 			return token, ErrTokenInvalid
 		}
-		if !token.UnlimitedQuota && token.RemainQuota <= 0 {
-			if !common.RedisEnabled {
+		if token.Status == common.TokenStatusExhausted || (!token.UnlimitedQuota && token.RemainQuota <= 0) {
+			if !common.RedisEnabled && token.Status != common.TokenStatusExhausted {
 				token.Status = common.TokenStatusExhausted
 				err := token.SelectUpdate()
 				if err != nil {
 					common.SysLog(common.LogText("failed to update token status%s", err.Error()))
 				}
 			}
-			return token, ErrTokenInvalid
+			return token, ErrTokenExhausted
 		}
 		return token, nil
 	}
 	common.SysLog(common.LogText("ValidateUserToken: failed to get token: %s", err.Error()))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("无效的令牌")
+		return nil, ErrTokenInvalid
 	} else {
-		return nil, errors.New("无效的令牌，数据库查询出错，请联系管理员")
+		return nil, fmt.Errorf("%w: %w", ErrDatabase, err)
 	}
 }
 
@@ -324,7 +323,7 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Don't return error - fall through to DB
 	}
 	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+	if err = DB.Where(map[string]any{"key": key}).First(token).Error; err != nil {
 		return nil, err
 	}
 	if common.RedisEnabled {

@@ -291,7 +291,7 @@ export function SpecialChannelsTab() {
 
       <p className='text-muted-foreground text-xs'>
         {t(
-          'Large file requests stay within these channels, including retries and higher priority key rules. Models match exactly first, then by regular expression.'
+          'Large file requests use these channels, including retries. Models match exactly first, then by regular expression.'
         )}
       </p>
 

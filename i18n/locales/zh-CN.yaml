@@ -346,3 +346,7 @@ custom_oauth.has_bindings: "无法删除已有用户绑定的提供商"
 custom_oauth.binding_not_found: "OAuth 绑定不存在"
 custom_oauth.provider_id_field_invalid: "无法从提供商响应中提取用户 ID"
 task_plugin.unknown_meta_field: '插件元数据包含未知字段“{{.Field}}”。如果插件来自官方市场，可能需要更高版本的 new-api。请尝试更新 new-api 后重新安装插件。'
+
+# Audio transcription relay
+relay.audio_transcription_only: "此模型仅支持 POST /v1/audio/transcriptions"
+relay.asr_response_invalid: "上游语音识别响应异常：{{.Error}}"

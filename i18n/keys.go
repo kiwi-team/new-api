@@ -46,6 +46,8 @@ const (
 	MsgRelayRetryGetChannelFailed        = "relay.retry_get_channel_failed"
 	MsgRelayRetryNoAvailableChannel      = "relay.retry_no_available_channel"
 	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
+	MsgRelayAudioTranscriptionOnly       = "relay.audio_transcription_only"
+	MsgRelayASRResponseInvalid           = "relay.asr_response_invalid"
 )
 
 // Emails and the name of the token created at registration, in the

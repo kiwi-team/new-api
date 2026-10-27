@@ -30,6 +30,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const responsesWSEventTypeResponseCreate = "response.create"
@@ -105,6 +107,7 @@ type responsesWSSession struct {
 	runner         ResponsesWSRequestRunner
 	request        *http.Request
 	requestID      string
+	logContext     *gin.Context
 	nextEventIndex int
 	workers        sync.WaitGroup
 	closeOnce      sync.Once
@@ -132,7 +135,7 @@ type responsesWSSession struct {
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	s := &responsesWSSession{ctx: ctx, cancel: cancel, client: client, runner: runner,
-		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey)}
+		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey), logContext: c.Copy()}
 	if s.requestID == "" {
 		s.requestID = common.NewRequestId()
 	}
@@ -275,6 +278,12 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info = &relaycommon.RelayInfo{OriginModelName: modelName, UsingGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), StartTime: started}
 		}
 		perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		if apiErr == nil && info != nil {
+			service.RecordStreamError(c, info.StreamStatus)
+		}
+		if state.terminal != nil && info != nil && info.StreamStatus.OutcomeSnapshot().Response == relaycommon.ResponseOutcomeFailed {
+			state.terminal.body = rewriteResponsesWSErrorMessage(c, state.terminal.body)
+		}
 		// Settlement already marks the request policy successful, and nothing
 		// reads a termination decision after this point on the WebSocket path,
 		// so neither policy record belongs here.
@@ -359,6 +368,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info.LastError = apiErr
 				decision := service.DecideRelayRetry(c, apiErr, retryPlan.MaxRetries-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
+				service.RecordChannelErrorLog(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, 0, false)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info, c.GetString(common.UpstreamRequestIdKey), 0, false)
 				if decision.Action == "retry" {
 					continue
@@ -448,7 +458,17 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						continue
 					}
 					terminal, ambiguous, controlError := responsesWSErrorEndsRequest(rejection, create.StreamID, responseID, sentControl)
+					if rejection.Error == nil {
+						// A flat error frame still carries the original request failure.
+						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
+					}
+					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
+					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
+						rejected.StatusCode = http.StatusBadRequest
+					}
 					if !terminal {
+						service.RecordChannelErrorLog(c, types.ChannelError{ChannelId: s.lockedChannelID, ChannelName: c.GetString("channel_name")}, rejected, time.Since(started).Milliseconds(), false)
+						incoming.body = rewriteResponsesWSErrorMessage(c, incoming.body)
 						if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 							s.shutdown(websocket.CloseInternalServerErr, "")
 						}
@@ -465,6 +485,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 								code = fmt.Sprint(rejection.Error.Code)
 							}
 							info.StreamStatus.MarkFailed(code, rejection.Error.Type, rejection.Status)
+							service.RecordRequestError(c, rejected)
 						}
 						accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
@@ -475,15 +496,6 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						ConsumeResponsesQuota(c, info, accumulator.Finish(), "", "")
 						return nil
-					}
-					if rejection.Error == nil {
-						// An error frame without an error object still describes the
-						// rejected request; keep the client-facing type stable.
-						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
-					}
-					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
-					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
-						rejected.StatusCode = http.StatusBadRequest
 					}
 					return rejected
 				}
@@ -758,10 +770,43 @@ func (s *responsesWSSession) sendError(eventID, streamID string, apiErr *types.N
 	if apiErr == nil {
 		return
 	}
+	if s.logContext != nil {
+		ctx := s.logContext.Copy()
+		service.RecordChannelErrorLog(ctx, types.ChannelError{}, apiErr, 0, false)
+		if common.RewriteErrorMessage(apiErr.Error()) != apiErr.Error() {
+			clientErr := *apiErr
+			clientErr.SetMessage(common.MessageWithRequestId(apiErr.Error(), s.requestID))
+			apiErr = &clientErr
+		}
+	}
 	payload, err := buildResponsesWSErrorPayload(eventID, streamID, apiErr)
 	if err == nil {
 		_ = s.writeClient(websocket.TextMessage, payload)
 	}
+}
+
+// Rewrite only the error text; stream/event identities and unknown fields must
+// survive byte-for-byte, including integer IDs above float64's exact range.
+func rewriteResponsesWSErrorMessage(c *gin.Context, body []byte) []byte {
+	for _, path := range []string{"error.message", "response.error.message", "message"} {
+		message := gjson.GetBytes(body, path)
+		if message.Type != gjson.String {
+			continue
+		}
+		original := message.String()
+		if common.RewriteErrorMessage(original) == original {
+			return body
+		}
+		encoded, err := common.Marshal(common.MessageWithRequestId(original, c.GetString(common.RequestIdKey)))
+		if err != nil {
+			return body
+		}
+		if rewritten, err := sjson.SetRawBytes(body, path, encoded); err == nil {
+			return rewritten
+		}
+		return body
+	}
+	return body
 }
 
 // shutdown ends the connection once. Each peer gets a close frame that says

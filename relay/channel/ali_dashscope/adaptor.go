@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -40,7 +41,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	fullRequestURL := ""
 	switch info.RelayMode {
 	case constant.RelayModeAudioTranscription:
-		if IsFunASRFlashModel(info.UpstreamModelName) {
+		if IsSynchronousASRModel(info.UpstreamModelName) {
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 		} else {
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/audio/asr/transcription", info.ChannelBaseUrl)
@@ -73,12 +74,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	if info.RelayMode == constant.RelayModeAudioTranscription {
 		req.Set("Content-Type", "application/json")
-		if IsFunASRFlashModel(info.UpstreamModelName) {
+		if IsSynchronousASRModel(info.UpstreamModelName) {
 			req.Set("X-DashScope-SSE", "disable")
+			req.Del("X-DashScope-Async")
 		} else {
 			req.Set("X-DashScope-Async", "enable")
 		}
-		req.Set("X-DashScope-OssResourceResolve", "enable")
+		if IsQwenAudioASRModel(info.UpstreamModelName) {
+			req.Del("X-DashScope-OssResourceResolve")
+		} else {
+			req.Set("X-DashScope-OssResourceResolve", "enable")
+		}
 		if info.Organization != "" {
 			req.Set("X-DashScope-WorkSpace", info.Organization)
 		}
@@ -100,6 +106,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	if IsQwenAudioASRModel(info.UpstreamModelName) {
+		return nil, types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayAudioTranscriptionOnly)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}

@@ -537,6 +537,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
 		if key == "" {
+			service.ExcludeInvalidTokenError(c)
 			common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New(common.TranslateMessage(c, i18n.MsgTokenNotProvided)))
 			c.Abort()
 			return
@@ -551,6 +552,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		token, err := model.GetTokenByKey(key, false)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
+				service.ExcludeInvalidTokenError(c)
 				common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New(common.TranslateMessage(c, i18n.MsgTokenInvalid)))
 			} else {
 				common.SysLog(common.LogText("TokenAuthReadOnly GetTokenByKey database error: %s", err.Error()))
@@ -563,6 +565,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		// TokenAuthReadOnly must keep allowing other token states to query read-only
 		// data, such as token usage logs; only explicitly disabled tokens are denied.
 		if token.Status == common.TokenStatusDisabled {
+			service.ExcludeInvalidTokenError(c)
 			common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New(common.TranslateMessage(c, i18n.MsgTokenStatusUnavailable)))
 			c.Abort()
 			return
@@ -635,11 +638,7 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 		if common.OptionMap["LogHeaderRedactEnabled"] != "false" {
-			for k, v := range headerMap {
-				if sensitiveHeaderKeys[strings.ToLower(k)] {
-					headerMap[k] = redactHeaderValue(v)
-				}
-			}
+			common.RedactLogHeaders(headerMap)
 		}
 		if headerBytes, err := common.Marshal(headerMap); err == nil {
 			common.SetContextKey(c, constant.ContextKeyHeader, string(headerBytes))
@@ -717,6 +716,8 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		token, err := model.ValidateUserToken(key)
 		if token != nil {
+			c.Set("token_id", token.Id)
+			c.Set("token_name", token.Name)
 			id := c.GetInt("id")
 			if id == 0 {
 				c.Set("id", token.UserId)
@@ -725,9 +726,16 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			if errors.Is(err, model.ErrDatabase) {
 				common.SysLog(common.LogText("TokenAuth ValidateUserToken database error: %s", err.Error()))
+				service.RecordRequestError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeQueryDataError, http.StatusInternalServerError))
 				abortWithOpenAiMessage(c, http.StatusInternalServerError,
 					common.TranslateMessage(c, i18n.MsgDatabaseError))
+			} else if errors.Is(err, model.ErrTokenExhausted) {
+				service.RecordRequestError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusUnauthorized))
+				// Keep the existing public authentication response, while recording
+				// quota exhaustion as an operational rejection rather than a bad key.
+				abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			} else {
+				service.ExcludeInvalidTokenError(c)
 				abortWithOpenAiMessage(c, http.StatusUnauthorized,
 					common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			}
@@ -753,6 +761,7 @@ func TokenAuth() func(c *gin.Context) {
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
 			common.SysLog(common.LogText("TokenAuth GetUserCache error for user %d: %v", token.UserId, err))
+			service.RecordRequestError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeQueryDataError, http.StatusInternalServerError))
 			abortWithOpenAiMessage(c, http.StatusInternalServerError,
 				common.TranslateMessage(c, i18n.MsgDatabaseError))
 			return

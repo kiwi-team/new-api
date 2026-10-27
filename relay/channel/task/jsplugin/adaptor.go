@@ -48,6 +48,7 @@ type requestDescriptor struct {
 	RewriteModel   string            `json:"rewriteModel"`
 	BodyType       string            `json:"bodyType"`
 	Parts          []requestPart     `json:"parts"`
+	State          any               `json:"state"`
 	// BodyText is the body as JSON.stringify wrote it, for a plugin that
 	// preserves JSON order: the upstream gets the members in that order.
 	BodyText json.RawMessage `json:"-"`
@@ -68,6 +69,7 @@ type orderedRequestDescriptor struct {
 	RewriteModel   string            `json:"rewriteModel"`
 	BodyType       string            `json:"bodyType"`
 	Parts          []requestPart     `json:"parts"`
+	State          any               `json:"state"`
 }
 
 type requestPart struct {
@@ -668,20 +670,33 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy str
 	return a.doFetchDescriptor(baseURL, proxy, descriptor)
 }
 
-// hookFetcher sends a driver hook's utils.fetch requests to the hosts its
-// request descriptors may use, through the channel's proxy like poll requests.
+// hookFetcher uses channel routing for provider reads and the protected media
+// client for credentialless reads of provider-returned asset URLs.
 func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
 	return func(ctx context.Context, request pluginruntime.FetchRequest) (pluginruntime.FetchResponse, error) {
-		if err := pluginruntime.ValidateRequestURL(request.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
-			return pluginruntime.FetchResponse{}, err
-		}
-		client, err := service.GetHttpClientWithProxySettings(proxy, a.channelSetting())
-		if err != nil {
-			return pluginruntime.FetchResponse{}, err
+		var client *http.Client
+		if request.Credentialless {
+			if err := service.ValidateSSRFProtectedFetchURL(request.URL); err != nil {
+				// Do not expose a signed media URL in a hook error.
+				return pluginruntime.FetchResponse{}, errors.New("credentialless fetch URL rejected by fetch policy")
+			}
+			client = service.GetSSRFProtectedHTTPClient()
+		} else {
+			if err := pluginruntime.ValidateRequestURL(request.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
+				return pluginruntime.FetchResponse{}, err
+			}
+			var err error
+			client, err = service.GetHttpClientWithProxySettings(proxy, a.channelSetting())
+			if err != nil {
+				return pluginruntime.FetchResponse{}, err
+			}
 		}
 		// A redirect reaches the plugin as it is; fetching its location is a
 		// new request, checked and counted again.
 		noRedirects := *client
+		if request.Credentialless {
+			noRedirects.Jar = nil
+		}
 		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		req, err := http.NewRequestWithContext(ctx, request.Method, request.URL, nil)
 		if err != nil {
@@ -698,7 +713,11 @@ func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
 			return pluginruntime.FetchResponse{}, err
 		}
 		defer resp.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(resp.Body, pluginruntime.MaxFetchBodyBytes+1))
+		bodyLimit := pluginruntime.MaxFetchBodyBytes
+		if request.ResponseType == "audio_duration" {
+			bodyLimit = pluginruntime.MaxFetchAudioBodyBytes
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, int64(bodyLimit)+1))
 		if err != nil {
 			return pluginruntime.FetchResponse{}, err
 		}
@@ -1321,7 +1340,7 @@ func (a *TaskAdaptor) requestDescriptor(ctx context.Context, hook string, args .
 	descriptor := requestDescriptor{
 		ResponseType: ordered.ResponseType, URL: ordered.URL, Method: ordered.Method, Headers: ordered.Headers,
 		Credentialless: ordered.Credentialless, Action: ordered.Action, Model: ordered.Model,
-		RewriteModel: ordered.RewriteModel, BodyType: ordered.BodyType, Parts: ordered.Parts,
+		RewriteModel: ordered.RewriteModel, BodyType: ordered.BodyType, Parts: ordered.Parts, State: ordered.State,
 	}
 	switch {
 	case len(ordered.Body) == 0 || string(ordered.Body) == "null":
@@ -1382,6 +1401,12 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 	if err = pluginruntime.ValidateRequestURL(descriptor.URL, info.ChannelBaseUrl, a.plugin.Meta.AllowedHosts); err != nil {
 		logger.LogDebug(c, "task_plugin subsystem=adaptor event=build_submit_failed plugin=%q stage=validate_url reason=url_not_allowed", a.plugin.Meta.Key)
 		return nil, err
+	}
+	if descriptor.State != nil {
+		state, err := common.Marshal(descriptor.State)
+		if err != nil || len(state) > maxTaskPluginPersistedJSONBytes {
+			return nil, fmt.Errorf("plugin returned invalid or oversized submit state")
+		}
 	}
 	if descriptor.Action != "" {
 		info.Action = descriptor.Action
@@ -1510,6 +1535,11 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 		}
 	}
 	ctx["requestBody"] = requestBody
+	// Preparation state belongs to this cached submit descriptor, never to
+	// client input. Usage and response hooks see the same pre-submit facts.
+	if a.submit != nil && a.submit.State != nil {
+		ctx["state"] = a.submit.State
+	}
 	ctx["requestHeaders"] = requestHeaders
 	ctx["files"] = files
 	ctx["action"] = info.Action

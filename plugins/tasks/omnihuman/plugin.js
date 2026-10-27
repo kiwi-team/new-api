@@ -1,7 +1,8 @@
 const REQ_KEY = "realman_avatar_picture_omni20_cv";
-// BytePlus does not report duration. Use the configured policy of ten billable
-// seconds per video; this is not a measurement or an upstream duration limit.
-const BILLING_SECONDS = 10;
+// Reserve the driving audio's duration; ten seconds is only the fallback.
+// Settle on the generated MP4 duration. Both quantities round up to seconds.
+const DEFAULT_SECONDS = 10;
+const MAX_SECONDS = 300; // BytePlus's documented audio duration limit
 
 export const meta = {
   apiVersion: 1,
@@ -28,7 +29,7 @@ export const meta = {
       description: { en: "Video generation unit price", zh: "视频生成单价" },
     },
   },
-  usageExamples: [{ label: "OmniHuman 2.0 · 10s", facts: { seconds: BILLING_SECONDS, videos: 1 } }],
+  usageExamples: [{ label: "OmniHuman 2.0 · 10s", facts: { seconds: DEFAULT_SECONDS, videos: 1 } }],
   routes: [{ method: "POST", path: "/omnihuman/", type: "dynamic", decode: "decodeRequest", render: "renderTask" }],
   protocols: ["openai_video", { name: "openai_responses", supports: ["stream", "sync", "background"] }],
 };
@@ -97,17 +98,36 @@ export function buildSubmitRequest(ctx) {
   // Revalidate the normalized body after channel selection. Only documented
   // vendor fields are forwarded; metadata cannot override the service key.
   const body = submitIntent(ctx.model, ctx.requestBody || {}).requestBody;
+  const state = { billing_seconds: DEFAULT_SECONDS, billing_duration_source: "default" };
+  try {
+    const audio = utils.fetch({ url: body.audio_url, credentialless: true, responseType: "audio_duration" });
+    const seconds = audio.status === 200 && audio.body && audio.body.seconds;
+    if (Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS) {
+      state.billing_seconds = Math.ceil(seconds);
+      state.billing_duration_source = "audio_metadata";
+    }
+  } catch (_error) {
+    // An unavailable audio probe keeps the default reservation.
+  }
+  if (state.billing_duration_source === "default") console.log("OmniHuman audio duration unavailable; reserving the default duration");
   // Another gateway routes on the configured model identity before its own
   // driver converts that name to the vendor's fixed service key.
   const reqKey = ctx.upstream && ctx.upstream.kind === "new_api" ? ctx.upstreamModel || ctx.model : REQ_KEY;
-  return upstreamRequest(ctx, "CVSync2AsyncSubmitTask", Object.assign({ req_key: reqKey }, body));
+  const request = upstreamRequest(ctx, "CVSync2AsyncSubmitTask", Object.assign({ req_key: reqKey }, body));
+  // The host caches the descriptor before pre-consumption. Carry the measured
+  // quantity across hooks without re-fetching audio or mutating their inputs.
+  request.state = state;
+  return request;
 }
 
 export function parseSubmitResponse(ctx, response) {
   const body = response.body || {};
   if (body.code !== 10000) throw new Error(body.message || "OmniHuman submission failed");
   if (!body.data || typeof body.data.task_id !== "string" || !body.data.task_id.trim()) throw new Error("OmniHuman response is missing task_id");
-  return { taskId: body.data.task_id, taskData: body };
+  // Persist the reservation, not the signed input URL, for background polling.
+  const result = { taskId: body.data.task_id, taskData: body };
+  if (ctx.state) result.state = ctx.state;
+  return result;
 }
 
 export function buildQueryRequest(ctx) {
@@ -124,7 +144,29 @@ export function parseTaskResult(ctx, body) {
   if (data.status === "generating") return { status: "IN_PROGRESS", progress: "50%" };
   if (data.status === "done") {
     if (typeof data.video_url !== "string" || !data.video_url.trim()) return { status: "UNKNOWN", reason: "OmniHuman completed without a video URL" };
-    return { status: "SUCCESS", progress: "100%", url: mediaURL(data.video_url, "video_url") };
+    const url = mediaURL(data.video_url, "video_url");
+    const state = Object.assign({ billing_seconds: DEFAULT_SECONDS, billing_duration_source: "default" }, ctx.state || {});
+    let seconds = null;
+    try {
+      seconds = videoDuration(url);
+    } catch (_error) {
+      // An inaccessible or unsupported output must not turn a successful
+      // generation into a failed task and refund its entire charge.
+    }
+    if (seconds) {
+      state.billing_seconds = Math.ceil(seconds);
+      state.billing_duration_source = "video_metadata";
+    } else {
+      console.log("OmniHuman video duration unavailable; retaining the reserved duration");
+    }
+    // Remove the signed audio URL carried by tasks from older plugin versions.
+    delete state.input_audio_url;
+    return {
+      status: "SUCCESS",
+      progress: "100%",
+      url: url,
+      state: state,
+    };
   }
   if (["not_found", "expired", "canceled"].includes(data.status)) return { status: "FAILURE", progress: "100%", reason: "OmniHuman task " + data.status };
   return { status: "UNKNOWN", reason: "Unrecognized OmniHuman task status: " + String(data.status || "") };
@@ -132,11 +174,99 @@ export function parseTaskResult(ctx, body) {
 
 export function extractUsage(ctx) {
   if (ctx.usagePurpose === "billing_ratios") return null;
-  return { seconds: BILLING_SECONDS, videos: 1 };
+  const state = ctx.state || {};
+  const seconds = state.billing_seconds;
+  return {
+    seconds:
+      state.billing_duration_source === "audio_metadata" && Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS
+        ? Math.ceil(seconds)
+        : DEFAULT_SECONDS,
+    videos: 1,
+  };
 }
 
 export function extractUsageOnComplete(ctx, result) {
-  return result.status === "SUCCESS" ? { seconds: BILLING_SECONDS, videos: 1 } : null;
+  if (result.status !== "SUCCESS") return null;
+  // Same-poll state is on result; ctx.state is the previous persisted state.
+  const state = result.plugin_state || ctx.state || {};
+  const seconds = state.billing_seconds;
+  const facts = { videos: 1 };
+  // No video measurement means no correction: settlement retains the frozen
+  // submission facts, including an audio-based reservation or the default.
+  if (state.billing_duration_source === "video_metadata" && Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS)
+    facts.seconds = Math.ceil(seconds);
+  return facts;
+}
+
+function be32(bytes, offset) {
+  return bytes[offset] * 16777216 + bytes[offset + 1] * 65536 + bytes[offset + 2] * 256 + bytes[offset + 3];
+}
+
+// Read the movie header's duration/timescale, skipping large mdat boxes by
+// offset. Request at most four 64 KiB ranges. Servers ignoring Range remain
+// subject to the 1 MiB response limit.
+// Support both 32-bit and 64-bit mvhd durations and extended-size ISO BMFF boxes.
+function videoDuration(url) {
+  let chunk = new Uint8Array(0);
+  let chunkStart = 0;
+  let reads = 0;
+  let offset = 0;
+  let movieEnd = null;
+  let fileEnd = null;
+  for (let boxes = 0; boxes < 64; boxes++) {
+    if (movieEnd !== null && offset + 8 > movieEnd) return null;
+    if (fileEnd !== null && offset + 8 > fileEnd) return null;
+    let local = offset - chunkStart;
+    if (local < 0 || local + 48 > chunk.length) {
+      if (reads++ >= 4) return null;
+      const response = utils.fetch({
+        url: url,
+        credentialless: true,
+        headers: { Range: "bytes=" + offset + "-" + (offset + 65535) },
+        responseType: "bytes",
+      });
+      if (response.status === 206) {
+        const range = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(response.headers["Content-Range"] || "");
+        if (!range || Number(range[1]) !== offset) return null;
+        chunkStart = offset;
+        if (range[3] !== "*") fileEnd = Number(range[3]);
+      } else if (response.status === 200) {
+        chunkStart = 0;
+        fileEnd = response.body.byteLength;
+      } else return null;
+      chunk = new Uint8Array(response.body);
+      local = offset - chunkStart;
+    }
+    if (local < 0 || local + 8 > chunk.length) return null;
+    let size = be32(chunk, local);
+    let header = 8;
+    if (size === 1) {
+      if (local + 16 > chunk.length) return null;
+      size = be32(chunk, local + 8) * 4294967296 + be32(chunk, local + 12);
+      header = 16;
+    }
+    if (!Number.isSafeInteger(size) || size < header || !Number.isSafeInteger(offset + size)) return null;
+    if (fileEnd !== null && offset + size > fileEnd) return null;
+    if (movieEnd !== null && offset + size > movieEnd) return null;
+    const type = String.fromCharCode(chunk[local + 4], chunk[local + 5], chunk[local + 6], chunk[local + 7]);
+    if (type === "moov" && movieEnd === null) {
+      movieEnd = offset + size;
+      offset += header;
+      continue;
+    }
+    if (type === "mvhd" && movieEnd !== null) {
+      const fields = local + header;
+      const version = chunk[fields];
+      const required = version === 1 ? 32 : 20;
+      if ((version !== 0 && version !== 1) || header + required > size || fields + required > chunk.length) return null;
+      const timescale = be32(chunk, fields + (version === 1 ? 20 : 12));
+      const ticks = version === 1 ? be32(chunk, fields + 24) * 4294967296 + be32(chunk, fields + 28) : be32(chunk, fields + 16);
+      const seconds = ticks / timescale;
+      return Number.isSafeInteger(ticks) && Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS ? seconds : null;
+    }
+    offset += size;
+  }
+  return null;
 }
 
 export function listArtifacts(task) {

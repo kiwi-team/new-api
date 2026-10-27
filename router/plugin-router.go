@@ -19,6 +19,8 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -273,6 +275,7 @@ func (b *pluginGenerationBuilder) buildInnerEngine(generation *jsplugin.RoutingG
 		return nil, "", err
 	}
 	engine.Use(importPluginDispatchState())
+	engine.Use(middleware.RequestErrorLog())
 	engine.Use(pluginRouteRecovery())
 	engine.Use(middleware.BodyStorageCleanup())
 	engine.NoMethod(func(c *gin.Context) {
@@ -328,9 +331,11 @@ func markPluginRouteHit(c *gin.Context) {
 func pluginRouteRecovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
-			if recover() == nil {
+			recovered := recover()
+			if recovered == nil {
 				return
 			}
+			service.RecordRequestError(c, types.NewErrorWithStatusCode(fmt.Errorf("plugin route panic: %v", recovered), types.ErrorCodeBadResponse, http.StatusInternalServerError))
 			common.SysError(common.LogText("panic recovered in plugin route"))
 			if pinnedValue, exists := c.Get(jsplugin.ContextKeyPinnedRoute); exists {
 				if pinned, ok := pinnedValue.(jsplugin.PinnedRoute); ok && pinned.Plugin != nil && pinned.Generation != nil {
@@ -347,7 +352,7 @@ func pluginRouteRecovery() gin.HandlerFunc {
 			if !c.Writer.Written() {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": gin.H{
-						"message": "internal plugin route error",
+						"message": service.RewriteClientErrorMessage(c, "internal plugin route error"),
 						"type":    "plugin_route_error",
 					},
 				})

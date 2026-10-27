@@ -1,15 +1,18 @@
 package jsplugin
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/Calcium-Ion/moejs"
+	"github.com/QuantumNous/new-api/common"
 )
 
 // Fetcher sends one utils.fetch request for the hook call whose context
@@ -18,10 +21,12 @@ import (
 type Fetcher func(ctx context.Context, request FetchRequest) (FetchResponse, error)
 
 type FetchRequest struct {
-	Hook    string // the calling hook, filled by the engine for logs and errors
-	URL     string
-	Method  string
-	Headers map[string]string
+	Hook           string // the calling hook, filled by the engine for logs and errors
+	URL            string
+	Method         string
+	Headers        map[string]string
+	Credentialless bool
+	ResponseType   string
 }
 
 type FetchResponse struct {
@@ -31,14 +36,16 @@ type FetchResponse struct {
 }
 
 // The utils.fetch limits are part of the published plugin contract
-// (docs/plugin-api/v1.md). A fetcher reads at most MaxFetchBodyBytes+1 bytes
-// so that the engine can reject a longer body.
+// (docs/plugin-api/v1.md). A fetcher reads at most the selected limit + 1 byte
+// so that the engine can reject a longer body before parsing it.
 const (
 	maxFetchesPerCall   = 4
 	fetchTimeout        = 15 * time.Second
 	maxFetchTimePerCall = 30 * time.Second
 	MaxFetchBodyBytes   = 1 << 20
-	maxFetchURLBytes    = 64 << 10
+	// Audio is decoded in the host; only its duration is exposed to JavaScript.
+	MaxFetchAudioBodyBytes = 15 << 20
+	maxFetchURLBytes       = 64 << 10
 )
 
 type fetcherContextKey struct{}
@@ -138,8 +145,12 @@ func (c *runtimeCall) fetch(r *moejs.Realm, argument moejs.Value) (moejs.Value, 
 		}
 		return moejs.Undefined(), fmt.Errorf("utils.fetch to %s failed: %v", host, err)
 	}
-	if len(response.Body) > MaxFetchBodyBytes {
-		return moejs.Undefined(), fmt.Errorf("utils.fetch response from %s exceeds %d bytes", host, MaxFetchBodyBytes)
+	bodyLimit := MaxFetchBodyBytes
+	if request.ResponseType == "audio_duration" {
+		bodyLimit = MaxFetchAudioBodyBytes
+	}
+	if len(response.Body) > bodyLimit {
+		return moejs.Undefined(), fmt.Errorf("utils.fetch response from %s exceeds %d bytes", host, bodyLimit)
 	}
 	// The result is built from JavaScript objects, not a host map: a hook may
 	// return it, or part of it, as it is.
@@ -154,7 +165,24 @@ func (c *runtimeCall) fetch(r *moejs.Realm, argument moejs.Value) (moejs.Value, 
 		return moejs.Undefined(), err
 	}
 	body := moejs.String("")
-	if wantBytes {
+	if request.ResponseType == "audio_duration" {
+		// Partial responses cannot establish the duration of an entire MP3.
+		// Non-200 statuses retain their status but expose no media bytes.
+		body = moejs.Null()
+		if response.Status == http.StatusOK {
+			ext := ".mp3"
+			if len(response.Body) >= 12 && string(response.Body[:4]) == "RIFF" && string(response.Body[8:12]) == "WAVE" {
+				ext = ".wav"
+			}
+			seconds, probeErr := common.GetAudioDuration(c.ctx, bytes.NewReader(response.Body), ext)
+			if probeErr != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds <= 0 {
+				return moejs.Undefined(), fmt.Errorf("utils.fetch could not read MP3/WAV duration from %s", host)
+			}
+			if body, err = r.FromGo(map[string]any{"seconds": seconds}); err != nil {
+				return moejs.Undefined(), err
+			}
+		}
+	} else if wantBytes {
 		// An ArrayBuffer over the response bytes, which belong to this call.
 		if response.Body == nil {
 			response.Body = []byte{}
@@ -234,10 +262,15 @@ func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, h
 				continue
 			}
 			responseType, isString := value.(string)
-			if !isString || (responseType != "json" && responseType != "bytes") {
-				return FetchRequest{}, "", false, r.TypeError(`utils.fetch responseType must be "json" or "bytes"`)
+			if !isString || (responseType != "json" && responseType != "bytes" && responseType != "audio_duration") {
+				return FetchRequest{}, "", false, r.TypeError(`utils.fetch responseType must be "json", "bytes" or "audio_duration"`)
 			}
+			request.ResponseType = responseType
 			wantBytes = responseType == "bytes"
+		case "credentialless":
+			if request.Credentialless, ok = value.(bool); !ok {
+				return FetchRequest{}, "", false, r.TypeError("utils.fetch credentialless must be a boolean")
+			}
 		default:
 			return FetchRequest{}, "", false, r.TypeError("utils.fetch request has unsupported member %q", name)
 		}
@@ -254,6 +287,26 @@ func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, h
 	}
 	if err = ValidateRequestHeaders(request.Headers); err != nil {
 		return FetchRequest{}, "", false, r.TypeError("utils.fetch: %s", err)
+	}
+	if request.Credentialless {
+		if parsed.User != nil || parsed.Fragment != "" {
+			return FetchRequest{}, "", false, r.TypeError("credentialless fetch URL must not contain credentials or a fragment")
+		}
+		for name := range request.Headers {
+			if !strings.EqualFold(name, "Range") && !strings.EqualFold(name, "Accept") {
+				return FetchRequest{}, "", false, r.TypeError("credentialless fetch permits only Range and Accept headers")
+			}
+		}
+	}
+	if request.ResponseType == "audio_duration" {
+		if !request.Credentialless || request.Method != http.MethodGet {
+			return FetchRequest{}, "", false, r.TypeError("audio_duration requires a credentialless GET")
+		}
+		for name := range request.Headers {
+			if strings.EqualFold(name, "Range") {
+				return FetchRequest{}, "", false, r.TypeError("audio_duration does not allow partial audio requests")
+			}
+		}
 	}
 	return request, parsed.Host, wantBytes, nil
 }

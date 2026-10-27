@@ -1,6 +1,7 @@
 package ali
 
 var ModelList = []string{
+	"qwen-audio-3.1-asr-flash",
 	"qwen-turbo",
 	"qwen-plus",
 	"qwen-max",

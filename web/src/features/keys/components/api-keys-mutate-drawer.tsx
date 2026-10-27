@@ -883,36 +883,12 @@ export function ApiKeysMutateDrawer({
                             <FormDescription>
                               {t(
                                 'JSON routing rules for this key (retry count, channel weights, disabled channels)'
+                              )}{' '}
+                              {t(
+                                'Routing priority: large files, key rules, global model routes, then system defaults.'
                               )}
                             </FormDescription>
                             <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    )}
-
-                    {isRoot && (
-                      <FormField
-                        control={form.control}
-                        name='channel_rules_high_priority'
-                        render={({ field }) => (
-                          <FormItem className={sideDrawerSwitchItemClassName()}>
-                            <div className='flex flex-col gap-0.5'>
-                              <FormLabel className='text-sm'>
-                                {t('Prioritize key channel rules')}
-                              </FormLabel>
-                              <FormDescription className='text-xs'>
-                                {t(
-                                  'When enabled, matching channel rules on this key override special channel rules.'
-                                )}
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
                           </FormItem>
                         )}
                       />

@@ -9,8 +9,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -41,6 +45,25 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	qwenASR := ali_dashscope.IsQwenAudioASRModel(request.Model)
+	if qwenASR {
+		if info.RelayMode != relayconstant.RelayModeAudioTranscription {
+			return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayAudioTranscriptionOnly)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if _, err := ali_dashscope.PrepareQwenAudioASRRequest(c); err != nil {
+			return types.NewError(err, types.ErrorCodeInvalidRequest)
+		}
+		// A retry may select a channel whose mapping first reveals this model.
+		// Re-estimate from the frozen expression before sending that attempt.
+		if constant.CountToken && info.GetEstimatePromptTokens() != ali_dashscope.QwenAudioASRInputEstimate {
+			if err := reserveQwenASRInput(c, info, request); err != nil {
+				return err
+			}
+		}
+		if saveRequestResponse {
+			requestStr = c.GetString(ali_dashscope.QwenASRRequestLogKey)
+		}
 	}
 
 	adaptor := GetAdaptor(info.ApiType)
@@ -79,6 +102,9 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	if saveRequestResponse {
 		responseStr = fmt.Sprintf(`{"audio_url": "%s"}`, common.GetContextKeyString(c, constant.ContextKeyAudioUrl))
+		if qwenASR {
+			responseStr = common.GetContextKeyString(c, constant.ContextKeySdkResponseStr)
+		}
 	}
 
 	// https://platform.minimaxi.com/docs/guides/pricing#%E8%AF%AD%E9%9F%B3%E8%B5%84%E6%BA%90%E5%8C%85
@@ -98,5 +124,51 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
 	}
 
+	return nil
+}
+
+func reserveQwenASRInput(c *gin.Context, info *relaycommon.RelayInfo, request *dto.AudioRequest) *types.NewAPIError {
+	const estimate = ali_dashscope.QwenAudioASRInputEstimate
+	if snap := info.TieredBillingSnapshot; snap != nil {
+		input := billingexpr.RequestInput{}
+		if info.BillingRequestInput != nil {
+			input = *info.BillingRequestInput
+		}
+		raw, trace, err := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{P: estimate, Len: estimate}, input)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		}
+		multiplier := snap.PreConsumeMultiplier
+		if multiplier <= 0 || trace.BillingUnit == billingexpr.BillingUnitRequest {
+			multiplier = 1
+		}
+		beforeGroup := raw / 1_000_000 * snap.QuotaPerUnit * multiplier
+		quota, err := billingexpr.QuotaRoundStrict(beforeGroup * snap.GroupRatio)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		}
+		snap.EstimatedPromptTokens, snap.EstimatedCompletionTokens = estimate, 0
+		snap.EstimatedQuotaBeforeGroup, snap.EstimatedQuotaAfterGroup = beforeGroup, quota
+		snap.EstimatedTier, snap.EstimatedBillingUnit, snap.EstimatedFixedPrice = trace.MatchedTier, trace.BillingUnit, trace.FixedPrice
+		info.PriceData.QuotaToPreConsume = quota
+		info.SetEstimatePromptTokens(estimate)
+		return service.PrepareTieredBillingForSelectedGroup(c, info)
+	}
+	// Preserve an administrator's explicit legacy pricing override as well.
+	price, err := helper.ModelPriceHelper(c, info, estimate, request.GetTokenCountMeta())
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+	}
+	info.SetEstimatePromptTokens(estimate)
+	if price.FreeModel {
+		return nil
+	}
+	if info.Billing == nil {
+		return service.PreConsumeBilling(c, price.QuotaToPreConsume, info)
+	}
+	if err := info.Billing.Reserve(price.QuotaToPreConsume); err != nil {
+		return types.NewError(err, types.ErrorCodeInsufficientUserQuota, types.ErrOptionWithSkipRetry())
+	}
+	info.FinalPreConsumedQuota = info.Billing.GetPreConsumedQuota()
 	return nil
 }

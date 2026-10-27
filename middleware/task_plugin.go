@@ -1251,7 +1251,10 @@ func RespondTaskPluginError(c *gin.Context, taskErr *dto.TaskError) bool {
 	if !exists || !ok || pinned.Plugin == nil {
 		return false
 	}
+	service.RecordTaskRequestError(c, taskErr)
 	sanitized := sanitizedTaskPluginError(taskErr.StatusCode, taskErr.Message)
+	// Preserve native renderer envelopes; only the message is rewritten.
+	sanitized.Message = service.RewriteClientErrorMessage(c, sanitized.Message)
 	requestID := c.GetString(common.RequestIdKey)
 	hasRenderer, err := pinned.Plugin.Engine.HasCallablePath(c.Request.Context(), "native", "error")
 	requestValue, exists := c.Get(pluginruntime.ContextKeyRouteRequest)
@@ -1292,7 +1295,7 @@ func RespondTaskPluginError(c *gin.Context, taskErr *dto.TaskError) bool {
 	)
 	message := sanitized.Message
 	if requestID != "" {
-		message = common.MessageWithRequestId(sanitized.Message, requestID)
+		message = service.ClientErrorMessage(c, sanitized.Message)
 	}
 	c.JSON(sanitized.HTTPStatus, &dto.TaskError{
 		Code:       sanitized.Code,
@@ -1307,6 +1310,7 @@ func abortTaskPluginRouteError(c *gin.Context, status int) {
 }
 
 func abortTaskPluginRouteErrorDetail(c *gin.Context, status int, detail string) {
+	service.RecordTaskRequestError(c, &dto.TaskError{Code: "task_route_error", Message: detail, StatusCode: status})
 	taskErr := sanitizedTaskPluginError(status, detail)
 	c.Abort()
 	if RespondTaskPluginError(c, &dto.TaskError{Code: taskErr.Code, Message: detail, StatusCode: taskErr.HTTPStatus}) {
@@ -1314,7 +1318,7 @@ func abortTaskPluginRouteErrorDetail(c *gin.Context, status int, detail string) 
 	}
 	message := taskErr.Message
 	if requestID := c.GetString(common.RequestIdKey); requestID != "" {
-		message = common.MessageWithRequestId(taskErr.Message, requestID)
+		message = service.ClientErrorMessage(c, taskErr.Message)
 	}
 	c.JSON(taskErr.HTTPStatus, &dto.TaskError{
 		Code:       taskErr.Code,

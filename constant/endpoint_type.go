@@ -18,6 +18,7 @@ const (
 	EndpointTypeJinaRerank            = types.EndpointTypeJinaRerank
 	EndpointTypeImageGeneration       = types.EndpointTypeImageGeneration
 	EndpointTypeEmbeddings            = types.EndpointTypeEmbeddings
+	EndpointTypeAudioTranscription    = types.EndpointTypeAudioTranscription
 	EndpointTypeOpenAIVideo           = types.EndpointTypeOpenAIVideo
 	EndpointTypeTypeSafe              = types.EndpointTypeTypeSafe
 )

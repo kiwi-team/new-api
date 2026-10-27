@@ -116,8 +116,8 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 }
 
 // ObserveResponsesOutcome records the protocol outcome of one Responses event
-// on the stream status for health classification. Only codes and types are
-// kept; messages never leave the event.
+// on the stream status for health classification. Messages stay out of the
+// classification snapshot and are retained separately for error logging.
 func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
 	if info == nil || info.StreamStatus == nil || event == nil {
 		return
@@ -129,12 +129,14 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	switch {
 	case event.Type == "error" || event.Type == "response.failed" || event.Type == "response.error" || responseStatus == "failed":
 		code, errorType := event.Code, ""
+		info.StreamStatus.RecordFailureMessage(event.Message)
 		if event.Response != nil {
 			if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
 				if oaiErr.Code != nil {
 					code = fmt.Sprint(oaiErr.Code)
 				}
 				errorType = oaiErr.Type
+				info.StreamStatus.RecordFailureMessage(oaiErr.Message)
 			}
 		}
 		info.StreamStatus.MarkFailed(code, errorType, 0)

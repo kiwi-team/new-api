@@ -3,11 +3,13 @@ package middleware
 import (
 	"net/http"
 
+	"errors"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,6 +19,7 @@ func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code
 		codeStr = string(code[0])
 	}
 	userId := c.GetInt("id")
+	service.RecordRequestError(c, types.NewOpenAIError(errors.New(message), types.ErrorCode(codeStr), statusCode))
 	_, preparedPluginRoute := c.Get(pluginruntime.ContextKeyRouteRequest)
 	if !preparedPluginRoute || !RespondTaskPluginError(c, &dto.TaskError{
 		Code:       codeStr,
@@ -25,7 +28,7 @@ func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code
 	}) {
 		c.JSON(statusCode, gin.H{
 			"error": gin.H{
-				"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
+				"message": service.ClientErrorMessage(c, message),
 				"type":    "new_api_error",
 				"code":    codeStr,
 			},
@@ -45,8 +48,9 @@ func invalidRequestStatus(err error) int {
 }
 
 func abortWithMidjourneyMessage(c *gin.Context, statusCode int, code int, description string) {
+	service.RecordRequestError(c, types.NewOpenAIError(errors.New(description), types.ErrorCodeBadResponseStatusCode, statusCode))
 	c.JSON(statusCode, gin.H{
-		"description": description,
+		"description": service.ClientErrorMessage(c, description),
 		"type":        "toio_api_error",
 		"code":        code,
 	})

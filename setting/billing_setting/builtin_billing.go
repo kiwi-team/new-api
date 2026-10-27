@@ -12,6 +12,9 @@ const deepSeekFlashExpr = deepSeekPeak + ` ? tier("peak", p * 0.3 + cr * 0.006 +
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-asr-flash
+	// Beijing USD per million actual input/output tokens, checked 2026-10-26.
+	"qwen-audio-3.1-asr-flash": `tier("beijing", p * 0.113 + c * 0.382)`,
 	// https://developers.openai.com/api/docs/guides/decisions and
 	// https://developers.openai.com/api/docs/models/gpt-6-luna (2026-10-15).
 	// Decisions prices differ from Chat/Responses. Global processing defaults;

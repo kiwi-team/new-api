@@ -353,6 +353,9 @@ export function RouteConfigMutateDialog({
             </SelectContent>
           </Select>
           <p className='text-muted-foreground text-xs'>
+            {t(
+              'Routing priority: large files, key rules, global model routes, then system defaults.'
+            )}{' '}
             {form.watch('apply_mode') === 'enforce'
               ? t(
                   'A matched rule only uses its configured channels and fails if none are available'

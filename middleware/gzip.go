@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
@@ -45,6 +47,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		case "gzip":
 			gzipReader, err := gzip.NewReader(origBody)
 			if err != nil {
+				service.RecordRequestError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest))
 				_ = origBody.Close()
 				c.AbortWithStatus(http.StatusBadRequest)
 				return
@@ -70,6 +73,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		case "zstd":
 			reader, err := zstd.NewReader(origBody)
 			if err != nil {
+				service.RecordRequestError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest))
 				_ = origBody.Close()
 				c.AbortWithStatus(http.StatusBadRequest)
 				return

@@ -324,9 +324,14 @@ describe('API keys mutate drawer Auto group integration', () => {
     fireEvent.change(screen.getByLabelText('Channel rules'), {
       target: { value: '{"gpt-4o":{"retry":2}}' },
     })
-    fireEvent.click(
-      screen.getByRole('switch', { name: 'Prioritize key channel rules' })
-    )
+    expect(
+      screen.queryByRole('switch', { name: 'Prioritize key channel rules' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /Routing priority: large files, key rules, global model routes, then system defaults\./
+      )
+    ).toBeVisible()
     expect(findButton('Visual editor', true)).toBeVisible()
 
     changeInput(getControlByLabel('Name'), 'root-routed')
@@ -335,7 +340,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     expect(createdPayloads[0]).toMatchObject({
       channel_ratios: '{"12":0.8}',
       channel_rules: '{"gpt-4o":{"retry":2}}',
-      channel_rules_high_priority: true,
+      channel_rules_high_priority: false,
     })
   })
 

@@ -8,6 +8,9 @@ import (
 
 // GetEndpointTypesByChannelType returns the endpoint protocols supported by a channel.
 func GetEndpointTypesByChannelType(channelType int, modelName string) []constant.EndpointType {
+	if modelName == "qwen-audio-3.1-asr-flash" && (channelType == constant.ChannelTypeAli || channelType == constant.ChannelTypeAliDashScope) {
+		return []constant.EndpointType{constant.EndpointTypeAudioTranscription}
+	}
 	// The DeepSeek Search and Fetch routing names serve only their endpoint.
 	switch modelName {
 	case constant.DeepSeekSearchModel:

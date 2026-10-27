@@ -184,6 +184,17 @@ type asrSentence struct {
 // ConvertASRRequest uploads the OpenAI multipart file to DashScope's temporary
 // OSS storage and builds the matching synchronous or asynchronous ASR request.
 func ConvertASRRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
+	if IsQwenAudioASRModel(request.Model) {
+		upstream, err := PrepareQwenAudioASRRequest(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err := common.Marshal(upstream)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(body), nil
+	}
 	form, err := common.ParseMultipartFormReusable(c)
 	if err != nil {
 		return nil, fmt.Errorf("parse audio form: %w", err)
@@ -347,6 +358,9 @@ func uploadASRFile(c *gin.Context, info *relaycommon.RelayInfo, policy *asrUploa
 // ASRHandler waits for the asynchronous task, fetches its transcript and
 // renders the result in the OpenAI transcription response format.
 func ASRHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.Usage) {
+	if IsQwenAudioASRModel(info.UpstreamModelName) {
+		return qwenAudioASRHandler(c, resp, info)
+	}
 	if IsFunASRFlashModel(info.UpstreamModelName) {
 		return asrFlashHandler(c, resp, info)
 	}

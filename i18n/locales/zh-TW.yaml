@@ -346,3 +346,7 @@ custom_oauth.has_bindings: "無法刪除已有使用者綁定的供應者"
 custom_oauth.binding_not_found: "OAuth 綁定不存在"
 custom_oauth.provider_id_field_invalid: "無法從供應者響應中提取使用者 ID"
 task_plugin.unknown_meta_field: '外掛中繼資料包含未知欄位「{{.Field}}」。如果外掛來自官方市集，可能需要較新版本的 new-api。請嘗試更新 new-api 後重新安裝外掛。'
+
+# Audio transcription relay
+relay.audio_transcription_only: "此模型僅支援 POST /v1/audio/transcriptions"
+relay.asr_response_invalid: "上游語音辨識回應異常：{{.Error}}"

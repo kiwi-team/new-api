@@ -427,7 +427,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if billingUsage == nil && snap != nil && billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) {
 		billingUsage = &dto.Usage{PromptTokens: summary.PromptTokens, CompletionTokens: summary.CompletionTokens, TotalTokens: summary.TotalTokens}
 	}
-	if billingUsage != nil {
+	if billingUsage != nil && relayInfo.UsageBillingFallback == "" {
 		var tieredUsedVars map[string]bool
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
@@ -443,6 +443,25 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 				summary.AudioInputPrice = 0
 			}
 		}
+	}
+
+	if relayInfo.UsageBillingFallback != "" {
+		// Do not invent actual tokens to preserve a reservation. The successful
+		// request still settles and records its original accounting attribution.
+		summary.PromptTokens, summary.CompletionTokens, summary.TotalTokens = 0, 0, 0
+		summary.Quota = relayInfo.FinalPreConsumedQuota
+		if summary.Quota == 0 {
+			if snap != nil {
+				summary.Quota = snap.EstimatedQuotaAfterGroup
+			} else {
+				summary.Quota = relayInfo.PriceData.QuotaToPreConsume
+			}
+		}
+		if relayInfo.PriceData.FreeModel || (snap != nil && snap.GroupRatio == 0) {
+			summary.Quota = 0
+		}
+		tieredBillingApplied = snap != nil
+		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage"))
 	}
 
 	for _, item := range summary.ToolSurchargeItems {
@@ -462,7 +481,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, common.NewMessage("Audio input cost {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaFromDecimal(q))}))
 	}
 
-	if !summary.hasBillableUsage() {
+	if !summary.hasBillableUsage() && relayInfo.UsageBillingFallback == "" && (billingUsage == nil || billingUsage.UsageSource != "dashscope") {
 		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -498,6 +517,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
+	if relayInfo.UsageBillingFallback != "" {
+		other.SetPublic("usage_estimated", true)
+		other.SetPublic("billing_fallback", relayInfo.UsageBillingFallback)
+		other.SetAdmin("usage_billing_path", "reservation")
+	}
+	if billingUsage != nil && billingUsage.UsageSource == "dashscope" {
+		other.SetPublic("audio_duration", billingUsage.Seconds)
+		other.SetPublic("upstream_request_id", ctx.GetString(common.UpstreamRequestIdKey))
+	}
 	if adminRejectReason != "" {
 		other.SetAdmin("reject_reason", adminRejectReason)
 	}

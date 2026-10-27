@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,7 +41,7 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 		c.Set(common.RequestIdKey, state.requestID)
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		c.Next()
-	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {
+	}, middleware.RequestErrorLog(), middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {
 		if _, ok := relay.ResponsesWSRouteBody(c.Request); !ok {
 			c.Next()
 			return
@@ -50,6 +51,10 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 		state := c.Request.Context().Value(responsesWSRequestContextKey{}).(*responsesWSRequestState)
 		state.apiError = state.handle(c)
 		if state.apiError != nil {
+			service.RecordRequestError(c, state.apiError)
+			if common.RewriteErrorMessage(state.apiError.Error()) != state.apiError.Error() {
+				state.apiError = service.ClientError(c, state.apiError)
+			}
 			status := state.apiError.StatusCode
 			if status < http.StatusBadRequest {
 				status = http.StatusInternalServerError
@@ -124,7 +129,6 @@ func newResponsesWSRequestRunner(c *gin.Context) relay.ResponsesWSRequestRunner 
 }
 
 func ResponsesWebSocket(c *gin.Context) {
-	requestID := c.GetString(common.RequestIdKey)
 	runner := newResponsesWSRequestRunner(c)
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -134,7 +138,7 @@ func ResponsesWebSocket(c *gin.Context) {
 
 	if apiError := relay.ResponsesWebSocketHelper(c, ws, runner); apiError != nil {
 		logger.LogError(c, common.LogText("responses websocket relay error: %s", common.LocalLogPreview(apiError.Error())))
-		apiError.SetMessage(common.MessageWithRequestId(apiError.Error(), requestID))
+		apiError = service.ClientError(c, apiError)
 		helper.WssError(c, ws, apiError.ToOpenAIError(common.UpstreamAddresses(c)...))
 	}
 }

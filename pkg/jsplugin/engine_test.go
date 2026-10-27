@@ -634,12 +634,12 @@ export function fetchFiveTimes() {
 
 	sent := len(requests)
 	for name, request := range map[string]map[string]any{
-		"unsupported member \"body\"":            {"url": "https://api.example/json", "body": "x"},
-		"only GET and HEAD":                      {"url": "https://api.example/json", "method": "POST"},
-		`responseType must be "json" or "bytes"`: {"url": "https://api.example/json", "responseType": "text"},
-		"request header \"Host\" is not":         {"url": "https://api.example/json?token=secret", "headers": map[string]any{"Host": "other.example"}},
-		"absolute http(s) URL":                   {"url": "/v1/files/retrieve"},
-		"exceeds 65536 bytes":                    {"url": "https://api.example/" + strings.Repeat("a", 64<<10)},
+		"unsupported member \"body\"":                              {"url": "https://api.example/json", "body": "x"},
+		"only GET and HEAD":                                        {"url": "https://api.example/json", "method": "POST"},
+		`responseType must be "json", "bytes" or "audio_duration"`: {"url": "https://api.example/json", "responseType": "text"},
+		"request header \"Host\" is not":                           {"url": "https://api.example/json?token=secret", "headers": map[string]any{"Host": "other.example"}},
+		"absolute http(s) URL":                                     {"url": "/v1/files/retrieve"},
+		"exceeds 65536 bytes":                                      {"url": "https://api.example/" + strings.Repeat("a", 64<<10)},
 	} {
 		_, err = engine.Call(ctx, "run", request)
 		require.Error(t, err, name)

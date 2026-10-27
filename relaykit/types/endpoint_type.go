@@ -17,6 +17,7 @@ const (
 	EndpointTypeJinaRerank            EndpointType = "jina-rerank"
 	EndpointTypeImageGeneration       EndpointType = "image-generation"
 	EndpointTypeEmbeddings            EndpointType = "embeddings"
+	EndpointTypeAudioTranscription    EndpointType = "audio-transcription"
 	EndpointTypeOpenAIVideo           EndpointType = "openai-video"
 	EndpointTypeTypeSafe              EndpointType = "typesafe"
 )

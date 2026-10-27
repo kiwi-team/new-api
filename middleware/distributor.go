@@ -33,10 +33,6 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
-func shouldSpecialChannelsOverrideKeyRules(specialChannelIds, keyChannelIds []int, keyRulesHighPriority bool) bool {
-	return len(specialChannelIds) > 0 && (!keyRulesHighPriority || len(keyChannelIds) == 0)
-}
-
 func filterExplicitChannelCandidates(channelIds []int, modelName string, requireModelSupport bool, tags []string, constraints *taskdto.ChannelConstraints) []int {
 	filtered := make([]int, 0, len(channelIds))
 	seen := make(map[int]struct{}, len(channelIds))
@@ -62,20 +58,6 @@ func filterExplicitChannelCandidates(channelIds []int, modelName string, require
 		}
 		seen[channelId] = struct{}{}
 		filtered = append(filtered, channelId)
-	}
-	return filtered
-}
-
-func intersectChannelCandidates(channelIds, allowedIds []int) []int {
-	allowed := make(map[int]struct{}, len(allowedIds))
-	for _, channelId := range allowedIds {
-		allowed[channelId] = struct{}{}
-	}
-	filtered := make([]int, 0, len(channelIds))
-	for _, channelId := range channelIds {
-		if _, ok := allowed[channelId]; ok {
-			filtered = append(filtered, channelId)
-		}
 	}
 	return filtered
 }
@@ -174,34 +156,6 @@ func Distribute() func(c *gin.Context) {
 			tags, _ = value.([]string)
 		}
 		_, hasPinnedChannel, _ := constraints.ResolvedPin()
-		var routeBody string
-		if !hasPinnedChannel && model.DB != nil {
-			if storage, bodyErr := common.GetBodyStorage(c); bodyErr == nil {
-				if bodyBytes, bytesErr := storage.Bytes(); bytesErr == nil {
-					routeBody = string(bodyBytes)
-				} else {
-					logger.LogWarn(c, fmt.Sprintf("failed to read request body for model route config: %v", bytesErr))
-				}
-			} else {
-				logger.LogWarn(c, fmt.Sprintf("failed to prepare request body for model route config: %v", bodyErr))
-			}
-		}
-
-		enforcedRoute := &model.ModelRouteMatch{}
-		if !hasPinnedChannel && model.DB != nil {
-			var routeErr error
-			enforcedRoute, routeErr = model.GetChannelRouteByModel(
-				modelName,
-				routeBody,
-				c.Request.URL.RequestURI(),
-				model.ModelRouteApplyModeEnforce,
-			)
-			if routeErr != nil {
-				logger.LogError(c, fmt.Sprintf("failed to resolve enforced model route config: %v", routeErr))
-				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelName), types.ErrorCode("model_route_unavailable"))
-				return
-			}
-		}
 
 		var specialChannelIds []int
 		if filePlan != nil {
@@ -215,7 +169,6 @@ func Distribute() func(c *gin.Context) {
 			constraints.AddFilter(taskdto.ChannelFilter{Kind: taskdto.FilterGeminiFiles, ChannelIDs: specialChannelIds, GeminiFileMode: filePlan.Config.Mode, RequiresFileStorage: filePlan.RequiresStorage, GeminiDeveloperAPIOnly: filePlan.DeveloperAPIOnly})
 		}
 		hasSpecialChannelRule := filePlan != nil && filePlan.RequiresStorage
-		fmt.Printf("specialChannelIds: %v\n", specialChannelIds)
 		specialChannelIds = filterExplicitChannelCandidates(specialChannelIds, modelName, true, tags, constraints)
 		if hasSpecialChannelRule && len(specialChannelIds) == 0 {
 			abortWithOpenAiMessage(c, 503, "no compatible large file channel", types.ErrorCode("large_file_channel_unavailable"))
@@ -223,17 +176,12 @@ func Distribute() func(c *gin.Context) {
 		}
 		var channelIds []int
 		var raceGroups []taskdto.ChannelRaceGroup
-		if enforcedRoute.Matched && !hasPinnedChannel {
-			channelIds = filterExplicitChannelCandidates(enforcedRoute.ChannelIDs, modelName, true, tags, constraints)
-			if hasSpecialChannelRule {
-				channelIds = intersectChannelCandidates(channelIds, specialChannelIds)
-			}
-			if len(channelIds) == 0 {
-				logger.LogWarn(c, fmt.Sprintf("enforced model route has no available channels: config_id=%d config_name=%q", enforcedRoute.ConfigID, enforcedRoute.ConfigName))
-				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelName), types.ErrorCode("model_route_no_available_channel"))
-				return
-			}
-			c.Set("new_retry_times", enforcedRoute.MaxRetry)
+		// Routing policies are ordered: large files, Key rules, global model
+		// routes, then the default group/model selector. Only the selected
+		// policy supplies the candidate sequence and retry budget.
+		if hasSpecialChannelRule {
+			channelIds = specialChannelIds
+			c.Set("new_retry_times", len(channelIds)-1)
 		} else if channelRules != nil {
 			if channelRules.RandomType == taskdto.ChannelRuleModeRace {
 				raceGroups = model.GetChannelGroupsByRule(channelRules, tags)
@@ -243,27 +191,45 @@ func Distribute() func(c *gin.Context) {
 			} else {
 				channelIds = model.GetChannelIdsByRule(channelRules, tags)
 			}
-		}
-		if !enforcedRoute.Matched || hasPinnedChannel {
 			channelIds = filterExplicitChannelCandidates(channelIds, modelName, true, tags, constraints)
-			keyRulesHighPriority := common.GetContextKeyBool(c, constant.ContextKeyTokenChannelRulesHighPriority)
-			if shouldSpecialChannelsOverrideKeyRules(specialChannelIds, channelIds, keyRulesHighPriority) {
-				channelIds = specialChannelIds
-				raceGroups = nil
-				c.Set("new_retry_times", len(specialChannelIds))
-			} else if len(channelIds) > 0 && channelRules != nil && channelRules.RandomType != taskdto.ChannelRuleModeRace {
+			if len(channelIds) > 0 && channelRules.RandomType != taskdto.ChannelRuleModeRace {
 				c.Set("new_retry_times", channelRules.Retry)
 			}
 		}
 		if len(channelIds) == 0 && !hasPinnedChannel && model.DB != nil {
-			modelRouterChannelIds, retryTimes, routeErr := model.GetChannelIdsByModel(modelName, routeBody, c.Request.URL.RequestURI())
-			if routeErr != nil {
-				logger.LogWarn(c, fmt.Sprintf("failed to resolve model route config: %v", routeErr))
+			var routeBody string
+			if storage, bodyErr := common.GetBodyStorage(c); bodyErr == nil {
+				if bodyBytes, bytesErr := storage.Bytes(); bytesErr == nil {
+					routeBody = string(bodyBytes)
+				} else {
+					logger.LogWarn(c, fmt.Sprintf("failed to read request body for model route config: %v", bytesErr))
+				}
+			} else {
+				logger.LogWarn(c, fmt.Sprintf("failed to prepare request body for model route config: %v", bodyErr))
 			}
-			modelRouterChannelIds = filterExplicitChannelCandidates(modelRouterChannelIds, modelName, true, tags, constraints)
-			if len(modelRouterChannelIds) > 0 {
-				channelIds = modelRouterChannelIds
-				c.Set("new_retry_times", retryTimes)
+			enforcedRoute, routeErr := model.GetChannelRouteByModel(modelName, routeBody, c.Request.URL.RequestURI(), model.ModelRouteApplyModeEnforce)
+			if routeErr != nil {
+				logger.LogError(c, fmt.Sprintf("failed to resolve enforced model route config: %v", routeErr))
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelName), types.ErrorCode("model_route_unavailable"))
+				return
+			}
+			if enforcedRoute.Matched {
+				channelIds = filterExplicitChannelCandidates(enforcedRoute.ChannelIDs, modelName, true, tags, constraints)
+				if len(channelIds) == 0 {
+					logger.LogWarn(c, fmt.Sprintf("enforced model route has no available channels: config_id=%d config_name=%q", enforcedRoute.ConfigID, enforcedRoute.ConfigName))
+					abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelName), types.ErrorCode("model_route_no_available_channel"))
+					return
+				}
+				c.Set("new_retry_times", enforcedRoute.MaxRetry)
+			} else {
+				modelRouterChannelIds, retryTimes, routeErr := model.GetChannelIdsByModel(modelName, routeBody, c.Request.URL.RequestURI())
+				if routeErr != nil {
+					logger.LogWarn(c, fmt.Sprintf("failed to resolve model route config: %v", routeErr))
+				}
+				channelIds = filterExplicitChannelCandidates(modelRouterChannelIds, modelName, true, tags, constraints)
+				if len(channelIds) > 0 {
+					c.Set("new_retry_times", retryTimes)
+				}
 			}
 		}
 		if filePlan != nil {

@@ -237,10 +237,11 @@ func (w *raceResponseWriter) recordInternalFailure(message string) {
 	if w.committed || w.discarded {
 		return
 	}
+	service.RecordRequestError(w.ctx, types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeBadResponse, http.StatusInternalServerError))
 	w.status = http.StatusInternalServerError
 	w.wroteHeader = true
 	w.buffer.Reset()
-	_, _ = fmt.Fprintf(&w.buffer, `{"error":{"message":%q}}`, message)
+	_, _ = fmt.Fprintf(&w.buffer, `{"error":{"message":%q}}`, service.ClientErrorMessage(w.ctx, message))
 }
 
 func copyHeaders(dst http.Header, src http.Header) {

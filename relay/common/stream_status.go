@@ -53,6 +53,7 @@ type StreamStatus struct {
 	errorCode        string
 	errorType        string
 	errorStatus      int
+	failureMessage   string
 	incompleteReason string
 	expectsTerminal  bool
 }
@@ -204,6 +205,34 @@ func (s *StreamStatus) TotalErrorCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ErrorCount
+}
+
+// ErrorMessages returns owned messages for diagnostics after stream completion.
+func (s *StreamStatus) ErrorMessages() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages := make([]string, 0, len(s.Errors))
+	if s.failureMessage != "" {
+		messages = append(messages, s.failureMessage)
+	}
+	for _, entry := range s.Errors {
+		messages = append(messages, entry.Message)
+	}
+	return messages
+}
+
+// RecordFailureMessage retains diagnostic text without changing health or
+// billing classification. OutcomeSnapshot intentionally never includes it.
+func (s *StreamStatus) RecordFailureMessage(message string) {
+	if s == nil || message == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failureMessage = message
 }
 
 func (s *StreamStatus) IsNormalEnd() bool {

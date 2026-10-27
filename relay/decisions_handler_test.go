@@ -202,7 +202,7 @@ func TestDecisionsUsageSafety(t *testing.T) {
 func TestDecisionsRelayBillingAndLogs(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			database := setupDecisionsDatabase(t, dialect)
+			database := setupRelayBillingDatabase(t, dialect)
 			for caseIndex, tc := range []struct {
 				name          string
 				channel       int
@@ -352,7 +352,7 @@ func TestDecisionsRelayBillingAndLogs(t *testing.T) {
 	}
 }
 
-func setupDecisionsDatabase(t *testing.T, dialect string) *gorm.DB {
+func setupRelayBillingDatabase(t *testing.T, dialect string) *gorm.DB {
 	t.Helper()
 	var dialector gorm.Dialector
 	dbType := common.DatabaseTypeSQLite
@@ -404,6 +404,7 @@ func setupDecisionsDatabase(t *testing.T, dialect string) *gorm.DB {
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldBatch, oldLog := common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled
+	oldExport := common.DataExportEnabled
 	oldQuota := *operation_setting.GetQuotaSetting()
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	oldSettings := *settings
@@ -414,6 +415,7 @@ func setupDecisionsDatabase(t *testing.T, dialect string) *gorm.DB {
 		model.DB, model.LOG_DB = oldDB, oldLogDB
 		common.SetDatabaseTypes(oldMainType, oldLogType)
 		common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = oldRedis, oldBatch, oldLog
+		common.DataExportEnabled = oldExport
 		*operation_setting.GetQuotaSetting(), *settings = oldQuota, oldSettings
 		common.QuotaPerUnit = oldQuotaPerUnit
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
@@ -426,6 +428,7 @@ func setupDecisionsDatabase(t *testing.T, dialect string) *gorm.DB {
 	model.DB, model.LOG_DB = database, logDatabase
 	common.SetDatabaseTypes(dbType, logType)
 	common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = false, false, true
+	common.DataExportEnabled = false
 	common.QuotaPerUnit = 500000
 	operation_setting.GetQuotaSetting().TrustQuotaUSD = 0
 	operation_setting.GetQuotaSetting().PreConsumeMultiplier = 1
@@ -446,7 +449,7 @@ func TestDecisionsOpenRouterURL(t *testing.T) {
 }
 
 func TestDecisionsPricing(t *testing.T) {
-	setupDecisionsDatabase(t, "sqlite")
+	setupRelayBillingDatabase(t, "sqlite")
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/decisions", strings.NewReader(decisionsRequestJSON))
 	info := &relaycommon.RelayInfo{OriginModelName: "gpt-6-luna", UsingGroup: "default", UserGroup: "default", RelayFormat: types.RelayFormatOpenAIDecisions}

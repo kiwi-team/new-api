@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -114,7 +115,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		case constant.RelayModeResponses:
 			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/responses", info.ChannelBaseUrl)
 		case constant.RelayModeAudioTranscription:
-			if ali_dashscope.IsFunASRFlashModel(info.UpstreamModelName) {
+			if ali_dashscope.IsSynchronousASRModel(info.UpstreamModelName) {
 				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 			} else {
 				fullRequestURL = fmt.Sprintf("%s/api/v1/services/audio/asr/transcription", info.ChannelBaseUrl)
@@ -154,12 +155,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 	if info.RelayMode == constant.RelayModeAudioTranscription {
 		req.Set("Content-Type", "application/json")
-		if ali_dashscope.IsFunASRFlashModel(info.UpstreamModelName) {
+		if ali_dashscope.IsSynchronousASRModel(info.UpstreamModelName) {
 			req.Set("X-DashScope-SSE", "disable")
+			req.Del("X-DashScope-Async")
 		} else {
 			req.Set("X-DashScope-Async", "enable")
 		}
-		req.Set("X-DashScope-OssResourceResolve", "enable")
+		if ali_dashscope.IsQwenAudioASRModel(info.UpstreamModelName) {
+			req.Del("X-DashScope-OssResourceResolve")
+		} else {
+			req.Set("X-DashScope-OssResourceResolve", "enable")
+		}
 		if info.Organization != "" {
 			req.Set("X-DashScope-WorkSpace", info.Organization)
 		}
@@ -171,6 +177,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	if ali_dashscope.IsQwenAudioASRModel(info.UpstreamModelName) {
+		return nil, types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayAudioTranscriptionOnly)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}

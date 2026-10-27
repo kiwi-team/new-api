@@ -1,6 +1,7 @@
 package ali_dashscope
 
 var ModelList = []string{
+	"qwen-audio-3.1-asr-flash",
 	"qwq-32b",
 	"qwen-max-2025-01-25", // 又称qwen-max-0125、Qwen2.5-Max
 	"qwen-turbo", "qwen-turbo-latest",

@@ -8,8 +8,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -23,6 +26,24 @@ import (
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	qwenASR := false
+	if _, audio := info.Request.(*dto.AudioRequest); audio {
+		// Resolve on a separate view: pricing and the caller's model keep their
+		// original identity, while aliases receive the same validation/estimate.
+		mapped := &relaycommon.RelayInfo{OriginModelName: info.OriginModelName, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: info.OriginModelName}}
+		if err := helper.ModelMappedHelper(c, mapped, nil); err != nil {
+			return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+		}
+		qwenASR = ali_dashscope.IsQwenAudioASRModel(mapped.UpstreamModelName)
+		if qwenASR {
+			if info.RelayMode != relayconstant.RelayModeAudioTranscription {
+				return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayAudioTranscriptionOnly)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			if _, err := ali_dashscope.PrepareQwenAudioASRRequest(c); err != nil {
+				return types.NewError(err, types.ErrorCodeInvalidRequest)
+			}
+		}
+	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 	if info.Request != nil && (needSensitiveCheck || constant.CountToken || service.GetGeminiFilePlan(c) != nil) {
@@ -50,7 +71,15 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
-	tokens, err := service.EstimateRequestToken(c, meta, info)
+	var tokens int
+	var err error
+	if qwenASR {
+		if constant.CountToken {
+			tokens = ali_dashscope.QwenAudioASRInputEstimate
+		}
+	} else {
+		tokens, err = service.EstimateRequestToken(c, meta, info)
+	}
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeCountTokenFailed)
 	}
