@@ -87,12 +87,13 @@ type ChatCompletionsStreamResponseChoice struct {
 }
 
 type ChatCompletionsStreamResponseChoiceDelta struct {
-	Content          *string            `json:"content,omitempty"`
-	ReasoningContent *string            `json:"reasoning_content,omitempty"`
-	Signature        *string            `json:"signature,omitempty"`
-	Reasoning        *string            `json:"reasoning,omitempty"`
-	Role             string             `json:"role,omitempty"`
-	ToolCalls        []ToolCallResponse `json:"tool_calls,omitempty"`
+	Content          *string             `json:"content,omitempty"`
+	ReasoningContent *string             `json:"reasoning_content,omitempty"`
+	Signature        *string             `json:"signature,omitempty"`
+	Reasoning        *string             `json:"reasoning,omitempty"`
+	Role             string              `json:"role,omitempty"`
+	ToolCalls        []ToolCallResponse  `json:"tool_calls,omitempty"`
+	ExtraContent     *OpenAIExtraContent `json:"extra_content,omitempty"`
 	// Annotations is an OpenAI-compatible streaming extension supported by
 	// providers such as OpenRouter. Relaykit uses it to preserve streaming URL
 	// citations, including Claude round-trip metadata.
@@ -127,10 +128,42 @@ func (c *ChatCompletionsStreamResponseChoiceDelta) SetReasoningContent(s string)
 
 type ToolCallResponse struct {
 	// Index is not nil only in chat completion chunk object
-	Index    *int             `json:"index,omitempty"`
-	ID       string           `json:"id,omitempty"`
-	Type     any              `json:"type"`
-	Function FunctionResponse `json:"function"`
+	Index        *int                `json:"index,omitempty"`
+	ID           string              `json:"id,omitempty"`
+	Type         any                 `json:"type"`
+	Function     FunctionResponse    `json:"function"`
+	ExtraContent *OpenAIExtraContent `json:"extra_content,omitempty"`
+}
+
+// OpenAIExtraContent preserves provider metadata needed when replaying a chat
+// completion. Gemini signatures are opaque JSON strings, not reasoning text.
+type OpenAIExtraContent struct {
+	Google *GoogleExtraContent `json:"google,omitempty"`
+}
+
+type GoogleExtraContent struct {
+	ThoughtSignature json.RawMessage `json:"thought_signature,omitempty"`
+}
+
+func NewGeminiExtraContent(signature json.RawMessage) *OpenAIExtraContent {
+	switch strings.TrimSpace(string(signature)) {
+	case "", "null", `""`:
+		return nil
+	}
+	return &OpenAIExtraContent{Google: &GoogleExtraContent{
+		ThoughtSignature: append(json.RawMessage(nil), signature...),
+	}}
+}
+
+func (e *OpenAIExtraContent) GeminiThoughtSignature() json.RawMessage {
+	if e == nil || e.Google == nil {
+		return nil
+	}
+	switch strings.TrimSpace(string(e.Google.ThoughtSignature)) {
+	case "", "null", `""`:
+		return nil
+	}
+	return e.Google.ThoughtSignature
 }
 
 func (c *ToolCallResponse) SetIndex(i int) {

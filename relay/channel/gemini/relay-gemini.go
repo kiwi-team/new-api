@@ -1316,18 +1316,14 @@ func unescapeMapOrSlice(data interface{}) interface{} {
 }
 
 func getResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
-	var argsBytes []byte
-	var err error
-	// 移除 unescapeMapOrSlice 调用，直接使用 json.Marshal
-	// JSON 序列化/反序列化已经正确处理了转义字符
-	argsBytes, err = json.Marshal(item.FunctionCall.Arguments)
-
+	argsBytes, err := common.Marshal(item.FunctionCall.Arguments)
 	if err != nil {
 		return nil
 	}
 	return &dto.ToolCallResponse{
-		ID:   fmt.Sprintf("call_%s", common.GetUUID()),
-		Type: "function",
+		ID:           fmt.Sprintf("call_%s", common.GetUUID()),
+		Type:         "function",
+		ExtraContent: dto.NewGeminiExtraContent(item.ThoughtSignature),
 		Function: dto.FunctionResponse{
 			Arguments: string(argsBytes),
 			Name:      item.FunctionCall.FunctionName,
@@ -1357,6 +1353,9 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 			var texts []string
 			var toolCalls []dto.ToolCallResponse
 			for _, part := range candidate.Content.Parts {
+				if part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
+					choice.Message.ExtraContent = dto.NewGeminiExtraContent(part.ThoughtSignature)
+				}
 				if part.InlineData != nil {
 					// 媒体内容
 					// if strings.HasPrefix(part.InlineData.MimeType, "image") {
@@ -1528,6 +1527,9 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*d
 			}
 		}
 		for _, part := range candidate.Content.Parts {
+			if part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
+				choice.Delta.ExtraContent = dto.NewGeminiExtraContent(part.ThoughtSignature)
+			}
 			if part.InlineData != nil {
 				if strings.HasPrefix(part.InlineData.MimeType, "image") {
 					imgText := "![image](data:" + part.InlineData.MimeType + ";base64," + part.InlineData.Data + ")"
@@ -1865,8 +1867,47 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	finishReason := constant.FinishReasonStop
 	toolCallIndexByChoice := make(map[int]map[string]int)
 	nextToolCallIndexByChoice := make(map[int]int)
+	var chatState *relayconvert.ResponseStreamState
+	var conversionErr error
+	if info.RelayFormat == types.RelayFormatOpenAI {
+		var err error
+		chatState, err = relayconvert.NewResponseStreamState(types.RelayFormatGemini, types.RelayFormatOpenAI, relayconvert.ResponseStreamOptions{
+			ID:      id,
+			Created: createAt,
+		})
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
+	}
 
 	usage, err := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
+		if chatState != nil {
+			var results []relayconvert.ResponseResult
+			results, conversionErr = service.ConvertStreamResponseChunk(c, info, chatState, geminiResponse)
+			if conversionErr != nil {
+				return false
+			}
+			for resultIndex, result := range results {
+				response := result.Value.(*dto.ChatCompletionsStreamResponse)
+				// Keep this endpoint's existing usage contract: only the
+				// upstream frame may report usage. Converter-generated terminal
+				// chunks and local prompt estimates do not add usage frames.
+				if resultIndex > 0 || !dto.HasGeminiUsageMetadataTokens(geminiResponse.GetUsageMetadata()) {
+					response.Usage = nil
+				}
+				if info.SendResponseCount == 0 {
+					emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
+					emptyResponse.Usage = response.Usage
+					if conversionErr = handleStream(c, info, emptyResponse); conversionErr != nil {
+						return false
+					}
+				}
+				if conversionErr = handleStream(c, info, response); conversionErr != nil {
+					return false
+				}
+			}
+			return true
+		}
 		response, isStop := streamResponseGeminiChat2OpenAI(geminiResponse)
 
 		response.Id = id
@@ -1950,8 +1991,24 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		return true
 	})
 
+	if conversionErr != nil {
+		return usage, types.NewError(conversionErr, types.ErrorCodeBadResponseBody)
+	}
 	if err != nil {
 		return usage, err
+	}
+	if chatState != nil {
+		results, finalizeErr := service.FinalizeStreamResponse(c, info, chatState)
+		if finalizeErr != nil {
+			return usage, types.NewError(finalizeErr, types.ErrorCodeBadResponseBody)
+		}
+		for _, result := range results {
+			response := result.Value.(*dto.ChatCompletionsStreamResponse)
+			response.Usage = nil
+			if writeErr := handleStream(c, info, response); writeErr != nil {
+				return usage, types.NewError(writeErr, types.ErrorCodeBadResponseBody)
+			}
+		}
 	}
 
 	response := helper.GenerateFinalUsageResponse(id, createAt, info.UpstreamModelName, *usage)

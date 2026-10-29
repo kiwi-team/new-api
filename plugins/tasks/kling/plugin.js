@@ -7,10 +7,10 @@ export const meta = {
     en: "Kuaishou Kling video generation (text-to-video and image-to-video)",
     zh: "快手可灵视频生成（文生视频、图生视频）",
   },
-  version: "1.1.0",
+  version: "1.2.0",
   author: { name: "QuantumNous" },
   channelTypes: [50],
-  models: ["kling-v1", "kling-v1-6", "kling-v2-master"],
+  models: ["kling-v1", "kling-v1-6", "kling-v2-master", "kling-v3"],
   fetchMode: "per_task",
   upstreams: ["vendor", "new_api"],
   usageSchema: {
@@ -27,6 +27,8 @@ export const meta = {
     { label: "v1-6 std 5s", facts: { units: 2 } },
     { label: "v1-6 pro 10s", facts: { units: 7 } },
     { label: "v2-master pro 5s", facts: { units: 10 } },
+    { label: "v3 pro audio 5s", facts: { units: 6 } },
+    { label: "v3 4k audio 5s", facts: { units: 15 } },
   ],
   protocols: [{ name: "openai_responses", supports: ["stream", "sync", "background"] }, "openai_video"],
   routes: [
@@ -43,6 +45,7 @@ const UNITS_PER_SECOND = {
   "kling-v1": { std: 0.2, pro: 0.7 },
   "kling-v1-6": { std: 0.4, pro: 0.7 },
   "kling-v2-master": { pro: 2.0 },
+  "kling-v3": { std: 0.6, pro: 0.8, "4k": 3.0 },
 };
 
 function trimmed(value) {
@@ -138,19 +141,24 @@ function resolveKlingMode(model, mode) {
     return "pro";
   }
   if (!raw) return "std";
-  if (raw !== "std" && raw !== "pro") throw new Error("mode must be std or pro");
+  if (model === "kling-v3" && raw === "4k") return raw;
+  if (raw !== "std" && raw !== "pro") throw new Error(model === "kling-v3" ? "mode must be std, pro or 4k" : "mode must be std or pro");
   return raw;
 }
 
-function perSecondRate(model, mode) {
+function perSecondRate(model, mode, sound) {
+  if (model === "kling-v3" && sound === "on") {
+    if (mode === "std") return 0.9;
+    if (mode === "pro") return 1.2;
+  }
   const table = UNITS_PER_SECOND[model] || UNITS_PER_SECOND["kling-v1"];
   if (table[mode] !== undefined) return table[mode];
   if (table.pro !== undefined) return table.pro;
   return table.std;
 }
 
-function estimateUnits(model, mode, durationSeconds) {
-  return perSecondRate(model, mode) * durationSeconds;
+function estimateUnits(model, mode, durationSeconds, sound) {
+  return perSecondRate(model, mode, sound) * durationSeconds;
 }
 
 // Official current pages list 3–15s for new models; old-model duration "5"|"10"
@@ -173,7 +181,8 @@ function outboundDuration(req) {
 
 function outboundMode(req, model) {
   const metadata = (req && req.metadata) || {};
-  return resolveKlingMode(model, (req && req.mode) || metadata.mode);
+  const mode = Object.prototype.hasOwnProperty.call(metadata, "mode") ? metadata.mode : req && req.mode;
+  return resolveKlingMode(model, mode);
 }
 
 function hasKlingImage(req, hasInputReferenceFile) {
@@ -276,7 +285,8 @@ export function extractUsage(ctx) {
   const model = submitModel(ctx, req);
   const duration = outboundDuration(req);
   const mode = outboundMode(req, model);
-  return { units: estimateUnits(model, mode, duration) };
+  const sound = (req.metadata || {}).sound;
+  return { units: estimateUnits(model, mode, duration, sound) };
 }
 
 export function buildQueryRequest(ctx) {

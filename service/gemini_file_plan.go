@@ -26,7 +26,6 @@ import (
 )
 
 const geminiFilePlanKey = "gemini_file_plan"
-const maxGeminiFiles = 16
 const maxGeminiFileBytes int64 = 2 << 30
 const maxGeminiTotalFileBytes int64 = 4 << 30
 const maxGeminiProbeBytes int64 = 64 << 20
@@ -63,6 +62,14 @@ type GeminiPlannedFile struct {
 	etag          string
 	contentLength int64
 	resolved      *relayconvert.GeminiMedia
+}
+
+// HasRemoteFiles includes small URLs and provider file references, whose
+// upstream errors can expose signed URLs or account identifiers.
+func (p *GeminiFilePlan) HasRemoteFiles() bool {
+	return slices.ContainsFunc(p.Files, func(file *GeminiPlannedFile) bool {
+		return file.Source.IsURL()
+	})
 }
 
 func FileRoutingError(code, message string, status int) *types.NewAPIError {
@@ -235,9 +242,9 @@ func PlanGeminiFiles(c *gin.Context, modelName string) (*GeminiFilePlan, *types.
 	if len(plan.Files) == 0 {
 		return nil, nil
 	}
-	if len(plan.Files) > maxGeminiFiles {
-		return nil, FileRoutingError("file_input_too_large", "too many attachments (maximum 16)", 413)
-	}
+	// Attachment counts depend on the actual model and API (Developer API or
+	// Vertex AI), selected after planning. Let the upstream enforce its limits
+	// instead of imposing a shared cap on images, audio, video and PDFs.
 	select {
 	case geminiFileSlots <- struct{}{}:
 		plan.release = func() { <-geminiFileSlots }

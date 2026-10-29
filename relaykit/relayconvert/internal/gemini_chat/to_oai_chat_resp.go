@@ -1,6 +1,7 @@
 package geminichat
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -115,6 +116,9 @@ func ResponseGeminiChat2OpenAI(id string, created int64, response *dto.GeminiCha
 			}
 			var toolCalls []dto.ToolCallResponse
 			for _, part := range candidate.Content.Parts {
+				if part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
+					choice.Message.ExtraContent = dto.NewGeminiExtraContent(part.ThoughtSignature)
+				}
 				if part.InlineData != nil {
 					if strings.HasPrefix(part.InlineData.MimeType, "image") {
 						writeSep()
@@ -200,6 +204,9 @@ func StreamResponseGeminiChat2OpenAI(geminiResponse *dto.GeminiChatResponse) (*d
 		var content strings.Builder
 		var inlineGrow int
 		for _, part := range candidate.Content.Parts {
+			if part.FunctionCall == nil && len(part.ThoughtSignature) > 0 {
+				choice.Delta.ExtraContent = dto.NewGeminiExtraContent(part.ThoughtSignature)
+			}
 			if part.InlineData != nil {
 				inlineGrow += len(part.InlineData.MimeType) + len(part.InlineData.Data) + 32
 			}
@@ -307,9 +314,10 @@ type GeminiToChatStreamState struct {
 }
 
 type geminiPartialToolCall struct {
-	id        string
-	name      string
-	arguments map[string]interface{}
+	id               string
+	name             string
+	arguments        map[string]any
+	thoughtSignature json.RawMessage
 }
 
 type geminiPartialArgPathSegment struct {
@@ -478,9 +486,14 @@ func (s *GeminiToChatStreamState) preparePartialFunctionCalls(response *dto.Gemi
 		parts := make([]dto.GeminiPart, 0, len(candidate.Content.Parts))
 		for _, part := range candidate.Content.Parts {
 			call := part.FunctionCall
+			pending := s.partialToolByCandidate[candidate.Index]
 			if call == nil || (s.partialToolByCandidate[candidate.Index] == nil && call.WillContinue == nil && len(call.PartialArgs) == 0) {
 				parts = append(parts, part)
 				continue
+			}
+			signature := part.ThoughtSignature
+			if len(signature) == 0 && pending != nil {
+				signature = pending.thoughtSignature
 			}
 			completed, ready, err := s.appendPartialFunctionCall(candidate.Index, call)
 			if err != nil {
@@ -488,7 +501,10 @@ func (s *GeminiToChatStreamState) preparePartialFunctionCalls(response *dto.Gemi
 			}
 			if ready {
 				part.FunctionCall = completed
+				part.ThoughtSignature = signature
 				parts = append(parts, part)
+			} else {
+				s.partialToolByCandidate[candidate.Index].thoughtSignature = signature
 			}
 		}
 		candidate.Content.Parts = parts
@@ -729,8 +745,9 @@ func geminiResponseToolCall(item *dto.GeminiPart) *dto.ToolCallResponse {
 		callID = fmt.Sprintf("call_%s", kitutil.GetUUID())
 	}
 	return &dto.ToolCallResponse{
-		ID:   callID,
-		Type: "function",
+		ID:           callID,
+		Type:         "function",
+		ExtraContent: dto.NewGeminiExtraContent(item.ThoughtSignature),
 		Function: dto.FunctionResponse{
 			Arguments: string(argsBytes),
 			Name:      item.FunctionCall.FunctionName,

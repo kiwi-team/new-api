@@ -5,7 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
@@ -179,6 +183,61 @@ func TestParseOmniTaskResult_Failed(t *testing.T) {
 	}
 	if ti.Reason != "nsfw" {
 		t.Errorf("reason = %q, want nsfw", ti.Reason)
+	}
+}
+
+func TestKlingOmniQueryArrayResponse(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		body   string
+		status string
+		reason string
+	}{
+		{
+			name:   "succeeded video",
+			body:   `{"code":0,"message":"SUCCEED","data":[{"id":"944266271695577723","status":"succeeded","outputs":[{"type":"video","id":"video-1","url":"https://cdn.example/video.mp4","duration":"5.041"}],"message":"","billing":[{"charge_type":"unit","amount":"15","package_type":"video"}]}]}`,
+			status: model.TaskStatusSuccess,
+		},
+		{
+			name:   "processing",
+			body:   `{"code":0,"message":"SUCCEED","data":[{"id":"944266271695577723","status":"processing","outputs":[],"message":""}]}`,
+			status: model.TaskStatusInProgress,
+		},
+		{
+			name:   "upstream failure",
+			body:   `{"code":0,"message":"SUCCEED","data":[{"id":"944266271695577723","status":"failed","outputs":[],"message":"content rejected"}]}`,
+			status: model.TaskStatusFailure,
+			reason: "content rejected",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			adaptor := &TaskAdaptor{}
+			result, err := adaptor.ParseTaskResult([]byte(testCase.body))
+			require.NoError(t, err)
+			assert.Equal(t, "944266271695577723", result.TaskID)
+			assert.Equal(t, testCase.status, result.Status)
+			assert.Equal(t, testCase.reason, result.Reason)
+			if testCase.status != model.TaskStatusSuccess {
+				return
+			}
+			assert.Equal(t, "https://cdn.example/video.mp4", result.Url)
+			assert.InDelta(t, 5.041, result.ActualSeconds, 1e-9)
+			task := &model.Task{
+				TaskID: "task_public_omni", Status: model.TaskStatusSuccess, Progress: "100%",
+				Properties: model.Properties{OriginModelName: "kling-3.0-omni"},
+				Data:       []byte(testCase.body),
+			}
+			video, err := adaptor.ConvertToOpenAIVideo(task)
+			require.NoError(t, err)
+			var response map[string]any
+			require.NoError(t, common.Unmarshal(video, &response))
+			assert.Equal(t, task.TaskID, response["id"])
+			assert.Equal(t, task.TaskID, response["task_id"])
+			assert.Equal(t, "kling-3.0-omni", response["model"])
+			assert.Equal(t, "completed", response["status"])
+			assert.Equal(t, "5.041", response["seconds"])
+			assert.Equal(t, map[string]any{"url": "https://cdn.example/video.mp4"}, response["metadata"])
+		})
 	}
 }
 

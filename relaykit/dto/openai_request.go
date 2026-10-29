@@ -460,10 +460,11 @@ func (r *GeneralOpenAIRequest) GetSystemRoleName() string {
 const CustomType = "custom"
 
 type ToolCallRequest struct {
-	ID       string          `json:"id,omitempty"`
-	Type     string          `json:"type"`
-	Function FunctionRequest `json:"function"`
-	Custom   json.RawMessage `json:"custom,omitempty"`
+	ID           string              `json:"id,omitempty"`
+	Type         string              `json:"type"`
+	Function     FunctionRequest     `json:"function"`
+	Custom       json.RawMessage     `json:"custom,omitempty"`
+	ExtraContent *OpenAIExtraContent `json:"extra_content,omitempty"`
 	// Native is a complete vendor tool object sent instead of the fields
 	// above. Function has no omitempty, so a non-function tool would
 	// otherwise carry "function":{"name":""}, which vendor schemas with
@@ -525,15 +526,16 @@ func (r *GeneralOpenAIRequest) ParseInput() []string {
 }
 
 type Message struct {
-	Role             string          `json:"role"`
-	Content          any             `json:"content"`
-	Name             *string         `json:"name,omitempty"`
-	Prefix           *bool           `json:"prefix,omitempty"`
-	ReasoningContent *string         `json:"reasoning_content,omitempty"`
-	Signature        string          `json:"signature,omitempty"`
-	Reasoning        *string         `json:"reasoning,omitempty"`
-	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
-	ToolCallId       string          `json:"tool_call_id,omitempty"`
+	Role             string              `json:"role"`
+	Content          any                 `json:"content"`
+	Name             *string             `json:"name,omitempty"`
+	Prefix           *bool               `json:"prefix,omitempty"`
+	ReasoningContent *string             `json:"reasoning_content,omitempty"`
+	Signature        string              `json:"signature,omitempty"`
+	Reasoning        *string             `json:"reasoning,omitempty"`
+	ToolCalls        json.RawMessage     `json:"tool_calls,omitempty"`
+	ToolCallId       string              `json:"tool_call_id,omitempty"`
+	ExtraContent     *OpenAIExtraContent `json:"extra_content,omitempty"`
 	// Tools carries Kimi K3 dynamic tool loading declarations on a system message.
 	// Same shape as the top-level tools array; passthrough-only for OpenAI-compatible upstreams.
 	Tools json.RawMessage `json:"tools,omitempty"`

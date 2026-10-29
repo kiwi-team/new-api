@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"context"
@@ -245,10 +246,15 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		content := dto.GeminiChatContent{
 			Role: message.Role,
 		}
-		shouldAttachThoughtSignature := (message.Role == "assistant" || message.Role == "model") && sharedgemini.ShouldAttachThoughtSignature(opts)
+		isAssistant := message.Role == "assistant" || message.Role == "model"
+		toolCalls := message.ParseToolCalls()
+		hasOriginalSignature := len(message.ExtraContent.GeminiThoughtSignature()) > 0 || slices.ContainsFunc(toolCalls, func(call dto.ToolCallRequest) bool {
+			return len(call.ExtraContent.GeminiThoughtSignature()) > 0
+		})
+		shouldAttachThoughtSignature := isAssistant && !hasOriginalSignature && sharedgemini.ShouldAttachThoughtSignature(opts)
 		signatureAttached := false
 		if message.ToolCalls != nil {
-			for _, call := range message.ParseToolCalls() {
+			for _, call := range toolCalls {
 				args := map[string]any{}
 				if call.Function.Arguments != "" {
 					if kitutil.Unmarshal([]byte(call.Function.Arguments), &args) != nil {
@@ -256,6 +262,7 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 					}
 				}
 				toolCall := dto.GeminiPart{
+					ThoughtSignature: call.ExtraContent.GeminiThoughtSignature(),
 					FunctionCall: &dto.FunctionCall{
 						ID:           call.ID,
 						FunctionName: call.Function.Name,
@@ -346,6 +353,14 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 					mediaPart.InlineData = &dto.GeminiInlineData{MimeType: resolved.MIMEType, Data: resolved.Base64}
 				}
 				parts = append(parts, mediaPart)
+			}
+		}
+
+		if signature := message.ExtraContent.GeminiThoughtSignature(); isAssistant && len(signature) > 0 {
+			if len(parts) > 0 && parts[len(parts)-1].FunctionCall == nil {
+				parts[len(parts)-1].ThoughtSignature = signature
+			} else {
+				parts = append(parts, dto.GeminiPart{ThoughtSignature: signature})
 			}
 		}
 

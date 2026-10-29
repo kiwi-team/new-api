@@ -174,7 +174,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		if filePlan != nil {
+		if filePlan != nil && filePlan.HasRemoteFiles() {
 			return service.FileRoutingError("file_inference_failed", "Gemini file inference transport failed", 502)
 		}
 		logger.LogError(c, common.LogText("Do gemini request failed: %s", err.Error()))
@@ -188,7 +188,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
-			if filePlan != nil {
+			if filePlan != nil && filePlan.HasRemoteFiles() {
 				return service.GeminiFileUpstreamError(httpResp)
 			}
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)

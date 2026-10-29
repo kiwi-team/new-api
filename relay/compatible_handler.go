@@ -205,7 +205,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		if filePlan != nil {
+		if filePlan != nil && filePlan.HasRemoteFiles() {
 			return service.FileRoutingError("file_inference_failed", "Gemini file inference transport failed", 502)
 		}
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
@@ -217,7 +217,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
-			if filePlan != nil {
+			if filePlan != nil && filePlan.HasRemoteFiles() {
 				return service.GeminiFileUpstreamError(httpResp)
 			}
 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)

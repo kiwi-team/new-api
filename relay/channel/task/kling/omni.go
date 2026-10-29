@@ -15,7 +15,7 @@ import (
 //
 // 与旧版可灵（/v1/videos/{image2video,text2video}）完全不同的协议：
 //   - 提交： POST {base}/omni-video/{model}   请求体为 contents/settings/options 三段式
-//   - 查询： GET  {base}/tasks?task_ids={id}  结果在 data.result[].outputs[]
+//   - 查询： GET  {base}/tasks?task_ids={id}  结果在 data[].outputs[]，兼容 data.result[].outputs[]
 //
 // 素材通过 contents 数组承载，每项带 type 与可选的 id（供 prompt 里用 @id 指代）。
 // 文档：https://klingai.com/document-api/api/video/3-0-omni/video-omni
@@ -96,21 +96,40 @@ type omniOutput struct {
 
 // omniQueryResponse 是查询任务的响应（GET /tasks?task_ids=）。
 type omniQueryResponse struct {
-	Code      int    `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
-	Data      struct {
-		Result []struct {
-			ID         string       `json:"id"`
-			Status     string       `json:"status"`
-			Message    string       `json:"message"`
-			CreateTime int64        `json:"create_time"`
-			UpdateTime int64        `json:"update_time"`
-			ExternalID string       `json:"external_id"`
-			Outputs    []omniOutput `json:"outputs"`
-		} `json:"result"`
-		Count int `json:"count"`
-	} `json:"data"`
+	Code      int           `json:"code"`
+	Message   string        `json:"message"`
+	RequestID string        `json:"request_id"`
+	Data      omniQueryData `json:"data"`
+}
+
+type omniQueryData struct {
+	Result []omniQueryTask `json:"result"`
+	Count  int             `json:"count"`
+}
+
+type omniQueryTask struct {
+	ID         string       `json:"id"`
+	Status     string       `json:"status"`
+	Message    string       `json:"message"`
+	CreateTime int64        `json:"create_time"`
+	UpdateTime int64        `json:"update_time"`
+	ExternalID string       `json:"external_id"`
+	Outputs    []omniOutput `json:"outputs"`
+}
+
+// The vendor returns data as an array; older gateways wrap it in data.result.
+// Normalize both forms for status detection, polling and video result rendering.
+func (d *omniQueryData) UnmarshalJSON(data []byte) error {
+	if common.GetJsonType(data) == "array" {
+		var tasks []omniQueryTask
+		if err := common.Unmarshal(data, &tasks); err != nil {
+			return err
+		}
+		*d = omniQueryData{Result: tasks, Count: len(tasks)}
+		return nil
+	}
+	type queryData omniQueryData
+	return common.Unmarshal(data, (*queryData)(d))
 }
 
 // ============================
@@ -321,15 +340,9 @@ func parseOmniSubmitResponse(body []byte) (string, error) {
 	return resp.Data.ID, nil
 }
 
-// isOmniQueryResponse 判断响应体是否为 Omni 的查询结构（data.result 数组）。
+// isOmniQueryResponse 判断响应体是否为 Omni 的查询结构。
 func isOmniQueryResponse(body []byte) bool {
-	var probe struct {
-		Data struct {
-			Result []struct {
-				ID string `json:"id"`
-			} `json:"result"`
-		} `json:"data"`
-	}
+	var probe omniQueryResponse
 	if err := common.Unmarshal(body, &probe); err != nil {
 		return false
 	}

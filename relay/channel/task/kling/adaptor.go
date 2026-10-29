@@ -267,7 +267,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	// Omni 的任务 ID 在 data.id（旧接口在 data.task_id），两者结构不同需分别解析。
 	taskId := kResp.Data.TaskId
-	if relaycommon.IsKlingOmniModel(info.OriginModelName) {
+	if relaycommon.IsKlingOmniModel(info.UpstreamModelName) || relaycommon.IsKlingOmniModel(info.OriginModelName) {
 		id, err := parseOmniSubmitResponse(responseBody)
 		if err != nil {
 			taskErr = service.TaskErrorWrapperLocal(err, "task_failed", http.StatusBadRequest)
@@ -456,7 +456,7 @@ func (a *TaskAdaptor) createJWTTokenWithKey(apiKey string) (string, error) {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	// Omni 的查询响应结构不同（data.result[].outputs[]），按结构探测后分流。
+	// Omni 的查询响应使用 data[]（兼容 data.result[]），按结构探测后分流。
 	if isOmniQueryResponse(respBody) {
 		return parseOmniTaskResult(respBody)
 	}

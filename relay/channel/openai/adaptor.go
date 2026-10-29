@@ -471,6 +471,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.New("request is nil")
 	}
 
+	if err := service.InlineKimiChatMediaURLs(c, info, request); err != nil {
+		return nil, err
+	}
+
 	if c.GetString(constant.ContextKeyCompletionsResponses) == "yes" {
 		return ConvertChatRequestToResponseRequest(c, info, request)
 	}

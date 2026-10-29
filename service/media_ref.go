@@ -3,8 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
@@ -92,6 +96,68 @@ func ResolveMediaRef(c *gin.Context, ref string, defaultMime string) (data strin
 		}
 	}
 	return data, mimeType, nil
+}
+
+// InlineKimiChatMediaURLs applies the same inline-media policy to Kimi models
+// across providers. Ark endpoint IDs hide the upstream model name, so those
+// requests use the original model name to identify Kimi.
+func InlineKimiChatMediaURLs(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) error {
+	model := request.Model
+	if info != nil && info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		model = info.UpstreamModelName
+	}
+	model = strings.ToLower(path.Base(strings.TrimSpace(model)))
+	if info != nil && info.ChannelMeta != nil && info.ChannelType == constant.ChannelTypeVolcEngine && strings.HasPrefix(model, "ep-") {
+		model = strings.ToLower(path.Base(strings.TrimSpace(info.OriginModelName)))
+	}
+	if !strings.HasPrefix(model, "kimi-") {
+		return nil
+	}
+	return InlineOpenAIChatMediaURLs(c, request)
+}
+
+// InlineOpenAIChatMediaURLs downloads remote image/video references for upstreams
+// that require base64 data URLs. Existing inline media is preserved. Downloads
+// use the shared file service's SSRF policy, size limit and request cache.
+func InlineOpenAIChatMediaURLs(c *gin.Context, request *dto.GeneralOpenAIRequest) error {
+	for i := range request.Messages {
+		message := &request.Messages[i]
+		content := message.ParseContent()
+		changed := false
+		for j := range content {
+			part := &content[j]
+			var mediaURL *string
+			switch part.Type {
+			case dto.ContentTypeImageURL:
+				image := part.GetImageMedia()
+				if image == nil || ClassifyMediaRef(image.Url) != MediaRefHTTPURL {
+					continue
+				}
+				part.ImageUrl = image
+				mediaURL = &image.Url
+			case dto.ContentTypeVideoUrl:
+				video := part.GetVideoUrl()
+				if video == nil || ClassifyMediaRef(video.Url) != MediaRefHTTPURL {
+					continue
+				}
+				part.VideoUrl = video
+				mediaURL = &video.Url
+			default:
+				continue
+			}
+
+			data, mimeType, err := ResolveMediaRef(c, *mediaURL, "application/octet-stream")
+			if err != nil {
+				return fmt.Errorf("convert %s url to base64 failed: %w", strings.TrimSuffix(part.Type, "_url"), err)
+			}
+			*mediaURL = fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+			changed = true
+		}
+		if changed {
+			message.SetMediaContent(content)
+		}
+	}
+	return nil
 }
 
 // ResolveRemoteMediaRef 返回一个上游可直接拉取的远程地址。

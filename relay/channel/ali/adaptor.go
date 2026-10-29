@@ -183,6 +183,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	if err := service.InlineKimiChatMediaURLs(c, info, request); err != nil {
+		return nil, err
+	}
 	if ali_dashscope.IsQwen3ASRFlashModel(info.UpstreamModelName) {
 		return requestOpenAI2Ali(*request, info.UpstreamModelName), nil
 	}

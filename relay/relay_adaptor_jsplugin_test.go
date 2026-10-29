@@ -38,8 +38,8 @@ func TestGetTaskAdaptorMapsMigratedPlatformsToFactoryPlugins(t *testing.T) {
 	}
 	for _, platform := range platforms {
 		adaptor := GetTaskAdaptor(platform)
-		if google, ok := adaptor.(*googleVideoTaskAdaptor); ok {
-			adaptor = google.TaskAdaptor
+		if omni, ok := adaptor.(*omniVideoTaskAdaptor); ok {
+			adaptor = omni.TaskAdaptor
 		}
 		_, isJS := adaptor.(*jspluginadaptor.TaskAdaptor)
 		assert.True(t, isJS, "platform %s should use its factory plugin", platform)
@@ -201,4 +201,155 @@ func TestGoogleOmniPollingUsesInteractionEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	defer response.Body.Close()
 	assert.Equal(t, http.StatusOK, response.StatusCode)
+}
+
+func TestKlingOmniTasksKeepNativeChannelWithPluginEnabled(t *testing.T) {
+	const omniModel = "kling-3.0-omni"
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))
+	_, enabled := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
+	require.True(t, enabled)
+
+	for _, spec := range []struct {
+		name       string
+		resolution string
+		audio      string
+		withVideo  bool
+		ratio      float64
+	}{
+		{"no video audio 4k", "4k", "native", false, 4},
+		{"no video audio 1080p", "1080p", "native", false, 2},
+		{"reference video silent 4k", "4k", "off", true, 4},
+		{"reference video silent 1080p", "1080p", "off", true, 2},
+	} {
+		for _, clientModel := range []string{omniModel, "video-alias"} {
+			t.Run(spec.name+"/"+clientModel, func(t *testing.T) {
+				body := map[string]any{
+					"model": clientModel, "prompt": "waves at sunset", "duration": 5,
+					"resolution": spec.resolution, "audio": spec.audio, "aspect_ratio": "16:9",
+				}
+				expectedContents := []any{map[string]any{"type": "prompt", "text": "waves at sunset"}}
+				if spec.withVideo {
+					body["references"] = []any{map[string]any{
+						"type": "video", "role": "reference_video", "url": "https://cdn.example/reference.mp4", "id": "video_1",
+					}}
+					expectedContents = append(expectedContents, map[string]any{
+						"type": "feature_video", "url": "https://cdn.example/reference.mp4", "id": "video_1",
+					})
+				}
+				encoded, err := common.Marshal(body)
+				require.NoError(t, err)
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(string(encoded)))
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Set("model_mapping", `{"video-alias":"kling-3.0-omni"}`)
+				t.Cleanup(func() { common.CleanupBodyStorage(c) })
+				selectedPlatform, adaptor := getTaskAdaptorForRequest(c, platform, omniModel)
+				require.NotNil(t, adaptor)
+				assert.Equal(t, platform, selectedPlatform)
+				_, pinned := c.Get(pluginruntime.ContextKeyPinnedPlugin)
+				assert.False(t, pinned)
+				info := &relaycommon.RelayInfo{
+					OriginModelName: clientModel,
+					ChannelMeta: &relaycommon.ChannelMeta{
+						ChannelType: constant.ChannelTypeKling, ChannelBaseUrl: "https://provider.example",
+						ApiKey: "native-api-key", UpstreamModelName: omniModel,
+					},
+					TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_kling_omni"},
+				}
+				adaptor.Init(info)
+				require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+				requestURL, err := adaptor.BuildRequestURL(info)
+				require.NoError(t, err)
+				assert.Equal(t, "https://provider.example/omni-video/"+omniModel, requestURL)
+				requestBody, err := adaptor.BuildRequestBody(c, info)
+				require.NoError(t, err)
+				var payload map[string]any
+				require.NoError(t, common.DecodeJson(requestBody, &payload))
+				assert.Equal(t, expectedContents, payload["contents"])
+				assert.Equal(t, map[string]any{
+					"duration": float64(5), "resolution": spec.resolution, "audio": spec.audio, "aspect_ratio": "16:9",
+				}, payload["settings"])
+				assert.Equal(t, map[string]float64{"seconds": 5, "resolution-" + spec.resolution: spec.ratio}, adaptor.EstimateBilling(c, info))
+				response := &http.Response{
+					StatusCode: http.StatusOK, Header: make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"id":"private-omni-task","status":"submitted"}}`)),
+				}
+				parsed, taskErr := adaptor.ParseResponse(c, response, info)
+				require.Nil(t, taskErr)
+				require.NotNil(t, parsed)
+				assert.Equal(t, "private-omni-task", parsed.UpstreamTaskID)
+				clientResponse, err := common.Marshal(parsed.ClientResponse)
+				require.NoError(t, err)
+				var rendered map[string]any
+				require.NoError(t, common.Unmarshal(clientResponse, &rendered))
+				assert.Equal(t, clientModel, rendered["model"])
+				assert.Equal(t, info.PublicTaskID, rendered["id"])
+				assert.NotContains(t, string(clientResponse), "private-omni-task")
+			})
+		}
+	}
+}
+
+func TestKlingOmniPollingPreservesStoredTaskProtocol(t *testing.T) {
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))
+	for _, spec := range []struct {
+		name          string
+		upstreamModel string
+		pluginTask    bool
+		path          string
+	}{
+		{"native", "kling-3.0-omni", false, "/tasks"},
+		{"historical origin only", "", false, "/tasks"},
+		{"explicit plugin execution", "kling-3.0-omni", true, "/v1/videos/text2video/private-omni-task"},
+	} {
+		t.Run(spec.name, func(t *testing.T) {
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, spec.path, r.URL.Path)
+				if spec.pluginTask {
+					_, _ = io.WriteString(w, `{"code":0,"data":{"task_id":"private-omni-task","task_status":"succeed","task_result":{"videos":[{"url":"https://cdn.example/result.mp4","duration":"5"}]}}}`)
+					return
+				}
+				assert.Equal(t, "private-omni-task", r.URL.Query().Get("task_ids"))
+				_, _ = io.WriteString(w, `{"code":0,"data":{"result":[{"id":"private-omni-task","status":"succeeded","outputs":[{"type":"video","url":"https://cdn.example/result.mp4","duration":"5"}]}]}}`)
+			}))
+			defer source.Close()
+			task := &model.Task{
+				TaskID: "task_public_kling_omni", Platform: platform,
+				Properties:  model.Properties{OriginModelName: "kling-3.0-omni", UpstreamModelName: spec.upstreamModel},
+				PrivateData: model.TaskPrivateData{UpstreamTaskID: "private-omni-task"},
+			}
+			if spec.pluginTask {
+				task.PrivateData.Execution = &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{Key: "kling"}}
+			}
+			adaptor := GetTaskAdaptor(platform)
+			require.NotNil(t, adaptor)
+			response, err := adaptor.FetchTask(source.URL, "access|secret", task, "")
+			require.NoError(t, err)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			result, err := adaptor.ParseTaskResult(task, response, body)
+			require.NoError(t, err)
+			assert.Equal(t, model.TaskStatusSuccess, result.Status)
+			assert.Equal(t, "https://cdn.example/result.mp4", result.Url)
+			task.Status = model.TaskStatus(result.Status)
+			task.Progress = "100%"
+			task.Data = body
+			if !spec.pluginTask {
+				assert.Equal(t, float64(5), result.ActualSeconds)
+				converter, ok := adaptor.(channel.OpenAIVideoConverter)
+				require.True(t, ok)
+				video, err := converter.ConvertToOpenAIVideo(task)
+				require.NoError(t, err)
+				var rendered map[string]any
+				require.NoError(t, common.Unmarshal(video, &rendered))
+				assert.Equal(t, task.TaskID, rendered["id"])
+				assert.Equal(t, task.TaskID, rendered["task_id"])
+				assert.Equal(t, "kling-3.0-omni", rendered["model"])
+				assert.Equal(t, "completed", rendered["status"])
+				assert.Equal(t, "5", rendered["seconds"])
+			}
+		})
+	}
 }

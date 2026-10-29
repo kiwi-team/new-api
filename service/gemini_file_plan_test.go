@@ -113,6 +113,91 @@ func TestGeminiFilePlanChatContent(t *testing.T) {
 	}
 }
 
+func TestGeminiFilePlanPreservesAttachmentsBeyondSixteen(t *testing.T) {
+	configureGeminiFileTest(t, `{"enabled":true,"chat_model_patterns":["^gemini-"]}`)
+	for _, tc := range []struct {
+		name  string
+		count int
+		kinds []string
+	}{
+		{"images across messages", 17, []string{"image_url"}},
+		{"Developer API image limit", 3600, []string{"image_url"}},
+		{"audio without a file count limit", 17, []string{"audio_url"}},
+		{"PDFs across messages", 17, []string{"pdf_url"}},
+		{"mixed attachments", 18, []string{"image_url", "audio_url", "pdf_url"}},
+	} {
+		for _, native := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/native=%t", tc.name, native), func(t *testing.T) {
+				parts := make([]map[string]any, tc.count)
+				expected := make([]dto.GeminiInlineData, tc.count)
+				for i := range parts {
+					kind := tc.kinds[i%len(tc.kinds)]
+					mimeType, data := "image/png", "iVBORw0KGgo="
+					switch kind {
+					case "audio_url":
+						mimeType, data = "audio/wav", "UklGRgAAAABXQVZF"
+					case "pdf_url":
+						mimeType, data = "application/pdf", "JVBERi0xLjcK"
+					}
+					expected[i] = dto.GeminiInlineData{MimeType: mimeType, Data: data}
+					parts[i] = map[string]any{"type": kind, kind: map[string]string{"url": "data:" + mimeType + ";base64," + data}}
+					if native {
+						parts[i] = map[string]any{"inlineData": map[string]string{"mimeType": mimeType, "data": data}}
+					}
+				}
+				path := "/v1/chat/completions"
+				body := map[string]any{
+					"model": "gemini-2.5-flash",
+					"messages": []map[string]any{
+						{"role": "user", "content": parts[:tc.count-1]},
+						{"role": "user", "content": parts[tc.count-1:]},
+					},
+				}
+				if native {
+					path = "/v1beta/models/gemini-2.5-flash:generateContent"
+					body = map[string]any{"contents": []map[string]any{
+						{"role": "user", "parts": parts[:tc.count-1]},
+						{"role": "user", "parts": parts[tc.count-1:]},
+					}}
+				}
+				raw, err := common.Marshal(body)
+				require.NoError(t, err)
+				c := geminiFileTestContext(t, path, string(raw))
+				plan, apiErr := PlanGeminiFiles(c, "gemini-2.5-flash")
+				require.Nil(t, apiErr)
+				require.NotNil(t, plan)
+				require.Len(t, plan.Files, tc.count)
+				assert.False(t, plan.RequiresStorage)
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeGemini, UpstreamModelName: "gemini-2.5-flash"}, RelayFormat: types.RelayFormatOpenAI}
+				require.Nil(t, PrepareGeminiFileAttempt(c, info))
+				var result *dto.GeminiChatRequest
+				if native {
+					var request dto.GeminiChatRequest
+					require.NoError(t, common.Unmarshal(raw, &request))
+					require.NoError(t, ApplyGeminiFilePlan(c, &request))
+					result = &request
+				} else {
+					var request dto.GeneralOpenAIRequest
+					require.NoError(t, common.Unmarshal(raw, &request))
+					converted, err := ConvertRequest(c, info, types.RelayFormatGemini, &request)
+					require.NoError(t, err)
+					result = converted.Value.(*dto.GeminiChatRequest)
+				}
+				require.Len(t, result.Contents, 2)
+				require.Len(t, result.Contents[0].Parts, tc.count-1)
+				require.Len(t, result.Contents[1].Parts, 1)
+				i := 0
+				for _, content := range result.Contents {
+					for _, part := range content.Parts {
+						assert.Equal(t, &expected[i], part.InlineData)
+						i++
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestGeminiInlineFilesStayInlineAndPreserveChatConversion(t *testing.T) {
 	configureGeminiFileTest(t, `{"enabled":true,"mode":"forward","chat_model_patterns":["^gemini-"],"inline_threshold_bytes":64}`)
 	previousCountToken := constant.CountToken
