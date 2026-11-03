@@ -29,6 +29,7 @@ import (
 // ============================
 
 type TaskAdaptor struct {
+	common.TimingScope `json:"-"`
 	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
@@ -154,7 +155,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	req.Header.Set("API-KEY", key)
 	req.Header.Set("Ai-Trace-Id", common.GetUUID())
 
-	return service.GetHttpClient().Do(req)
+	return common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query"), service.GetHttpClient(), req, "task_query", true)
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -203,7 +204,7 @@ func uploadFile(info *relaycommon.RelayInfo, imageUrl string) (int64, error) {
 	req.Header.Set("Ai-Trace-Id", common.GetUUID())
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(info.RequestTimingContext(), "file_upload_http"), client, req, "file_upload", false)
 	if err != nil {
 		return 0, err
 	}

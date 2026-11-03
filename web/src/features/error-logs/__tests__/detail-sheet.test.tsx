@@ -53,9 +53,8 @@ const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
-const { ErrorLogDetailSheet } = await import(
-  '../components/error-log-detail-sheet'
-)
+const { ErrorLogDetailSheet } =
+  await import('../components/error-log-detail-sheet')
 const { api } = await import('@/lib/http-client')
 const { useAuthStore } = await import('@/stores/auth-store')
 
@@ -117,16 +116,20 @@ const errorLog = {
  * payload in `{ content }`, matching `/api/log/:id/header`. Both shapes are
  * served here so a mismatched unwrap surfaces as a render failure.
  */
-async function renderSheet() {
-  useAuthStore
-    .getState()
-    .auth.setUser({ id: 1, username: 'root', role: 100 })
+async function renderSheet(timing = '') {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   const originalAdapter = api.defaults.adapter
   api.defaults.adapter = async (config) => {
     const url = String(config.url)
-    const data = url.endsWith('/header')
-      ? { success: true, data: { content: '{"authorization":"redacted"}' } }
-      : { success: true, data: '{"model":"model"}' }
+    let data: unknown = { success: true, data: '{"model":"model"}' }
+    if (url.endsWith('/header')) {
+      data = {
+        success: true,
+        data: { content: '{"authorization":"redacted"}' },
+      }
+    } else if (url.endsWith('/timing')) {
+      data = { success: true, data: { content: timing } }
+    }
     return { data, status: 200, statusText: 'OK', headers: {}, config }
   }
 
@@ -171,6 +174,27 @@ async function renderSheet() {
 
 describe('error log detail sheet', () => {
   after(() => domWindow.close())
+
+  test('loads the error timing snapshot independently of consumption records', async () => {
+    const rendered = await renderSheet(
+      '{"phase":"error_log","request":{"pre_upstream_ms":397000,"gateway_total_ms":null}}'
+    )
+    try {
+      assert.deepEqual(rendered.renderErrors, [])
+      assert.ok(rendered.text().includes('397 s'))
+      assert.ok(rendered.text().includes('Pending at snapshot'))
+      const jsonTab = [...document.querySelectorAll('[role="tab"]')].find(
+        (tab) => tab.textContent === 'JSON'
+      )
+      assert.ok(jsonTab)
+      await act(async () => {
+        jsonTab.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      assert.ok(rendered.text().includes('"gateway_total_ms": null'))
+    } finally {
+      await rendered.cleanup()
+    }
+  })
 
   test('renders the request header payload without throwing during render', async () => {
     const rendered = await renderSheet()

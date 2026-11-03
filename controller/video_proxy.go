@@ -345,7 +345,7 @@ func doTaskMediaRequest(client *http.Client, request *http.Request, responseHead
 	request = request.Clone(requestContext)
 	resultChannel := make(chan taskMediaHTTPResult, 1)
 	go func() {
-		response, err := client.Do(request)
+		response, err := common.DoTimedHTTP(request.Context(), client, request, "artifact_download", true)
 		resultChannel <- taskMediaHTTPResult{response: response, err: err}
 	}()
 

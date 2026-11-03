@@ -400,6 +400,8 @@ func streamTaskPluginProtocol(
 	machine *relay.PluginResponsesMachine,
 	deps pluginProtocolBridgeDeps,
 ) {
+	timing := common.StartTimingPhase(c.Request.Context(), "task_wait")
+	defer timing.End()
 	generation := pinned.Generation.Number
 	pluginKey := pinned.Plugin.Meta.Key
 	logger.LogDebug(
@@ -532,7 +534,9 @@ func streamTaskPluginProtocol(
 		if previous.Present {
 			args = append(args, previous.PluginValue())
 		}
+		renderTiming := common.StartTimingPhase(observationContext, "plugin_render")
 		value, callErr := pinned.Plugin.Engine.CallPathWithAdmissionTimeout(observationContext, deps.admissionTimeout, "protocols", []string{pinned.Protocol, "renderEvents"}, args...)
+		renderTiming.End()
 		hookElapsed := deps.now().Sub(hookStarted)
 		overloaded := false
 		if callErr != nil {
@@ -664,6 +668,8 @@ func waitTaskPluginProtocol(
 	machine *relay.PluginResponsesMachine,
 	deps pluginProtocolBridgeDeps,
 ) {
+	timing := common.StartTimingPhase(c.Request.Context(), "task_wait")
+	defer timing.End()
 	generation := pinned.Generation.Number
 	pluginKey := pinned.Plugin.Meta.Key
 	logger.LogDebug(
@@ -873,6 +879,7 @@ func renderTaskPluginProtocolFinalResponse(
 	if err != nil {
 		return nil, 0, err
 	}
+	renderTiming := common.StartTimingPhase(ctx, "plugin_render")
 	hookStarted := deps.now()
 	payload, err := pinned.Plugin.Engine.CallPathWithAdmissionTimeout(
 		ctx,
@@ -882,6 +889,7 @@ func renderTaskPluginProtocolFinalResponse(
 		rendererContext,
 		viewValue,
 	)
+	renderTiming.End()
 	hookElapsed := deps.now().Sub(hookStarted)
 	if err != nil {
 		return nil, hookElapsed, err
@@ -918,6 +926,7 @@ func renderTaskPluginProtocolEventsResponse(
 	if err != nil {
 		return nil, 0, err
 	}
+	renderTiming := common.StartTimingPhase(ctx, "plugin_render")
 	hookStarted := deps.now()
 	value, err := pinned.Plugin.Engine.CallPathWithAdmissionTimeout(
 		ctx,
@@ -927,6 +936,7 @@ func renderTaskPluginProtocolEventsResponse(
 		rendererContext,
 		viewValue,
 	)
+	renderTiming.End()
 	hookElapsed := deps.now().Sub(hookStarted)
 	if err != nil {
 		return nil, hookElapsed, err
@@ -1263,6 +1273,9 @@ func taskPluginProtocolEventsTerminal(events []dto.PluginResponsesStreamEvent) b
 }
 
 func writeTaskPluginProtocolEvent(c *gin.Context, event dto.PluginResponsesStreamEvent) error {
+	if event.Delta != nil && *event.Delta != "" {
+		common.MarkTiming(c.Request.Context(), "host_first_output_at_ms")
+	}
 	if event.Type == "response.failed" && event.Response != nil && event.Response.Error != nil {
 		service.RecordTaskRequestError(c, &dto.TaskError{Code: event.Response.Error.Code, Message: event.Response.Error.Message, StatusCode: http.StatusBadGateway})
 		// The event owns this response snapshot; copy the error before presentation.

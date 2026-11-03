@@ -17,11 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
 
-import { transformFormDataToPayload } from '../user-form'
-import type { UserFormValues } from '../user-form'
+import { describe, test, expect } from 'vitest'
+
 import type { User } from '../../types'
+import {
+  transformFormDataToPayload,
+  transformUserToFormDefaults,
+  type UserFormValues,
+} from '../user-form'
 
 const formValues: UserFormValues = {
   username: 'alice',
@@ -67,7 +71,12 @@ describe('transformFormDataToPayload — update', () => {
   test('echoes back every field the backend overwrites unconditionally', () => {
     // Non-root editor: the org/uid inputs are not rendered, so the stored
     // values must survive the round trip.
-    const payload = transformFormDataToPayload(formValues, 7, undefined, storedUser)
+    const payload = transformFormDataToPayload(
+      formValues,
+      7,
+      undefined,
+      storedUser
+    )
 
     assert.equal(payload.quota, 5_000_000)
     assert.equal(payload.uid, 'client-abc')
@@ -104,6 +113,42 @@ describe('transformFormDataToPayload — update', () => {
 })
 
 describe('transformFormDataToPayload — root editor', () => {
+  test('loads model limits from the target user settings', () => {
+    const defaults = transformUserToFormDefaults({
+      ...storedUser,
+      setting:
+        '{"model_limits_enabled":true,"model_limits":["gpt-4o","custom-model"]}',
+    })
+
+    expect(defaults.model_limits_enabled).toBe(true)
+    expect(defaults.model_limits).toEqual(['gpt-4o', 'custom-model'])
+  })
+
+  test('sends explicit model limit edits only for root updates', () => {
+    const edited = {
+      ...formValues,
+      model_limits_enabled: false,
+      model_limits: [],
+    }
+    const rootPayload = transformFormDataToPayload(
+      edited,
+      7,
+      undefined,
+      storedUser,
+      true
+    )
+    expect(rootPayload.model_limits_enabled).toBe(false)
+    expect(rootPayload.model_limits).toEqual([])
+
+    for (const payload of [
+      transformFormDataToPayload(edited, 7, undefined, storedUser),
+      transformFormDataToPayload(edited, undefined, undefined, undefined, true),
+    ]) {
+      expect(payload).not.toHaveProperty('model_limits_enabled')
+      expect(payload).not.toHaveProperty('model_limits')
+    }
+  })
+
   test('sends the org, uid, and discount fields from the form', () => {
     const payload = transformFormDataToPayload(
       formValues,

@@ -78,7 +78,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
-			HTTPClient:              httpClient,
+			HTTPClient:              common.TimingHTTPClient{Client: httpClient, Context: c.Request.Context(), Purpose: "inference", Primary: true, Kind: "sdk_http"},
 		})
 	case 3:
 		ak := awsSecret[0]
@@ -87,7 +87,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
-			HTTPClient:  httpClient,
+			HTTPClient:  common.TimingHTTPClient{Client: httpClient, Context: c.Request.Context(), Purpose: "inference", Primary: true, Kind: "sdk_http"},
 		})
 	default:
 		return nil, errors.New("invalid aws secret key")

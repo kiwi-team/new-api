@@ -611,7 +611,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
-	resp, err := relayClient.Do(req)
+	resp, err := common2.DoTimedHTTP(c.Request.Context(), &relayClient, req, "inference", true)
 	if err != nil {
 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
@@ -675,5 +675,5 @@ func newTaskAPIRequest(c *gin.Context, fullRequestURL string, requestBody io.Rea
 	if c == nil || c.Request == nil {
 		return nil, errors.New("task client request is missing")
 	}
-	return http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
+	return http.NewRequestWithContext(common2.WithTimingPurpose(c.Request.Context(), "task_submit", true), c.Request.Method, fullRequestURL, requestBody)
 }

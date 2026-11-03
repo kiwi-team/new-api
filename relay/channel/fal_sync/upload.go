@@ -136,7 +136,7 @@ func uploadToFalCDN(c *gin.Context, info *relaycommon.RelayInfo, data []byte, mi
 		req.Header.Set("X-Fal-File-Name", fileName)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "file_upload_http"), client, req, "file_upload", false)
 	if err != nil {
 		return "", fmt.Errorf("fal_sync adaptor: CDN upload request failed: %w", err)
 	}
@@ -171,7 +171,7 @@ func fetchCDNToken(c *gin.Context, client *http.Client, apiKey string) (*FALCDNT
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "dependency_http"), client, req, "dependency", false)
 	if err != nil {
 		return nil, fmt.Errorf("fal_sync adaptor: CDN token request failed: %w", err)
 	}

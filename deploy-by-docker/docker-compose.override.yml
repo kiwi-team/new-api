@@ -1,0 +1,48 @@
+# Automatically loaded by `docker compose up`: adds the optional local database.
+# For a managed database, use only `-f docker-compose.yml`.
+services:
+  new-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: docker.io/library/postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./init-env.sh}
+      POSTGRES_DB: ${POSTGRES_DB:-newapi}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-newapi}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Run ./init-env.sh}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+      TZ: ${TZ:-Asia/Shanghai}
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      # PostgreSQL 18+ stores PGDATA below /var/lib/postgresql/<major>/docker.
+      - postgres_data:/var/lib/postgresql
+      - ./postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgresql/init-app.sh:/docker-entrypoint-initdb.d/10-init-app.sh:ro
+    networks:
+      - database
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$POSTGRES_APP_PASSWORD"
+          psql -h 127.0.0.1 -U "$$POSTGRES_APP_USER" -d "$$POSTGRES_DB"
+          -Atqc 'SELECT 1' | grep -qx 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  postgres_data:

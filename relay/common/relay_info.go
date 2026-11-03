@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,14 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tidwall/gjson"
 )
+
+// RequestTimingContext retains only the existing request context for outbound attribution.
+func (info *RelayInfo) RequestTimingContext() context.Context {
+	if info == nil || info.TimingContext == nil {
+		return context.Background()
+	}
+	return info.TimingContext
+}
 
 type ThinkingContentInfo struct {
 	IsFirstThinkingContent  bool
@@ -97,6 +106,7 @@ type RelayInfo struct {
 	TokenUnlimited    bool
 	StartTime         time.Time
 	FirstResponseTime time.Time
+	TimingContext     context.Context `json:"-"`
 	// ChannelAttemptStartTime is set while the selected channel is in flight so
 	// consume logs written inside the relay handler can include its elapsed time.
 	ChannelAttemptStartTime time.Time
@@ -698,6 +708,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 			//promptTokens: common.GetContextKeyInt(c, constant.ContextKeyPromptTokens),
 			estimatePromptTokens: common.GetContextKeyInt(c, constant.ContextKeyEstimatedTokens),
 		},
+	}
+
+	if common.TimingFromContext(c.Request.Context()) != nil {
+		info.TimingContext = c.Request.Context()
 	}
 
 	if info.RelayMode == relayconstant.RelayModeUnknown {

@@ -147,7 +147,9 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	parseTiming := common.StartTimingPhase(c.Request.Context(), "request_parse")
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
+	parseTiming.End()
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
@@ -158,6 +160,8 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	prepareTiming := common.StartTimingPhase(c.Request.Context(), "request_prepare")
+	defer prepareTiming.End()
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
@@ -184,6 +188,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
 	}
+	prepareTiming.End()
 	defer func() {
 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
 	}()
@@ -239,6 +244,11 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		timingContext, timingAttempt := common.BeginTimingAttempt(c.Request.Context(), c.GetInt("channel_id"))
+		if timingAttempt != nil {
+			c.Request = c.Request.WithContext(timingContext)
+			relayInfo.TimingContext = timingContext
+		}
 		attemptStart := time.Now()
 		relayInfo.ChannelAttemptStartTime = attemptStart
 		c.Set(common.UpstreamRequestIdKey, "")
@@ -262,6 +272,8 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		common.AnnotateTimingAttempt(timingContext, c.GetString(common.UpstreamRequestIdKey), c.GetString(common.KeyChannelRaceResult))
+		timingAttempt.End()
 		c.Writer = originalWriter
 		attemptUseTimeMs := max(time.Since(attemptStart).Milliseconds(), 1)
 		attemptUpstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
@@ -681,7 +693,14 @@ func executeTaskSubmissionWith(
 
 		stage = "submit"
 		c.Set(common.UpstreamRequestIdKey, "")
+		timingContext, timingAttempt := common.BeginTimingAttempt(c.Request.Context(), channel.Id)
+		if timingAttempt != nil {
+			c.Request = c.Request.WithContext(timingContext)
+			relayInfo.TimingContext = timingContext
+		}
 		result, taskErr = submit(c, relayInfo)
+		common.AnnotateTimingAttempt(timingContext, c.GetString(common.UpstreamRequestIdKey), c.GetString(common.KeyChannelRaceResult))
+		timingAttempt.End()
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)

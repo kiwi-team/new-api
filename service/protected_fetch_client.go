@@ -111,7 +111,7 @@ func (t *ssrfProtectedRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	if err != nil {
 		return nil, err
 	}
-	return t.transportFor(proxyURL).RoundTrip(req)
+	return common.TimedRoundTrip(t.transportFor(proxyURL), req)
 }
 
 func (t *ssrfProtectedRoundTripper) CloseIdleConnections() {

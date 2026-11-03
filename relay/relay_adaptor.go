@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -289,7 +290,9 @@ func (a *omniVideoTaskAdaptor) adaptorForTask(task *model.Task) channel.TaskAdap
 		nativeOmni = relaycommon.IsKlingOmniModel(modelName)
 	}
 	if nativeOmni {
-		return getLegacyTaskAdaptor(a.platform)
+		adaptor := getLegacyTaskAdaptor(a.platform)
+		common.AttachTimingScope(adaptor, a.RequestTimingContext())
+		return adaptor
 	}
 	return a.TaskAdaptor
 }
@@ -329,6 +332,10 @@ type legacyTaskAdaptor interface {
 
 type legacyTaskAdaptorBridge struct {
 	legacyTaskAdaptor
+}
+
+func (a *legacyTaskAdaptorBridge) SetTimingContext(ctx context.Context) {
+	common.AttachTimingScope(a.legacyTaskAdaptor, ctx)
 }
 
 func (a *legacyTaskAdaptorBridge) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {

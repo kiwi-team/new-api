@@ -197,6 +197,7 @@ type GenerateWorldResponse struct {
 // ============================
 
 type TaskAdaptor struct {
+	common.TimingScope `json:"-"`
 	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
@@ -338,7 +339,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	return client.Do(req)
+	return common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query_http"), client, req, "task_query", true)
 }
 
 func (a *TaskAdaptor) GetModelList() []string {

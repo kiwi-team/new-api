@@ -11,13 +11,14 @@ ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
-ADD go.mod go.sum ./
+COPY go.mod go.sum ./
 # relaykit and tokenkit are local submodules referenced via replace; their
 # go.mod files must be present for go mod download to resolve the main module graph.
-ADD relaykit/go.mod ./relaykit/go.mod
-ADD tokenkit/go.mod ./tokenkit/go.mod
+COPY relaykit/go.mod ./relaykit/go.mod
+COPY tokenkit/go.mod ./tokenkit/go.mod
 RUN go mod download
 
+# .dockerignore defines the source files allowed into this build context.
 COPY . .
 
 RUN mkdir -p web/dist && \

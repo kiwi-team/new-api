@@ -99,7 +99,7 @@ func uploadDifyFile(c *gin.Context, info *relaycommon.RelayInfo, user string, me
 
 		// Send request
 		client := service.GetHttpClient()
-		resp, err := client.Do(req)
+		resp, err := common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "file_upload_http"), client, req, "file_upload", false)
 		if err != nil {
 			common.SysLog(common.LogText("failed to send request: %s", err.Error()))
 			return nil

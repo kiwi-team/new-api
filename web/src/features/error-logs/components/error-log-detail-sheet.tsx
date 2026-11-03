@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
+import { RequestTimingViewer } from '@/components/request-timing-viewer'
 import {
   Sheet,
   SheetContent,
@@ -29,7 +30,7 @@ import {
 } from '@/components/ui/sheet'
 import { formatTimestampToDate } from '@/lib/format'
 
-import { getErrorLogBody, getErrorLogHeader } from '../api'
+import { getErrorLogBody, getErrorLogHeader, getErrorLogTiming } from '../api'
 import { formatUseTime, parseErrorLogExtra } from '../lib'
 import type { ErrorLog } from '../types'
 
@@ -99,6 +100,11 @@ export function ErrorLogDetailSheet({
     queryFn: () => getErrorLogHeader(logId as number),
     enabled: logId !== undefined && canViewHeader,
   })
+  const timingQuery = useQuery({
+    queryKey: ['error-logs', 'timing', logId],
+    queryFn: () => getErrorLogTiming(logId as number),
+    enabled: logId !== undefined && canViewHeader,
+  })
 
   if (!log) return null
 
@@ -127,22 +133,18 @@ export function ErrorLogDetailSheet({
             />
             <Field label={t('User ID')} value={log.user_id} />
             <Field label={t('Status code')} value={log.status_code || '-'} />
-            <Field label={t('Latency')} value={formatUseTime(log.use_time_ms)} />
+            <Field
+              label={t('Latency')}
+              value={formatUseTime(log.use_time_ms)}
+            />
             <Field
               label={t('Request ID')}
               value={
-                log.request_id ? (
-                  <IdWithCopy value={log.request_id} />
-                ) : (
-                  '-'
-                )
+                log.request_id ? <IdWithCopy value={log.request_id} /> : '-'
               }
             />
             <Field label={t('IP')} value={log.ip || '-'} />
-            <Field
-              label={t('Client UID')}
-              value={log.client_user_id || '-'}
-            />
+            <Field label={t('Client UID')} value={log.client_user_id || '-'} />
             <Field label={t('Scenario')} value={log.client_scenairo || '-'} />
             <Field
               label={t('Session ID')}
@@ -191,6 +193,19 @@ export function ErrorLogDetailSheet({
               <JsonBlock value={bodyQuery.data?.data || '-'} />
             )}
           </div>
+
+          {canViewHeader && (
+            <div className='space-y-2'>
+              <h3 className='text-sm font-medium'>{t('Request timing')}</h3>
+              {timingQuery.isLoading ? (
+                <p className='text-muted-foreground text-sm'>
+                  {t('Loading...')}
+                </p>
+              ) : (
+                <RequestTimingViewer data={timingQuery.data?.data?.content} />
+              )}
+            </div>
+          )}
 
           {canViewHeader && (
             <div className='space-y-2'>

@@ -350,6 +350,7 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/error-logs", middleware.RootAuth(), controller.GetAllErrorLogs)
 		logRoute.GET("/error-logs/:id/body", middleware.RootAuth(), controller.GetErrorLogBody)
+		logRoute.GET("/error-logs/:id/timing", middleware.RootAuth(), controller.GetErrorLogTiming)
 		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
 		// Legacy synchronous direct-delete route used only by the classic frontend.
 		// TODO: remove once the classic frontend is removed; the default frontend uses /system-task/log-cleanup.

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { parseUserSettings } from '@/features/profile/lib/format'
 import {
   type PermissionCatalog,
   type AdminPermissionMatrix,
@@ -27,7 +28,7 @@ import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { UserFormData, User } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -54,6 +55,8 @@ export const userFormSchema = z.object({
   check_uid: z.boolean().optional(),
   group_discount: z.string().optional(),
   model_extra_discount: z.string().optional(),
+  model_limits_enabled: z.boolean().optional(),
+  model_limits: z.array(z.string()).optional(),
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -78,6 +81,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   check_uid: false,
   group_discount: '',
   model_extra_discount: '',
+  model_limits_enabled: false,
+  model_limits: [],
   // Filled against the backend catalog at render time; see UsersMutateDrawer.
   admin_permissions: {},
 }
@@ -205,9 +210,7 @@ export function transformFormDataToPayload(
       ? (data.related_uids ?? '')
       : (currentUser?.related_uids ?? '')
     payload.toio_registered = isRoot
-      ? data.toio_registered
-        ? 1
-        : 0
+      ? Number(!!data.toio_registered)
       : (currentUser?.toio_registered ?? 0)
     payload.org_code = isRoot
       ? (data.org_code ?? '')
@@ -218,6 +221,10 @@ export function transformFormDataToPayload(
     payload.setting = isRoot
       ? buildUserSettingPayload(data)
       : (currentUser?.setting ?? '')
+    if (isRoot) {
+      payload.model_limits_enabled = !!data.model_limits_enabled
+      payload.model_limits = data.model_limits ?? []
+    }
   }
 
   return payload
@@ -229,6 +236,7 @@ export function transformFormDataToPayload(
  * the catalog at render time in UsersMutateDrawer.
  */
 export function transformUserToFormDefaults(user: User): UserFormValues {
+  const settings = parseUserSettings(user.setting)
   return {
     username: user.username,
     display_name: user.display_name,
@@ -245,6 +253,8 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     check_uid: readSettingFlag(user.setting, 'check_uid'),
     group_discount: readSettingJson(user.setting, 'group_discount'),
     model_extra_discount: readSettingJson(user.setting, 'model_extra_discount'),
+    model_limits_enabled: settings.model_limits_enabled === true,
+    model_limits: settings.model_limits ?? [],
     admin_permissions: user.admin_permissions ?? {},
   }
 }

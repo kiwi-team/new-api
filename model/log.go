@@ -475,6 +475,14 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	if c != nil && c.Request != nil {
+		if timing := common.TimingSnapshot(c.Request.Context(), "consume_log"); timing != nil {
+			if params.Other == nil {
+				params.Other = NewLogOther()
+			}
+			params.Other.SetAdmin("timing", timing)
+		}
+	}
 	username := c.GetString("username")
 	requestId := params.RequestId
 	if requestId == "" {
@@ -587,6 +595,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
+	TimingContext  context.Context
 	EventID        string
 	CreatedAt      int64
 	UserId         int
@@ -606,6 +615,12 @@ type RecordTaskBillingLogParams struct {
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
+	if timing := common.TimingSnapshot(params.TimingContext, "consume_log"); timing != nil {
+		if params.Other == nil {
+			params.Other = NewLogOther()
+		}
+		params.Other.SetAdmin("timing", timing)
+	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
 	if params.TokenId > 0 {

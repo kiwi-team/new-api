@@ -448,7 +448,7 @@ func querySeedASR(c *gin.Context, info *relaycommon.RelayInfo) (*http.Response, 
 	if err != nil {
 		return nil, err
 	}
-	return client.Do(req)
+	return common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "task_query_http"), client, req, "task_query", true)
 }
 
 func validateSeedASRStatus(response *http.Response) error {

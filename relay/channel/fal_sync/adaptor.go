@@ -862,7 +862,7 @@ func (a *Adaptor) submitRequest(c *gin.Context, client *http.Client, submitURL s
 			_ = a.SetupRequestHeader(c, &headers, info)
 		}
 
-		resp, lastErr = client.Do(req)
+		resp, lastErr = common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "inference_http"), client, req, "inference", true)
 		if lastErr == nil {
 			break
 		}
@@ -967,7 +967,7 @@ func (a *Adaptor) pollStatusWithRetry(c *gin.Context, client *http.Client, statu
 		req.Header.Set("Authorization", "Key "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		resp, err := common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "task_query_http"), client, req, "task_query", true)
 		if err != nil {
 			lastErr = err
 			if !isRetryableError(err) {
@@ -1033,7 +1033,7 @@ func (a *Adaptor) fetchResultWithRetry(c *gin.Context, client *http.Client, info
 		req.Header.Set("Authorization", "Key "+info.ApiKey)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		resp, err := common.DoTimedHTTP(common.OutboundTimingContext(common.RequestContext(c), "dependency_http"), client, req, "dependency", false)
 		if err != nil {
 			lastErr = err
 			if !isRetryableError(err) {

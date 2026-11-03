@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -709,12 +710,17 @@ func GetUserModels(c *gin.Context) {
 }
 
 func UpdateUser(c *gin.Context) {
-	var updatedUser model.User
-	err := common.DecodeJson(c.Request.Body, &updatedUser)
-	if err != nil || updatedUser.Id == 0 {
+	var req struct {
+		model.User
+		ModelLimitsEnabled *bool    `json:"model_limits_enabled,omitempty"`
+		ModelLimits        []string `json:"model_limits,omitempty"`
+	}
+	err := common.DecodeJson(c.Request.Body, &req)
+	if err != nil || req.Id == 0 {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	updatedUser := req.User
 	updatedUser.Username = strings.TrimSpace(updatedUser.Username)
 	if updatedUser.Username == "" {
 		common.ApiErrorT(c, "Invalid parameters")
@@ -743,6 +749,13 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorT(c, "No permission to update users of same or higher permission level")
 		return
 	}
+	updateModelLimits := req.ModelLimitsEnabled != nil || req.ModelLimits != nil
+	// Account model limits are editable here only by root, including when an
+	// administrator submits these fields directly instead of using the console.
+	if updateModelLimits && myRole != common.RoleRootUser {
+		common.ApiErrorT(c, "No permission to perform this action")
+		return
+	}
 	updatePassword := updatedUser.Password != ""
 	auditParams := map[string]any{
 		"username": originUser.Username,
@@ -763,6 +776,50 @@ func UpdateUser(c *gin.Context) {
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
+		}
+		if updateModelLimits {
+			// EditWithTx reloads the stored row after its update. Merge just the
+			// allowlist fields so other preferences and extension keys survive.
+			settings := map[string]json.RawMessage{}
+			if updatedUser.Setting != "" {
+				if err := common.UnmarshalJsonStr(updatedUser.Setting, &settings); err != nil {
+					return err
+				}
+			}
+			if settings == nil {
+				settings = map[string]json.RawMessage{}
+			}
+			modelLimits := updatedUser.GetSetting()
+			if req.ModelLimits != nil {
+				modelLimits.ModelLimits = make([]string, 0, len(req.ModelLimits))
+				seen := make(map[string]bool, len(req.ModelLimits))
+				for _, name := range req.ModelLimits {
+					name = strings.TrimSpace(name)
+					if name != "" && !seen[name] {
+						modelLimits.ModelLimits = append(modelLimits.ModelLimits, name)
+						seen[name] = true
+					}
+				}
+			}
+			if req.ModelLimitsEnabled != nil {
+				modelLimits.ModelLimitsEnabled = *req.ModelLimitsEnabled
+			}
+			for key, value := range map[string]any{
+				"model_limits":         modelLimits.ModelLimits,
+				"model_limits_enabled": modelLimits.ModelLimitsEnabled && len(modelLimits.ModelLimits) > 0,
+			} {
+				settings[key], err = common.Marshal(value)
+				if err != nil {
+					return err
+				}
+			}
+			settingBytes, err := common.Marshal(settings)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&updatedUser).Update("setting", string(settingBytes)).Error; err != nil {
+				return err
+			}
 		}
 		touched, err := updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, originUser.Role, updatedUser.AdminPermissions)
 		authzTouched = touched

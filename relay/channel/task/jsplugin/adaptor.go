@@ -106,12 +106,13 @@ const maxTaskArtifacts = 64
 const maxTaskPluginPersistedJSONBytes = 1 << 20
 
 type TaskAdaptor struct {
-	plugin         *pluginruntime.LoadedPlugin
-	info           *relaycommon.RelayInfo
-	submit         *requestDescriptor
-	routeRequest   *pluginruntime.RouteRequestContext
-	requestHeaders map[string]string
-	files          []map[string]any
+	common.TimingScope `json:"-"`
+	plugin             *pluginruntime.LoadedPlugin
+	info               *relaycommon.RelayInfo
+	submit             *requestDescriptor
+	routeRequest       *pluginruntime.RouteRequestContext
+	requestHeaders     map[string]string
+	files              []map[string]any
 	// hookRequestBody is hookRequestSource as hooks receive it.
 	hookRequestSource map[string]any
 	hookRequestBody   any
@@ -667,7 +668,11 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy str
 	if err != nil {
 		return nil, err
 	}
-	return a.doFetchDescriptor(baseURL, proxy, descriptor)
+	source := a.RequestTimingContext()
+	if common.TimingFromContext(source) == nil {
+		source = common.BackgroundTimingContext("task_query_http", task.TaskID)
+	}
+	return a.doFetchDescriptor(baseURL, proxy, descriptor, source)
 }
 
 // hookFetcher uses channel routing for provider reads and the protected media
@@ -706,7 +711,10 @@ func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
 			req.Header.Set(name, value)
 		}
 		started := time.Now()
-		resp, err := noRedirects.Do(req)
+		if common.TimingFromContext(ctx) == nil {
+			ctx = common.WithTimingContext(ctx, common.OutboundTimingContext(a.RequestTimingContext(), "task_dependency_http"))
+		}
+		resp, err := common.DoTimedHTTP(ctx, &noRedirects, req, "dependency", false)
 		if err != nil {
 			logger.LogDebug(ctx, "task_plugin subsystem=fetch event=failed plugin=%q hook=%q method=%q host=%q reason=transport_error elapsed_ms=%d",
 				a.plugin.Meta.Key, request.Hook, request.Method, req.URL.Host, time.Since(started).Milliseconds())
@@ -733,7 +741,7 @@ func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
 	}
 }
 
-func (a *TaskAdaptor) doFetchDescriptor(baseURL, proxy string, descriptor requestDescriptor) (*http.Response, error) {
+func (a *TaskAdaptor) doFetchDescriptor(baseURL, proxy string, descriptor requestDescriptor, timingContext ...context.Context) (*http.Response, error) {
 	if err := pluginruntime.ValidateRequestURL(descriptor.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
 		return nil, err
 	}
@@ -767,7 +775,14 @@ func (a *TaskAdaptor) doFetchDescriptor(baseURL, proxy string, descriptor reques
 		return nil, err
 	}
 	started := time.Now()
-	resp, err := client.Do(req)
+	source := a.RequestTimingContext()
+	if len(timingContext) > 0 {
+		source = timingContext[0]
+	}
+	if common.TimingFromContext(source) == nil {
+		source = common.BackgroundTimingContext("task_query_http", "")
+	}
+	resp, err := common.DoTimedHTTP(source, client, req, "task_query", true)
 	if err != nil {
 		logger.LogDebug(
 			context.Background(),
@@ -1328,6 +1343,8 @@ func validateTaskArtifacts(value any) ([]channel.TaskArtifact, error) {
 // order has its descriptor decoded from the JSON.stringify text of the result,
 // with the body kept as that text (BodyText) for the upstream.
 func (a *TaskAdaptor) requestDescriptor(ctx context.Context, hook string, args ...any) (requestDescriptor, error) {
+	timing := common.StartTimingPhase(a.RequestTimingContext(), "plugin_build_request")
+	defer timing.End()
 	if !a.plugin.Meta.PreservesJSONOrder() {
 		var descriptor requestDescriptor
 		err := a.plugin.Engine.CallInto(ctx, &descriptor, hook, args...)

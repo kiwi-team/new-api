@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/clickhouse"
+	"gorm.io/gorm"
 )
 
 func TestIsClickHouseDSN(t *testing.T) {
@@ -152,4 +154,41 @@ func TestAssignDisplayLogIds(t *testing.T) {
 	assert.Equal(t, []int{21, 22, 23}, []int{logs[0].Id, logs[1].Id, logs[2].Id})
 
 	assert.NotPanics(t, func() { assignDisplayLogIds(nil, 0) })
+}
+
+// ClickHouse deployments already need an operational error_logs table. Verify
+// the additive migration on that table without changing its existing engine.
+func TestClickHouseErrorTimingMigration(t *testing.T) {
+	dsn := os.Getenv("TEST_CLICKHOUSE_DSN")
+	if dsn == "" {
+		t.Skip("TEST_CLICKHOUSE_DSN not configured")
+	}
+	db, err := gorm.Open(clickhouse.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	connection, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	require.False(t, db.Migrator().HasTable(&ErrorLog{}), "use an empty disposable database")
+	require.False(t, db.Migrator().HasTable(&Log{}), "use an empty disposable database")
+	previous := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&ErrorLog{}, &Log{})); LOG_DB = previous })
+	var version string
+	require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
+	t.Logf("ClickHouse version: %s", version)
+	require.NoError(t, db.Set("gorm:table_options", "ENGINE = MergeTree() ORDER BY id").AutoMigrate(&ErrorLog{}))
+	require.NoError(t, db.Exec("ALTER TABLE error_logs DROP COLUMN timing").Error)
+	require.NoError(t, db.Model(&ErrorLog{}).Create(map[string]any{"id": 1, "request_id": "legacy", "message": "legacy error"}).Error)
+	for range 2 {
+		require.NoError(t, migrateClickHouseLogDB())
+	}
+	var legacy ErrorLog
+	require.NoError(t, db.Where("id = ?", 1).First(&legacy).Error)
+	assert.Nil(t, legacy.Timing)
+	assert.Equal(t, "legacy error", legacy.Message)
+	row := ErrorLog{Id: 2, RequestId: "timed", Timing: common.GetPointer(LogJSON(`{"schema_version":1,"phase":"error_log"}`))}
+	require.NoError(t, db.Create(&row).Error)
+	text, err := GetErrorLogTiming(2)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(*row.Timing), text)
 }

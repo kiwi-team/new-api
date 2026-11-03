@@ -667,7 +667,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				if strings.HasPrefix(imageUrl, "http") {
 					if supportGeminiUrl {
 						// baidu vod gemini 可以支持直接传递image_url
-						mimeType, err := GetFileMimeType(imageUrl)
+						mimeType, err := GetFileMimeType(imageUrl, common.RequestContext(c))
 						if err != nil {
 							continue
 						}
@@ -780,7 +780,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				isGenai := channel.Type == constant.ChannelTypeGemini && channelConfig.GoogleFileUpload == "enabled"
 				if (supportGeminiUrl) && strings.HasPrefix(audioFileUrl, "http") {
 					// baidu vod gemini 可以支持直接传递audio_url
-					mimeType, err := GetFileMimeType(audioFileUrl)
+					mimeType, err := GetFileMimeType(audioFileUrl, common.RequestContext(c))
 					if err != nil {
 						continue
 					}
@@ -888,7 +888,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					if videoFileUrl == "" {
 						continue
 					}
-					mimeType, err := GetFileMimeType(videoFileUrl)
+					mimeType, err := GetFileMimeType(videoFileUrl, common.RequestContext(c))
 					if err != nil {
 						continue
 					}
@@ -1767,6 +1767,13 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
 		}
+		output := false
+		for _, candidate := range geminiResponse.Candidates {
+			for _, part := range candidate.Content.Parts {
+				output = output || part.Text != "" || part.FunctionCall != nil || part.InlineData != nil
+			}
+		}
+		common.ObserveTimingProtocol(c.Request.Context(), "", output, false)
 		info.ObserveResponseModel(gjson.Get(data, "modelVersion").Str)
 		for _, candidate := range geminiResponse.Candidates {
 			if candidate.FinishReason == nil || *candidate.FinishReason == "" || *candidate.FinishReason == "FINISH_REASON_UNSPECIFIED" {
@@ -2035,6 +2042,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	common.ObserveTimingProtocol(c.Request.Context(), "response_parsed_at_ms", false, false)
 	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
 	var grounding geminiGroundingCounter
 	grounding.observe(&geminiResponse)
@@ -2268,7 +2276,7 @@ func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]s
 
 		request.Header.Set("x-goog-api-key", apiKey)
 
-		response, err := client.Do(request)
+		response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("request failed: %v", err)

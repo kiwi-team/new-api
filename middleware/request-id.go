@@ -11,6 +11,7 @@ func RequestId() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		id := "toio" + common.GetTimeString() + common.GetRandomString(8)
 		c.Set(common.RequestIdKey, id)
+		common.SetTimingRequestID(c.Request.Context(), id)
 		ctx := context.WithValue(c.Request.Context(), common.RequestIdKey, id)
 		c.Request = c.Request.WithContext(ctx)
 		c.Header(common.RequestIdKey, id)

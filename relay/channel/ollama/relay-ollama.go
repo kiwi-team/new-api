@@ -345,7 +345,7 @@ func FetchOllamaModels(baseURL, apiKey string) ([]OllamaModel, error) {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	response, err := client.Do(request)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
@@ -397,7 +397,7 @@ func PullOllamaModel(baseURL, apiKey, modelName string) error {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	response, err := client.Do(request)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 	if err != nil {
 		return fmt.Errorf("request failed: %v", err)
 	}
@@ -438,7 +438,7 @@ func PullOllamaModelStream(baseURL, apiKey, modelName string, progressCallback f
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	response, err := client.Do(request)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 	if err != nil {
 		return fmt.Errorf("request failed: %v", err)
 	}
@@ -512,7 +512,7 @@ func DeleteOllamaModel(baseURL, apiKey, modelName string) error {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	response, err := client.Do(request)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 	if err != nil {
 		return fmt.Errorf("request failed: %v", err)
 	}
@@ -544,7 +544,7 @@ func FetchOllamaVersion(baseURL, apiKey string) (string, error) {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	response, err := client.Do(request)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(request.Context(), "dependency_http"), client, request, "dependency", false)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %v", err)
 	}

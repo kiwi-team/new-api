@@ -281,6 +281,9 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelType: ch.Type, ChannelId: ch.Id, ChannelBaseUrl: baseURL, ChannelSetting: ch.GetSetting()}
 	info.ApiKey = ch.Key
 	adaptor.Init(info)
+	ctx, timingScope := common.BeginTimingOperationScope(ctx, "task_poll_batch", "")
+	defer timingScope.EndOperation()
+	common.AttachTimingScope(adaptor, ctx)
 	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, proxy)
 	if err != nil {
 		common.SysLog(common.LogText("Get Task Do req error: %v", err))
@@ -500,6 +503,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if privateData.Key != "" {
 		key = privateData.Key
 	}
+	ctx, timingScope := common.BeginTimingOperationScope(ctx, "task_poll", task.TaskID)
+	defer timingScope.EndOperation()
+	common.AttachTimingScope(adaptor, ctx)
 	snap := task.Snapshot()
 	resp, err := adaptor.FetchTask(baseURL, key, task, proxy)
 	if err != nil {

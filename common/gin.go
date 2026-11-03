@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -21,6 +22,31 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/http/httpproxy"
 )
+
+// MarkResponseHandlingEnded keeps concurrent losing attempts out of request-level cleanup timing.
+func MarkResponseHandlingEnded(c *gin.Context) {
+	ctx := RequestContext(c)
+	t := TimingFromContext(ctx)
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	at := t.offset()
+	if a, ok := ctx.Value(timingAttemptKey{}).(*TimingAttempt); ok {
+		a.offsets["response_handling_ended_at_ms"] = at
+	}
+	if !c.GetBool(KeyChannelRaceAttempt) || c.GetString(KeyChannelRaceResult) == "winner" {
+		t.offsets["response_handling_ended_at_ms"] = at
+	}
+}
+
+func RequestContext(c *gin.Context) context.Context {
+	if c == nil || c.Request == nil {
+		return context.Background()
+	}
+	return c.Request.Context()
+}
 
 const KeyRequestBody = "key_request_body"
 const KeyBodyStorage = "key_body_storage"
@@ -109,6 +135,8 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 
 	// 缓存存储对象
 	c.Set(KeyBodyStorage, storage)
+	MarkTiming(c.Request.Context(), "body_storage_ready_at_ms")
+	TimingMetric(c.Request.Context(), "decoded_body_bytes", storage.Size())
 
 	return storage, nil
 }
@@ -136,12 +164,20 @@ func CleanupBodyStorage(c *gin.Context) {
 	}
 }
 
-func UnmarshalBodyReusable(c *gin.Context, v any) error {
+// decodePhase optionally distinguishes a known decoding purpose in diagnostics.
+// It does not change body storage, decoding, or validation behavior.
+func UnmarshalBodyReusable(c *gin.Context, v any, decodePhase ...string) error {
 	storage, err := GetBodyStorage(c)
 	if err != nil {
 		return err
 	}
 	contentType := c.Request.Header.Get("Content-Type")
+	phase := "request_decode"
+	if len(decodePhase) > 0 && decodePhase[0] != "" {
+		phase = decodePhase[0]
+	}
+	decodeTiming := StartTimingPhase(c.Request.Context(), phase)
+	defer decodeTiming.End()
 
 	// disk-backed JSON: stream-decode directly from the file to avoid
 	// materializing the entire payload back into a transient []byte

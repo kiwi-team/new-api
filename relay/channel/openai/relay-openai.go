@@ -408,6 +408,19 @@ func observeStreamChoices(info *relaycommon.RelayInfo, data string, seen map[str
 		return
 	}
 	for _, choice := range streamResponse.Choices {
+		common.ObserveTimingProtocol(info.RequestTimingContext(), "", false, false)
+		if choice.Delta.GetContentString() != "" {
+			common.ObserveTimingProtocol(info.RequestTimingContext(), "first_text_at_ms", true, false)
+		}
+		if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" || choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
+			common.ObserveTimingProtocol(info.RequestTimingContext(), "first_reasoning_at_ms", true, false)
+		}
+		for _, tool := range choice.Delta.ToolCalls {
+			if tool.Function.Name != "" || tool.Function.Arguments != "" {
+				common.ObserveTimingProtocol(info.RequestTimingContext(), "first_tool_output_at_ms", true, false)
+				break
+			}
+		}
 		if choice.FinishReason != nil && *choice.FinishReason != "" {
 			if *choice.FinishReason == constant.FinishReasonContentFilter {
 				info.PerformanceBusinessRejection = true
@@ -481,6 +494,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	common.ObserveTimingProtocol(c.Request.Context(), "response_parsed_at_ms", false, false)
 	if newModel := remapResponseModelName(info, simpleResponse.Model); newModel != simpleResponse.Model {
 		simpleResponse.Model = newModel
 		responseBody, _ = common.Marshal(simpleResponse)

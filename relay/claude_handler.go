@@ -183,6 +183,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	//usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	common.MarkResponseHandlingEnded(c)
 	//log.Printf("usage: %v", usage)
 	if newAPIError != nil {
 		// reset status code 重置状态码

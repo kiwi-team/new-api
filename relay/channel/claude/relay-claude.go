@@ -886,9 +886,15 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
+	common.ObserveTimingProtocol(c.Request.Context(), "response_parsed_at_ms", false, false)
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
+	output := claudeResponse.Completion != ""
+	if d := claudeResponse.Delta; d != nil {
+		output = output || d.Text != nil && *d.Text != "" || d.Thinking != nil && *d.Thinking != "" || d.PartialJson != nil && *d.PartialJson != ""
+	}
+	common.ObserveTimingProtocol(c.Request.Context(), "", output, claudeResponse.Type == "message_stop", claudeResponse.Type)
 	if claudeResponse.Type == "message_start" && claudeResponse.Message != nil {
 		info.ObserveResponseModel(claudeResponse.Message.Model)
 	}

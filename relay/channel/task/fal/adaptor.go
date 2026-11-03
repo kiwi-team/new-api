@@ -28,6 +28,7 @@ import (
 // ============================
 
 type TaskAdaptor struct {
+	common.TimingScope `json:"-"`
 	taskbilling.BaseBilling
 	ChannelType int
 	apiKey      string
@@ -223,7 +224,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	/*
 	 {"id":"xxxxxx","status":"pending",.....}
 	*/
-	resp, err := service.GetHttpClient().Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query"), service.GetHttpClient(), req, "task_query", true)
 	if err != nil {
 		return nil, err
 	}

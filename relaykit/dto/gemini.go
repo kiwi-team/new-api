@@ -404,14 +404,15 @@ type GeminiPart struct {
 	CodeExecutionResult *GeminiPartCodeExecutionResult `json:"codeExecutionResult,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData
+// UnmarshalJSON accepts snake_case and camelCase attachment fields.
 func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Alias to avoid recursion during unmarshalling
 	type Alias GeminiPart
 	var aux struct {
 		Alias
-		InlineDataSnake *GeminiInlineData `json:"inline_data,omitempty"` // snake_case variant
-		FileDataSnake   *GeminiFileData   `json:"file_data,omitempty"`
+		InlineDataSnake       *GeminiInlineData       `json:"inline_data,omitempty"` // snake_case variant
+		FileDataSnake         *GeminiFileData         `json:"file_data,omitempty"`
+		FunctionResponseSnake *GeminiFunctionResponse `json:"function_response,omitempty"`
 	}
 
 	if err := kitutil.Unmarshal(data, &aux); err != nil {
@@ -420,6 +421,12 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 
 	// Assign fields from alias
 	*p = GeminiPart(aux.Alias)
+	if aux.FunctionResponseSnake != nil {
+		if p.FunctionResponse != nil && !reflect.DeepEqual(p.FunctionResponse, aux.FunctionResponseSnake) {
+			return fmt.Errorf("conflicting functionResponse and function_response")
+		}
+		p.FunctionResponse = aux.FunctionResponseSnake
+	}
 	if aux.FileDataSnake != nil {
 		if p.FileData != nil && *p.FileData != *aux.FileDataSnake {
 			return fmt.Errorf("conflicting fileData and file_data")

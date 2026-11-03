@@ -607,6 +607,8 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		authTiming := common.StartTimingPhase(c.Request.Context(), "auth")
+		defer authTiming.End()
 		// 快照请求头到 context，落库时给 logs/error_logs.header 列用。必须在任何 header
 		// 修改之前（ws / x-api-key / x-goog-api-key 等会改写 Authorization）。
 		//
@@ -854,13 +856,14 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			return
 		}
+		authTiming.End()
 		c.Next()
 	}
 }
 
 func setMultiModelTags(c *gin.Context) []string {
 	textRequest := &dto.GeneralOpenAIRequest{}
-	common.UnmarshalBodyReusable(c, textRequest)
+	common.UnmarshalBodyReusable(c, textRequest, "auth_tag_decode")
 	tags := make([]string, 0)
 	if len(textRequest.Tools) > 0 {
 		tags = append(tags, "tools")

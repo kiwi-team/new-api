@@ -113,6 +113,82 @@ func TestGeminiFilePlanChatContent(t *testing.T) {
 	}
 }
 
+func TestGeminiFileFunctionResponseAttachments(t *testing.T) {
+	configureGeminiFileTest(t, `{"enabled":true,"mode":"forward","inline_threshold_bytes":8}`)
+	for _, tc := range []struct {
+		name, responseKey, attachment, kind, mimeType, sourceKey, source string
+	}{
+		{"inline image", "functionResponse", `{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","displayName":"result"}}`, "inlineData", "image/png", "data", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="},
+		{"snake case PDF", "function_response", `{"inline_data":{"mime_type":"application/pdf","data":"JVBERi0xLjcK","displayName":"result"}}`, "inlineData", "application/pdf", "data", "JVBERi0xLjcK"},
+		{"text document", "functionResponse", `{"inlineData":{"mimeType":"text/plain","data":"dG9vbCByZXN1bHQ=","displayName":"result"}}`, "inlineData", "text/plain", "data", "dG9vbCByZXN1bHQ="},
+		{"Files API reference", "functionResponse", `{"fileData":{"mimeType":"image/png","fileUri":"https://generativelanguage.googleapis.com/v1beta/files/image","displayName":"result"}}`, "fileData", "image/png", "fileUri", "https://generativelanguage.googleapis.com/v1beta/files/image"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"contents":[{"role":"user","parts":[{"text":"Get images"}]},{"role":"model","parts":[{"functionCall":{"name":"get_image","args":{}},"thoughtSignature":"keep-signature"}]},{"role":"user","parts":[{"text":"tool output"},{%q:{"name":"get_image","id":"call-1","response":{"image":{"$ref":"result"}},"willContinue":false,"scheduling":"SILENT","parts":[%s,{"inlineData":{"mimeType":"application/pdf","data":"JVBERi0xLjcK","displayName":"other"}}]}},{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgo="}}]}],"customProviderField":{"keep":true}}`, tc.responseKey, tc.attachment)
+			c := geminiFileTestContext(t, "/v1beta/models/gemini-4-argon:generateContent", body)
+			plan, apiErr := PlanGeminiFiles(c, "gemini-4-argon")
+			require.Nil(t, apiErr)
+			require.NotNil(t, plan)
+			require.Len(t, plan.Files, 3)
+			assert.False(t, plan.RequiresStorage, "inline media never triggers the URL size threshold")
+			assert.Equal(t, "contents[2].parts[1].functionResponse.parts[0]", plan.Files[0].Position)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeGemini, UpstreamModelName: "gemini-4-argon"}}
+			require.Nil(t, PrepareGeminiFileAttempt(c, info))
+			var request dto.GeminiChatRequest
+			require.NoError(t, common.UnmarshalJsonStr(body, &request))
+			assert.Len(t, request.GetTokenCountMeta().Files, 3, "nested attachments remain visible to token estimation")
+			require.NoError(t, ApplyGeminiFilePlan(c, &request))
+			serialized, err := common.Marshal(request)
+			require.NoError(t, err)
+			for _, passthrough := range []bool{false, true} {
+				result, apiErr := FinalizeGeminiFileBody(c, serialized, serialized, passthrough)
+				require.Nil(t, apiErr)
+				responseKey := "functionResponse"
+				if passthrough {
+					responseKey = tc.responseKey
+					assert.True(t, gjson.GetBytes(result, "customProviderField.keep").Bool())
+				}
+				path := "contents.2.parts.1." + responseKey
+				assert.Equal(t, "call-1", gjson.GetBytes(result, path+".id").String())
+				assert.Equal(t, "result", gjson.GetBytes(result, path+".response.image.$ref").String())
+				assert.Equal(t, "false", gjson.GetBytes(result, path+".willContinue").Raw)
+				assert.Equal(t, "SILENT", gjson.GetBytes(result, path+".scheduling").String())
+				assert.Len(t, gjson.GetBytes(result, path+".parts").Array(), 2)
+				assert.Equal(t, tc.mimeType, gjson.GetBytes(result, path+".parts.0."+tc.kind+".mimeType").String())
+				assert.Equal(t, tc.source, gjson.GetBytes(result, path+".parts.0."+tc.kind+"."+tc.sourceKey).String())
+				assert.Equal(t, "result", gjson.GetBytes(result, path+".parts.0."+tc.kind+".displayName").String())
+				assert.Equal(t, "other", gjson.GetBytes(result, path+".parts.1.inlineData.displayName").String())
+				assert.Equal(t, "iVBORw0KGgo=", gjson.GetBytes(result, "contents.2.parts.2.inlineData.data").String())
+				assert.Equal(t, "keep-signature", gjson.GetBytes(result, "contents.1.parts.0.thoughtSignature").String())
+			}
+			storage, err := common.GetBodyStorage(c)
+			require.NoError(t, err)
+			original, err := storage.Bytes()
+			require.NoError(t, err)
+			assert.Equal(t, body, string(original), "planning and rewriting preserve retry input")
+			changed, err := sjson.SetBytes(serialized, "contents.2.parts.1.functionResponse.parts.0."+tc.kind+"."+tc.sourceKey, "unplanned")
+			require.NoError(t, err)
+			_, apiErr = FinalizeGeminiFileBody(c, changed, serialized, true)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, types.ErrorCode("file_route_conflict"), apiErr.GetErrorCode())
+			require.NoError(t, common.Unmarshal(changed, &request))
+			assert.ErrorContains(t, ApplyGeminiFilePlan(c, &request), "attachment changed after file routing")
+			assert.NotContains(t, RedactGeminiFileRequest(c, body), tc.source)
+			plan.Config.MaxInlineRequestBytes = 1
+			_, apiErr = FinalizeGeminiFileBody(c, serialized, nil, true)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusRequestEntityTooLarge, apiErr.StatusCode)
+		})
+	}
+	for _, parts := range []string{"", `,"parts":[]`, `,"parts":null`} {
+		body := `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{"ok":true}` + parts + `}}]}]}`
+		c := geminiFileTestContext(t, "/v1/models/gemini-4-argon:generateContent", body)
+		plan, apiErr := PlanGeminiFiles(c, "gemini-4-argon")
+		require.Nil(t, apiErr)
+		assert.Nil(t, plan, "text-only function results require no file plan")
+	}
+}
+
 func TestGeminiFilePlanPreservesAttachmentsBeyondSixteen(t *testing.T) {
 	configureGeminiFileTest(t, `{"enabled":true,"chat_model_patterns":["^gemini-"]}`)
 	for _, tc := range []struct {
@@ -395,6 +471,13 @@ func TestGeminiFilePlanRejectsInvalidOrUnsupportedAttachments(t *testing.T) {
 		{"message field casing bypass", "/v1/chat/completions", `{"messages":[{"role":"user","Content":[{"type":"pdf_url","pdf_url":{"url":"https://example.com/file"}}]}]}`, "gemini-test"},
 		{"root field casing bypass", "/v1/chat/completions", `{"messages":[],"Messages":[{"role":"user","content":[{"type":"pdf_url","pdf_url":{"url":"https://example.com/file"}}]}]}`, "gemini-test"},
 		{"inline data cannot reuse a URL probe", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"fileData":{"mimeType":"application/pdf","fileUri":"https://generativelanguage.googleapis.com/v1beta/files/test"}},{"inlineData":{"mimeType":"application/pdf","data":"https://generativelanguage.googleapis.com/v1beta/files/test"}}]}]}`, "gemini-test"},
+		{"nested parts must be an array", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":{}}}]}]}`, "gemini-test"},
+		{"nested invalid base64", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":[{"inlineData":{"mimeType":"image/png","data":"invalid!"}}]}}]}]}`, "gemini-test"},
+		{"nested conflicting media", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":[{"inlineData":{"data":"JVBERi0xLjcK"},"fileData":{"fileUri":"https://example.com/file"}}]}}]}]}`, "gemini-test"},
+		{"nested media casing bypass", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":[{"InlineData":{"mimeType":"image/png","data":"iVBORw0KGgo="}}]}}]}]}`, "gemini-test"},
+		{"nested private source", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":[{"fileData":{"mimeType":"image/png","fileUri":"https://127.0.0.1/private?signature=secret"}}]}}]}]}`, "gemini-test"},
+		{"nested text cannot bypass direct attachment MIME policy", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"tool","response":{},"parts":[{"inlineData":{"mimeType":"text/plain","data":"dG9vbCByZXN1bHQ="}}]}},{"inlineData":{"mimeType":"text/plain","data":"dG9vbCByZXN1bHQ="}}]}]}`, "gemini-test"},
+		{"conflicting function response aliases", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"functionResponse":{"name":"first","response":{}},"function_response":{"name":"second","response":{}}}]}]}`, "gemini-test"},
 	}
 	cases = append(cases, struct{ name, path, body, model string }{"duplicate JSON attachments", "/v1/models/gemini-test:generateContent", `{"contents":[{"parts":[{"fileData":{"fileUri":"first","fileUri":"second","mimeType":"application/pdf"}}]}]}`, "gemini-test"})
 	invalidTail := base64.StdEncoding.EncodeToString([]byte("%PDF-1.7\n"+strings.Repeat("x", 640))) + "!"
@@ -489,6 +572,59 @@ func TestGeminiFileURLProbeIsBoundedAndDetectsChanges(t *testing.T) {
 	assert.Contains(t, transferErr.Error(), "changed after planning")
 }
 
+func TestGeminiFileFunctionResponseURLRouting(t *testing.T) {
+	configureGeminiFileTest(t, `{"enabled":true,"mode":"forward","inline_threshold_bytes":32}`)
+	system_setting.GetFetchSetting().AllowPrivateIp = true
+	for _, size := range []int{31, 32} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			data := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{'x'}, size-9)...)
+			source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Empty(t, r.Header.Get("Authorization"))
+				w.Header().Set("Content-Type", "application/pdf")
+				_, _ = w.Write(data)
+			}))
+			defer source.Close()
+			parsed, err := url.Parse(source.URL)
+			require.NoError(t, err)
+			system_setting.GetFetchSetting().AllowedPorts = []string{parsed.Port()}
+			body := fmt.Sprintf(`{"contents":[{"parts":[{"functionResponse":{"name":"get_document","response":{"document":{"$ref":"document.pdf"}},"parts":[{"file_data":{"mime_type":"application/pdf","file_uri":%q,"displayName":"document.pdf"}}]}}]}],"customProviderField":true}`, source.URL)
+			c := geminiFileTestContext(t, "/v1/models/gemini-test:streamGenerateContent", body)
+			config, err := model_setting.GetGeminiFileRouting()
+			require.NoError(t, err)
+			// Trust only this fixture's TLS certificate at the download boundary.
+			index := 0
+			file := &GeminiPlannedFile{FunctionResponsePartIndex: &index, Position: "contents[0].parts[0].functionResponse.parts[0]", Source: types.NewURLFileSource(source.URL), MIMEType: "application/pdf"}
+			plan := &GeminiFilePlan{Config: config, Native: true, Files: []*GeminiPlannedFile{file}, client: source.Client()}
+			c.Set(geminiFilePlanKey, plan)
+			require.Nil(t, plan.probe(c.Request.Context(), file))
+			plan.RequiresStorage = file.Large
+			assert.Equal(t, size >= 32, plan.RequiresStorage)
+			assert.True(t, plan.HasRemoteFiles())
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeGemini, UpstreamModelName: "gemini-test"}}
+			require.Nil(t, PrepareGeminiFileAttempt(c, info))
+			var request dto.GeminiChatRequest
+			require.NoError(t, common.UnmarshalJsonStr(body, &request))
+			require.NoError(t, ApplyGeminiFilePlan(c, &request))
+			serialized, err := common.Marshal(request)
+			require.NoError(t, err)
+			for _, passthrough := range []bool{false, true} {
+				result, apiErr := FinalizeGeminiFileBody(c, serialized, serialized, passthrough)
+				require.Nil(t, apiErr)
+				path := "contents.0.parts.0.functionResponse"
+				assert.Equal(t, "document.pdf", gjson.GetBytes(result, path+".response.document.$ref").String())
+				if size < 32 {
+					assert.False(t, gjson.GetBytes(result, path+".parts.0.file_data").Exists())
+					assert.Equal(t, base64.StdEncoding.EncodeToString(data), gjson.GetBytes(result, path+".parts.0.inlineData.data").String())
+					assert.Equal(t, "document.pdf", gjson.GetBytes(result, path+".parts.0.inlineData.displayName").String())
+				} else {
+					assert.Equal(t, source.URL, gjson.GetBytes(result, path+".parts.0.fileData.fileUri").String())
+					assert.Equal(t, "document.pdf", gjson.GetBytes(result, path+".parts.0.fileData.displayName").String())
+				}
+			}
+		})
+	}
+}
+
 func TestGeminiFileGCSLifecycleAndPermissionDomain(t *testing.T) {
 	configureGeminiFileTest(t, `{"enabled":true,"mode":"process","inline_threshold_bytes":8}`)
 	var mu sync.Mutex
@@ -557,7 +693,10 @@ func TestGeminiFileGCSLifecycleAndPermissionDomain(t *testing.T) {
 	file := &GeminiPlannedFile{PartIndex: 1, Position: "contents[0].parts[1]", Source: types.NewURLFileSource(source.URL), MIMEType: "application/pdf"}
 	require.Nil(t, plan.probe(c.Request.Context(), file))
 	require.True(t, file.Large)
-	plan.Files = append(plan.Files, file)
+	index := 0
+	nestedFile := &GeminiPlannedFile{PartIndex: 2, FunctionResponsePartIndex: &index, Position: "contents[0].parts[2].functionResponse.parts[0]", Source: file.Source, MIMEType: file.MIMEType}
+	require.Nil(t, plan.probe(c.Request.Context(), nestedFile))
+	plan.Files = append(plan.Files, file, nestedFile)
 	plan.RequiresStorage = file.Large
 	require.Nil(t, PrepareGeminiFileAttempt(c, info))
 	require.Nil(t, PrepareGeminiFileAttempt(c, info))
@@ -571,12 +710,16 @@ func TestGeminiFileGCSLifecycleAndPermissionDomain(t *testing.T) {
 	request := &dto.GeminiChatRequest{Contents: []dto.GeminiChatContent{{Parts: []dto.GeminiPart{
 		{InlineData: &dto.GeminiInlineData{MimeType: "application/pdf", Data: "JVBERi0xLjcK"}},
 		{FileData: &dto.GeminiFileData{MimeType: "application/pdf", FileUri: source.URL}},
+		{FunctionResponse: &dto.GeminiFunctionResponse{Name: "get_document", Response: map[string]any{"document": map[string]any{"$ref": "document.pdf"}}, Parts: common.RawMessage(fmt.Sprintf(`[{"fileData":{"mimeType":"application/pdf","fileUri":%q,"displayName":"document.pdf"}}]`, source.URL))}},
 	}}}}
 	require.NoError(t, ApplyGeminiFilePlan(c, request))
 	require.NotNil(t, request.Contents[0].Parts[0].InlineData)
 	assert.Equal(t, "JVBERi0xLjcK", request.Contents[0].Parts[0].InlineData.Data)
 	require.NotNil(t, request.Contents[0].Parts[1].FileData)
 	assert.True(t, strings.HasPrefix(request.Contents[0].Parts[1].FileData.FileUri, "gs://test-bucket/"))
+	nested := request.Contents[0].Parts[2].FunctionResponse.Parts
+	assert.Equal(t, request.Contents[0].Parts[1].FileData.FileUri, gjson.GetBytes(nested, "0.fileData.fileUri").String(), "nested and direct references reuse the credential-bound upload")
+	assert.Equal(t, "document.pdf", gjson.GetBytes(nested, "0.fileData.displayName").String())
 	plan.Close(c)
 	assert.Len(t, deleted, 2)
 	plan.Close(c)

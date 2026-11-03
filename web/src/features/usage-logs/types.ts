@@ -123,6 +123,8 @@ export interface ToolSurchargeItem {
 
 export interface LogOtherData {
   admin_info?: {
+    /** Lifecycle snapshot captured when this consumption/settlement log was written. */
+    timing?: Record<string, unknown> | null
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean
     multi_key_index?: number

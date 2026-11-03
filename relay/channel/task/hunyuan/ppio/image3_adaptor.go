@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	hostcommon "github.com/QuantumNous/new-api/common"
 	"io"
 	"net/http"
 	"strings"
@@ -85,6 +86,7 @@ type PPioTaskResult struct {
 // ============================
 
 type TaskAdaptor struct {
+	hostcommon.TimingScope `json:"-"`
 	taskbilling.BaseBilling
 	ChannelType int
 	apiKey      string
@@ -184,7 +186,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	/*
 	 {"id":"xxxxxx","status":"pending",.....}
 	*/
-	return service.GetHttpClient().Do(req)
+	return hostcommon.DoTimedHTTP(hostcommon.OutboundTimingContext(a.RequestTimingContext(), "task_query"), service.GetHttpClient(), req, "task_query", true)
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

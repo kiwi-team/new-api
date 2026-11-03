@@ -81,6 +81,97 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestUpdateUserModelLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		role         int
+		wantSuccess  bool
+		wantEnabled  bool
+		wantModels   []string
+	}{
+		{"root replaces models", `,"model_limits_enabled":true,"model_limits":[" gpt-4o ","gemini-2.5-pro","gpt-4o",""]`, common.RoleRootUser, true, true, []string{"gpt-4o", "gemini-2.5-pro"}},
+		{"root disables and retains models", `,"model_limits_enabled":false`, common.RoleRootUser, true, false, []string{"old-model"}},
+		{"root clears models", `,"model_limits":[]`, common.RoleRootUser, true, false, []string{}},
+		{"root leaves limits unchanged", "", common.RoleRootUser, true, true, []string{"old-model"}},
+		{"admin cannot change switch", `,"model_limits_enabled":false`, common.RoleAdminUser, false, true, []string{"old-model"}},
+		{"admin cannot change models", `,"model_limits":["other-model"]`, common.RoleAdminUser, false, true, []string{"old-model"}},
+		{"admin can edit other fields", "", common.RoleAdminUser, true, true, []string{"old-model"}},
+		{"invalid switch rejected", `,"model_limits_enabled":"false"`, common.RoleRootUser, false, true, []string{"old-model"}},
+		{"invalid model rejected", `,"model_limits":[42]`, common.RoleRootUser, false, true, []string{"old-model"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			previousMaster := common.IsMasterNode
+			common.IsMasterNode = false
+			t.Cleanup(func() { common.IsMasterNode = previousMaster })
+			t.Setenv("LOG_SQL_DSN", "")
+			logDB := model.LOG_DB
+			require.NoError(t, model.InitLogDB())
+			model.LOG_DB = logDB
+			require.NoError(t, authz.Init(db))
+			redisServer := miniredis.RunT(t)
+			previousRDB := common.RDB
+			common.RDB = redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+			common.RedisEnabled = true
+			t.Cleanup(func() {
+				_ = common.RDB.Close()
+				common.RDB = previousRDB
+			})
+			user := model.User{
+				Username: "model-limits-owner", DisplayName: "Before", Role: common.RoleCommonUser,
+				Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+				Setting: `{"model_limits_enabled":true,"model_limits":["old-model"],"language":"ja","record_ip_log":true,"extension":{"id":9007199254740993}}`,
+			}
+			require.NoError(t, db.Create(&user).Error)
+			_, err := model.GetUserCache(user.Id)
+			require.NoError(t, err)
+
+			body := fmt.Sprintf(`{"id":%d,"username":"model-limits-owner","display_name":"After","group":"default"%s}`, user.Id, tc.fields)
+			recorder := adminUserRequest(http.MethodPut, "/api/user/", body, "", service.AuthIdentity{UserID: 9999}, tc.role, nil, UpdateUser)
+			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
+			require.NoError(t, db.First(&user, user.Id).Error)
+			settings := user.GetSetting()
+			assert.Equal(t, tc.wantEnabled, settings.ModelLimitsEnabled)
+			assert.Equal(t, tc.wantModels, settings.ModelLimits)
+			assert.Equal(t, "ja", settings.Language)
+			assert.True(t, settings.RecordIpLog)
+			assert.Contains(t, user.Setting, `"extension":{"id":9007199254740993}`)
+			cached, err := model.GetUserCache(user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, settings, cached.GetSetting(), "the next request must see the saved limits")
+			if tc.wantSuccess {
+				assert.Equal(t, "After", user.DisplayName)
+			} else {
+				assert.Equal(t, "Before", user.DisplayName, "rejection must precede any mutation")
+			}
+		})
+	}
+}
+
+func TestUpdateUserModelLimitsRollback(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	user := model.User{
+		Username: "model-limits-owner", DisplayName: "Before", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default",
+		Setting: `{"model_limits_enabled":true,"model_limits":["old-model"]}`,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:fail_model_limits", func(tx *gorm.DB) {
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if ok && tx.Statement.Table == "users" && updates["setting"] != nil {
+			tx.AddError(errors.New("setting update unavailable"))
+		}
+	}))
+
+	body := fmt.Sprintf(`{"id":%d,"username":"model-limits-owner","display_name":"After","group":"default","model_limits_enabled":false}`, user.Id)
+	recorder := adminUserRequest(http.MethodPut, "/api/user/", body, "", service.AuthIdentity{UserID: 9999}, common.RoleRootUser, nil, UpdateUser)
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, "Before", stored.DisplayName)
+	assert.JSONEq(t, user.Setting, stored.Setting)
+}
+
 func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return performVerifiedManageUserRequest(t, body, service.AuthIdentity{UserID: 9999}, "")

@@ -1,4 +1,6 @@
-FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS builder
+# Build frontend assets natively; they are shared by all target architectures.
+# Running Bun's JavaScriptCore under QEMU can fail during memory allocation.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS builder
 
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
@@ -7,15 +9,8 @@ COPY ./web ./
 COPY ./VERSION /build/VERSION
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat /build/VERSION) bun run build
 
-FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder-portal
-
-WORKDIR /build/customer-portal
-COPY customer-portal/package.json customer-portal/bun.lock ./
-RUN bun install --frozen-lockfile
-COPY ./customer-portal ./
-RUN bun run build
-
-FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder2
+# Run the compiler natively and cross-compile using TARGETOS/TARGETARCH below.
+FROM --platform=$BUILDPLATFORM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder2
 ENV GO111MODULE=on CGO_ENABLED=0 GOWORK=off
 
 ARG TARGETOS
@@ -25,13 +20,14 @@ ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
-ADD go.mod go.sum ./
+COPY go.mod go.sum ./
 # relaykit and tokenkit are local submodules referenced via replace; their
 # go.mod files must be present for go mod download to resolve the main module graph.
-ADD relaykit/go.mod ./relaykit/go.mod
-ADD tokenkit/go.mod ./tokenkit/go.mod
+COPY relaykit/go.mod ./relaykit/go.mod
+COPY tokenkit/go.mod ./tokenkit/go.mod
 RUN go mod download
 
+# .dockerignore defines the source files allowed into this build context.
 COPY . .
 COPY --from=builder /build/web/dist ./web/dist
 RUN go build -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api

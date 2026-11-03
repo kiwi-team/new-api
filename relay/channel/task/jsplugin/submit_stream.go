@@ -82,6 +82,7 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 		if eventName == "" {
 			eventName = "message"
 		}
+		common.ObserveTimingProtocol(parent, "first_sse_data_at_ms", false, false)
 		event := map[string]any{"event": eventName, "id": lastID, "data": strings.Join(data, "\n")}
 		value, err := a.plugin.Engine.Call(ctx, hook, driverContext, event, state)
 		if err != nil {
@@ -128,6 +129,7 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 			}
 			state = decoded
 		}
+		common.ObserveTimingProtocol(parent, "", false, done, "plugin_done")
 		if done {
 			if accumulated != nil {
 				return accumulated.Value()

@@ -219,6 +219,14 @@ func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, c
 	_ = common.UnmarshalJsonStr(common.GetContextKeyString(c, constant.ContextKeyHeader), &headers)
 	common.RedactLogHeaders(headers)
 	header, _ := common.Marshal(headers)
+	var timing *model.LogJSON
+	if snapshot := common.TimingSnapshot(c.Request.Context(), "error_log"); snapshot != nil {
+		snapshot["error_channel_id"] = channelID
+		if data, err := common.Marshal(snapshot); err == nil {
+			value := model.LogJSON(string(data))
+			timing = &value
+		}
+	}
 	if err := model.SaveErrorLog(c.GetInt("id"), channelID, channelName,
 		common.GetContextKeyString(c, constant.ContextKeyOriginalModel), apiErr, body,
 		c.GetHeader("Content-Type"), c.GetString(common.RequestIdKey), c.ClientIP(),
@@ -226,7 +234,7 @@ func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, c
 		common.GetContextKeyString(c, constant.ContextKeyClientUserId),
 		common.GetContextKeyString(c, constant.ContextKeyClientScenairo),
 		common.GetContextKeyString(c, constant.ContextKeyExtra), string(header),
-		common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId), max(elapsed, 0), includeBody); err != nil {
+		common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId), max(elapsed, 0), includeBody, timing); err != nil {
 		logger.LogError(c, fmt.Sprintf("failed to record error_logs entry: %s; original error: %s", err, apiErr.Message))
 	}
 }

@@ -217,7 +217,7 @@ func updateTask(info *relaycommon.RelayInfo, taskID string) (*AliResponse, error
 	req.Header.Set("Authorization", "Bearer "+info.ApiKey)
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(info.RequestTimingContext(), "task_query_http"), client, req, "task_query", true)
 	if err != nil {
 		common.SysLog("updateTask client.Do err: " + err.Error())
 		return &aliResponse, err, nil

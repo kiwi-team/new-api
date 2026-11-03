@@ -234,6 +234,7 @@ func main() {
 		common.FatalLog(common.LogText("failed to configure trusted proxies: %s", err.Error()))
 		return
 	}
+	server.Use(middleware.RequestTiming())
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(common.LogText("panic detected: %v", err))
 		common.SysLog(common.LogText("stacktrace from panic: %s", string(debug.Stack())))

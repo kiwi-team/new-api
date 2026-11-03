@@ -138,7 +138,7 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 				return 0, errors.New("exactly one of file or audio_url/input_url is required")
 			}
 			if audioURL != "" {
-				resp, downloadErr := DoDownloadRequest(audioURL, "estimate Hy ASR duration")
+				resp, downloadErr := DoDownloadRequestWithContext(common.RequestContext(c), audioURL, "estimate Hy ASR duration")
 				if downloadErr != nil {
 					return 0, fmt.Errorf("fetch audio_url for duration estimate: %w", downloadErr)
 				}

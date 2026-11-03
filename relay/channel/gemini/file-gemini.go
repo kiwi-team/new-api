@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+
 	"google.golang.org/genai"
 )
 
 func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, baseUrl string) (*genai.File, error) {
 	if strings.HasPrefix(fileUri, "https://storage.googleapis.com/") {
-		mimeType, err := GetFileMimeType(fileUri)
+		mimeType, err := GetFileMimeType(fileUri, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -37,7 +39,11 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 	}
 
 	//file, err := client.Files.UploadFromPath(ctx, fileUri, uploadConfig)
-	response, err := http.Get(fileUri)
+	req, err := http.NewRequest(http.MethodGet, fileUri, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := common.DoTimedHTTP(ctx, http.DefaultClient, req, "file_download", false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download image from URL: %w", err)
 	}
@@ -62,7 +68,9 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 		//	Timeout: &timeout,
 		//},
 	}
+	uploadTiming := common.BeginTimingOperation(ctx, "file_upload", false)
 	file, err := client.Files.Upload(ctx, response.Body, uploadConfig)
+	uploadTiming.End()
 	if err != nil {
 		fmt.Printf("failed to upload file to gemini, err: %v\n", err)
 		return nil, err
@@ -118,7 +126,9 @@ func CheckFileState(ctx context.Context, client *genai.Client, file *genai.File)
 	for file.State != genai.FileStateActive && max < 10 {
 		fmt.Printf("file state is processing, wait for 10 * %d seconds\n", max+1)
 		time.Sleep(2 * time.Second)
+		pollTiming := common.BeginTimingOperation(ctx, "task_query", false)
 		file, _ = client.Files.Get(ctx, file.Name, nil)
+		pollTiming.End()
 		max = max + 1
 	}
 	if file == nil {

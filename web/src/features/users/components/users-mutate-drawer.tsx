@@ -31,6 +31,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { MultiSelect } from '@/components/multi-select'
 import { PermissionMatrix } from '@/components/permission-matrix'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -53,7 +54,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import {
   Sheet,
   SheetClose,
@@ -63,7 +63,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { getEnabledModels } from '@/features/channels/api'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -172,6 +174,17 @@ export function UsersMutateDrawer({
   const selectedRole = form.watch('role')
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
   const isRoot = currentUser?.role === ROLE.SUPER_ADMIN
+  const modelLimitsEnabled = form.watch('model_limits_enabled')
+  const selectedModels = form.watch('model_limits') ?? []
+  const { data: enabledModels } = useQuery({
+    queryKey: ['enabled-models'],
+    queryFn: async () => requireServerSuccess(await getEnabledModels()),
+    enabled: isRoot && isUpdate && open && !!modelLimitsEnabled,
+    staleTime: 5 * 60 * 1000,
+  })
+  const modelOptions = [
+    ...new Set([...(enabledModels?.data ?? []), ...selectedModels]),
+  ].map((name) => ({ label: name, value: name }))
 
   // Org list is a backend constant; only enabled entries come back.
   const { data: orgs } = useQuery({
@@ -517,6 +530,56 @@ export function UsersMutateDrawer({
                 </SideDrawerSection>
               )}
 
+              {isRoot && isUpdate && (
+                <SideDrawerSection>
+                  <h3 className='text-sm font-medium'>{t('Model Limits')}</h3>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'When on, every key of this account may only request the models selected below. A key with its own model limit overrides this.'
+                    )}
+                  </p>
+                  <FormField
+                    control={form.control}
+                    name='model_limits_enabled'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-lg border p-3'>
+                        <FormLabel>{t('Enable model limits')}</FormLabel>
+                        <FormControl>
+                          <Switch
+                            checked={!!field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  {modelLimitsEnabled && (
+                    <FormField
+                      control={form.control}
+                      name='model_limits'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Allowed models')}</FormLabel>
+                          <FormControl>
+                            <MultiSelect
+                              options={modelOptions}
+                              selected={field.value ?? []}
+                              onChange={field.onChange}
+                              placeholder={t('Select models')}
+                              allowCreate
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t('Leave empty to allow every model.')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </SideDrawerSection>
+              )}
+
               {/* Root-only. Changing the org changes which menus and data the
                   user sees on their next request (org.md 6.4). */}
               {isRoot && isUpdate && (
@@ -534,7 +597,9 @@ export function UsersMutateDrawer({
                           <FormLabel>{t('Organization')}</FormLabel>
                           <Select
                             value={field.value || ''}
-                            onValueChange={(value) => field.onChange(value ?? '')}
+                            onValueChange={(value) =>
+                              field.onChange(value ?? '')
+                            }
                             items={orgSelectItems}
                           >
                             <FormControl>

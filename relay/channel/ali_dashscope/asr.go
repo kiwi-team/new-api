@@ -616,7 +616,7 @@ func doASRRequest(info *relaycommon.RelayInfo, req *http.Request) (*http.Respons
 	if err != nil {
 		return nil, err
 	}
-	return client.Do(req)
+	return common.DoTimedHTTP(common.OutboundTimingContext(info.RequestTimingContext(), "inference_http"), client, req, "inference", true)
 }
 
 func readASRBody(reader io.Reader) ([]byte, error) {

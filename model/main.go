@@ -484,6 +484,11 @@ func migrateLOGDB() error {
 }
 
 func migrateClickHouseLogDB() error {
+	if LOG_DB.Migrator().HasTable(&ErrorLog{}) {
+		if err := LOG_DB.Exec("ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS timing Nullable(String)").Error; err != nil {
+			return err
+		}
+	}
 	ttlDays := clickHouseLogTTLDays()
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err

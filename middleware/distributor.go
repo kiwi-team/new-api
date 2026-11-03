@@ -130,6 +130,8 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, fileErr.StatusCode, fileErr.Error(), fileErr.GetErrorCode())
 			return
 		}
+		routeTiming := common.StartTimingPhase(c.Request.Context(), "route")
+		defer routeTiming.End()
 		channelRulesMapAny, hasChannelRules := c.Get("token_channel_rules")
 		channelRulesMap := make(map[string]taskdto.ChannelRulesItem)
 		if hasChannelRules {
@@ -318,7 +320,11 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		setupError := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		routeTiming.End()
+		if setupError == nil {
+			common.MarkTiming(c.Request.Context(), "route_ready_at_ms")
+		}
 		// c.Set(constant.ContextKeyCompletionsResponses, "no")
 		// responsesModelListStr := common.OptionMap["ResponsesModelList"]
 		// ResponsesModelList := strings.Split(responsesModelListStr, ",")
@@ -509,6 +515,8 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	modelTiming := common.StartTimingPhase(c.Request.Context(), "model_extract")
+	defer modelTiming.End()
 	if !gjson.ValidBytes(requestBody) {
 		return nil, errors.New("invalid JSON request body")
 	}

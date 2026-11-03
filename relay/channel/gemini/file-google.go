@@ -53,8 +53,16 @@ func urlExt(rawURL string) string {
 	return filepath.Ext(rawURL)
 }
 
-func GetFileMimeType(fileUri string) (string, error) {
-	response, err := mimeProbeClient.Get(fileUri)
+func GetFileMimeType(fileUri string, source ...context.Context) (string, error) {
+	ctx := context.Background()
+	if len(source) > 0 {
+		ctx = source[0]
+	}
+	req, err := http.NewRequest(http.MethodGet, fileUri, nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(ctx, "file_probe"), mimeProbeClient, req, "file_download", false)
 	if err != nil {
 		return "", fmt.Errorf("failed to get file type from URL: %w", err)
 	}
@@ -92,7 +100,7 @@ func probeContentLength(ctx context.Context, fileUri string) int64 {
 	if err != nil {
 		return -1
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(ctx, "file_download_http"), http.DefaultClient, req, "file_download", false)
 	if err != nil {
 		return -1
 	}
@@ -105,7 +113,7 @@ func probeContentLength(ctx context.Context, fileUri string) int64 {
 
 func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, credentials string) (*genai.File, error) {
 	if strings.HasPrefix(fileUri, "https://storage.googleapis.com/") {
-		mimeType, err := GetFileMimeType(fileUri)
+		mimeType, err := GetFileMimeType(fileUri, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +147,7 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download request: %w", err)
 	}
-	response, err := http.DefaultClient.Do(req)
+	response, err := common.DoTimedHTTP(common.OutboundTimingContext(ctx, "file_upload_http"), http.DefaultClient, req, "file_upload", false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file from URL: %w", err)
 	}
@@ -158,6 +166,8 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 	obj := client.Bucket(bucket).Object(object)
 
 	// 获取对象的写入器
+	uploadTiming := common.BeginTimingOperation(ctx, "file_upload", false)
+	defer uploadTiming.End()
 	wc := obj.NewWriter(ctx)
 	// GCS writer 会按 ChunkSize 预分配缓冲区。大文件用上限(16MB,等于默认值,保证上传吞吐),
 	// 小文件按实际大小缩小(256KB 对齐),避免一张小图也占 16MB —— 此前内存被放大的主因之一。
@@ -215,7 +225,7 @@ func UploadByConfigAPI(ctx context.Context, fileUri string) (*genai.File, error)
 	req.Header.Set("Content-Type", "application/json")
 
 	httpClient := &http.Client{}
-	resp, err := httpClient.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(ctx, "file_upload_http"), httpClient, req, "file_upload", false)
 	if err != nil {
 		return nil, err
 	}

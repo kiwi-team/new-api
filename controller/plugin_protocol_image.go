@@ -174,6 +174,8 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 // or the protocol timeout elapses. A client disconnect stops waiting; the
 // background poller then finishes the durable task.
 func waitTaskPluginImageTask(c *gin.Context, task *model.Task, deps pluginProtocolBridgeDeps) *dto.TaskError {
+	timing := common.StartTimingPhase(c.Request.Context(), "task_wait")
+	defer timing.End()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), deps.submissionTimeout)
 	defer cancel()
 	for {

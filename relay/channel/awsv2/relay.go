@@ -49,7 +49,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
-			HTTPClient:              httpClient,
+			HTTPClient:              common.TimingHTTPClient{Client: httpClient, Context: c.Request.Context(), Purpose: "inference", Primary: true, Kind: "sdk_http"},
 		})
 	case 3:
 		// AKSK mode: accessKey|secretKey|region
@@ -59,7 +59,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
-			HTTPClient:  httpClient,
+			HTTPClient:  common.TimingHTTPClient{Client: httpClient, Context: c.Request.Context(), Purpose: "inference", Primary: true, Kind: "sdk_http"},
 		})
 	default:
 		return nil, errors.New("invalid aws secret key format, expected: apiKey|region or accessKey|secretKey|region")
@@ -210,6 +210,7 @@ func handleConverseStream(c *gin.Context, info *relaycommon.RelayInfo, stream *b
 	var finishReason string
 
 	for event := range stream.Events() {
+		common.ObserveTimingProtocol(c.Request.Context(), "", false, false)
 		info.SetFirstResponseTime()
 
 		switch v := event.(type) {
@@ -219,6 +220,7 @@ func handleConverseStream(c *gin.Context, info *relaycommon.RelayInfo, stream *b
 				if toolUseStart, ok := v.Value.Start.(*bedrockTypes.ContentBlockStartMemberToolUse); ok {
 					currentToolUseId = aws.ToString(toolUseStart.Value.ToolUseId)
 					currentToolName = aws.ToString(toolUseStart.Value.Name)
+					common.ObserveTimingProtocol(c.Request.Context(), "first_tool_output_at_ms", currentToolName != "", false)
 					currentToolInput.Reset()
 
 					// Send tool call start chunk
@@ -245,6 +247,7 @@ func handleConverseStream(c *gin.Context, info *relaycommon.RelayInfo, stream *b
 			case *bedrockTypes.ContentBlockDeltaMemberToolUse:
 				// Tool use input delta
 				if d.Value.Input != nil {
+					common.ObserveTimingProtocol(c.Request.Context(), "first_tool_output_at_ms", *d.Value.Input != "", false)
 					currentToolInput.WriteString(*d.Value.Input)
 					// Send tool call arguments delta chunk
 					chunk := createToolCallDeltaChunk(responseId, created, info.UpstreamModelName, currentContentBlockIndex-1, *d.Value.Input)
@@ -255,8 +258,10 @@ func handleConverseStream(c *gin.Context, info *relaycommon.RelayInfo, stream *b
 
 			if text != "" {
 				if isReasoning {
+					common.ObserveTimingProtocol(c.Request.Context(), "first_reasoning_at_ms", true, false)
 					reasoningText.WriteString(text)
 				} else {
+					common.ObserveTimingProtocol(c.Request.Context(), "first_text_at_ms", true, false)
 					responseText.WriteString(text)
 				}
 
@@ -283,6 +288,7 @@ func handleConverseStream(c *gin.Context, info *relaycommon.RelayInfo, stream *b
 
 		case *bedrockTypes.ConverseStreamOutputMemberMessageStop:
 			// Message completed
+			common.ObserveTimingProtocol(c.Request.Context(), "", false, true, "message_stop")
 			finishReason = convertStopReason(v.Value.StopReason)
 
 		case *bedrockTypes.ConverseStreamOutputMemberMetadata:

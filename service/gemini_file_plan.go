@@ -47,21 +47,22 @@ type GeminiFilePlan struct {
 }
 
 type GeminiPlannedFile struct {
-	MessageIndex  int
-	PartIndex     int
-	Position      string
-	Source        types.FileSource
-	MIMEType      string
-	ExpectedType  string
-	Size          int64
-	Large         bool
-	Special       bool
-	ExistingGCS   bool
-	prefixHash    [32]byte
-	prefixSize    int64
-	etag          string
-	contentLength int64
-	resolved      *relayconvert.GeminiMedia
+	MessageIndex              int
+	PartIndex                 int
+	FunctionResponsePartIndex *int
+	Position                  string
+	Source                    types.FileSource
+	MIMEType                  string
+	ExpectedType              string
+	Size                      int64
+	Large                     bool
+	Special                   bool
+	ExistingGCS               bool
+	prefixHash                [32]byte
+	prefixSize                int64
+	etag                      string
+	contentLength             int64
+	resolved                  *relayconvert.GeminiMedia
 }
 
 // HasRemoteFiles includes small URLs and provider file references, whose
@@ -136,26 +137,39 @@ func PlanGeminiFiles(c *gin.Context, modelName string) (*GeminiFilePlan, *types.
 			for pi, part := range content.Parts {
 				position := fmt.Sprintf("contents[%d].parts[%d]", mi, pi)
 				rawPart := root.Get(fmt.Sprintf("contents.%d.parts.%d", mi, pi))
-				if rawPart.Get("function_response.parts").Exists() || (part.FunctionResponse != nil && len(part.FunctionResponse.Parts) > 0) {
-					return nil, FileRoutingError("unsupported_file_reference", position+": nested function response attachments are unsupported", 400)
-				}
 				file := &GeminiPlannedFile{MessageIndex: mi, PartIndex: pi, Position: position}
-				if part.InlineData != nil {
-					if !rawPart.Get("inlineData").Exists() && !rawPart.Get("inline_data").Exists() {
-						return nil, FileRoutingError("invalid_file_input", position+": invalid attachment field casing", 400)
-					}
-					file.Source = types.NewBase64FileSource(part.InlineData.Data, part.InlineData.MimeType)
-					file.MIMEType = part.InlineData.MimeType
-				} else if part.FileData != nil {
-					if !rawPart.Get("fileData").Exists() && !rawPart.Get("file_data").Exists() {
-						return nil, FileRoutingError("invalid_file_input", position+": invalid attachment field casing", 400)
-					}
-					file.Source = types.NewURLFileSource(part.FileData.FileUri)
-					file.MIMEType = part.FileData.MimeType
-				} else {
+				if apiErr := plan.addNativeAttachment(part, rawPart, file); apiErr != nil {
+					return nil, apiErr
+				}
+				if part.FunctionResponse == nil {
 					continue
 				}
-				plan.Files = append(plan.Files, file)
+				if hasNoncanonicalFileFields(rawPart, "functionResponse", "function_response") {
+					return nil, FileRoutingError("invalid_file_input", position+": invalid function response field casing", 400)
+				}
+				response := rawPart.Get("functionResponse")
+				if rawPart.Get("function_response").Exists() {
+					response = rawPart.Get("function_response")
+				}
+				if hasNoncanonicalFileFields(response, "parts") {
+					return nil, FileRoutingError("invalid_file_input", position+": invalid function response parts field casing", 400)
+				}
+				parts := response.Get("parts")
+				if !parts.Exists() || parts.Type == gjson.Null {
+					continue
+				}
+				var attachments []dto.GeminiPart
+				if !parts.IsArray() || common.Unmarshal(part.FunctionResponse.Parts, &attachments) != nil {
+					return nil, FileRoutingError("invalid_file_input", position+": invalid function response attachments", 400)
+				}
+				rawAttachments := parts.Array()
+				for i, attachment := range attachments {
+					file := &GeminiPlannedFile{MessageIndex: mi, PartIndex: pi, FunctionResponsePartIndex: &i,
+						Position: fmt.Sprintf("%s.functionResponse.parts[%d]", position, i)}
+					if apiErr := plan.addNativeAttachment(attachment, rawAttachments[i], file); apiErr != nil {
+						return nil, apiErr
+					}
+				}
 			}
 		}
 		for _, key := range []string{"systemInstruction", "system_instruction"} {
@@ -273,7 +287,10 @@ func PlanGeminiFiles(c *gin.Context, modelName string) (*GeminiFilePlan, *types.
 	probed := make(map[[32]byte]*GeminiPlannedFile)
 	for _, file := range plan.Files {
 		key := sha256.Sum256([]byte(file.MIMEType + "\x00" + file.Source.GetRawData()))
-		if previous, ok := probed[key]; ok && previous.Source.IsURL() == file.Source.IsURL() {
+		// Function responses allow text/plain; their probes cannot relax the
+		// MIME policy for an identical attachment in an ordinary content part.
+		if previous, ok := probed[key]; ok && previous.Source.IsURL() == file.Source.IsURL() &&
+			(file.FunctionResponsePartIndex != nil || previous.FunctionResponsePartIndex == nil) {
 			file.MIMEType, file.Size, file.Large = previous.MIMEType, previous.Size, previous.Large
 			file.ExistingGCS, file.Special = previous.ExistingGCS, previous.Special
 			file.prefixHash, file.prefixSize, file.resolved = previous.prefixHash, previous.prefixSize, previous.resolved
@@ -320,6 +337,23 @@ func PlanGeminiFiles(c *gin.Context, modelName string) (*GeminiFilePlan, *types.
 	c.Set("multi_model_tags", tags)
 	logger.LogInfo(c, fmt.Sprintf("Gemini file plan: attachments=%d storage=%t mode=%s", len(plan.Files), plan.RequiresStorage, config.Mode))
 	return plan, nil
+}
+
+func (p *GeminiFilePlan) addNativeAttachment(part dto.GeminiPart, raw gjson.Result, file *GeminiPlannedFile) *types.NewAPIError {
+	if hasNoncanonicalFileFields(raw, "inlineData", "inline_data", "fileData", "file_data") {
+		return FileRoutingError("invalid_file_input", file.Position+": invalid attachment field casing", 400)
+	}
+	if part.InlineData != nil {
+		file.Source = types.NewBase64FileSource(part.InlineData.Data, part.InlineData.MimeType)
+		file.MIMEType = part.InlineData.MimeType
+	} else if part.FileData != nil {
+		file.Source = types.NewURLFileSource(part.FileData.FileUri)
+		file.MIMEType = part.FileData.MimeType
+	} else {
+		return nil
+	}
+	p.Files = append(p.Files, file)
+	return nil
 }
 
 func (p *GeminiFilePlan) probe(ctx context.Context, file *GeminiPlannedFile) *types.NewAPIError {
@@ -375,7 +409,7 @@ func (p *GeminiFilePlan) probe(ctx context.Context, file *GeminiPlannedFile) *ty
 		file.Large = file.Size >= limit
 		file.prefixSize = file.Size
 		file.prefixHash = sha256.Sum256(data)
-		mimeType, err := geminiFileMIME(data, file.MIMEType, response.Header.Get("Content-Type"))
+		mimeType, err := geminiFileMIME(data, file.MIMEType, response.Header.Get("Content-Type"), file.FunctionResponsePartIndex != nil)
 		if err != nil {
 			return FileRoutingError("invalid_file_input", file.Position+": "+err.Error(), 400)
 		}
@@ -412,7 +446,7 @@ func (p *GeminiFilePlan) probe(ctx context.Context, file *GeminiPlannedFile) *ty
 	if err != nil {
 		return FileRoutingError("invalid_file_input", file.Position+": invalid base64", 400)
 	}
-	mimeType, err := geminiFileMIME(prefix[:n], file.MIMEType, "")
+	mimeType, err := geminiFileMIME(prefix[:n], file.MIMEType, "", file.FunctionResponsePartIndex != nil)
 	if err != nil {
 		return FileRoutingError("invalid_file_input", file.Position+": "+err.Error(), 400)
 	}
@@ -429,7 +463,7 @@ func (p *GeminiFilePlan) download(ctx context.Context, file *GeminiPlannedFile) 
 	if err != nil {
 		return nil, FileRoutingError("invalid_file_input", file.Position+": invalid file URL", 400)
 	}
-	response, err := p.client.Do(req)
+	response, err := common.DoTimedHTTP(ctx, p.client, req, "file_download", false)
 	if err != nil {
 		status := 502
 		code := "file_transfer_failed"
@@ -448,7 +482,7 @@ func (p *GeminiFilePlan) download(ctx context.Context, file *GeminiPlannedFile) 
 	return response, nil
 }
 
-func geminiFileMIME(prefix []byte, declared, received string) (string, error) {
+func geminiFileMIME(prefix []byte, declared, received string, functionResponse bool) (string, error) {
 	if len(prefix) == 0 {
 		return "", fmt.Errorf("empty file")
 	}
@@ -484,6 +518,9 @@ func geminiFileMIME(prefix []byte, declared, received string) (string, error) {
 			}
 		}
 		mimeType = normalizeGeminiMIME(mimeType)
+	}
+	if functionResponse && mimeType == "text/plain" {
+		return mimeType, nil
 	}
 	if mimeType == "application/octet-stream" || strings.HasPrefix(mimeType, "text/") {
 		return "", fmt.Errorf("unsupported or unrecognized file format")
@@ -537,7 +574,7 @@ func (p *GeminiFilePlan) Close(c *gin.Context) {
 // attachment when content conversion merges or filters parts.
 func (p *GeminiFilePlan) MediaForPosition(source types.FileSource, mi, pi int) (*relayconvert.GeminiMedia, error) {
 	for _, file := range p.Files {
-		if file.MessageIndex == mi && file.PartIndex == pi && file.Source.GetRawData() == source.GetRawData() {
+		if file.FunctionResponsePartIndex == nil && file.MessageIndex == mi && file.PartIndex == pi && file.Source.GetRawData() == source.GetRawData() {
 			if file.resolved == nil {
 				return nil, fmt.Errorf("file has not been prepared for the selected channel")
 			}

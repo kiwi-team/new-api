@@ -91,6 +91,7 @@ var (
 // ============================
 
 type TaskAdaptor struct {
+	common.TimingScope `json:"-"`
 	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
@@ -294,7 +295,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, fmt.Errorf("new http client: %w", err)
 	}
-	return client.Do(req)
+	return common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query_http"), client, req, "task_query", true)
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
@@ -444,7 +445,7 @@ func (a *TaskAdaptor) createAsset(assetType string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(req.Context(), "file_upload_http"), client, req, "file_upload", false)
 	if err != nil {
 		return "", err
 	}
@@ -500,7 +501,7 @@ func (a *TaskAdaptor) doUploadFile(assetID, fileURL string, fileData []byte) err
 	if err != nil {
 		return err
 	}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(req.Context(), "file_upload_http"), client, req, "file_upload", false)
 	if err != nil {
 		return err
 	}
@@ -533,7 +534,7 @@ func (a *TaskAdaptor) fetchModelID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(req.Context(), "dependency_http"), client, req, "dependency", false)
 	if err != nil {
 		return "", err
 	}
@@ -569,7 +570,7 @@ func downloadFile(url, proxy string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := common.DoTimedHTTP(common.OutboundTimingContext(req.Context(), "file_download_http"), client, req, "file_download", false)
 	if err != nil {
 		return nil, err
 	}

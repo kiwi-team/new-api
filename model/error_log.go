@@ -40,6 +40,7 @@ type ErrorLog struct {
 	SessionId      string   `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
 	Extra          *LogJSON `json:"extra,omitempty"`
 	Header         *LogJSON `json:"header,omitempty"`
+	Timing         *LogJSON `json:"timing,omitempty"`
 }
 
 // GetErrorLogBody 根据ID获取错误日志的body字段
@@ -47,6 +48,18 @@ func GetErrorLogBody(id int) (string, error) {
 	var body string
 	err := LOG_DB.Model(&ErrorLog{}).Where("id = ?", id).Pluck("body", &body).Error
 	return body, err
+}
+
+// GetErrorLogTiming is used only by the root-protected diagnostic endpoint.
+func GetErrorLogTiming(id int) (string, error) {
+	var result struct{ Timing *LogJSON }
+	if err := LOG_DB.Model(&ErrorLog{}).Select("timing").Where("id = ?", id).First(&result).Error; err != nil {
+		return "", err
+	}
+	if result.Timing == nil {
+		return "", nil
+	}
+	return string(*result.Timing), nil
 }
 
 // GetSelfErrorLogBody 在自助视图范围内获取错误日志 body：
@@ -119,7 +132,7 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	var total int64
 	_ = query.Count(&total)
 	// 不返回body字段，减少数据传输量
-	err = query.Omit("body").Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
+	err = query.Omit("body", "timing").Order("id desc").Limit(num).Offset(startIdx).Find(&errorLogs).Error
 	tokenIds := make([]int, 0)
 	for _, log := range errorLogs {
 		if slices.Contains(tokenIds, log.TokenId) {
@@ -180,7 +193,7 @@ func GetErrorLogsForExport(req *dto.ErrorLogsRequest) ([]*ErrorLog, error) {
 	}
 
 	var errorLogs []*ErrorLog
-	if err := query.Order("id asc").Find(&errorLogs).Error; err != nil {
+	if err := query.Omit("timing").Order("id asc").Find(&errorLogs).Error; err != nil {
 		return nil, err
 	}
 
@@ -354,7 +367,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool, timing ...*LogJSON) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -384,6 +397,9 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		SessionId:      sessionId,
 		Extra:          normalizeJsonbString(extra),
 		Header:         normalizeJsonbString(header),
+	}
+	if len(timing) > 0 {
+		log.Timing = timing[0]
 	}
 	return LOG_DB.Create(log).Error
 	// LogList = append(LogList, log)

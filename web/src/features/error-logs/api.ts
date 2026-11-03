@@ -17,8 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
-import type { ApiResponse, ErrorLogFilters, ErrorLogListResponse } from './types'
+import type {
+  ApiResponse,
+  ErrorLogFilters,
+  ErrorLogListResponse,
+} from './types'
 
 function toParams(filters: ErrorLogFilters) {
   const params: Record<string, string | number> = {}
@@ -61,6 +66,14 @@ export async function getErrorLogHeader(
 ): Promise<ApiResponse<{ content: string }>> {
   const res = await api.get(`/api/log/error-logs/${id}/header`)
   return res.data
+}
+
+/** Root only; lifecycle snapshots are loaded when opening the detail sheet. */
+export async function getErrorLogTiming(
+  id: number
+): Promise<ApiResponse<{ content: string }>> {
+  const res = await api.get(`/api/log/error-logs/${id}/timing`)
+  return requireServerSuccess(res.data)
 }
 
 /** Root only; the backend caps the range at 24 hours. */

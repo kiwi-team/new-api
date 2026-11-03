@@ -169,6 +169,8 @@ func (p *GeminiFilePlan) upload(ctx context.Context, c *gin.Context, client *sto
 	reader := io.MultiReader(bytes.NewReader(prefix), response.Body)
 	uploadCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	timingCall := common.BeginTimingOperation(ctx, "file_upload", false)
+	defer timingCall.End()
 	writer := client.Bucket(object.Bucket).Object(object.Name).If(storage.Conditions{DoesNotExist: true}).NewWriter(uploadCtx)
 	writer.ChunkSize = 1 << 20
 	writer.ContentType = file.MIMEType
@@ -206,6 +208,17 @@ func ApplyGeminiFilePlan(c *gin.Context, request *dto.GeminiChatRequest) error {
 			return fmt.Errorf("attachment changed after file routing")
 		}
 		part := &request.Contents[file.MessageIndex].Parts[file.PartIndex]
+		if file.FunctionResponsePartIndex != nil {
+			if part.FunctionResponse == nil {
+				return fmt.Errorf("attachment changed after file routing")
+			}
+			parts, err := file.replaceAttachment(part.FunctionResponse.Parts, strconv.Itoa(*file.FunctionResponsePartIndex))
+			if err != nil {
+				return err
+			}
+			part.FunctionResponse.Parts = parts
+			continue
+		}
 		var source string
 		if part.InlineData != nil {
 			source = part.InlineData.Data
@@ -224,6 +237,58 @@ func ApplyGeminiFilePlan(c *gin.Context, request *dto.GeminiChatRequest) error {
 		}
 	}
 	return nil
+}
+
+// replaceAttachment preserves displayName references and other media metadata
+// when a URL becomes inline data or an uploaded GCS object.
+func (f *GeminiPlannedFile) replaceAttachment(body []byte, path string) ([]byte, error) {
+	rawPart := gjson.GetBytes(body, path)
+	var part dto.GeminiPart
+	if f.resolved == nil || !rawPart.IsObject() || common.UnmarshalJsonStr(rawPart.Raw, &part) != nil {
+		return nil, fmt.Errorf("attachment changed after file routing")
+	}
+	var source string
+	var media gjson.Result
+	for _, key := range []string{"inlineData", "inline_data", "fileData", "file_data"} {
+		if value := rawPart.Get(key); value.IsObject() {
+			media = value
+		}
+	}
+	if part.InlineData != nil {
+		source = part.InlineData.Data
+	} else if part.FileData != nil {
+		source = part.FileData.FileUri
+	}
+	if !media.IsObject() || source != f.Source.GetRawData() {
+		return nil, fmt.Errorf("attachment changed after file routing")
+	}
+	attachment := []byte(media.Raw)
+	var err error
+	for _, key := range []string{"mime_type", "data", "fileUri", "file_uri"} {
+		attachment, err = sjson.DeleteBytes(attachment, key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	attachment, err = sjson.SetBytes(attachment, "mimeType", f.resolved.MIMEType)
+	if err != nil {
+		return nil, err
+	}
+	kind, sourceKey, value := "inlineData", "data", f.resolved.Base64
+	if f.resolved.URI != "" {
+		kind, sourceKey, value = "fileData", "fileUri", f.resolved.URI
+	}
+	attachment, err = sjson.SetBytes(attachment, sourceKey, value)
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"inlineData", "inline_data", "fileData", "file_data"} {
+		body, err = sjson.DeleteBytes(body, path+"."+key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return sjson.SetRawBytes(body, path+"."+kind, attachment)
 }
 
 // FinalizeGeminiFileBody also runs for body passthrough. The original native
@@ -247,17 +312,16 @@ func FinalizeGeminiFileBody(c *gin.Context, body []byte, beforeOverride []byte, 
 		}
 		for _, file := range plan.Files {
 			path := fmt.Sprintf("contents.%d.parts.%d", file.MessageIndex, file.PartIndex)
-			for _, key := range []string{"inlineData", "inline_data", "fileData", "file_data"} {
-				body, err = sjson.DeleteBytes(body, path+"."+key)
-				if err != nil {
-					break
-				}
-			}
-			if err == nil && file.resolved != nil {
-				if file.resolved.URI != "" {
-					body, err = sjson.SetBytes(body, path+".fileData", map[string]string{"mimeType": file.resolved.MIMEType, "fileUri": file.resolved.URI})
-				} else {
-					body, err = sjson.SetBytes(body, path+".inlineData", map[string]string{"mimeType": file.resolved.MIMEType, "data": file.resolved.Base64})
+			if file.FunctionResponsePartIndex == nil {
+				body, err = file.replaceAttachment(body, path)
+			} else {
+				for _, key := range []string{"functionResponse", "function_response"} {
+					if gjson.GetBytes(body, path+"."+key).Exists() {
+						body, err = file.replaceAttachment(body, fmt.Sprintf("%s.%s.parts.%d", path, key, *file.FunctionResponsePartIndex))
+						if err != nil {
+							break
+						}
+					}
 				}
 			}
 			if err != nil {

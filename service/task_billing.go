@@ -353,6 +353,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("reason", reason)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		TimingContext:  ctx,
 		EventID:        model.QuotaDataActionID("task-refund", fmt.Sprintf("%d:%s", task.ID, task.TaskID)),
 		CreatedAt:      task.FinishTime,
 		NodeName:       task.PrivateData.NodeName,
@@ -442,6 +443,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		TimingContext:  ctx,
 		EventID:        model.QuotaDataActionID("task-settlement", fmt.Sprintf("%d:%s:%d:%d", task.ID, task.TaskID, preConsumedQuota, actualQuota)),
 		CreatedAt:      task.FinishTime,
 		UserId:         task.UserId,

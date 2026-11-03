@@ -239,8 +239,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if info.PublicTaskID == "" {
 		info.PublicTaskID = model.GenerateTaskID()
 	}
+	common.AttachTimingScope(adaptor, common.RequestContext(c))
 	adaptor.Init(info)
-	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+	parseTiming := common.StartTimingPhase(common.RequestContext(c), "request_parse")
+	taskValidationErr := adaptor.ValidateRequestAndSetAction(c, info)
+	parseTiming.End()
+	if taskErr := taskValidationErr; taskErr != nil {
 		return nil, taskErr
 	}
 
@@ -649,6 +653,7 @@ func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (
 		return nil, false
 	}
 
+	common.AttachTimingScope(adaptor, common.RequestContext(c))
 	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, task, proxy)
 	if err != nil || resp == nil {
 		return nil, false

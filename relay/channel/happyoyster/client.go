@@ -3,6 +3,7 @@ package happyoyster
 import (
 	"bytes"
 	"fmt"
+	hostcommon "github.com/QuantumNous/new-api/common"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,7 +51,7 @@ func do(ctx *http.Request, baseURL, key, proxy string, settings dto.ChannelSetti
 	if err != nil {
 		return 0, nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := hostcommon.DoTimedHTTP(hostcommon.OutboundTimingContext(ctx.Context(), "dependency_http"), client, req, "dependency", false)
 	if err != nil {
 		return 0, nil, err
 	}

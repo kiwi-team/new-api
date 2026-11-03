@@ -40,6 +40,23 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 	}
 	a.started = true
 	ObserveResponsesOutcome(a.info, event)
+	terminal := false
+	switch event.Type {
+	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		terminal = true
+	}
+	outputNode := ""
+	if event.Delta != "" {
+		switch event.Type {
+		case "response.output_text.delta", "response.refusal.delta":
+			outputNode = "first_text_at_ms"
+		case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+			outputNode = "first_reasoning_at_ms"
+		case "response.function_call_arguments.delta":
+			outputNode = "first_tool_output_at_ms"
+		}
+	}
+	common.ObserveTimingProtocol(a.info.TimingContext, outputNode, outputNode != "", terminal, event.Type)
 	switch event.Type {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		if event.Response != nil {

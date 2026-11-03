@@ -1,0 +1,4 @@
+/.env
+/.env.tmp.*
+/postgresql/certs/*
+!/postgresql/certs/.gitkeep

@@ -1,0 +1,133 @@
+name: ${COMPOSE_PROJECT_NAME:-new-api}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: docker.io/library/caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Run ./init-env.sh and set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      TZ: ${TZ:-Asia/Shanghai}
+      # Podman can inherit host proxy settings; internal upstreams must bypass them.
+      NO_PROXY: new-api,localhost,127.0.0.1,::1
+      no_proxy: new-api,localhost,127.0.0.1,::1
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      new-api:
+        condition: service_healthy
+    networks:
+      proxy:
+        ipv4_address: ${CADDY_IP:-172.30.70.2}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  new-api:
+    image: ${NEW_API_IMAGE:-kimiteam-ap-southeast-3.cr.volces.com/newapi/newapi-full}:${NEW_API_TAG:?Set the pushed image tag in .env}
+    restart: unless-stopped
+    init: true
+    command: ["--log-dir", "/app/logs"]
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      NODE_NAME: ${NODE_NAME:-new-api-docker}
+      NODE_TYPE: master
+      DEFAULT_LANGUAGE: zh-CN
+      GIN_MODE: release
+      # An explicit SQL_DSN selects a managed database; blank keeps the local URL.
+      SQL_DSN: ${SQL_DSN:-postgresql://${POSTGRES_APP_USER:-newapi}:${POSTGRES_APP_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-newapi}?sslmode=disable}
+      # Blank reuses the primary database; a value selects a separate log database.
+      LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      SQL_MAX_OPEN_CONNS: "50"
+      SQL_MAX_IDLE_CONNS: "10"
+      SQL_MAX_LIFETIME: "60"
+      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD:?Run ./init-env.sh}@redis:6379/0
+      SESSION_SECRET: ${SESSION_SECRET:?Run ./init-env.sh}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:?Run ./init-env.sh}
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_TRUSTED_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      TRUSTED_PROXIES: ${CADDY_IP:-172.30.70.2}
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      STREAMING_TIMEOUT: "300"
+    volumes:
+      - new_api_data:/data
+      - new_api_logs:/app/logs
+      - ./postgresql/certs:/etc/new-api/postgresql:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      proxy:
+        ipv4_address: ${NEW_API_IP:-172.30.70.3}
+      database:
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O - http://127.0.0.1:3000/api/status |
+          grep -q '"success"[[:space:]]*:[[:space:]]*true'
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    stop_grace_period: 45s
+    logging: *default-logging
+
+  redis:
+    image: docker.io/library/redis:8.10.3-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./init-env.sh}
+      TZ: ${TZ:-Asia/Shanghai}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - exec /usr/local/bin/docker-entrypoint.sh redis-server /usr/local/etc/redis/redis.conf --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis_data:/data
+    networks:
+      - database
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --raw ping | grep -qx PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+networks:
+  proxy:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${PROXY_SUBNET:-172.30.70.0/24}
+  database:
+    driver: bridge
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  new_api_data:
+  new_api_logs:
+  redis_data:

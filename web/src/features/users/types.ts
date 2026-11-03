@@ -135,6 +135,8 @@ export interface UserFormData {
   group?: string // Only used when updating user
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
+  model_limits_enabled?: boolean
+  model_limits?: string[]
   // Echoed verbatim on update — see the note on `userSchema`. Omitting any of
   // these resets the stored value (quota would be zeroed).
   uid?: string

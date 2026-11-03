@@ -55,7 +55,21 @@ func GetErrorLogHeader(c *gin.Context) {
 	})
 }
 
-// GetErrorLogBody 获取错误日志的body字段
+// GetErrorLogTiming returns an error snapshot through the root-only detail route.
+func GetErrorLogTiming(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorT(c, "Invalid ID")
+		return
+	}
+	content, err := model.GetErrorLogTiming(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"content": content}})
+}
+
 func GetErrorLogBody(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
