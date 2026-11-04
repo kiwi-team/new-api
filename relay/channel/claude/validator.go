@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/tidwall/gjson"
 )
 
 // 校验项对齐 Anthropic Messages API 的服务端约束，目的是在「最终请求体即将发往上游
@@ -36,13 +38,25 @@ import (
 //
 // 校验不通过时返回 error，调用方据此返回参数异常，不再请求上游。
 func ValidateClaudeRequestBody(body []byte) error {
-	var request dto.ClaudeRequest
-	if err := common.Unmarshal(body, &request); err != nil {
-		// 无法解析为 Claude 请求结构时，不在此处拦截，交由后续流程/上游处理，避免误判。
-		return nil
+	// Read only the billing limits: compatible providers may accept different
+	// types for unrelated fields such as stop_sequences.
+	var limits struct {
+		MaxTokens         *uint `json:"max_tokens"`
+		MaxTokensToSample *uint `json:"max_tokens_to_sample"`
+	}
+	if err := common.Unmarshal(body, &limits); err != nil {
+		if !gjson.ValidBytes(body) {
+			return nil
+		}
+		return fmt.Errorf("max_tokens is invalid")
+	}
+	// Parameter overrides run after entry validation and can change the token
+	// limit. Keep the shared billing bound without enforcing model-specific
+	// Anthropic sampling rules on compatible providers.
+	if helper.ExceedsMaxTokensLimit(limits.MaxTokens, limits.MaxTokensToSample) {
+		return fmt.Errorf("max_tokens is invalid")
 	}
 	return nil
-	//return ValidateClaudeRequest(&request)
 }
 
 // ValidateClaudeRequest 对 Claude 请求结构体做参数校验。

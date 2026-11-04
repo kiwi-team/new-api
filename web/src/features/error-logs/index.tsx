@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { Download, Search } from 'lucide-react'
 import { useState } from 'react'
@@ -60,12 +60,9 @@ import type { ErrorLog, ErrorLogFilters } from './types'
 const route = getRouteApi('/_authenticated/error-logs/')
 const PAGE_SIZE = 20
 
-function hoursAgo(hours: number): Date {
-  return new Date(Date.now() - hours * 3_600_000)
-}
-
 export function ErrorLogsPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const search = route.useSearch()
   const navigate = route.useNavigate()
   const isRoot = useAuthStore(
@@ -73,10 +70,15 @@ export function ErrorLogsPage() {
   )
 
   const page = search.page ?? 1
-  const [startTime, setStartTime] = useState<Date | undefined>(() =>
-    hoursAgo(24)
+  const [timeRange, setTimeRange] = useState<{ start?: Date; end?: Date }>(
+    () => {
+      const now = Date.now()
+      return {
+        start: new Date(now - 3_600_000),
+        end: new Date(now + 3_600_000),
+      }
+    }
   )
-  const [endTime, setEndTime] = useState<Date | undefined>(() => new Date())
   const [modelName, setModelName] = useState('')
   const [requestId, setRequestId] = useState('')
   const [channelId, setChannelId] = useState('')
@@ -91,8 +93,12 @@ export function ErrorLogsPage() {
 
   // Filters apply on submit so typing an id does not fire a query per key.
   const [filters, setFilters] = useState<ErrorLogFilters>(() => ({
-    start_timestamp: Math.floor(hoursAgo(24).getTime() / 1000),
-    end_timestamp: Math.floor(Date.now() / 1000),
+    start_timestamp: timeRange.start
+      ? Math.floor(timeRange.start.getTime() / 1000)
+      : undefined,
+    end_timestamp: timeRange.end
+      ? Math.floor(timeRange.end.getTime() / 1000)
+      : undefined,
   }))
 
   const logsQuery = useQuery({
@@ -131,10 +137,12 @@ export function ErrorLogsPage() {
   })
 
   const buildFilters = (): ErrorLogFilters => ({
-    start_timestamp: startTime
-      ? Math.floor(startTime.getTime() / 1000)
+    start_timestamp: timeRange.start
+      ? Math.floor(timeRange.start.getTime() / 1000)
       : undefined,
-    end_timestamp: endTime ? Math.floor(endTime.getTime() / 1000) : undefined,
+    end_timestamp: timeRange.end
+      ? Math.floor(timeRange.end.getTime() / 1000)
+      : undefined,
     model_name: modelName.trim(),
     request_id: requestId.trim(),
     channel: Number.parseInt(channelId, 10) || undefined,
@@ -149,12 +157,19 @@ export function ErrorLogsPage() {
   })
 
   const handleSearch = () => {
-    setFilters(buildFilters())
+    const nextFilters = buildFilters()
+    // Refresh the submitted first page even if these filters are cached.
+    void queryClient.invalidateQueries({
+      queryKey: ['error-logs', 'list', 1, nextFilters],
+      exact: true,
+      refetchType: 'all',
+    })
+    setFilters(nextFilters)
     void navigate({ search: { page: 1 } })
   }
 
   const handleExport = async () => {
-    if (!isRangeExportable(startTime, endTime)) {
+    if (!isRangeExportable(timeRange.start, timeRange.end)) {
       toast.warning(
         t('Export is limited to a {{hours}} hour range', {
           hours: EXPORT_MAX_RANGE_HOURS,
@@ -199,12 +214,9 @@ export function ErrorLogsPage() {
             <div className='flex flex-wrap items-end gap-3'>
               <div className='w-full sm:w-auto sm:min-w-[24rem]'>
                 <CompactDateTimeRangePicker
-                  start={startTime}
-                  end={endTime}
-                  onChange={({ start, end }) => {
-                    setStartTime(start)
-                    setEndTime(end)
-                  }}
+                  start={timeRange.start}
+                  end={timeRange.end}
+                  onChange={setTimeRange}
                 />
               </div>
               <div className='grid gap-1.5'>

@@ -3628,6 +3628,7 @@
     "io.net Deployments": "Triển khai io.net",
     "IP": "IP",
     "IP Address": "Địa chỉ IP",
+    "IP addresses are always recorded and are only visible to root users.": "Địa chỉ IP luôn được ghi lại và chỉ người dùng root mới có thể xem.",
     "IP Filter Mode": "Lọc IP",
     "IP Restriction": "Giới hạn IP",
     "IP Whitelist (supports CIDR)": "Danh sách trắng IP (hỗ trợ CIDR)",

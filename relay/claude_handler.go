@@ -104,7 +104,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		requestBody = common.NewReplayableBodyReader(storage)
 		// 序列化 textRequest 为 JSON 字符串
 		if saveRequestResponse {
-			val, _ := io.ReadAll(requestBody)
+			// Read the stored bytes without consuming the outbound reader.
+			val, err := storage.Bytes()
+			if err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
 			requestStr = string(val)
 		}
 	} else {

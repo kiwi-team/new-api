@@ -199,7 +199,19 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	var httpResp *http.Response
-	requestStr = service.RedactGeminiFileRequest(c, requestStr)
+	if saveRequestResponse && filePlan != nil {
+		// File conversion can replace URLs with inline data or GCS references;
+		// the database request must retain the client's original JSON.
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		data, err := storage.Bytes()
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		requestStr = string(data)
+	}
 	if filePlan != nil {
 		filePlan.Submitted = true
 	}
@@ -217,8 +229,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
+			if filePlan != nil && len(service.GetChannelRetryPlan(c).ChannelIds) > 0 {
+				filePlan.Submitted = false
+			}
 			if filePlan != nil && filePlan.HasRemoteFiles() {
-				return service.GeminiFileUpstreamError(httpResp)
+				return service.GeminiFileUpstreamError(c, httpResp)
 			}
 			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码

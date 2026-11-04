@@ -95,6 +95,10 @@ func GetErrorLogBody(c *gin.Context) {
 }
 
 func GetAllErrorLogs(c *gin.Context) {
+	if c.GetInt("role") < common.RoleRootUser {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
 	p, _ := strconv.Atoi(c.Query("p"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
 	if p < 1 {
@@ -159,6 +163,10 @@ func GetAllErrorLogs(c *gin.Context) {
 // ExportErrorLogsCSV 仅 root：导出当前筛选条件下的 error_logs 为 CSV。
 // 时间范围强制 ≤ 24 小时；使用 encoding/csv 写出，字段内的逗号/引号/换行由其自动转义，避免破坏列结构。
 func ExportErrorLogsCSV(c *gin.Context) {
+	if c.GetInt("role") < common.RoleRootUser {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	modelName := c.Query("model_name")
@@ -225,7 +233,7 @@ func ExportErrorLogsCSV(c *gin.Context) {
 	_ = w.Write([]string{
 		"ID", "CreatedAt", "UserID", "ChannelId", "ChannelName", "TokenId", "TokenName",
 		"ModelName", "StatusCode", "Code", "Type", "Message", "Param", "UseTimeMs",
-		"RequestId", "IP", "ClientUserId", "ClientScenairo", "Body", "Extra", "Header",
+		"RequestId", "IP", "ClientUserId", "ClientScenairo", "Body", "Extra", "Header", "UpstreamRequestId",
 	})
 	for _, log := range logs {
 		_ = w.Write([]string{
@@ -250,6 +258,7 @@ func ExportErrorLogsCSV(c *gin.Context) {
 			log.Body,
 			deref(log.Extra),
 			deref(log.Header),
+			log.UpstreamRequestId,
 		})
 	}
 	w.Flush()

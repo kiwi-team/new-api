@@ -168,7 +168,19 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	// 创建流式响应记录器（如果需要记录响应）
 	var streamRecorder *helper.StreamResponseRecorder
 
-	requestStr = service.RedactGeminiFileRequest(c, requestStr)
+	if saveRequestResponse && filePlan != nil {
+		// Persist the client's original JSON, including attachments and fields
+		// omitted or rewritten by upstream conversion.
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		data, err := storage.Bytes()
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		requestStr = string(data)
+	}
 	if filePlan != nil {
 		filePlan.Submitted = true
 	}
@@ -188,8 +200,11 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
+			if filePlan != nil && len(service.GetChannelRetryPlan(c).ChannelIds) > 0 {
+				filePlan.Submitted = false
+			}
 			if filePlan != nil && filePlan.HasRemoteFiles() {
-				return service.GeminiFileUpstreamError(httpResp)
+				return service.GeminiFileUpstreamError(c, httpResp)
 			}
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码

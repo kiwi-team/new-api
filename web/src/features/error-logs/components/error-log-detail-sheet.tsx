@@ -143,7 +143,13 @@ export function ErrorLogDetailSheet({
                 log.request_id ? <IdWithCopy value={log.request_id} /> : '-'
               }
             />
-            <Field label={t('IP')} value={log.ip || '-'} />
+            {canViewHeader && log.upstream_request_id && (
+              <Field
+                label={t('Upstream Request ID')}
+                value={<IdWithCopy value={log.upstream_request_id} />}
+              />
+            )}
+            {canViewHeader && <Field label={t('IP')} value={log.ip || '-'} />}
             <Field label={t('Client UID')} value={log.client_user_id || '-'} />
             <Field label={t('Scenario')} value={log.client_scenairo || '-'} />
             <Field

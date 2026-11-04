@@ -183,7 +183,9 @@ describe('security page migration', () => {
       await within(verification).findByText('Two-Factor Authentication')
     ).toBeVisible()
     expect(
-      within(verification).getByRole('switch', { name: 'Record IP Address' })
+      within(verification).getByText(
+        'IP addresses are always recorded and are only visible to root users.'
+      )
     ).toBeVisible()
     expect(verification).toHaveClass('xl:sticky', 'xl:top-0')
     expect(verification.parentElement).toHaveClass(
@@ -196,8 +198,8 @@ describe('security page migration', () => {
       await within(access).findByText('No active login sessions')
     ).toBeVisible()
     expect(
-      screen.getByRole('switch', { name: 'Record IP Address' })
-    ).toBeVisible()
+      screen.queryByRole('switch', { name: 'Record IP Address' })
+    ).not.toBeInTheDocument()
     expect(
       within(screen.getByRole('region', { name: 'Account Actions' })).getByRole(
         'button',

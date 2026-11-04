@@ -513,8 +513,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   )
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
-  const showAdminIp =
-    !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
+  const showAdminIp = props.isRoot && !!props.log.ip && (showTiming || isTopup)
   const adminInfo = other?.admin_info
   const requestTiming =
     props.open && props.isAdmin ? adminInfo?.timing : undefined
@@ -529,14 +528,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
             label: t('Callback Payment Method'),
             value: adminInfo.callback_payment_method,
           },
-          adminInfo.caller_ip && {
-            label: t('Callback Caller IP'),
-            value: adminInfo.caller_ip,
-          },
-          adminInfo.server_ip && {
-            label: t('Server IP'),
-            value: adminInfo.server_ip,
-          },
+          props.isRoot &&
+            adminInfo.caller_ip && {
+              label: t('Callback Caller IP'),
+              value: adminInfo.caller_ip,
+            },
+          props.isRoot &&
+            adminInfo.server_ip && {
+              label: t('Server IP'),
+              value: adminInfo.server_ip,
+            },
           adminInfo.node_name && {
             label: t('Node Name'),
             value: adminInfo.node_name,
@@ -608,10 +609,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
           label: t('Login Method'),
           value: String(other.login_method),
         },
-        props.log.ip && {
-          label: t('IP Address'),
-          value: props.log.ip,
-        },
+        props.isRoot &&
+          props.log.ip && {
+            label: t('IP Address'),
+            value: props.log.ip,
+          },
         other?.user_agent && {
           label: t('User Agent'),
           value: String(other.user_agent),

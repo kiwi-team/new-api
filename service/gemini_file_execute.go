@@ -395,7 +395,7 @@ func RedactGeminiFileRequest(c *gin.Context, body string) string {
 	if plan == nil {
 		return body
 	}
-	// Metadata only: this also covers error paths before a body is converted.
+	// Debug output keeps metadata only; database logs retain the original body.
 	files := make([]map[string]any, 0, len(plan.Files))
 	for _, file := range plan.Files {
 		files = append(files, map[string]any{"position": file.Position, "mime_type": file.MIMEType, "bytes_observed": file.Size, "large": file.Large})
@@ -406,10 +406,16 @@ func RedactGeminiFileRequest(c *gin.Context, body string) string {
 
 // GeminiFileUpstreamError discards upstream bodies that can echo signed URLs,
 // inline data or account identifiers. Status still distinguishes provider failures.
-func GeminiFileUpstreamError(response *http.Response) *types.NewAPIError {
+func GeminiFileUpstreamError(c *gin.Context, response *http.Response) *types.NewAPIError {
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-	return FileRoutingError("file_inference_failed", "upstream rejected the Gemini file request", response.StatusCode)
+	const message = "upstream rejected the Gemini file request"
+	if len(GetChannelRetryPlan(c).ChannelIds) == 0 {
+		return FileRoutingError("file_inference_failed", message, response.StatusCode)
+	}
+	// A received HTTP rejection can fall through to another explicit channel.
+	// Transport failures still use FileRoutingError to prohibit replay.
+	return types.NewErrorWithStatusCode(fmt.Errorf("%s", message), "file_inference_failed", response.StatusCode)
 }
 
 func ValidateGeminiFileForwardingHeaders(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {

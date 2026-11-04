@@ -18,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -44,12 +45,32 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.ClaudeRequest) (any, error) {
+	if req == nil {
+		return nil, errors.New("request is nil")
+	}
 	if _, ok := channelconstant.ChannelSpecialBases[info.ChannelBaseUrl]; ok {
 		adaptor := claude.Adaptor{}
 		return adaptor.ConvertClaudeRequest(c, info, req)
 	}
+	if usesNativeMessages(info) {
+		if err := relayconvert.ApplyClaudeThinkingModel(req, info); err != nil {
+			return nil, err
+		}
+		return req, nil
+	}
 	adaptor := openai.Adaptor{}
 	return adaptor.ConvertClaudeRequest(c, info, req)
+}
+
+func usesNativeMessages(info *relaycommon.RelayInfo) bool {
+	if info.RelayFormat != types.RelayFormatClaude ||
+		(info.RelayMode != constant.RelayModeUnknown && info.RelayMode != constant.RelayModeChatCompletions) {
+		return false
+	}
+	if plan, ok := channelconstant.ChannelSpecialBases[info.ChannelBaseUrl]; ok && plan.ClaudeBaseURL != "" {
+		return true
+	}
+	return !strings.HasPrefix(info.UpstreamModelName, "bot")
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
@@ -212,51 +233,57 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		baseUrl = channelconstant.GetChannelBaseURL(channelconstant.ChannelTypeVolcEngine)
 	}
 	specialPlan, hasSpecialPlan := channelconstant.ChannelSpecialBases[baseUrl]
+	baseUrl = strings.TrimRight(baseUrl, "/")
 
-	switch info.RelayFormat {
-	case types.RelayFormatClaude:
+	if usesNativeMessages(info) {
 		if hasSpecialPlan && specialPlan.ClaudeBaseURL != "" {
 			return fmt.Sprintf("%s/v1/messages", specialPlan.ClaudeBaseURL), nil
+		}
+		return fmt.Sprintf("%s/api/compatible/v1/messages", baseUrl), nil
+	}
+	// /v1/messages has no dedicated relay mode. Bots keep the existing
+	// Claude-to-OpenAI conversion, while explicit modes such as Responses
+	// must select their own upstream endpoint regardless of the client format.
+	if info.RelayFormat == types.RelayFormatClaude && info.RelayMode == constant.RelayModeUnknown {
+		return fmt.Sprintf("%s/api/v3/bots/chat/completions", baseUrl), nil
+	}
+	switch info.RelayMode {
+	case constant.RelayModeChatCompletions:
+		if hasSpecialPlan && specialPlan.OpenAIBaseURL != "" {
+			return fmt.Sprintf("%s/chat/completions", specialPlan.OpenAIBaseURL), nil
 		}
 		if strings.HasPrefix(info.UpstreamModelName, "bot") {
 			return fmt.Sprintf("%s/api/v3/bots/chat/completions", baseUrl), nil
 		}
 		return fmt.Sprintf("%s/api/v3/chat/completions", baseUrl), nil
-	default:
-		switch info.RelayMode {
-		case constant.RelayModeChatCompletions:
-			if hasSpecialPlan && specialPlan.OpenAIBaseURL != "" {
-				return fmt.Sprintf("%s/chat/completions", specialPlan.OpenAIBaseURL), nil
-			}
-			if strings.HasPrefix(info.UpstreamModelName, "bot") {
-				return fmt.Sprintf("%s/api/v3/bots/chat/completions", baseUrl), nil
-			}
-			return fmt.Sprintf("%s/api/v3/chat/completions", baseUrl), nil
-		case constant.RelayModeEmbeddings:
-			return fmt.Sprintf("%s/api/v3/embeddings", baseUrl), nil
-		//豆包的图生图也走generations接口: https://www.volcengine.com/docs/82379/1824121
-		case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
-			return fmt.Sprintf("%s/api/v3/images/generations", baseUrl), nil
-		//case constant.RelayModeImagesEdits:
-		//	return fmt.Sprintf("%s/api/v3/images/edits", baseUrl), nil
-		case constant.RelayModeRerank:
-			return fmt.Sprintf("%s/api/v3/rerank", baseUrl), nil
-		case constant.RelayModeResponses:
-			return fmt.Sprintf("%s/api/v3/responses", baseUrl), nil
-		case constant.RelayModeAudioSpeech:
-			if baseUrl == channelconstant.GetChannelBaseURL(channelconstant.ChannelTypeVolcEngine) {
-				return "wss://openspeech.bytedance.com/api/v1/tts/ws_binary", nil
-			}
-			return fmt.Sprintf("%s/v1/audio/speech", baseUrl), nil
-		case constant.RelayModeAudioTranscription:
-			return seedASRFileEndpoint("submit"), nil
-		default:
+	case constant.RelayModeEmbeddings:
+		return fmt.Sprintf("%s/api/v3/embeddings", baseUrl), nil
+	//豆包的图生图也走generations接口: https://www.volcengine.com/docs/82379/1824121
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+		return fmt.Sprintf("%s/api/v3/images/generations", baseUrl), nil
+	//case constant.RelayModeImagesEdits:
+	//	return fmt.Sprintf("%s/api/v3/images/edits", baseUrl), nil
+	case constant.RelayModeRerank:
+		return fmt.Sprintf("%s/api/v3/rerank", baseUrl), nil
+	case constant.RelayModeResponses:
+		return fmt.Sprintf("%s/api/v3/responses", baseUrl), nil
+	case constant.RelayModeAudioSpeech:
+		if baseUrl == channelconstant.GetChannelBaseURL(channelconstant.ChannelTypeVolcEngine) {
+			return "wss://openspeech.bytedance.com/api/v1/tts/ws_binary", nil
 		}
+		return fmt.Sprintf("%s/v1/audio/speech", baseUrl), nil
+	case constant.RelayModeAudioTranscription:
+		return seedASRFileEndpoint("submit"), nil
+	default:
 	}
 	return "", fmt.Errorf("unsupported relay mode: %d", info.RelayMode)
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
+	if _, specialPlan := channelconstant.ChannelSpecialBases[info.ChannelBaseUrl]; !specialPlan && usesNativeMessages(info) {
+		adaptor := claude.Adaptor{}
+		return adaptor.SetupRequestHeader(c, req, info)
+	}
 	channel.SetupApiRequestHeader(info, c, req)
 
 	if isSeedASRFile(info) {
@@ -330,11 +357,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if isSeedASRFile(info) {
 		return handleSeedASRResponse(c, resp, info)
 	}
-	if info.RelayFormat == types.RelayFormatClaude {
-		if _, ok := channelconstant.ChannelSpecialBases[info.ChannelBaseUrl]; ok {
-			adaptor := claude.Adaptor{}
-			return adaptor.DoResponse(c, resp, info)
-		}
+	if usesNativeMessages(info) {
+		adaptor := claude.Adaptor{}
+		return adaptor.DoResponse(c, resp, info)
 	}
 
 	if info.RelayMode == constant.RelayModeAudioSpeech {

@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -124,6 +126,145 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	assert.Equal(t, "gpt-test", storedError.ModelName)
 	assert.Equal(t, string(body), storedError.Body)
 	assert.Equal(t, http.StatusBadGateway, storedError.StatusCode)
+	encoded, err := common.Marshal(storedError)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	assert.Equal(t, "upstream-attempt-101", payload["upstream_request_id"])
+}
+
+// The schema immediately before upstream request IDs were added to error_logs.
+type errorLogBeforeUpstreamID struct {
+	Id             int
+	UserId         int    `gorm:"index"`
+	CreatedAt      int64  `gorm:"bigint;index:idx_error_created_a"`
+	ChannelId      int    `gorm:"index"`
+	ChannelName    string `gorm:"default:''"`
+	TokenId        int    `gorm:"index"`
+	TokenName      string
+	ModelName      string `gorm:"default:''"`
+	Message        string `gorm:"default:''"`
+	Type           string `gorm:"default:''"`
+	Param          string `gorm:"default:''"`
+	Code           string `gorm:"default:''"`
+	RequestId      string `gorm:"default:'';index:idx_error_request_id"`
+	StatusCode     int    `gorm:"default:0"`
+	UseTimeMs      int64  `gorm:"default:0"`
+	Body           string
+	Ip             string `gorm:"default:''"`
+	ClientUserId   string `gorm:"default:''"`
+	ClientScenairo string `gorm:"index;size:200;default:''"`
+	SessionId      string `gorm:"index:idx_error_session_id;size:128;default:''"`
+	Extra          *model.LogJSON
+	Header         *model.LogJSON
+	Timing         *model.LogJSON
+}
+
+func TestErrorLogUpstreamRequestIDDatabaseMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, dialect := range []struct {
+		name, env string
+		typ       common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dialect.env != "" && dsn == "" {
+				t.Skip(dialect.env + " is not configured")
+			}
+			mainDB, _ := newAuditTestDatabase(t, dialect.name, dsn)
+			useLogExportDatabases(t, mainDB, mainDB, dialect.typ, dialect.typ)
+			require.NoError(t, mainDB.AutoMigrate(&model.Token{}))
+			previousSave, previousError := common.SaveErrorLog, constant.ErrorLogEnabled
+			common.SaveErrorLog, constant.ErrorLogEnabled = true, false
+			t.Cleanup(func() { common.SaveErrorLog, constant.ErrorLogEnabled = previousSave, previousError })
+			for _, store := range []string{"primary", "separate log"} {
+				for _, upgrade := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s upgrade=%t", store, upgrade), func(t *testing.T) {
+						db := mainDB
+						if store == "separate log" {
+							db, _ = newAuditTestDatabase(t, dialect.name, dsn)
+						}
+						previousLogDB := model.LOG_DB
+						model.LOG_DB = db
+						t.Cleanup(func() { model.LOG_DB = previousLogDB })
+						require.NoError(t, db.Migrator().DropTable(&model.ErrorLog{}))
+						var indexes []gorm.Index
+						if upgrade {
+							require.NoError(t, db.Table("error_logs").AutoMigrate(&errorLogBeforeUpstreamID{}))
+							require.NoError(t, db.Table("error_logs").Create(&errorLogBeforeUpstreamID{Id: 100, RequestId: "preserved-local", Message: "preserved failure", Body: "preserved body", Ip: "203.0.113.8"}).Error)
+							var err error
+							indexes, err = db.Migrator().GetIndexes(&model.ErrorLog{})
+							require.NoError(t, err)
+						}
+						for range 2 {
+							require.NoError(t, db.AutoMigrate(&model.ErrorLog{}))
+						}
+						for _, index := range indexes {
+							assert.True(t, db.Migrator().HasIndex(&model.ErrorLog{}, index.Name()), "existing index %s survives", index.Name())
+						}
+						if upgrade {
+							var preserved model.ErrorLog
+							require.NoError(t, db.First(&preserved, 100).Error)
+							assert.Equal(t, "preserved-local", preserved.RequestId)
+							assert.Equal(t, "preserved failure", preserved.Message)
+							assert.Equal(t, "preserved body", preserved.Body)
+							assert.Equal(t, "203.0.113.8", preserved.Ip)
+						}
+
+						ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+						ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+						ctx.Set(common.RequestIdKey, "gateway-request")
+						ctx.Set(common.UpstreamRequestIdKey, "later-attempt-id")
+						apiErr := types.NewOpenAIError(errors.New("upstream failed"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+						processChannelError(ctx, types.ChannelError{ChannelId: 101}, apiErr, nil, 10, "first-attempt-id", false, false)
+						processChannelError(ctx, types.ChannelError{ChannelId: 102}, apiErr, nil, 20, "", true, false)
+						processChannelError(ctx, types.ChannelError{ChannelId: 103}, apiErr, nil, 30, strings.Repeat("x", 129), false, false)
+						terminal, _ := gin.CreateTestContext(httptest.NewRecorder())
+						terminal.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+						terminal.Set(common.RequestIdKey, "gateway-terminal")
+						service.CaptureUpstreamRequestId(terminal, http.Header{"X-Request-Id": {"terminal-upstream-id"}}, constant.ChannelTypeOpenAI)
+						service.RecordRequestError(terminal, apiErr)
+						for _, sample := range []struct {
+							requestID string
+							channel   int
+							want      string
+						}{
+							{"gateway-request", 101, "first-attempt-id"},
+							{"gateway-request", 102, ""},
+							{"gateway-request", 103, ""},
+							{"gateway-terminal", 0, "terminal-upstream-id"},
+						} {
+							query := fmt.Sprintf("request_id=%s&channel=%d&page_size=20", sample.requestID, sample.channel)
+							response := callLogHandler(t, GetAllErrorLogs, 1, common.RoleRootUser, query)
+							items := response[0]["data"].(map[string]any)["items"].([]any)
+							require.Len(t, items, 1)
+							log := items[0].(map[string]any)
+							assert.Equal(t, sample.requestID, log["request_id"])
+							if sample.want == "" {
+								assert.Empty(t, log["upstream_request_id"])
+							} else {
+								assert.Equal(t, sample.want, log["upstream_request_id"])
+							}
+						}
+						recorder := httptest.NewRecorder()
+						export, _ := gin.CreateTestContext(recorder)
+						export.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/log/error-logs/export?request_id=gateway-terminal&start_timestamp=%d&end_timestamp=%d", time.Now().Unix()-60, time.Now().Unix()+1), nil)
+						export.Set("role", common.RoleRootUser)
+						ExportErrorLogsCSV(export)
+						rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(recorder.Body.String(), "\uFEFF"))).ReadAll()
+						require.NoError(t, err)
+						require.Len(t, rows, 2)
+						assert.Equal(t, "UpstreamRequestId", rows[0][len(rows[0])-1])
+						assert.Equal(t, "terminal-upstream-id", rows[1][len(rows[1])-1])
+					})
+				}
+			}
+		})
+	}
 }
 
 // Run with TEST_TASK_DB_DIALECT=sqlite/mysql/postgres and the existing DSN
@@ -188,8 +329,8 @@ func TestRequestErrorLoggingDatabase(t *testing.T) {
 			c.Set("channel_id", 91)
 			upstream := types.NewOpenAIError(errors.New("retry failure"), types.ErrorCodeBadResponseStatusCode, 503)
 			channel := types.ChannelError{ChannelId: 91, ChannelName: "test"}
-			recordRelayErrorLog(c, channel, upstream, 12, false)
-			recordRelayErrorLog(c, channel, upstream, 24, true)
+			recordRelayErrorLog(c, channel, upstream, 12, false, "first-retry-id")
+			recordRelayErrorLog(c, channel, upstream, 24, true, "second-retry-id")
 			client := service.ClientError(c, upstream)
 			assert.Equal(t, "retry failure", upstream.Error())
 			assert.Contains(t, client.Error(), "请求失败，请稍后再尝试")
@@ -197,7 +338,7 @@ func TestRequestErrorLoggingDatabase(t *testing.T) {
 		}, status: 503, message: "retry failure", count: 2},
 		{name: "local failure after failed attempt", handler: func(c *gin.Context) {
 			c.Set("channel_id", 91)
-			recordRelayErrorLog(c, types.ChannelError{ChannelId: 91}, types.NewOpenAIError(errors.New("attempt failed"), types.ErrorCodeBadResponseStatusCode, 503), 1, false)
+			recordRelayErrorLog(c, types.ChannelError{ChannelId: 91}, types.NewOpenAIError(errors.New("attempt failed"), types.ErrorCodeBadResponseStatusCode, 503), 1, false, "")
 			client := service.ClientError(c, types.NewErrorWithStatusCode(errors.New("no more channels"), types.ErrorCodeGetChannelFailed, 503))
 			c.JSON(503, gin.H{"error": client.ToOpenAIError()})
 		}, status: 503, count: 2},

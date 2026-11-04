@@ -3628,6 +3628,7 @@
     "io.net Deployments": "io.net 部署",
     "IP": "IP",
     "IP Address": "IP 地址",
+    "IP addresses are always recorded and are only visible to root users.": "IP 位址一律記錄，且僅 root 使用者可檢視。",
     "IP Filter Mode": "IP 過濾模式",
     "IP Restriction": "IP 限制",
     "IP Whitelist (supports CIDR)": "IP 白名單（支援 CIDR 表達式）",

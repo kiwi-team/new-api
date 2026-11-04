@@ -368,7 +368,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info.LastError = apiErr
 				decision := service.DecideRelayRetry(c, apiErr, retryPlan.MaxRetries-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
-				service.RecordChannelErrorLog(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, 0, false)
+				service.RecordChannelErrorLog(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, 0, false, c.GetString(common.UpstreamRequestIdKey))
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info, c.GetString(common.UpstreamRequestIdKey), 0, false)
 				if decision.Action == "retry" {
 					continue
@@ -467,7 +467,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						rejected.StatusCode = http.StatusBadRequest
 					}
 					if !terminal {
-						service.RecordChannelErrorLog(c, types.ChannelError{ChannelId: s.lockedChannelID, ChannelName: c.GetString("channel_name")}, rejected, time.Since(started).Milliseconds(), false)
+						service.RecordChannelErrorLog(c, types.ChannelError{ChannelId: s.lockedChannelID, ChannelName: c.GetString("channel_name")}, rejected, time.Since(started).Milliseconds(), false, c.GetString(common.UpstreamRequestIdKey))
 						incoming.body = rewriteResponsesWSErrorMessage(c, incoming.body)
 						if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 							s.shutdown(websocket.CloseInternalServerErr, "")
@@ -772,7 +772,7 @@ func (s *responsesWSSession) sendError(eventID, streamID string, apiErr *types.N
 	}
 	if s.logContext != nil {
 		ctx := s.logContext.Copy()
-		service.RecordChannelErrorLog(ctx, types.ChannelError{}, apiErr, 0, false)
+		service.RecordChannelErrorLog(ctx, types.ChannelError{}, apiErr, 0, false, ctx.GetString(common.UpstreamRequestIdKey))
 		if common.RewriteErrorMessage(apiErr.Error()) != apiErr.Error() {
 			clientErr := *apiErr
 			clientErr.SetMessage(common.MessageWithRequestId(apiErr.Error(), s.requestID))

@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -133,29 +132,10 @@ func GetAllLogs(c *gin.Context) {
 
 		now := time.Now()
 		filename := fmt.Sprintf("%s_logs.csv", now.Format("2006-01-02_15-04-05"))
-		filePath := fmt.Sprintf("web/dist/assets/%s", filename)
-
-		// 写入文件
-		err = os.WriteFile(filePath, []byte(csvData), 0644)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"message": "Failed to create CSV file: " + err.Error(),
-			})
-			return
-		}
-
-		// 返回文件URL
-		baseURL := os.Getenv("FRONTEND_BASE_URL")
-		fileURL := fmt.Sprintf("%s/assets/%s", baseURL, filename)
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "CSV file created successfully",
-			"data": map[string]any{
-				"url":      fileURL,
-				"filename": filename,
-			},
-		})
+		// Sensitive exports must not become publicly served frontend assets.
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Data(http.StatusOK, "text/tab-separated-values; charset=utf-8", []byte(csvData))
 		return
 	}
 	// c.JSON(http.StatusOK, gin.H{
@@ -258,7 +238,7 @@ func isAdmin(c *gin.Context) bool {
 	return c.GetInt("role") >= common.RoleAdminUser
 }
 
-// sanitizeLogChannelInfoForRole removes root-only upstream routing details from
+// sanitizeLogChannelInfoForRole removes root-only IP and upstream routing details from
 // responses returned to every lower role while preserving unrelated admin_info
 // diagnostics that those roles are otherwise allowed to inspect.
 func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
@@ -272,6 +252,7 @@ func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
 		}
 		log.ChannelId = 0
 		log.ChannelName = ""
+		log.Ip = ""
 
 		other, _ := common.StrToMap(log.Other)
 		if other == nil {
@@ -279,6 +260,9 @@ func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
 		}
 		delete(other, "is_model_mapped")
 		delete(other, "upstream_model_name")
+		delete(other, "ip")
+		delete(other, "caller_ip")
+		delete(other, "server_ip")
 		adminInfo, ok := other["admin_info"].(map[string]interface{})
 		if !ok {
 			log.Other = common.MapToJsonStr(other)
@@ -288,6 +272,9 @@ func sanitizeLogChannelInfoForRole(logs []*model.Log, role int) {
 		delete(adminInfo, "use_channel_time")
 		delete(adminInfo, "is_model_mapped")
 		delete(adminInfo, "upstream_model_name")
+		delete(adminInfo, "ip")
+		delete(adminInfo, "caller_ip")
+		delete(adminInfo, "server_ip")
 		if len(adminInfo) == 0 {
 			delete(other, "admin_info")
 		}
@@ -554,6 +541,10 @@ func GetLogsSelfStat(c *gin.Context) {
 
 // ExportLogsCSV 仅 root 可调用：按筛选条件导出日志为 CSV，时间范围最大 7 天，不包含 request/response 字段。
 func ExportLogsCSV(c *gin.Context) {
+	if c.GetInt("role") < common.RoleRootUser {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)

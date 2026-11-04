@@ -45,7 +45,7 @@ type Log struct {
 	// UpstreamRequestId 记录上游返回的 request id，便于按上游工单追踪。
 	UpstreamRequestId string   `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string   `json:"other"`
-	Request           string   `json:"request" gorm:"type:text"`
+	Request           string   `json:"request"` // Infer MySQL longtext and PostgreSQL/SQLite text for full file requests.
 	Response          string   `json:"response" gorm:"type:text"`
 	ClientUserId      string   `json:"client_user_id" gorm:"index:idx_client_user_id,default:''"`
 	ClientScenairo    string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
@@ -403,30 +403,23 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
 	sessionId := common.GetContextKeyString(c, constant.ContextKeyClaudeSessionId)
 	otherStr := other.JSONString()
-	// 判断是否需要记录 IP
-	needRecordIp := true
 	log := &Log{
-		UserId:           userId,
-		Username:         username,
-		CreatedAt:        common.GetTimestamp(),
-		Type:             LogTypeError,
-		Content:          content,
-		PromptTokens:     0,
-		CompletionTokens: 0,
-		TokenName:        tokenName,
-		ModelName:        modelName,
-		Quota:            0,
-		ChannelId:        channelId,
-		TokenId:          tokenId,
-		UseTime:          useTimeSeconds,
-		IsStream:         isStream,
-		Group:            group,
-		Ip: func() string {
-			if needRecordIp {
-				return c.ClientIP()
-			}
-			return ""
-		}(),
+		UserId:            userId,
+		Username:          username,
+		CreatedAt:         common.GetTimestamp(),
+		Type:              LogTypeError,
+		Content:           content,
+		PromptTokens:      0,
+		CompletionTokens:  0,
+		TokenName:         tokenName,
+		ModelName:         modelName,
+		Quota:             0,
+		ChannelId:         channelId,
+		TokenId:           tokenId,
+		UseTime:           useTimeSeconds,
+		IsStream:          isStream,
+		Group:             group,
+		Ip:                c.ClientIP(),
 		RequestId:         requestId,
 		Other:             otherStr,
 		SessionId:         sessionId,
@@ -537,24 +530,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if !common.LogConsumeEnabled {
 		return
 	}
-	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
 	extra := common.GetContextKeyString(c, constant.ContextKeyExtra)
 	header := common.GetContextKeyString(c, constant.ContextKeyHeader)
-	// 判断是否需要记录 IP
-	clientIp := ""
-	if needRecordIp {
-		clientIp = c.ClientIP()
-	}
-	//if settingMap, err := GetUserSetting(userId, false); err == nil {
-	//	if settingMap.RecordIpLog {
-	//	}
-	//}
 	log := &Log{
 		UserId:            userId,
 		Username:          username,
@@ -572,7 +549,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		FirstTokenMs:      firstTokenMs,
 		IsStream:          params.IsStream,
 		Group:             params.Group,
-		Ip:                clientIp,
+		Ip:                c.ClientIP(),
 		Other:             otherStr,
 		Request:           sanitizeLogBody(params.Request),
 		Response:          sanitizeLogBody(params.Response),

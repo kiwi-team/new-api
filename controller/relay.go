@@ -213,6 +213,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 	pendingErrors := make([]pendingError, 0, retryPlan.MaxRetries+1)
 
 	for ; retryParam.GetRetry() <= retryPlan.MaxRetries; retryParam.IncreaseRetry() {
+		c.Set(common.UpstreamRequestIdKey, "")
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
@@ -251,7 +252,6 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		attemptStart := time.Now()
 		relayInfo.ChannelAttemptStartTime = attemptStart
-		c.Set(common.UpstreamRequestIdKey, "")
 		originalWriter := c.Writer
 		channelSetting, _ := common.GetContextKeyType[relaykitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 		if mapping := channelSetting.ModelOutputMapping; (mapping != "" && mapping != "{}") || channelSetting.ResponseModelUseRequestModel {
@@ -420,11 +420,11 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, useTimeMs int64, upstreamRequestId string, includeBody bool, notifySlowError bool) {
-	recordRelayErrorLog(c, channelError, err, useTimeMs, includeBody)
+	recordRelayErrorLog(c, channelError, err, useTimeMs, includeBody, upstreamRequestId)
 	service.ProcessChannelError(c, channelError, err, relayInfo, upstreamRequestId, useTimeMs, notifySlowError)
 }
 
-func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool) {
+func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, useTimeMs int64, includeBody bool, upstreamRequestId string) {
 	if !common.SaveErrorLog || err == nil {
 		return
 	}
@@ -437,7 +437,7 @@ func recordRelayErrorLog(c *gin.Context, channelError types.ChannelError, err *t
 		}
 	}
 
-	service.RecordChannelErrorLog(c, channelError, err, useTimeMs, includeBody)
+	service.RecordChannelErrorLog(c, channelError, err, useTimeMs, includeBody, upstreamRequestId)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -648,6 +648,7 @@ func executeTaskSubmissionWith(
 
 	for ; retryParam.GetRetry() <= retryPlan.MaxRetries; retryParam.IncreaseRetry() {
 		stage = "select_channel"
+		c.Set(common.UpstreamRequestIdKey, "")
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("before_attempt", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
@@ -692,7 +693,6 @@ func executeTaskSubmissionWith(
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		stage = "submit"
-		c.Set(common.UpstreamRequestIdKey, "")
 		timingContext, timingAttempt := common.BeginTimingAttempt(c.Request.Context(), channel.Id)
 		if timingAttempt != nil {
 			c.Request = c.Request.WithContext(timingContext)
@@ -977,6 +977,12 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason, stop.Source = "attempt_budget_exhausted", "global"
 	case service.GetChannelConstraints(c).SuppressesRetry():
 		stop.Reason, stop.Source = "pinned_channel", "channel_constraint"
+	case !taskErr.LocalError && taskErr.StatusCode/100 != 2 && len(service.GetChannelRetryPlan(c).ChannelIds) > 0:
+		if c.Writer != nil && c.Writer.Written() {
+			stop.Reason = "non_retryable_error"
+			break
+		}
+		return service.PolicyDecision{Action: "retry", Reason: "channel_error", Source: "routing"}
 	case taskErr.StatusCode == http.StatusTooManyRequests, taskErr.StatusCode == 307:
 		return retry
 	case taskErr.StatusCode/100 == 5:

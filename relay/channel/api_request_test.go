@@ -20,10 +20,12 @@ func TestDoRequestCapturesUpstreamRequestId(t *testing.T) {
 		name        string
 		channelType int
 		headers     http.Header
+		status      int
 		want        string
 	}{
 		{name: "new-api id has global priority", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Oneapi-Request-Id": {"gateway-id"}, "X-Request-Id": {"provider-id"}}, want: "gateway-id"},
 		{name: "OpenAI compatible", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Request-Id": {"openai-id"}}, want: "openai-id"},
+		{name: "upstream error retains response id", channelType: constant.ChannelTypeOpenAI, headers: http.Header{"X-Request-Id": {"failed-upstream-id"}}, status: http.StatusBadGateway, want: "failed-upstream-id"},
 		{name: "Anthropic native id", channelType: constant.ChannelTypeAnthropic, headers: http.Header{"Request-Id": {"anthropic-id"}, "X-Request-Id": {"gateway-id"}}, want: "anthropic-id"},
 		{name: "Azure native id", channelType: constant.ChannelTypeAzure, headers: http.Header{"Apim-Request-Id": {"azure-id"}, "X-Request-Id": {"gateway-id"}}, want: "azure-id"},
 		{name: "AWS native id", channelType: constant.ChannelTypeAws, headers: http.Header{"X-Amzn-RequestId": {"aws-id"}, "Request-Id": {"anthropic-id"}}, want: "aws-id"},
@@ -41,7 +43,11 @@ func TestDoRequestCapturesUpstreamRequestId(t *testing.T) {
 						w.Header().Add(name, value)
 					}
 				}
-				w.WriteHeader(http.StatusNoContent)
+				status := tt.status
+				if status == 0 {
+					status = http.StatusNoContent
+				}
+				w.WriteHeader(status)
 			}))
 			t.Cleanup(server.Close)
 

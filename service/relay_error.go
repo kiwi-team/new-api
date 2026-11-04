@@ -18,6 +18,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -83,7 +84,21 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if code < 100 || code > 599 {
 		return PolicyDecision{Action: "retry", Reason: "unrecognized_status", Source: "system"}
 	}
-	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) || operation_setting.IsAlwaysSkipRetryStatusCode(code) {
+	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) {
+		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
+	}
+	if len(GetChannelRetryPlan(c).ChannelIds) > 0 {
+		// The client WebSocket handshake precedes upstream channel selection;
+		// upstream handshake failures can still try the next route candidate.
+		clientWebSocket := c.Request != nil && websocket.IsWebSocketUpgrade(c.Request)
+		if c.Writer != nil && c.Writer.Written() && !clientWebSocket {
+			return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+		}
+		// Explicit routes try their remaining candidates independently of the
+		// status rules used by the default channel selector.
+		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "routing"}
+	}
+	if operation_setting.IsAlwaysSkipRetryStatusCode(code) {
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
 	}
 	if operation_setting.ShouldRetryByStatusCode(code) {

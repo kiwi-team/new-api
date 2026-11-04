@@ -124,6 +124,39 @@ function renderConsumptionDetails(
   )
 }
 
+test.each(
+  [
+    { isAdmin: false, isRoot: false },
+    { isAdmin: true, isRoot: false },
+    { isAdmin: true, isRoot: true },
+  ].flatMap((role) => [2, 5].map((type) => ({ ...role, type })))
+)(
+  'log type=$type IP addresses are visible only for root=$isRoot admin=$isAdmin',
+  ({ isAdmin, isRoot, type }) => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>
+          <DetailsDialog
+            log={{ ...consumeLog, type, ip: '203.0.113.8' }}
+            isAdmin={isAdmin}
+            isRoot={isRoot}
+            open
+            onOpenChange={() => undefined}
+          />
+        </QueryClientProvider>
+      </I18nextProvider>
+    )
+
+    if (isRoot) {
+      expect(screen.getByText('203.0.113.8')).toBeVisible()
+      expect(screen.getByText('IP Address')).toBeVisible()
+    } else {
+      expect(screen.queryByText('203.0.113.8')).not.toBeInTheDocument()
+      expect(screen.queryByText('IP Address')).not.toBeInTheDocument()
+    }
+  }
+)
+
 test.each([
   { isAdmin: true, isRoot: false },
   { isAdmin: true, isRoot: true },

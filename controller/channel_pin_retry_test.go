@@ -3,24 +3,27 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
-	"github.com/QuantumNous/new-api/middleware"
-	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,6 +100,219 @@ func TestSameChannelPinsMergeToStricterRetryMode(t *testing.T) {
 	assert.Equal(t, dto.PinRetrySingleAttempt, pin.RetryMode)
 	assert.Empty(t, overridden)
 	assert.False(t, service.ShouldRetryRelayError(c, types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError), 1))
+}
+
+func TestExplicitChannelRoutesIgnoreRetryStatusCodes(t *testing.T) {
+	previousRanges := operation_setting.AutomaticRetryStatusCodeRanges
+	operation_setting.AutomaticRetryStatusCodeRanges = nil
+	t.Cleanup(func() { operation_setting.AutomaticRetryStatusCodeRanges = previousRanges })
+	for _, status := range []int{400, 408, 429, 500, 504, 524} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			c := newPinRetryContext()
+			c.Set("token_channel_ids", []int{1, 2})
+			c.Set("new_retry_times", 1)
+			apiErr := types.NewOpenAIError(errors.New("upstream rejected request"), types.ErrorCodeBadResponseStatusCode, status)
+			want := service.PolicyDecision{Action: "retry", Reason: "channel_error", Source: "routing"}
+			assert.Equal(t, want, service.DecideRelayRetry(c, apiErr, 1))
+			assert.Equal(t, want, decideTaskRetry(c, &dto.TaskError{StatusCode: status}, 1))
+			assert.Equal(t, "stop", service.DecideRelayRetry(c, apiErr, 0).Action, "the route cannot exceed its attempt budget")
+			assert.Equal(t, "stop", decideTaskRetry(c, &dto.TaskError{StatusCode: status}, 0).Action)
+
+			ordinary := newPinRetryContext()
+			assert.Equal(t, "stop", service.DecideRelayRetry(ordinary, apiErr, 1).Action, "ordinary selection still follows the configured status rules")
+		})
+	}
+	t.Run("client WebSocket handshake still permits upstream fallback", func(t *testing.T) {
+		c := newPinRetryContext()
+		c.Set("token_channel_ids", []int{1, 2})
+		c.Set("new_retry_times", 1)
+		c.Request.Header.Set("Connection", "Upgrade")
+		c.Request.Header.Set("Upgrade", "websocket")
+		c.Writer.WriteHeaderNow()
+		apiErr := types.NewOpenAIError(errors.New("upstream handshake rejected"), types.ErrorCodeBadResponseStatusCode, 400)
+		assert.Equal(t, "retry", service.DecideRelayRetry(c, apiErr, 1).Action)
+	})
+
+	for _, tc := range []struct {
+		name    string
+		apiErr  *types.NewAPIError
+		taskErr *dto.TaskError
+		setup   func(*gin.Context)
+	}{
+		{name: "successful HTTP status", apiErr: types.NewOpenAIError(errors.New("invalid response"), types.ErrorCodeBadResponseStatusCode, 200), taskErr: &dto.TaskError{StatusCode: 200}},
+		{name: "local validation and accepted tasks", apiErr: types.NewErrorWithStatusCode(errors.New("invalid request"), types.ErrorCodeInvalidRequest, 400, types.ErrOptionWithSkipRetry()), taskErr: &dto.TaskError{StatusCode: 400, NoRetry: true}},
+		{name: "invalid response body and local task error", apiErr: types.NewOpenAIError(errors.New("invalid response"), types.ErrorCodeBadResponseBody, 400), taskErr: &dto.TaskError{StatusCode: 400, LocalError: true}},
+		{name: "single attempt pin", setup: func(c *gin.Context) {
+			service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 1, Source: dto.PinSourceToken, RetryMode: dto.PinRetrySingleAttempt})
+		}},
+		{name: "origin task cannot switch channels", setup: func(c *gin.Context) {
+			service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 1, Source: dto.PinSourceOriginTask, RetryMode: dto.PinRetrySameChannel})
+		}},
+		{name: "strict session", setup: func(c *gin.Context) { c.Set("channel_affinity_skip_retry_on_failure", true) }},
+		{name: "response already started", setup: func(c *gin.Context) {
+			_, err := c.Writer.WriteString("data: partial response\n\n")
+			require.NoError(t, err)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newPinRetryContext()
+			c.Set("token_channel_ids", []int{1, 2})
+			c.Set("new_retry_times", 1)
+			if tc.setup != nil {
+				tc.setup(c)
+			}
+			apiErr, taskErr := tc.apiErr, tc.taskErr
+			if apiErr == nil {
+				apiErr = types.NewOpenAIError(errors.New("upstream rejected request"), types.ErrorCodeBadResponseStatusCode, 400)
+			}
+			if taskErr == nil {
+				taskErr = &dto.TaskError{StatusCode: 400}
+			}
+			assert.Equal(t, "stop", service.DecideRelayRetry(c, apiErr, 1).Action)
+			assert.Equal(t, "stop", decideTaskRetry(c, taskErr, 1).Action)
+		})
+	}
+}
+
+func TestExplicitChannelRouteRetriesUpstreamRejections(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	t.Setenv("QUOTA_DATA_SPOOL_DIR", t.TempDir())
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, db.AutoMigrate(&model.SettlementConfig{}))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gemini-route-test":0}`))
+	require.NoError(t, db.Create(&model.User{Id: 7, Username: "route-test", Group: "default"}).Error)
+	previousConsume, previousError, previousSave := common.LogConsumeEnabled, constant.ErrorLogEnabled, common.SaveErrorLog
+	previousExport, previousBatch := common.DataExportEnabled, common.BatchUpdateEnabled
+	previousRetry, previousCount := common.RetryTimes, constant.CountToken
+	previousAffinity := *operation_setting.GetChannelAffinitySetting()
+	previousFetch := *system_setting.GetFetchSetting()
+	previousTLS := common.TLSInsecureSkipVerify
+	previousFreePreConsume := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+	t.Cleanup(func() {
+		common.LogConsumeEnabled, constant.ErrorLogEnabled, common.SaveErrorLog = previousConsume, previousError, previousSave
+		common.DataExportEnabled, common.BatchUpdateEnabled = previousExport, previousBatch
+		common.RetryTimes, constant.CountToken = previousRetry, previousCount
+		*operation_setting.GetChannelAffinitySetting() = previousAffinity
+		*system_setting.GetFetchSetting() = previousFetch
+		common.TLSInsecureSkipVerify = previousTLS
+		operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = previousFreePreConsume
+	})
+	common.LogConsumeEnabled, constant.ErrorLogEnabled, common.SaveErrorLog = false, false, false
+	common.DataExportEnabled, common.BatchUpdateEnabled = false, false
+	common.RetryTimes, constant.CountToken = 0, false
+	operation_setting.GetChannelAffinitySetting().Enabled = false
+	system_setting.GetFetchSetting().EnableSSRFProtection = true
+	system_setting.GetFetchSetting().ApplyIPFilterForDomain = true
+	common.TLSInsecureSkipVerify = false
+	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+	common.OptionMap["GeminiFileRouting"] = `{"enabled":true,"mode":"forward","chat_model_patterns":["gemini-route-test"]}`
+	service.InitHttpClient()
+	var firstStatus, secondStatus atomic.Int32
+	var calls [3]atomic.Int32
+	for i := range calls {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls[i].Add(1)
+			status := int(firstStatus.Load())
+			if i == 1 {
+				status = int(secondStatus.Load())
+			}
+			if status == 0 {
+				connection, _, err := w.(http.Hijacker).Hijack()
+				if assert.NoError(t, err) {
+					assert.NoError(t, connection.Close())
+				}
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			if status != http.StatusOK {
+				_, _ = fmt.Fprint(w, `{"error":{"code":400,"message":"channel rejected request","status":"INVALID_ARGUMENT"}}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}`)
+		}))
+		t.Cleanup(upstream.Close)
+		channel := &model.Channel{Id: i + 1, Name: fmt.Sprintf("route-%d", i+1), Type: constant.ChannelTypeGemini, Key: "test-only", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "gemini-route-test"}
+		require.NoError(t, db.Create(channel).Error)
+	}
+	for _, endpoint := range []struct {
+		name   string
+		path   string
+		format types.RelayFormat
+	}{
+		{name: "chat", path: "/v1/chat/completions", format: types.RelayFormatOpenAI},
+		{name: "native", path: "/v1beta/models/gemini-route-test:generateContent", format: types.RelayFormatGemini},
+	} {
+		for _, attachment := range []string{"none", "inline", "remote"} {
+			for _, tc := range []struct {
+				status, secondStatus, retries, wantStatus int
+				wantChannels                              []string
+			}{
+				{400, 200, 9, 200, []string{"1", "2"}},
+				{408, 200, 9, 200, []string{"1", "2"}},
+				{504, 200, 9, 200, []string{"1", "2"}},
+				{524, 200, 9, 200, []string{"1", "2"}},
+				{400, 400, 9, 400, []string{"1", "2"}},
+				{400, 200, 0, 400, []string{"1"}},
+				{0, 200, 9, 200, []string{"1", "2"}},
+			} {
+				t.Run(fmt.Sprintf("%s/%s/status=%d/second=%d/retries=%d", endpoint.name, attachment, tc.status, tc.secondStatus, tc.retries), func(t *testing.T) {
+					for i := range calls {
+						calls[i].Store(0)
+					}
+					firstStatus.Store(int32(tc.status))
+					secondStatus.Store(int32(tc.secondStatus))
+					body := `{"model":"gemini-route-test","messages":[{"role":"user","content":"hello"}]}`
+					if attachment == "remote" {
+						body = `{"model":"gemini-route-test","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://generativelanguage.googleapis.com/v1beta/files/test","mime_type":"image/png"}}]}]}`
+					} else if attachment == "inline" {
+						body = `{"model":"gemini-route-test","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}]}`
+					}
+					if endpoint.format == types.RelayFormatGemini {
+						body = `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
+						if attachment == "remote" {
+							body = `{"contents":[{"role":"user","parts":[{"fileData":{"mimeType":"image/png","fileUri":"https://generativelanguage.googleapis.com/v1beta/files/test"}}]}]}`
+						} else if attachment == "inline" {
+							body = `{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgo="}}]}]}`
+						}
+					}
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, endpoint.path, strings.NewReader(body))
+					c.Request.Header.Set("Content-Type", "application/json")
+					c.Set("id", 7)
+					common.SetContextKey(c, constant.ContextKeyUserSetting, kitdto.UserSetting{BillingPreference: "wallet_only"})
+					common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+					common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+					common.SetContextKey(c, constant.ContextKeyOriginalModel, "gemini-route-test")
+					c.Set("token_channel_ids", []int{1, 2})
+					c.Set("new_retry_times", tc.retries)
+					t.Cleanup(func() { common.CleanupBodyStorage(c) })
+					filePlan, apiErr := service.PlanGeminiFiles(c, "gemini-route-test")
+					require.Nil(t, apiErr)
+					if filePlan != nil {
+						t.Cleanup(func() { filePlan.Close(c) })
+					}
+					RelayWithoutRace(c, endpoint.format)
+					wantStatus, wantChannels := tc.wantStatus, tc.wantChannels
+					if tc.status == 0 && attachment != "none" {
+						wantStatus, wantChannels = http.StatusInternalServerError, []string{"1"}
+						if attachment == "remote" {
+							wantStatus = http.StatusBadGateway
+						}
+					}
+					assert.Equal(t, wantStatus, recorder.Code, recorder.Body.String())
+					if wantStatus == http.StatusOK {
+						assert.Contains(t, recorder.Body.String(), "ok")
+					}
+					assert.Equal(t, wantChannels, c.GetStringSlice("use_channel"))
+					assert.Equal(t, int32(1), calls[0].Load())
+					assert.Equal(t, int32(len(wantChannels)-1), calls[1].Load())
+					assert.Zero(t, calls[2].Load(), "the request must stay within its explicit channel list")
+				})
+			}
+		}
+	}
 }
 
 func newPinRetryContext() *gin.Context {

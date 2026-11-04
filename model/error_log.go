@@ -18,29 +18,30 @@ import (
 )
 
 type ErrorLog struct {
-	Id             int      `json:"id"`
-	UserId         int      `json:"user_id" gorm:"index"`
-	CreatedAt      int64    `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
-	ChannelId      int      `json:"channel_id" gorm:"index"`
-	ChannelName    string   `json:"channel_name" gorm:"default:''"`
-	TokenId        int      `json:"token_id" gorm:"index"`
-	TokenName      string   `json:"token_name"`
-	ModelName      string   `json:"model_name" gorm:"default:''"`
-	Message        string   `json:"message" gorm:"default:''"`
-	Type           string   `json:"type" gorm:"default:''"`
-	Param          string   `json:"param" gorm:"default:''"`
-	Code           string   `json:"code" gorm:"default:''"`
-	RequestId      string   `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
-	StatusCode     int      `json:"status_code" gorm:"default:0"`
-	UseTimeMs      int64    `json:"use_time_ms" gorm:"default:0"`
-	Body           string   `json:"body" gorm:"default:''"`
-	Ip             string   `json:"ip" gorm:"default:''"`
-	ClientUserId   string   `json:"client_user_id" gorm:"default:''"`
-	ClientScenairo string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
-	SessionId      string   `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
-	Extra          *LogJSON `json:"extra,omitempty"`
-	Header         *LogJSON `json:"header,omitempty"`
-	Timing         *LogJSON `json:"timing,omitempty"`
+	Id                int      `json:"id"`
+	UserId            int      `json:"user_id" gorm:"index"`
+	CreatedAt         int64    `json:"created_at" gorm:"bigint;index:idx_error_created_a"`
+	ChannelId         int      `json:"channel_id" gorm:"index"`
+	ChannelName       string   `json:"channel_name" gorm:"default:''"`
+	TokenId           int      `json:"token_id" gorm:"index"`
+	TokenName         string   `json:"token_name"`
+	ModelName         string   `json:"model_name" gorm:"default:''"`
+	Message           string   `json:"message" gorm:"default:''"`
+	Type              string   `json:"type" gorm:"default:''"`
+	Param             string   `json:"param" gorm:"default:''"`
+	Code              string   `json:"code" gorm:"default:''"`
+	RequestId         string   `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
+	UpstreamRequestId string   `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);default:''"`
+	StatusCode        int      `json:"status_code" gorm:"default:0"`
+	UseTimeMs         int64    `json:"use_time_ms" gorm:"default:0"`
+	Body              string   `json:"body"` // Infer MySQL longtext instead of a default-sized varchar.
+	Ip                string   `json:"ip" gorm:"default:''"`
+	ClientUserId      string   `json:"client_user_id" gorm:"default:''"`
+	ClientScenairo    string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
+	SessionId         string   `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
+	Extra             *LogJSON `json:"extra,omitempty"`
+	Header            *LogJSON `json:"header,omitempty"`
+	Timing            *LogJSON `json:"timing,omitempty"`
 }
 
 // GetErrorLogBody 根据ID获取错误日志的body字段
@@ -367,7 +368,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool, timing ...*LogJSON) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, upstreamRequestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool, timing ...*LogJSON) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -375,28 +376,34 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 	if includeBody {
 		bodyToSave = sanitizeRequestBodyForLog(body, contentType)
 	}
+	upstreamRequestId = strings.TrimSpace(upstreamRequestId)
+	if len(upstreamRequestId) > 128 {
+		common.SysError(common.LogText("ignored oversized error log upstream request id: length=%d", len(upstreamRequestId)))
+		upstreamRequestId = ""
+	}
 
 	log := &ErrorLog{
-		UserId:         userId,
-		CreatedAt:      common.GetTimestamp(),
-		ChannelId:      channelId,
-		Message:        err.Message,
-		Type:           string(err.Type),
-		Param:          err.Param,
-		ChannelName:    channelName,
-		ModelName:      modelName,
-		Code:           fmt.Sprintf("%v", err.Code),
-		StatusCode:     err.StatusCode,
-		Body:           sanitizeLogBody(bodyToSave),
-		Ip:             ip,
-		UseTimeMs:      useTimeMs,
-		TokenId:        tokenId,
-		RequestId:      requestId,
-		ClientUserId:   clientUserId,
-		ClientScenairo: clientScenairo,
-		SessionId:      sessionId,
-		Extra:          normalizeJsonbString(extra),
-		Header:         normalizeJsonbString(header),
+		UserId:            userId,
+		CreatedAt:         common.GetTimestamp(),
+		ChannelId:         channelId,
+		Message:           err.Message,
+		Type:              string(err.Type),
+		Param:             err.Param,
+		ChannelName:       channelName,
+		ModelName:         modelName,
+		Code:              fmt.Sprintf("%v", err.Code),
+		StatusCode:        err.StatusCode,
+		Body:              sanitizeLogBody(bodyToSave),
+		Ip:                ip,
+		UseTimeMs:         useTimeMs,
+		TokenId:           tokenId,
+		RequestId:         requestId,
+		UpstreamRequestId: upstreamRequestId,
+		ClientUserId:      clientUserId,
+		ClientScenairo:    clientScenairo,
+		SessionId:         sessionId,
+		Extra:             normalizeJsonbString(extra),
+		Header:            normalizeJsonbString(header),
 	}
 	if len(timing) > 0 {
 		log.Timing = timing[0]

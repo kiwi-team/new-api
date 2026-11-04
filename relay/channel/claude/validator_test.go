@@ -13,8 +13,8 @@ import (
 // validateBody 解析请求体后走结构体校验。
 //
 // 这些用例断言的是 ValidateClaudeRequest 的校验规则本身。ValidateClaudeRequestBody
-// 目前在解析成功后直接放行（见 validator.go），是本项目刻意保留的运行时开关，
-// 因此不能用它来断言各项规则是否生效。
+// 仅执行共享的最大 token 安全上限检查，完整模型参数校验仍未启用（见 validator.go），
+// 因此不能用它来断言下面各项模型参数规则是否生效。
 func validateBody(t *testing.T, body string) error {
 	t.Helper()
 	var request dto.ClaudeRequest

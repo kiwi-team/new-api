@@ -198,6 +198,26 @@
 | 内存限流令牌隔离（2026-10-18） | main 将限流主体改为用户/分组并改用成功请求预留，可能覆盖本分支同用户不同 Key 的独立额度。 | 内存主体同时包含用户、已配置独立额度的分组和 token_id；保留 main 的成功请求预留、失败流释放及标准 429 响应；Redis 保持既有用户/分组粒度。 | `middleware/model-rate-limit.go`；`TestModelMemoryRateLimitIsolatesTokensWithinConfiguredGroup`、`TestModelMemoryRateLimitReservesConcurrentSuccessAdmission`、`TestModelRateLimitCountsConfiguredGroupsSeparately`。 |
 | 自定义管理路由的个人令牌边界（2026-10-18） | main 新增全路由权限声明检查，自定义管理路由未声明；简单开放任意 token 会扩大新权限令牌授权，改为 session-only 又会中断旧令牌。 | 自定义管理路由显式声明 legacy 规则：浏览器会话不变，旧令牌仍受原截止日期和角色校验，新 scoped token 拒绝；不能用 `any` 规则代替未定义的授权。 | `middleware/access_token_routes.go`、`middleware/auth.go`；`TestUserAuthAppliesAccessTokenRouteRules`、`TestAccessTokenRouteRulesCoverEveryDashboardRoute`。 |
 
+### Gemini 文件请求数据库原文（2026-11-04 用户确认）
+
+- 用户明确要求数据库中的 request 保存原始数据、不脱敏。对上表 Gemini 文件请求的请求脱敏约束作此变更：启用 `SAVE_REQUEST_RESPONSE=true` 时，原生 Gemini 和 Chat 文件请求的 `logs.request` 必须保留客户端原始 JSON，包括正文、工具结果中的嵌套附件、Base64、完整 URL 和未建模字段；不得替换为附件摘要或经过渠道转换、参数覆盖后的请求体。
+- `error_logs.body` 同样保留已缓存的原始 JSON，继续遵循错误日志开关和 `includeBody`，不得为了记录鉴权/过载拒绝而额外读取未校验的请求体。普通 debug 输出仍可使用附件摘要；上游错误信息、请求头和凭据的既有脱敏边界不变。
+- 实现锚点：`relay/gemini_handler.go`、`relay/compatible_handler.go`、`service/request_error_log.go`。回归集中在 `relay/gemini_file_error_test.go` 的 `TestGeminiFileRequestLoggingDatabaseMatrix`，覆盖原生/Chat、JSON/SSE、Body 透传、嵌套图片、URL、参数覆盖、未知字段、错误请求及关闭记录；主库与日志库分别连接真实 SQLite/MySQL/PostgreSQL。
+- 实测发现 MySQL 的原 `logs.request` 为最大 64 KiB 的 TEXT，`error_logs.body` 因空串 default 被 GORM 推断为 VARCHAR(191)。移除这两个字段的类型/默认值限制，使 MySQL 使用 LONGTEXT，PostgreSQL/SQLite 使用 TEXT；保持 Go 字段类型和 JSON 接口为 string。测试请求包含超过 64 KiB 的 Base64 图片，验证完整落库。
+- 三库实测：SQLite **3.50.4**、MySQL **8.4.13**、PostgreSQL **16.15**。每种数据库均验证 fresh、从本地最新发布 tag `v1.0.0-rc.47` 的 logs schema 升级（该 tag 尚无 request/error_logs），以及本分支变更前 TEXT/VARCHAR schema 升级；连续两次日志迁移，第二次不重复 ALTER，保留既有请求正文、错误正文、消费记录和索引列/唯一性。MySQL/PostgreSQL 的主库使用 `gemini_logs`，独立日志库使用 `gemini_logs_separate`，均为临时测试容器。
+- 最终命令（事先设置真实测试实例的 `TEST_MYSQL_DSN`、`TEST_MYSQL_LOG_DSN`、`TEST_POSTGRES_DSN`、`TEST_POSTGRES_LOG_DSN`）：`QUOTA_DATA_SPOOL_DIR="$(mktemp -d /tmp/new-api-gemini-log-final.XXXXXX)" GIN_MODE=release go test ./model ./service ./controller ./relay ./relay/channel/gemini -run '^(TestGemini.*|TestRequestErrorLoggingDatabase|TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata|TestExplicitChannelRoute.*|TestLog.*|TestFormatUserLogs.*|TestLegacyLog.*|TestClickHouseLog.*)$' -count=1 -v`。五个包全部通过，新增矩阵 90 个 HTTP/落库用例通过；测试输出在 `/tmp/new-api-gemini-log-final.log`。未对生产数据库执行迁移。
+- 已经只存附件摘要的历史记录不能通过本次代码变更恢复原文。
+
+### 显式渠道列表的故障切换（2026-11-04 用户确认）
+
+- 全局模型路由、大文件处理渠道列表和 Key 渠道列表生成的显式候选计划，应独立于系统默认选路的 HTTP 重试状态码规则。当前渠道返回 400、408、504、524 或其他失败状态时，只要仍有候选与重试次数，就继续尝试计划内下一渠道；不得在列表耗尽后回到系统默认渠道，也不得忽略零重试配置。
+- 保留固定渠道身份、严格会话、请求校验失败、禁止重试标记、无效响应体及任务已受理等限制。默认选路继续使用 `AutomaticRetryStatusCodes` 和原有 504/524 排除规则。HTTP 响应开始输出后不能切换渠道；客户端 WebSocket 握手完成不代表上游请求已输出，上游握手失败仍可按显式计划切换。
+- 对上表 Gemini 文件请求“推理提交后不自动重放”的约束作如下明确例外：显式列表内收到失败 HTTP 响应后，原生 Gemini 和 Chat 两条 handler 均解除该次提交屏障，保留错误脱敏并允许下一候选。传输失败导致执行结果未知、成功 HTTP 响应之后的处理失败，以及已受理的异步任务，仍不得自动重放。上传对象继续按逻辑请求和实际渠道凭据管理及清理。
+- 实现锚点：`service/relay_error.go`、`service/gemini_file_execute.go`、`relay/gemini_handler.go`、`relay/compatible_handler.go`、`controller/relay.go`。回归集中在 `controller/channel_pin_retry_test.go` 的 `TestExplicitChannelRoutesIgnoreRetryStatusCodes` 和 `TestExplicitChannelRouteRetriesUpstreamRejections`，覆盖状态码配置为空、次数边界、固定/会话限制、已输出响应、任务已受理，以及原生/Chat 的无附件、inline 和远程引用实际 A→B 请求、列表全失败及传输结果未知。
+- 后续受影响合并至少运行：`go test ./service ./controller ./relay ./middleware ./setting/operation_setting -count=1`，同时保留 `TestGetChannelRetryPlanBoundsExplicitRoutes`、`TestChannelRoutingPriority`、`TestGeminiFileRoutingCannotBeBypassedAndRetiresLegacyRules` 和 `TestGeminiFileSubmittedAttemptStopsRetryAndRecordsFailure`。
+- 本轮验证：`QUOTA_DATA_SPOOL_DIR="$(mktemp -d /tmp/new-api-route-suite.XXXXXX)" go test ./service ./controller ./relay ./middleware ./setting/operation_setting -skip '^TestTaskBillingAttributionDatabase$' -count=1` 五个包通过；任务归因锚点在独立 spool 目录运行 `go test ./controller -run '^TestTaskBillingAttributionDatabase$' -count=1` 通过（SQLite 3.50.4）。最终代码的 `go test ./controller ./relay ./service -run 'TestExplicitChannelRoute|TestGeminiInlineFilesPreserveUpstreamErrors|TestGeminiFileSubmittedAttemptStopsRetryAndRecordsFailure' -count=1` 通过。
+- 整组运行仍有既有测试隔离问题：先前用例写入共享 quota spool 的事件被 `TestTaskBillingAttributionDatabase` 回放，使其按用户查询到其他模型的统计桶；在干净 spool 目录排除本次新增用例运行 `go test ./controller -skip '^TestExplicitChannelRoute' -count=1` 同样复现。新增 HTTP 回归已独立 spool，并关闭其无关的统计导出及批量记账，未修改任务归因断言或生产记账逻辑。
+
 ### Claude → Chat Completions usage 合并复核
 
 - 示例：Claude 普通输入 `100`、缓存读取 `30`、缓存写入 `50`、输出 `20`，对外必须返回 `prompt_tokens=180`、`prompt_tokens_details.cached_tokens=30`、`prompt_tokens_details.cache_write_tokens=50`、`total_tokens=200`；内部原始普通输入仍为 `100`。

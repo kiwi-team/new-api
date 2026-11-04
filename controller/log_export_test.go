@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -243,6 +244,182 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestRequestLogIPDatabaseMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, dialect := range []struct {
+		name, env string
+		typ       common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dialect.env != "" && dsn == "" {
+				t.Skip(dialect.env + " is not configured")
+			}
+			mainDB, _ := newAuditTestDatabase(t, dialect.name, dsn)
+			logDB, _ := newAuditTestDatabase(t, dialect.name, dsn)
+			useLogExportDatabases(t, mainDB, logDB, dialect.typ, dialect.typ)
+			require.NoError(t, mainDB.AutoMigrate(&model.User{}, &model.Channel{}, &model.SystemTaskLock{}))
+			require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.ErrorLog{}))
+			versionQuery := "SELECT VERSION()"
+			if dialect.name == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var version string
+			require.NoError(t, logDB.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			previousConsume, previousExport, previousSaveError := common.LogConsumeEnabled, common.DataExportEnabled, common.SaveErrorLog
+			previousUserExport := operation_setting.GetLogSetting().UserExportEnabled
+			common.LogConsumeEnabled, common.DataExportEnabled, common.SaveErrorLog = true, false, true
+			operation_setting.GetLogSetting().UserExportEnabled = true
+			t.Cleanup(func() {
+				common.LogConsumeEnabled, common.DataExportEnabled, common.SaveErrorLog = previousConsume, previousExport, previousSaveError
+				operation_setting.GetLogSetting().UserExportEnabled = previousUserExport
+			})
+			require.NoError(t, mainDB.Create(&model.User{Id: 1, Username: "ip-owner", Setting: `{"record_ip_log":false}`}).Error)
+
+			for index, source := range []struct {
+				name, remote, forwarded, ip string
+				enabled                     bool
+			}{
+				{name: "disabled IPv4", remote: "203.0.113.8:45678", ip: "203.0.113.8"},
+				{name: "disabled forwarded IPv6", remote: "127.0.0.1:45678", forwarded: "2001:db8::42", ip: "2001:db8::42"},
+				{name: "enabled IPv4", remote: "203.0.113.9:45678", ip: "203.0.113.9", enabled: true},
+			} {
+				t.Run(source.name, func(t *testing.T) {
+					require.NoError(t, mainDB.Model(&model.User{}).Where("id = ?", 1).Update("setting", fmt.Sprintf(`{"record_ip_log":%t}`, source.enabled)).Error)
+					ctx, engine := gin.CreateTestContext(httptest.NewRecorder())
+					require.NoError(t, engine.SetTrustedProxies([]string{"127.0.0.1"}))
+					ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+					ctx.Request.RemoteAddr = source.remote
+					ctx.Request.Header.Set("X-Forwarded-For", source.forwarded)
+					requestID := fmt.Sprintf("ip-request-%d", index)
+					ctx.Set("id", 1)
+					ctx.Set("username", "ip-owner")
+					ctx.Set(common.RequestIdKey, requestID)
+					other := model.NewLogOther()
+					other.SetPublic("request_path", "/v1/chat/completions")
+					other.SetPublic("ip", source.ip)
+					other.SetAdmin("caller_ip", source.ip)
+					other.SetAdmin("server_ip", "192.0.2.20")
+					other.SetRoot("client_ip", source.ip)
+					model.RecordConsumeLog(ctx, 1, model.RecordConsumeLogParams{TokenId: 11, ModelName: "ip-model", Other: other})
+					model.RecordErrorLog(ctx, 1, 0, "ip-model", "", "upstream failure", 11, 1, false, "default", "", other)
+					service.RecordRequestError(ctx, types.NewOpenAIError(fmt.Errorf("upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway))
+					var stored []model.Log
+					require.NoError(t, logDB.Where("request_id = ?", requestID).Find(&stored).Error)
+					require.Len(t, stored, 2)
+					for _, log := range stored {
+						assert.Equal(t, source.ip, log.Ip, "request IP is independent of the user preference")
+					}
+					var failure model.ErrorLog
+					require.NoError(t, logDB.Where("request_id = ?", requestID).First(&failure).Error)
+					assert.Equal(t, source.ip, failure.Ip)
+					listedErrors := callLogHandler(t, GetAllErrorLogs, 1, common.RoleRootUser, "request_id="+requestID+"&page_size=20")
+					errorItems := listedErrors[0]["data"].(map[string]any)["items"].([]any)
+					require.Len(t, errorItems, 1)
+					assert.Equal(t, source.ip, errorItems[0].(map[string]any)["ip"])
+
+					for _, role := range []int{common.RoleCommonUser, common.RoleAdminUser, common.RoleRootUser} {
+						for _, endpoint := range []struct {
+							name    string
+							handler gin.HandlerFunc
+							stream  bool
+						}{
+							{"self list", GetUserLogs, false},
+							{"self export", ExportUserLogs, true},
+							{"admin list", GetAllLogs, false},
+							{"admin export", ExportAllLogs, true},
+						} {
+							if role == common.RoleCommonUser && strings.HasPrefix(endpoint.name, "admin") {
+								continue
+							}
+							t.Run(fmt.Sprintf("%s role=%d", endpoint.name, role), func(t *testing.T) {
+								lines := callLogHandler(t, endpoint.handler, 1, role, "request_id="+requestID)
+								var logs []any
+								if endpoint.stream {
+									require.Equal(t, true, lines[len(lines)-1]["success"])
+									for _, line := range lines[:len(lines)-1] {
+										logs = append(logs, line)
+									}
+								} else {
+									require.Equal(t, true, lines[0]["success"])
+									logs = lines[0]["data"].(map[string]any)["items"].([]any)
+								}
+								require.Len(t, logs, 2)
+								for _, item := range logs {
+									log := item.(map[string]any)
+									if role == common.RoleRootUser {
+										assert.Equal(t, source.ip, log["ip"])
+									} else {
+										assert.Empty(t, log["ip"])
+										assert.NotContains(t, common.MapToJsonStr(log), source.ip)
+										assert.NotContains(t, common.MapToJsonStr(log), "192.0.2.20")
+									}
+								}
+							})
+						}
+					}
+					tokenRecorder := httptest.NewRecorder()
+					tokenContext, _ := gin.CreateTestContext(tokenRecorder)
+					tokenContext.Set("token_id", 11)
+					GetLogByKey(tokenContext)
+					assert.NotContains(t, tokenRecorder.Body.String(), source.ip)
+					for _, endpoint := range []struct {
+						name    string
+						handler gin.HandlerFunc
+						query   string
+					}{
+						{"legacy CSV", GetAllLogs, "export=true&request_id=" + requestID},
+						{"request CSV", ExportLogsCSV, "request_id=" + requestID},
+						{"error CSV", ExportErrorLogsCSV, "request_id=" + requestID},
+					} {
+						t.Run(endpoint.name, func(t *testing.T) {
+							recorder := httptest.NewRecorder()
+							ctx, _ := gin.CreateTestContext(recorder)
+							ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/log?%s&start_timestamp=%d&end_timestamp=%d", endpoint.query, time.Now().Unix()-60, time.Now().Unix()+1), nil)
+							ctx.Set("id", 1)
+							ctx.Set("role", common.RoleRootUser)
+							endpoint.handler(ctx)
+							assert.Equal(t, http.StatusOK, recorder.Code)
+							assert.Contains(t, recorder.Header().Get("Content-Disposition"), "attachment;")
+							assert.Contains(t, recorder.Body.String(), source.ip)
+						})
+					}
+					require.NoError(t, logDB.Where("request_id = ?", requestID).First(&failure).Error)
+					assert.Equal(t, source.ip, failure.Ip, "redacting API views does not erase the stored IP")
+				})
+			}
+		})
+	}
+}
+
+func TestLogIPRootEndpointsRejectLowerRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, role := range []int{0, common.RoleCommonUser, common.RoleAdminUser} {
+		for _, endpoint := range []struct {
+			name    string
+			handler gin.HandlerFunc
+		}{
+			{"error list", GetAllErrorLogs},
+			{"error CSV", ExportErrorLogsCSV},
+			{"request CSV", ExportLogsCSV},
+		} {
+			t.Run(fmt.Sprintf("%s role=%d", endpoint.name, role), func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(recorder)
+				ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log", nil)
+				ctx.Set("role", role)
+				endpoint.handler(ctx)
+				assert.Equal(t, http.StatusForbidden, recorder.Code)
+			})
+		}
 	}
 }
 

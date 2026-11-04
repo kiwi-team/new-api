@@ -32,6 +32,7 @@ export type ErrorLog = {
   param: string
   code: string
   request_id: string
+  upstream_request_id?: string
   status_code: number
   use_time_ms: number
   ip: string

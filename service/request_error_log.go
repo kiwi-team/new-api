@@ -86,12 +86,12 @@ func RecordRequestError(c *gin.Context, apiErr *types.NewAPIError) {
 	if state.recorded[identity] {
 		return
 	}
-	saveRequestError(c, apiErr.ToOpenAIError(), c.GetInt("channel_id"), c.GetString("channel_name"), time.Since(state.started).Milliseconds(), !c.GetBool(common.KeyChannelRaceAttempt))
+	saveRequestError(c, apiErr.ToOpenAIError(), c.GetInt("channel_id"), c.GetString("channel_name"), c.GetString(common.UpstreamRequestIdKey), time.Since(state.started).Milliseconds(), !c.GetBool(common.KeyChannelRaceAttempt))
 }
 
 // RecordChannelErrorLog deliberately keeps every attempt, including repeated
 // failures on the same channel. Only the later terminal response is deduplicated.
-func RecordChannelErrorLog(c *gin.Context, channel types.ChannelError, apiErr *types.NewAPIError, elapsed int64, includeBody bool) {
+func RecordChannelErrorLog(c *gin.Context, channel types.ChannelError, apiErr *types.NewAPIError, elapsed int64, includeBody bool, upstreamRequestId string) {
 	if apiErr == nil {
 		return
 	}
@@ -101,7 +101,7 @@ func RecordChannelErrorLog(c *gin.Context, channel types.ChannelError, apiErr *t
 	if state.invalidToken {
 		return
 	}
-	saveRequestError(c, apiErr.ToOpenAIError(), channel.ChannelId, channel.ChannelName, elapsed, includeBody)
+	saveRequestError(c, apiErr.ToOpenAIError(), channel.ChannelId, channel.ChannelName, upstreamRequestId, elapsed, includeBody)
 	state.recorded[requestErrorIdentity{channel.ChannelId, apiErr.StatusCode, string(apiErr.GetErrorCode()), apiErr.Error()}] = true
 }
 
@@ -188,7 +188,7 @@ func ClientError(c *gin.Context, apiErr *types.NewAPIError) *types.NewAPIError {
 	return &clientErr
 }
 
-func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, channelName string, elapsed int64, includeBody bool) {
+func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, channelName string, upstreamRequestId string, elapsed int64, includeBody bool) {
 	if !common.SaveErrorLog {
 		return
 	}
@@ -211,7 +211,7 @@ func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, c
 	if value, ok := c.Get(common.KeyBodyStorage); ok && includeBody {
 		if storage, ok := value.(common.BodyStorage); ok && storage != nil {
 			if data, err := storage.Bytes(); err == nil {
-				body = RedactGeminiFileRequest(c, string(data))
+				body = string(data)
 			}
 		}
 	}
@@ -229,7 +229,7 @@ func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, c
 	}
 	if err := model.SaveErrorLog(c.GetInt("id"), channelID, channelName,
 		common.GetContextKeyString(c, constant.ContextKeyOriginalModel), apiErr, body,
-		c.GetHeader("Content-Type"), c.GetString(common.RequestIdKey), c.ClientIP(),
+		c.GetHeader("Content-Type"), c.GetString(common.RequestIdKey), upstreamRequestId, c.ClientIP(),
 		common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		common.GetContextKeyString(c, constant.ContextKeyClientUserId),
 		common.GetContextKeyString(c, constant.ContextKeyClientScenairo),

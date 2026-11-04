@@ -3628,6 +3628,7 @@
     "io.net Deployments": "Déploiements io.net",
     "IP": "IP",
     "IP Address": "Adresse IP",
+    "IP addresses are always recorded and are only visible to root users.": "Les adresses IP sont toujours enregistrées et visibles uniquement par les utilisateurs root.",
     "IP Filter Mode": "Mode de filtre IP",
     "IP Restriction": "Restriction IP",
     "IP Whitelist (supports CIDR)": "Liste blanche IP (supporte CIDR)",
