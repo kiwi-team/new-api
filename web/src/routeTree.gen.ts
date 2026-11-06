@@ -34,6 +34,7 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedAlertsIndexRouteImport } from './routes/_authenticated/alerts/index'
 import { Route as AuthenticatedBillIndexRouteImport } from './routes/_authenticated/bill/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
@@ -209,6 +210,12 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AuthenticatedAlertsIndexRoute =
+  AuthenticatedAlertsIndexRouteImport.update({
+    id: '/alerts/',
+    path: '/alerts/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedBillIndexRoute = AuthenticatedBillIndexRouteImport.update({
   id: '/bill/',
   path: '/bill/',
@@ -535,6 +542,7 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/alerts/': typeof AuthenticatedAlertsIndexRoute
   '/bill/': typeof AuthenticatedBillIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/client-user-quota/': typeof AuthenticatedClientUserQuotaIndexRoute
@@ -609,6 +617,7 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/alerts': typeof AuthenticatedAlertsIndexRoute
   '/bill': typeof AuthenticatedBillIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/client-user-quota': typeof AuthenticatedClientUserQuotaIndexRoute
@@ -687,6 +696,7 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/_authenticated/alerts/': typeof AuthenticatedAlertsIndexRoute
   '/_authenticated/bill/': typeof AuthenticatedBillIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/client-user-quota/': typeof AuthenticatedClientUserQuotaIndexRoute
@@ -764,6 +774,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/alerts/'
     | '/bill/'
     | '/channels/'
     | '/client-user-quota/'
@@ -838,6 +849,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/alerts'
     | '/bill'
     | '/channels'
     | '/client-user-quota'
@@ -915,6 +927,7 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
+    | '/_authenticated/alerts/'
     | '/_authenticated/bill/'
     | '/_authenticated/channels/'
     | '/_authenticated/client-user-quota/'
@@ -1156,6 +1169,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/user/reset'
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
+    }
+    '/_authenticated/alerts/': {
+      id: '/_authenticated/alerts/'
+      path: '/alerts'
+      fullPath: '/alerts/'
+      preLoaderRoute: typeof AuthenticatedAlertsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/bill/': {
       id: '/_authenticated/bill/'
@@ -1608,6 +1628,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedAlertsIndexRoute: typeof AuthenticatedAlertsIndexRoute
   AuthenticatedBillIndexRoute: typeof AuthenticatedBillIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedClientUserQuotaIndexRoute: typeof AuthenticatedClientUserQuotaIndexRoute
@@ -1646,6 +1667,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedAlertsIndexRoute: AuthenticatedAlertsIndexRoute,
   AuthenticatedBillIndexRoute: AuthenticatedBillIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedClientUserQuotaIndexRoute:

@@ -671,6 +671,9 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 // Submit through the real persistence/billing boundary, then settle a reloaded
 // task without its HTTP context. Every balance and log must retain attribution.
 func TestTaskBillingAttributionDatabase(t *testing.T) {
+	// Other provider tests can leave durable fallback events. This fixture must
+	// never replay their unrelated user IDs into its accounting database.
+	t.Setenv("QUOTA_DATA_SPOOL_DIR", t.TempDir())
 	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{},
 		&model.QuotaData{}, &model.QuotaDataEventRecord{}, &model.QuotaDataAppliedEvent{}, &model.CliendUserQuota{}, &model.ProjectAllocation{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB

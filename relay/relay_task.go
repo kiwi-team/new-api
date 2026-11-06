@@ -668,12 +668,26 @@ func tryRealtimeFetch(c *gin.Context, task *model.Task, isOpenAIVideoAPI bool) (
 	if err != nil || ti == nil {
 		return nil, false
 	}
+	if ti.Status == "" || ti.Status == model.TaskStatusUnknown {
+		return nil, false
+	}
 	// 已完成任务只补取结果地址；上游记录过期或查询失败不能撤销成功态、触发退款。
 	if task.Status == model.TaskStatusSuccess && ti.Status != model.TaskStatusSuccess {
 		return nil, false
 	}
+	// Billing retries belong to the persisted polling queue and its CAS claim.
+	// A client refresh must not race that claim or settle the reservation again.
+	if task.Status == model.TaskStatusSuccess && task.PrivateData.BillingPending {
+		return realtimeFetchRespBody(task, ti, task.Data, isOpenAIVideoAPI)
+	}
 
 	snap := task.Snapshot()
+	if snap.Status != model.TaskStatusSuccess && ti.Status == model.TaskStatusSuccess {
+		task.PrivateData.BillingPending = ti.BillingPending
+	}
+	if len(ti.PluginState) > 0 {
+		task.PrivateData.PluginState = ti.PluginState
+	}
 
 	// 将上游最新状态更新到 task
 	if ti.Status != "" {

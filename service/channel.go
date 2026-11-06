@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -32,6 +34,14 @@ func shouldCloseActiveWebSocketsAfterDisable(channelId int) bool {
 
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mode, modeErr := model.AlertChannelProtectionMode(ctx, channelError.ChannelId)
+	if modeErr != nil || mode == "scoped" {
+		// Scoped callers must supply a routing model through ProcessChannelError.
+		// A legacy callback with only channel ID cannot widen that protection.
+		return
+	}
 	common.SysLog(common.LogText("channel %q (#%d) failed, disabling it, reason: %s", channelError.ChannelName, channelError.ChannelId, common.LocalLogPreview(reason)))
 
 	// 检查是否启用自动禁用功能
@@ -40,7 +50,7 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		return
 	}
 
-	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
+	success := model.DisableLegacyAlertChannel(ctx, channelError.ChannelId, channelError.UsingKey, reason)
 	if success {
 		if shouldCloseActiveWebSocketsAfterDisable(channelError.ChannelId) {
 			CloseActiveWebSocketsForChannel(channelError.ChannelId, ChannelDisabledCloseReason)

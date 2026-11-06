@@ -1,9 +1,11 @@
 package model
 
 import (
+	"context"
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -24,6 +26,9 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 // then task_plugin_identity) for error attribution.
 func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.ChannelFilter) (bool, dto.ChannelFilterKind) {
 	if ch == nil {
+		return false, ""
+	}
+	if CheckChannelModelAvailability(context.Background(), ch.Id, modelName) != nil {
 		return false, ""
 	}
 	for _, kind := range filterEvalOrder {
@@ -48,6 +53,15 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 		return ids, ""
 	}
 	kept = ids
+	if common.AlertingControlsEnabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		var err error
+		kept, err = FilterAlertAvailableChannels(ctx, ids, modelName)
+		cancel()
+		if err != nil {
+			return nil, ""
+		}
+	}
 	for _, kind := range filterEvalOrder {
 		kindFilters := filtersByKind(filters, kind)
 		if len(kindFilters) == 0 {

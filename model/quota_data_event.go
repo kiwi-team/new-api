@@ -277,6 +277,7 @@ func applyQuotaDataEvents(ctx context.Context, events []QuotaDataEvent) error {
 			return errors.New("quota data receipt disappeared")
 		}
 		buckets := make(map[string]QuotaData)
+		var alertObservations []AlertObservation
 		for _, receipt := range receipts {
 			event := unique[receipt.EventID]
 			if receipt.PayloadHash != event.PayloadHash {
@@ -284,6 +285,9 @@ func applyQuotaDataEvents(ctx context.Context, events []QuotaDataEvent) error {
 			}
 			if receipt.ApplyToken != applyToken {
 				continue
+			}
+			if common.AlertingEnabled {
+				alertObservations = append(alertObservations, AlertUsageObservation(event))
 			}
 			q, exists := buckets[event.BucketKey]
 			if !exists {
@@ -298,6 +302,11 @@ func applyQuotaDataEvents(ctx context.Context, events []QuotaDataEvent) error {
 				}
 			}
 			buckets[event.BucketKey] = q
+		}
+		if len(alertObservations) > 0 {
+			if err := AcceptAlertObservationsTx(tx, alertObservations); err != nil {
+				return err
+			}
 		}
 		keys := make([]string, 0, len(buckets))
 		for key := range buckets {

@@ -179,6 +179,9 @@ func (w *raceResponseWriter) Write(data []byte) (int, error) {
 		return len(data), nil
 	}
 	w.ctx.Set(common.KeyChannelRaceResult, "winner")
+	if w.ctx.Request != nil {
+		common.AlertSpanFromContext(w.ctx.Request.Context()).ConfirmRaceWinner(w.ctx.Request.Context())
+	}
 	w.committed = true
 	copyHeaders(w.parent.Header(), w.header)
 	w.parent.WriteHeader(w.status)

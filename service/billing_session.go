@@ -164,7 +164,8 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 		_, imageRequest = s.relayInfo.Request.(*dto.ImageRequest)
 		imageRequest = imageRequest || s.relayInfo.ImageRequestCount > 0
 	}
-	if s.settled || s.refunded || s.trusted && !imageRequest || targetQuota <= s.preConsumedQuota {
+	strictReservation := imageRequest || s.relayInfo != nil && s.relayInfo.RelayFormat == types.RelayFormatOpenAIRealtime
+	if s.settled || s.refunded || s.trusted && !strictReservation || targetQuota <= s.preConsumedQuota {
 		return nil
 	}
 
@@ -173,7 +174,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 		return nil
 	}
 
-	if err := s.reserveFunding(delta, imageRequest); err != nil {
+	if err := s.reserveFunding(delta, strictReservation); err != nil {
 		return err
 	}
 	if err := s.reserveToken(delta); err != nil {
@@ -184,7 +185,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	s.preConsumedQuota += delta
 	s.tokenConsumed += delta
 	s.extraReserved += delta
-	if imageRequest {
+	if strictReservation {
 		s.trusted = false
 	}
 	s.syncRelayInfo()
@@ -257,8 +258,9 @@ func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) e
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
 		if requireAvailableQuota {
-			// Image quantity is known before submission, including retries and
-			// overrides. Reserve atomically instead of admitting wallet debt.
+			// Image submission and cumulative realtime updates must stop further
+			// generation when funds run out. Final settlement still retains any
+			// already incurred overage through WalletFunding.Settle.
 			if err := funding.PreConsume(delta); err != nil {
 				if errors.Is(err, ErrInsufficientWalletQuota) {
 					return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())

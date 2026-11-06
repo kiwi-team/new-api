@@ -228,24 +228,29 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent []*common.Message) {
+	billingUsage := usage
+	if relayInfo.RealtimeBillingUsage != nil {
+		billingUsage = relayInfo.RealtimeBillingUsage
+	}
 
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
 	}
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredRealtimeTokenParams(usage, tieredUsedVars))
+	tieredParams := BuildTieredRealtimeTokenParams(billingUsage, tieredUsedVars)
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredParams)
 	if tieredOk {
 		tieredResult = tieredRes
 	}
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	textInputTokens := usage.InputTokenDetails.TextTokens
-	textOutTokens := usage.OutputTokenDetails.TextTokens
+	textInputTokens := billingUsage.InputTokenDetails.TextTokens
+	textOutTokens := billingUsage.OutputTokenDetails.TextTokens
 
-	audioInputTokens := usage.InputTokenDetails.AudioTokens
-	audioOutTokens := usage.OutputTokenDetails.AudioTokens
-	videoInputTokens := usage.InputTokenDetails.VideoTokens
+	audioInputTokens := billingUsage.InputTokenDetails.AudioTokens
+	audioOutTokens := billingUsage.OutputTokenDetails.AudioTokens
+	videoInputTokens := billingUsage.InputTokenDetails.VideoTokens
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(modelName))
@@ -262,11 +267,13 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		InputDetails: TokenDetails{
 			TextTokens:  textInputTokens,
 			AudioTokens: audioInputTokens,
+			ImageTokens: billingUsage.InputTokenDetails.ImageTokens,
 			VideoTokens: videoInputTokens,
 		},
 		OutputDetails: TokenDetails{
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
+			ImageTokens: billingUsage.OutputTokenDetails.ImageTokens,
 		},
 		ModelName:      modelName,
 		UsePrice:       usePrice,
@@ -297,7 +304,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	totalTokens := usage.TotalTokens
 	var logContent []*common.Message
 	if tieredOk {
-		logContent = []*common.Message{tieredRealtimeLogContent(relayInfo, usage, tieredResult)}
+		logContent = []*common.Message{tieredRealtimeLogContent(relayInfo, billingUsage, tieredResult)}
 		if tieredResult == nil {
 			logContent = append(logContent, common.NewMessage("Settlement used the reserved quota"))
 		}
@@ -369,6 +376,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+		if details := usage.InputTokenDetails.CachedTokensDetails; relayInfo.RealtimeBillingUsage != nil || details != nil && details.AudioTokens != nil && tieredUsedVars["cr"] && tieredUsedVars["ai"] {
+			other.SetPublic("billing_tokens", map[string]float64{
+				"p": tieredParams.P, "c": tieredParams.C, "len": tieredParams.Len,
+				"cr": tieredParams.CR, "ai": tieredParams.AI, "ao": tieredParams.AO,
+				"cc": tieredParams.CC, "cc1h": tieredParams.CC1h,
+				"img": tieredParams.Img, "img_cr": tieredParams.ImgCR, "img_o": tieredParams.ImgO,
+			})
+		}
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 
@@ -383,6 +398,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
 		CompletionTokens: usage.OutputTokens,
+		CachedTokens:     usage.InputTokenDetails.CachedTokens,
 		ModelName:        logModel,
 		TokenName:        tokenName,
 		Quota:            quota,
@@ -445,6 +461,31 @@ func BuildTieredRealtimeTokenParams(usage *dto.RealtimeUsage, usedVars map[strin
 	img := float64(usage.InputTokenDetails.ImageTokens)
 	ao := float64(usage.OutputTokenDetails.AudioTokens)
 	imgO := float64(usage.OutputTokenDetails.ImageTokens)
+	if details := usage.InputTokenDetails.CachedTokensDetails; usedVars["cr"] && usedVars["ai"] && details != nil && details.AudioTokens != nil {
+		cachedAudio := *details.AudioTokens
+		cached := usage.InputTokenDetails.CachedTokens
+		audio := usage.InputTokenDetails.AudioTokens
+		valid := cachedAudio >= 0 && cachedAudio <= cached && cached <= usage.InputTokens &&
+			cachedAudio <= audio && audio <= usage.InputTokens-(cached-cachedAudio)
+		if valid {
+			remaining := cached - cachedAudio
+			for _, count := range []*int{details.TextTokens, details.ImageTokens} {
+				if count == nil {
+					continue
+				}
+				if *count < 0 || *count > remaining {
+					valid = false
+					break
+				}
+				remaining -= *count
+			}
+		}
+		if valid {
+			ai -= float64(cachedAudio)
+		} else {
+			common.SysError(common.LogText("invalid audio cache token breakdown; using aggregate cache billing"))
+		}
+	}
 	if usedVars["cr"] {
 		p -= cr
 	}
@@ -478,6 +519,9 @@ func BuildTieredRealtimeTokenParams(usage *dto.RealtimeUsage, usedVars map[strin
 func ReserveWssUsage(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
 	if relayInfo == nil || usage == nil {
 		return errors.New("invalid realtime billing state")
+	}
+	if relayInfo.RealtimeBillingUsage != nil {
+		usage = relayInfo.RealtimeBillingUsage
 	}
 
 	quotaInfo := QuotaInfo{

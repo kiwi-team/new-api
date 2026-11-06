@@ -52,6 +52,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { RelatedAlertsLink } from '@/features/alerts/components/related-alerts-link'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -263,6 +264,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <span className='sr-only'>{t('Open menu')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-48'>
+          <RelatedAlertsLink menu ownerID={0} channelID={channel.id} />
           {layout === 'card' && (
             <DropdownMenuItem onClick={handleEdit}>
               {t('Edit')}

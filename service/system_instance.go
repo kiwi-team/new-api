@@ -35,10 +35,11 @@ type SystemInstanceRoleInfo struct {
 }
 
 type SystemInstanceRuntimeInfo struct {
-	Version   string `json:"version"`
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-	StartedAt int64  `json:"started_at"`
+	AlertingBootID string `json:"alerting_boot_id"`
+	Version        string `json:"version"`
+	GOOS           string `json:"goos"`
+	GOARCH         string `json:"goarch"`
+	StartedAt      int64  `json:"started_at"`
 }
 
 type SystemInstanceHostInfo struct {
@@ -97,10 +98,11 @@ func ReportCurrentSystemInstance() error {
 			IsMaster: common.IsMasterNode,
 		},
 		Runtime: SystemInstanceRuntimeInfo{
-			Version:   common.Version,
-			GOOS:      runtime.GOOS,
-			GOARCH:    runtime.GOARCH,
-			StartedAt: common.StartTime,
+			AlertingBootID: common.AlertingBootID,
+			Version:        common.Version,
+			GOOS:           runtime.GOOS,
+			GOARCH:         runtime.GOARCH,
+			StartedAt:      common.StartTime,
 		},
 		Host: SystemInstanceHostInfo{
 			Hostname: hostname,

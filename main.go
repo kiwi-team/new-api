@@ -111,6 +111,10 @@ func main() {
 	go model.SyncOptions(common.SyncFrequency)
 
 	// 数据看板
+	// Install alert receipts and cutover guards before accounting replay or
+	// legacy executors can consume work left by the previous process.
+	service.StartSystemInstanceReporter()
+	service.StartAlerting()
 	quotaCtx, stopQuotaWorkers := context.WithCancel(context.Background())
 	quotaWorkersDone := model.StartQuotaDataWorkers(quotaCtx)
 	wsmanager.StartSubscriber(quotaCtx)
@@ -186,10 +190,6 @@ func main() {
 	// 		controller.DeleteErrorLogs()
 	// 	})
 	// }
-	// Report this process as a system instance so the System Info page can show
-	// all currently alive nodes in multi-instance deployments.
-	service.StartSystemInstanceReporter()
-
 	// Wire task polling adaptor factory (breaks service -> relay import cycle).
 	// Must run before the system task runner starts: the async_task_poll handler
 	// calls service.RunTaskPollingOnce, which needs this factory set.

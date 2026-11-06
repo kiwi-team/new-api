@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, renderHook } from '@testing-library/react'
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterContextProvider,
+} from '@tanstack/react-router'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,10 +32,12 @@ import {
   parseSidebarModulesAdmin,
   serializeSidebarModulesAdmin,
 } from '@/features/system-settings/maintenance/config'
+import { ROLE, type RoleValue } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useSidebarConfig } from '../use-sidebar-config'
 import { useSidebarData } from '../use-sidebar-data'
+import { useSidebarView } from '../use-sidebar-view'
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', {
@@ -72,6 +80,75 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   )
   return result
 }
+
+function sidebarForRole(role: RoleValue | null) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['status'], { SidebarModulesAdmin: '' })
+  client.setQueryData(['user-menu'], { topbar_mode: 'normal', pages: [] })
+  const router = createRouter({
+    routeTree: createRootRoute(),
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+  })
+  useAuthStore
+    .getState()
+    .auth.setUser(role === null ? null : { id: 1, username: 'alice', role })
+  function Wrapper(props: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>
+          {props.children}
+        </RouterContextProvider>
+      </QueryClientProvider>
+    )
+  }
+  return renderHook(() => useSidebarView(), { wrapper: Wrapper })
+}
+
+describe('alert center sidebar visibility', () => {
+  it.each([
+    { name: 'ordinary user', role: ROLE.USER },
+    { name: 'administrator', role: ROLE.ADMIN },
+    { name: 'user not loaded yet', role: null },
+  ])('hides the alert center for $name', ({ role }) => {
+    const { result } = sidebarForRole(role)
+
+    expect(
+      result.current.navGroups
+        .flatMap((group) => group.items)
+        .some((item) => item.url === '/alerts')
+    ).toBe(false)
+  })
+
+  it('shows the alert center for root', () => {
+    const { result } = sidebarForRole(ROLE.SUPER_ADMIN)
+
+    expect(
+      result.current.navGroups
+        .flatMap((group) => group.items)
+        .some((item) => item.url === '/alerts')
+    ).toBe(true)
+  })
+
+  it('hides the alert center when the current account changes from root to administrator', () => {
+    const { result } = sidebarForRole(ROLE.SUPER_ADMIN)
+
+    act(() => {
+      useAuthStore.getState().auth.setUser({
+        id: 1,
+        username: 'alice',
+        role: ROLE.ADMIN,
+      })
+    })
+
+    expect(
+      result.current.navGroups
+        .flatMap((group) => group.items)
+        .some((item) => item.url === '/alerts')
+    ).toBe(false)
+  })
+})
 
 describe('security sidebar visibility', () => {
   it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {
@@ -192,6 +269,7 @@ describe('merged sidebar navigation', () => {
     )
 
     expect(routesByGroup.general).toEqual([
+      '/alerts',
       '/dashboard/overview',
       '/dashboard/models',
       '/keys',

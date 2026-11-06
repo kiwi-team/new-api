@@ -162,6 +162,63 @@ func TestSecurityProofBindsIdentityAndOperation(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAuthTokenExpired)
 }
 
+func TestAlertProofBindsRuleOwnerRevisionAndRelease(t *testing.T) {
+	user := setupAuthSessionTestDB(t)
+	useTestSessionSecret(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.TwoFA{}, &model.PasskeyCredential{}))
+	previousPasswordLogin := common.PasswordLoginEnabled
+	common.PasswordLoginEnabled = true
+	t.Cleanup(func() { common.PasswordLoginEnabled = previousPasswordLogin })
+	bundle, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "alert-test")
+	require.NoError(t, err)
+	identity, err := ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	context := AlertManageContext{RuleID: 12, OwnerUserID: user.Id, ExpectedRevision: 5, ConfigHash: model.AlertIdentity("rule-config"), Operation: "save"}
+	encoded, err := common.Marshal(context)
+	require.NoError(t, err)
+	operation := VerificationOperation{Scope: VerificationScopeAlertManage, Context: encoded}
+	binding, err := BindVerificationOperation(operation)
+	require.NoError(t, err)
+	proof, _, err := IssueSecurityProof(identity, VerificationMethodPassword, binding)
+	require.NoError(t, err)
+	for _, field := range []string{"rule", "owner", "revision", "config", "release"} {
+		t.Run(field, func(t *testing.T) {
+			changed := context
+			switch field {
+			case "rule":
+				changed.RuleID++
+			case "owner":
+				changed.OwnerUserID++
+			case "revision":
+				changed.ExpectedRevision++
+			case "config":
+				changed.ConfigHash = model.AlertIdentity("different-config")
+			case "release":
+				changed.Operation = "release"
+			}
+			data, err := common.Marshal(changed)
+			require.NoError(t, err)
+			other, err := BindVerificationOperation(VerificationOperation{Scope: VerificationScopeAlertManage, Context: data})
+			require.NoError(t, err)
+			_, err = verifySecurityProof(proof, identity, other)
+			assert.ErrorIs(t, err, ErrProofContext)
+		})
+	}
+	_, err = ConsumeOperationProof(proof, identity, operation)
+	require.NoError(t, err)
+	_, err = ConsumeOperationProof(proof, identity, operation)
+	assert.ErrorIs(t, err, ErrProofConsumed)
+	claims, err := parseAuthClaims(proof, securityProofTokenUse, authSigningKey(securityProofTokenUse))
+	require.NoError(t, err)
+	claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
+	expired, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(securityProofTokenUse))
+	require.NoError(t, err)
+	_, err = ConsumeOperationProof(expired, identity, operation)
+	assert.ErrorIs(t, err, ErrAuthTokenExpired)
+	_, err = BindVerificationOperation(VerificationOperation{Scope: VerificationScopeAlertManage, Context: []byte(`{"operation":"save"}`)})
+	assert.ErrorIs(t, err, ErrVerificationContextInvalid)
+}
+
 func TestSecurityProofBindsAccessTokenSession(t *testing.T) {
 	setupAuthSessionTestDB(t)
 	useTestSessionSecret(t)

@@ -110,6 +110,37 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 	}
 }
 
+func TestSeeduplexBuiltinBillingAndAdministratorOverride(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	expression, ok := billing_setting.GetBillingExpr("seeduplex-1.2.6.1")
+	require.True(t, ok)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode("seeduplex-1.2.6.1"))
+	result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{
+		ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+	}, billingexpr.TokenParams{P: 100, AI: 200, CR: 700, C: 50, AO: 60, Len: 1000})
+	require.NoError(t, err)
+	assert.Equal(t, 3125, result.ActualQuotaAfterGroup, "CNY 0.0425 / 6.8 USD * 500000")
+
+	settings.BillingMode["seeduplex-1.2.6.1"] = billing_setting.BillingModeTieredExpr
+	settings.BillingExpr["seeduplex-1.2.6.1"] = `tier("custom", p * 1)`
+	actual, ok := billing_setting.GetBillingExpr("seeduplex-1.2.6.1")
+	require.True(t, ok)
+	assert.Equal(t, settings.BillingExpr["seeduplex-1.2.6.1"], actual)
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"seeduplex-1.2.6.1":0}`))
+	assert.Equal(t, billing_setting.BillingModeRatio, billing_setting.GetBillingMode("seeduplex-1.2.6.1"), "preserve explicit free legacy prices")
+}
+
 func TestJevBuiltinBillingUsesInputTokensOnly(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings

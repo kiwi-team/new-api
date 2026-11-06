@@ -1,9 +1,11 @@
 package common
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/smtp"
 	"slices"
 	"strings"
@@ -41,41 +43,60 @@ func smtpTLSConfig() *tls.Config {
 	}
 }
 
-func newSMTPClient(addr string) (*smtp.Client, error) {
+// newSMTPClient shares one bounded TLS/STARTTLS handshake with every mail path.
+func newSMTPClient(ctx context.Context, addr string) (*smtp.Client, error) {
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	var conn net.Conn
+	var err error
 	if SMTPSSLEnabled || (SMTPPort == 465 && !SMTPStartTLSEnabled) {
-		conn, err := tls.Dial("tcp", addr, smtpTLSConfig())
-		if err != nil {
-			return nil, err
-		}
-		client, err := smtp.NewClient(conn, SMTPServer)
-		if err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
-		return client, nil
+		tlsDialer := tls.Dialer{NetDialer: &dialer, Config: smtpTLSConfig()}
+		conn, err = tlsDialer.DialContext(ctx, "tcp", addr)
+	} else {
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
-
-	client, err := smtp.Dial(addr)
 	if err != nil {
 		return nil, err
 	}
-
-	if SMTPStartTLSEnabled {
-		startTLSSupported, _ := client.Extension("STARTTLS")
-		if !startTLSSupported {
-			_ = client.Close()
+	success := false
+	defer func() {
+		if !success {
+			_ = conn.Close()
+		}
+	}()
+	deadline := time.Now().Add(15 * time.Second)
+	if limit, ok := ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	client, err := smtp.NewClient(conn, SMTPServer)
+	if err != nil {
+		return nil, err
+	}
+	if SMTPStartTLSEnabled && !SMTPSSLEnabled {
+		if supported, _ := client.Extension("STARTTLS"); !supported {
 			return nil, fmt.Errorf("SMTP server does not support STARTTLS")
 		}
 		if err := client.StartTLS(smtpTLSConfig()); err != nil {
-			_ = client.Close()
 			return nil, err
 		}
 	}
-
+	success = true
 	return client, nil
 }
 
 func SendEmail(subject string, receiver string, content string) error {
+	return SendEmailContext(context.Background(), subject, receiver, content)
+}
+
+// SendEmailContext bounds both dialing and the complete SMTP exchange. Alert
+// delivery leases must not be held forever by a peer that stops responding.
+func SendEmailContext(ctx context.Context, subject string, receiver string, content string) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	if SMTPFrom == "" { // for compatibility
 		SMTPFrom = SMTPAccount
 	}
@@ -97,12 +118,13 @@ func SendEmail(subject string, receiver string, content string) error {
 	auth := getSMTPAuth()
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")
-	var err error
-	client, err := newSMTPClient(addr)
+	client, err := newSMTPClient(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
 	if shouldAuthenticateSMTP() {
 		if err = client.Auth(auth); err != nil {
 			return err

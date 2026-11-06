@@ -279,7 +279,24 @@ type RelayInfo struct {
 	WsRequestMessages []string
 	// WsResponseMessages collects non-binary upstream→client WebSocket messages for logging.
 	WsResponseMessages []string
-	VoideId            string
+	// RealtimeUsageIncomplete marks sessions whose upstream usage could not be fully verified.
+	RealtimeUsageIncomplete bool
+	// RealtimeBillingUsage is a provider-normalized copy used by both reservation
+	// and settlement. The handler's returned usage remains the raw statistics.
+	RealtimeBillingUsage       *dto.RealtimeUsage
+	RealtimeResponseCount      int
+	RealtimeDuplicateResponses int
+	RealtimeUsageDiagnostics   []RealtimeUsageDiagnostic
+	VoideId                    string
+}
+
+type RealtimeUsageDiagnostic struct {
+	ResponseID               string `json:"response_id,omitempty"`
+	Status                   string `json:"status,omitempty"`
+	Reason                   string `json:"reason"`
+	Event                    string `json:"event,omitempty"`
+	InputUnclassifiedTokens  int    `json:"input_unclassified_tokens,omitempty"`
+	OutputUnclassifiedTokens int    `json:"output_unclassified_tokens,omitempty"`
 }
 
 // UpdateImageCount replaces the billable quantity without changing the frozen
@@ -1128,6 +1145,7 @@ const (
 	RefTypeVideo   = "video"
 	RefTypeAudio   = "audio"
 	RefTypeElement = "element"
+	RefTypeVoice   = "voice"
 )
 
 // 统一的素材角色（TaskReference.Role）。各 adaptor 负责翻译成上游方言。
@@ -1139,20 +1157,23 @@ const (
 	RefRoleBaseVideo      = "base_video"
 	RefRoleReferenceAudio = "reference_audio"
 	RefRoleElement        = "element"
+	RefRoleMiddleFrame    = "middle_frame"
+	RefRoleVoice          = "voice"
 )
 
 // TaskReference 是 /v1/videos 统一的多模态素材条目。
 // 顺序即上游数组顺序：提示词中的指代（阿里“图1”、可灵“@id”等）依赖该顺序，
 // 因此归一化过程中不得重排 References。
 type TaskReference struct {
-	Type          string `json:"type"`                     // image / video / audio / element
-	Role          string `json:"role"`                     // first_frame / reference_image / ...
-	URL           string `json:"url,omitempty"`            // 公网 URL、data URI 或裸 base64
-	ID            string `json:"id,omitempty"`             // 素材索引 ID，供 prompt 内指代（可灵）
-	ElementID     string `json:"element_id,omitempty"`     // 主体 ID（可灵 element）
-	ReferenceType string `json:"reference_type,omitempty"` // Veo referenceType，如 asset
-	VoiceURL      string `json:"voice_url,omitempty"`      // 单素材音色参考（wan2.7 reference_voice）
-	MimeType      string `json:"mime_type,omitempty"`      // 可选，缺省时由内容嗅探
+	Type          string  `json:"type"`                     // image / video / audio / element
+	Role          string  `json:"role"`                     // first_frame / reference_image / ...
+	URL           string  `json:"url,omitempty"`            // 公网 URL、data URI 或裸 base64
+	ID            string  `json:"id,omitempty"`             // 素材索引 ID，供 prompt 内指代（可灵）
+	ElementID     string  `json:"element_id,omitempty"`     // 主体 ID（可灵 element）
+	VoiceID       *string `json:"voice_id,omitempty"`       // 音色 ID（可灵 voice）
+	ReferenceType string  `json:"reference_type,omitempty"` // Veo referenceType，如 asset
+	VoiceURL      string  `json:"voice_url,omitempty"`      // 单素材音色参考（wan2.7 reference_voice）
+	MimeType      string  `json:"mime_type,omitempty"`      // 可选，缺省时由内容嗅探
 }
 
 type TaskSubmitReq struct {
@@ -1326,6 +1347,7 @@ type TaskInfo struct {
 	WorldMarbleUrl         string             `json:"world_marble_url,omitempty"`
 	UsageFacts             map[string]any     `json:"usage_facts,omitempty"`
 	PluginState            json.RawMessage    `json:"plugin_state,omitempty"`
+	BillingPending         bool               `json:"billing_pending,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

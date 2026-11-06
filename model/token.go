@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,6 +15,9 @@ import (
 )
 
 type Token struct {
+	// Transient management intent; these never enter cached credentials or SQL schema.
+	SkipAlertThresholdUpdate bool    `json:"-" gorm:"-"`
+	ResetAlertBaseline       bool    `json:"-" gorm:"-"`
 	Id                       int     `json:"id"`
 	AuthVersion              int64   `json:"-" gorm:"not null;default:1"`
 	UserId                   int     `json:"user_id" gorm:"index"`
@@ -257,6 +261,14 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	}
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
+		// A stale Redis snapshot cannot undo a committed alert revocation.
+		held, holdErr := AlertTokenHeld(context.Background(), token.Id)
+		if holdErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrDatabase, holdErr)
+		}
+		if held {
+			return token, ErrTokenInvalid
+		}
 		if token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusExhausted {
 			return token, ErrTokenInvalid
 		}
@@ -343,17 +355,32 @@ func (token *Token) Insert() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
+func (token *Token) Update() error { return token.UpdateWithContext(context.Background()) }
+
+func (token *Token) UpdateWithContext(ctx context.Context) (err error) {
 	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Update("auth_version", gorm.Expr("auth_version + 1")).Error; err != nil {
 			return err
 		}
-		return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-			"model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_rules_high_priority", "channel_ratios", "cross_group_retry", "auto_groups", "alert_threshold", "allow_user_quota_query").Updates(token).Error
+		if token.ResetAlertBaseline {
+			var used int
+			if err := tx.Model(&QuotaData{}).Where("token_id = ?", token.Id).Select("COALESCE(SUM(quota),0)").Scan(&used).Error; err != nil {
+				return err
+			}
+			token.AlertNotifiedQuota, token.AlertLastNotifiedTime = used, common.GetTimestamp()
+			if err := tx.Model(&Token{}).Where("id = ?", token.Id).Updates(map[string]any{"alert_notified_quota": used, "alert_last_notified_time": token.AlertLastNotifiedTime}).Error; err != nil {
+				return err
+			}
+		}
+		fields := []string{"name", "status", "expired_time", "remain_quota", "unlimited_quota", "model_limits_enabled", "model_limits", "allow_ips", "group", "channel_rules", "channel_rules_high_priority", "channel_ratios", "cross_group_retry", "auto_groups", "allow_user_quota_query"}
+		if !token.SkipAlertThresholdUpdate {
+			fields = append(fields, "alert_threshold")
+		}
+		return tx.Model(token).Select(fields).Updates(token).Error
 	})
 }
 

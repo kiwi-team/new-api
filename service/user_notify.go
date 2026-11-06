@@ -2,10 +2,14 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/QuantumNous/new-api/service/alerting"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -81,6 +85,18 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 		return fmt.Errorf("notification limit exceeded for user %d with type %s", userId, notifyType)
 	}
 
+	content := data.Content
+	for _, value := range data.Values {
+		content = strings.Replace(content, dto.ContentValueParam, fmt.Sprint(value), 1)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return alerting.DispatchLegacyNotice(ctx, "user_notifications", strconv.Itoa(userId), model.AlertIdentity(data.Type, data.Title, content, time.Now().Unix()/60), strconv.Itoa(userId), alerting.LegacyNotice{Type: data.Type, Title: data.Title, Content: content, Values: data.Values}, func(ctx context.Context) error {
+		return sendLegacyUserNotify(ctx, userId, userEmail, userSetting, data, notifyType)
+	})
+}
+
+func sendLegacyUserNotify(ctx context.Context, userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify, notifyType string) error {
 	switch notifyType {
 	case dto.NotifyTypeEmail:
 		// 优先使用设置中的通知邮箱，如果为空则使用用户的默认邮箱
@@ -92,7 +108,7 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 			common.SysLog(common.LogText("user %d has no email, skip sending email", userId))
 			return nil
 		}
-		return sendEmailNotify(emailToUse, data)
+		return sendEmailNotify(emailToUse, data, ctx)
 	case dto.NotifyTypeWebhook:
 		webhookURLStr := userSetting.WebhookUrl
 		if webhookURLStr == "" {
@@ -102,14 +118,14 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 
 		// 获取 webhook secret
 		webhookSecret := userSetting.WebhookSecret
-		return SendWebhookNotify(webhookURLStr, webhookSecret, data)
+		return SendWebhookNotify(webhookURLStr, webhookSecret, data, ctx)
 	case dto.NotifyTypeBark:
 		barkURL := userSetting.BarkUrl
 		if barkURL == "" {
 			common.SysLog(common.LogText("user %d has no bark url, skip sending bark", userId))
 			return nil
 		}
-		return sendBarkNotify(barkURL, data)
+		return sendBarkNotify(barkURL, data, ctx)
 	case dto.NotifyTypeGotify:
 		gotifyUrl := userSetting.GotifyUrl
 		gotifyToken := userSetting.GotifyToken
@@ -117,22 +133,30 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 			common.SysLog(common.LogText("user %d has no gotify url or token, skip sending gotify", userId))
 			return nil
 		}
-		return sendGotifyNotify(gotifyUrl, gotifyToken, userSetting.GotifyPriority, data)
+		return sendGotifyNotify(gotifyUrl, gotifyToken, userSetting.GotifyPriority, data, ctx)
 	}
 	return nil
 }
 
-func sendEmailNotify(userEmail string, data dto.Notify) error {
+func sendEmailNotify(userEmail string, data dto.Notify, contexts ...context.Context) error {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	// make email content
 	content := data.Content
 	// 处理占位符
 	for _, value := range data.Values {
 		content = strings.Replace(content, dto.ContentValueParam, fmt.Sprintf("%v", value), 1)
 	}
-	return common.SendEmail(data.Title, userEmail, content)
+	return common.SendEmailContext(ctx, data.Title, userEmail, content)
 }
 
-func sendBarkNotify(barkURL string, data dto.Notify) error {
+func sendBarkNotify(barkURL string, data dto.Notify, contexts ...context.Context) error {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	// 处理占位符
 	content := data.Content
 	for _, value := range data.Values {
@@ -159,7 +183,7 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 			},
 		}
 
-		resp, err = DoWorkerRequest(workerReq)
+		resp, err = DoWorkerRequest(workerReq, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to send bark request through worker: %v", err)
 		}
@@ -176,7 +200,7 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 		}
 
 		// 直接发送请求
-		req, err = http.NewRequest(http.MethodGet, finalURL, nil)
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, finalURL, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create bark request: %v", err)
 		}
@@ -201,7 +225,11 @@ func sendBarkNotify(barkURL string, data dto.Notify) error {
 	return nil
 }
 
-func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data dto.Notify) error {
+func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data dto.Notify, contexts ...context.Context) error {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	// 处理占位符
 	content := data.Content
 	for _, value := range data.Values {
@@ -252,7 +280,7 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 			Body: payloadBytes,
 		}
 
-		resp, err = DoWorkerRequest(workerReq)
+		resp, err = DoWorkerRequest(workerReq, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to send gotify request through worker: %v", err)
 		}
@@ -269,7 +297,7 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 		}
 
 		// 直接发送请求
-		req, err = http.NewRequest(http.MethodPost, finalURL, bytes.NewBuffer(payloadBytes))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, finalURL, bytes.NewBuffer(payloadBytes))
 		if err != nil {
 			return fmt.Errorf("failed to create gotify request: %v", err)
 		}

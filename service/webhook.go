@@ -2,10 +2,10 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,7 +33,12 @@ func generateSignature(secret string, payload []byte) string {
 }
 
 // SendWebhookNotify 发送 webhook 通知
-func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error {
+func SendWebhookNotify(webhookURL string, secret string, data dto.Notify, contexts ...context.Context) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	// 处理占位符
 	content := data.Content
 	for _, value := range data.Values {
@@ -78,7 +83,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 			workerReq.Headers["Authorization"] = "Bearer " + secret
 		}
 
-		resp, err = DoWorkerRequest(workerReq)
+		resp, err = DoWorkerRequest(workerReq, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to send webhook request through worker: %v", err)
 		}
@@ -94,7 +99,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 			return fmt.Errorf("request reject: %v", err)
 		}
 
-		req, err = http.NewRequest(http.MethodPost, webhookURL, bytes.NewBuffer(payloadBytes))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBuffer(payloadBytes))
 		if err != nil {
 			return fmt.Errorf("failed to create webhook request: %v", err)
 		}
@@ -126,12 +131,19 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 }
 
 func SendFeishuNotify(webhookURL string, secret string, data dto.FeishuNotify) error {
+	return SendFeishuNotifyContext(context.Background(), webhookURL, secret, data)
+}
+
+func SendFeishuNotifyContext(ctx context.Context, webhookURL string, secret string, data dto.FeishuNotify) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
 	// 序列化负载
-	payloadBytes, err := json.Marshal(data)
+	payloadBytes, err := common.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal webhook payload: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create webhook request: %v", err)
 	}

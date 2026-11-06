@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 
@@ -133,6 +134,9 @@ func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {
 			require.True(t, foundResponses, "openai_responses claim must be present")
 			assert.Equal(t, []string{"stream", "sync", "background"}, responsesClaim.Supports)
 			for _, model := range plugin.Meta.Models {
+				if len(responsesClaim.Models) > 0 && !slices.Contains(responsesClaim.Models, model) {
+					continue
+				}
 				binding, claimed := registry.Generation().LookupEndpoint("POST", "/v1/responses", model)
 				require.True(t, claimed, model)
 				assert.Same(t, plugin, binding.Plugin)

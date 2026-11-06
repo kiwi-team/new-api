@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"strconv"
@@ -282,6 +283,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "key_quota_warning_config" || IsLegacyNoticeOption(key) {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if key == model_setting.GeminiFileRoutingKey || key == model_setting.LargeFileChannelsKey {
 		return UpdateOptionsBulk(map[string]string{key: value})
 	}
@@ -319,6 +323,34 @@ func UpdateOption(key string, value string) error {
 // is touched — safe for callers that must commit a set of related options
 // atomically (e.g. payment gateway binding).
 func UpdateOptionsBulk(values map[string]string) error {
+	if common.AlertingControlsEnabled {
+		for key := range values {
+			if IsLegacyNoticeOption(key) {
+				return WithLegacyNoticeLease(context.Background(), "", "site", func(ctx context.Context) error {
+					if err := ValidateLegacyNoticeEdit(ctx, values); err != nil {
+						return err
+					}
+					return updateOptionsWithKeyQuotaFence(ctx, values)
+				})
+			}
+		}
+	}
+	return updateOptionsWithKeyQuotaFence(context.Background(), values)
+}
+
+func updateOptionsWithKeyQuotaFence(ctx context.Context, values map[string]string) error {
+	if raw, ok := values["key_quota_warning_config"]; ok && common.AlertingControlsEnabled {
+		return WithLegacyAlertLease(ctx, "quota_options", "key", func(ctx context.Context) error {
+			if err := ValidateLegacyKeyQuotaEdit(ctx, raw); err != nil {
+				return err
+			}
+			return updateOptionsBulk(ctx, values)
+		})
+	}
+	return updateOptionsBulk(ctx, values)
+}
+
+func updateOptionsBulk(ctx context.Context, values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -353,7 +385,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 		}
 	}
 
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {

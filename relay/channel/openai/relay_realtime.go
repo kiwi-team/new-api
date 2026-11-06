@@ -14,6 +14,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.RealtimeUsage) {
@@ -34,6 +35,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	tracker := service.NewRealtimeAlertTracker(common.AlertHealthEvent{RequestID: c.GetString(common.RequestIdKey), UserID: info.UserId, TokenID: c.GetInt("token_id"), ChannelID: info.ChannelId, ChannelName: c.GetString("channel_name"), Model: info.OriginModelName})
+	defer tracker.Close(c.Request.Context())
 
 	gopool.Go(func() {
 		defer func() {
@@ -62,6 +65,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				if err := tracker.Admit(c.Request.Context(), realtimeEvent.Type); err != nil {
+					errChan <- err
+					return
+				}
 				if realtimeEvent.Type == dto.RealtimeEventTypeSessionUpdate {
 					if realtimeEvent.Session != nil {
 						if realtimeEvent.Session.Tools != nil {
@@ -122,6 +129,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				tracker.Observe(c.Request.Context(), realtimeEvent.Type, gjson.GetBytes(message, "response.status").String(), realtimeEvent.Delta != "")
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {

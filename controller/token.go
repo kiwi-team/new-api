@@ -1,10 +1,13 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -35,13 +38,15 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	UserID     *int                 `json:"user_id"`
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	AlertThreshold *float64             `json:"alert_threshold"`
+	UserID         *int                 `json:"user_id"`
+	AutoGroups     tokenAutoGroupsInput `json:"auto_groups"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
 
 type tokenResponse struct {
+	AlertManaged bool `json:"alert_managed,omitempty"`
 	*model.Token
 	AutoGroups []string `json:"auto_groups"`
 }
@@ -88,7 +93,7 @@ func maxTokenQuota() int {
 	return quota
 }
 
-func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
+func maskTokenResponse(token *model.Token) *tokenResponse {
 	if token == nil {
 		return nil
 	}
@@ -108,9 +113,38 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
 	maskedTokens := make([]*tokenResponse, 0, len(tokens))
 	for _, token := range tokens {
-		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
+		maskedTokens = append(maskedTokens, maskTokenResponse(token))
+	}
+	if common.AlertingControlsEnabled && len(maskedTokens) > 0 {
+		ids := make([]string, 0, len(maskedTokens))
+		for _, response := range maskedTokens {
+			if response != nil {
+				ids = append(ids, strconv.Itoa(response.Id))
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var migrated []model.AlertMigration
+		if err := model.DB.WithContext(ctx).Select("object_id").Where("kind = ? AND executor = ? AND object_id IN ?", "token_spend", "unified", ids).Find(&migrated).Error; err == nil {
+			managed := map[string]bool{}
+			for _, migration := range migrated {
+				managed[migration.ObjectID] = true
+			}
+			for _, response := range maskedTokens {
+				if response != nil {
+					response.AlertManaged = managed[strconv.Itoa(response.Id)]
+				}
+			}
+		}
 	}
 	return maskedTokens
+}
+
+func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
+	if token == nil {
+		return nil
+	}
+	return buildMaskedTokenResponses([]*model.Token{token})[0]
 }
 
 func getTokenRequestUserGroup(c *gin.Context, userID int) (string, error) {
@@ -436,6 +470,9 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if request.AlertThreshold != nil {
+		token.AlertThreshold = *request.AlertThreshold
+	}
 	userID := c.GetInt("id")
 	if request.UserID != nil {
 		if *request.UserID <= 0 {
@@ -648,26 +685,6 @@ func UpdateToken(c *gin.Context) {
 			cleanToken.ChannelRatios = token.ChannelRatios
 		}
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.AlertThreshold < 0 {
-			token.AlertThreshold = 0
-		}
-		// 告警阈值变化时重置告警基线，避免改小阈值后立即补发大量历史告警
-		if cleanToken.AlertThreshold != token.AlertThreshold {
-			var currentUsed int
-			_ = model.DB.Table("quota_data").
-				Select("COALESCE(sum(quota),0)").
-				Where("token_id = ?", cleanToken.Id).
-				Scan(&currentUsed).Error
-			cleanToken.AlertNotifiedQuota = currentUsed
-			cleanToken.AlertLastNotifiedTime = common.GetTimestamp()
-			// 直接写入不走 Update() 的 Select 白名单
-			_ = model.DB.Model(&model.Token{}).Where("id = ?", cleanToken.Id).
-				Updates(map[string]interface{}{
-					"alert_notified_quota":     cleanToken.AlertNotifiedQuota,
-					"alert_last_notified_time": cleanToken.AlertLastNotifiedTime,
-				}).Error
-		}
-		cleanToken.AlertThreshold = token.AlertThreshold
 		if token.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
@@ -677,7 +694,25 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	// Only an explicit legacy threshold change takes the cutover lease.
+	// Other edits preserve the SQL setting and never reset its checkpoint.
+	cleanToken.SkipAlertThresholdUpdate = true
+	if statusOnly == "" && request.AlertThreshold != nil && max(*request.AlertThreshold, 0) != previous.AlertThreshold {
+		err = model.WithLegacyAlertLease(c.Request.Context(), "token_spend", strconv.Itoa(cleanToken.Id), func(ctx context.Context) error {
+			managed, err := model.LegacyAlertUsesUnified(ctx, "token_spend", strconv.Itoa(cleanToken.Id))
+			if err != nil {
+				return err
+			}
+			if managed {
+				return errors.New("This alert is managed in Alert center.")
+			}
+			cleanToken.AlertThreshold = max(*request.AlertThreshold, 0)
+			cleanToken.SkipAlertThresholdUpdate, cleanToken.ResetAlertBaseline = false, true
+			return cleanToken.UpdateWithContext(ctx)
+		})
+	} else {
+		err = cleanToken.UpdateWithContext(c.Request.Context())
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

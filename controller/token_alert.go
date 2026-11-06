@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -55,95 +57,105 @@ func runTokenKeyAlertOnce() {
 		return
 	}
 
-	// 用户设置按 user_id 缓存，避免重复读
-	userSettingCache := make(map[int]dto.UserSetting)
-	now := time.Now().Unix()
-
-	for _, t := range tokens {
-		if t.AlertThreshold <= 0 {
-			continue
+	for _, token := range tokens {
+		err := model.WithLegacyAlertLease(context.Background(), "token_spend", strconv.Itoa(token.Id), func(ctx context.Context) error { return processTokenKeyAlert(ctx, token.Id) })
+		if err != nil && err != model.ErrAlertConflict {
+			common.SysError(common.LogText("legacy key alert evaluation failed"))
 		}
-		thresholdQuota := int(t.AlertThreshold * common.QuotaPerUnit)
-		if thresholdQuota <= 0 {
-			continue
-		}
-
-		var currentUsed int
-		if err := model.DB.Table("quota_data").
-			Select("COALESCE(sum(quota),0)").
-			Where("token_id = ?", t.Id).
-			Scan(&currentUsed).Error; err != nil {
-			common.SysError(fmt.Sprintf("TokenKeyAlert: sum quota failed token=%d: %s", t.Id, err.Error()))
-			continue
-		}
-
-		delta := currentUsed - t.AlertNotifiedQuota
-		if delta < thresholdQuota {
-			continue
-		}
-
-		// 获取用户 webhook
-		setting, ok := userSettingCache[t.UserId]
-		if !ok {
-			s, err := model.GetUserSetting(t.UserId, true)
-			if err != nil {
-				common.SysError(fmt.Sprintf("TokenKeyAlert: get user setting failed user=%d: %s", t.UserId, err.Error()))
-				// 避免没拿到设置时反复刷阈值 —— 先跳过本轮
-				continue
-			}
-			userSettingCache[t.UserId] = s
-			setting = s
-		}
-		webhook := setting.WebhookUrl
-		if webhook == "" {
-			// 用户未配置 webhook：仅将基线前移，防止后续无效检测反复累积
-			_ = updateTokenAlertCheckpoint(t.Id, currentUsed, now)
-			continue
-		}
-
-		// 时间范围：上次告警到现在（首次则从令牌创建时间起）
-		start := t.AlertLastNotifiedTime
-		if start <= 0 {
-			start = t.CreatedTime
-		}
-		deltaUSD := float64(delta) / common.QuotaPerUnit
-
-		tokenName := t.Name
-		if tokenName == "" {
-			tokenName = fmt.Sprintf("ID:%d", t.Id)
-		}
-
-		content := fmt.Sprintf(
-			"Key消耗预警\nKey名称：%s\n时间范围：%s ~ %s\n本次新增消耗：$%.2f\n告警阈值：$%.2f\n累计消耗：$%.2f",
-			tokenName,
-			time.Unix(start, 0).Format("2006-01-02 15:04:05"),
-			time.Unix(now, 0).Format("2006-01-02 15:04:05"),
-			deltaUSD,
-			t.AlertThreshold,
-			float64(currentUsed)/common.QuotaPerUnit,
-		)
-
-		if err := service.SendFeishuNotify(webhook, "", dto.FeishuNotify{
-			MsgType: "text",
-			Content: dto.FeishuContent{Text: content},
-		}); err != nil {
-			common.SysError(fmt.Sprintf("TokenKeyAlert: send webhook failed token=%d user=%d: %s", t.Id, t.UserId, err.Error()))
-			// 发送失败不前移基线，下轮重试
-			continue
-		}
-
-		if err := updateTokenAlertCheckpoint(t.Id, currentUsed, now); err != nil {
-			common.SysError(fmt.Sprintf("TokenKeyAlert: update checkpoint failed token=%d: %s", t.Id, err.Error()))
-			continue
-		}
-		common.SysLog("TokenKeyAlert: " + content)
 	}
+}
+
+func processTokenKeyAlert(ctx context.Context, tokenID int) error {
+	unified, err := model.LegacyAlertUsesUnified(ctx, "token_spend", strconv.Itoa(tokenID))
+	if err != nil || unified {
+		return err
+	}
+	var t model.Token
+	if err = model.DB.WithContext(ctx).First(&t, tokenID).Error; err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	if t.AlertThreshold <= 0 {
+		return nil
+	}
+	thresholdQuota := int(t.AlertThreshold * common.QuotaPerUnit)
+	if thresholdQuota <= 0 {
+		return nil
+	}
+
+	var currentUsed int
+	if err := model.DB.WithContext(ctx).Table("quota_data").
+		Select("COALESCE(sum(quota),0)").
+		Where("token_id = ?", t.Id).
+		Scan(&currentUsed).Error; err != nil {
+		common.SysError(fmt.Sprintf("TokenKeyAlert: sum quota failed token=%d: %s", t.Id, err.Error()))
+		return nil
+	}
+
+	delta := currentUsed - t.AlertNotifiedQuota
+	if delta < thresholdQuota {
+		return nil
+	}
+
+	// Read settings inside the bounded migration lease; a stalled cache/database
+	// read must not leave an old sender running after a cutover.
+	var user model.User
+	if err := model.DB.WithContext(ctx).Select("id", "setting").First(&user, t.UserId).Error; err != nil {
+		return err
+	}
+	setting := user.GetSetting()
+	webhook := setting.WebhookUrl
+	if webhook == "" {
+		// 用户未配置 webhook：仅将基线前移，防止后续无效检测反复累积
+		_ = updateTokenAlertCheckpoint(t.Id, currentUsed, now)
+		return nil
+	}
+
+	// 时间范围：上次告警到现在（首次则从令牌创建时间起）
+	start := t.AlertLastNotifiedTime
+	if start <= 0 {
+		start = t.CreatedTime
+	}
+	deltaUSD := float64(delta) / common.QuotaPerUnit
+
+	tokenName := t.Name
+	if tokenName == "" {
+		tokenName = fmt.Sprintf("ID:%d", t.Id)
+	}
+
+	content := fmt.Sprintf(
+		"Key消耗预警\nKey名称：%s\n时间范围：%s ~ %s\n本次新增消耗：$%.2f\n告警阈值：$%.2f\n累计消耗：$%.2f",
+		tokenName,
+		time.Unix(start, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(now, 0).Format("2006-01-02 15:04:05"),
+		deltaUSD,
+		t.AlertThreshold,
+		float64(currentUsed)/common.QuotaPerUnit,
+	)
+
+	if err := service.SendFeishuNotifyContext(ctx, webhook, "", dto.FeishuNotify{
+		MsgType: "text",
+		Content: dto.FeishuContent{Text: content},
+	}); err != nil {
+		common.SysError(fmt.Sprintf("TokenKeyAlert: send webhook failed token=%d user=%d: %s", t.Id, t.UserId, err.Error()))
+		// 发送失败不前移基线，下轮重试
+		return nil
+	}
+
+	if err := updateTokenAlertCheckpoint(t.Id, currentUsed, now); err != nil {
+		common.SysError(fmt.Sprintf("TokenKeyAlert: update checkpoint failed token=%d: %s", t.Id, err.Error()))
+		return nil
+	}
+	common.SysLog("TokenKeyAlert: " + content)
+	return nil
 }
 
 // updateTokenAlertCheckpoint 直接更新告警基线，避免走 Token.Update() 的 Select 白名单。
 func updateTokenAlertCheckpoint(tokenId int, notifiedQuota int, notifiedTime int64) error {
-	return model.DB.Model(&model.Token{}).Where("id = ?", tokenId).
-		Updates(map[string]interface{}{
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return model.DB.WithContext(ctx).Model(&model.Token{}).Where("id = ?", tokenId).
+		Updates(map[string]any{
 			"alert_notified_quota":     notifiedQuota,
 			"alert_last_notified_time": notifiedTime,
 		}).Error

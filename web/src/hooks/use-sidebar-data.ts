@@ -88,6 +88,12 @@ export function useSidebarData(): SidebarData {
         title: t('General'),
         items: [
           {
+            title: t('Alert center'),
+            url: '/alerts',
+            icon: ShieldAlert,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
             title: t('Overview'),
             url: '/dashboard/overview',
             icon: Activity,

@@ -171,6 +171,9 @@ func quotaDataDelta(params *LogQuotaDataCache, createdAt int64) *QuotaData {
 
 func LogQuotaData(params *LogQuotaDataCache) error {
 	event, err := newQuotaDataEvent(params)
+	if err == nil && !common.DataExportEnabled && common.AlertingEnabled {
+		return AcceptAlertUsage(event)
+	}
 	if err == nil {
 		err = enqueueQuotaDataEvent(event)
 	}
@@ -183,7 +186,7 @@ func LogQuotaData(params *LogQuotaDataCache) error {
 // RefundQuotaData writes a negative quota entry to offset the original quota_data record
 // written at task submission time. Called when an async task fails and quota is refunded.
 func RefundQuotaData(task *Task) {
-	if task == nil || task.Quota == 0 || !common.DataExportEnabled {
+	if task == nil || task.Quota == 0 || (!common.DataExportEnabled && !common.AlertingEnabled) {
 		return
 	}
 	username, _ := GetUsernameById(task.UserId, false)

@@ -434,6 +434,12 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
+				if t.Status == model.TaskStatusSuccess && t.PrivateData.BillingPending {
+					if retryErr := retryPendingTaskBilling(ctx, t); retryErr != nil {
+						logger.LogError(ctx, common.LogText("Failed to update billing retry for task %s: %v", t.TaskID, retryErr))
+					}
+					continue
+				}
 				failedIDs = append(failedIDs, t.ID)
 			}
 		}
@@ -449,6 +455,13 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	adaptor := GetTaskAdaptorFunc(platform)
 	if adaptor == nil {
+		for _, taskID := range taskIds {
+			if task := taskM[taskID]; task != nil && task.Status == model.TaskStatusSuccess && task.PrivateData.BillingPending {
+				if retryErr := retryPendingTaskBilling(ctx, task); retryErr != nil {
+					return retryErr
+				}
+			}
+		}
 		return fmt.Errorf("video adaptor not found")
 	}
 	info := &relaycommon.RelayInfo{}
@@ -521,6 +534,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	switch classifyPollHTTP(resp.StatusCode) {
 	case pollClassNotFound:
+		if task.PrivateData.BillingPending {
+			return retryPendingTaskBilling(ctx, task)
+		}
 		logger.LogWarn(ctx, common.LogText("task %s poll %s (failures=%d, http=%d): %s", task.TaskID, pollClassNotFound, task.PrivateData.PollFailures, resp.StatusCode, unrecognizedPollDetail("", responseBody)))
 		return failTaskFromPoll(ctx, adaptor, task, snap.Status, "Upstream task not found")
 	case pollClassAuth:
@@ -554,6 +570,30 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if classifyPollHTTP(resp.StatusCode) == pollClassOtherClient && isNonTerminalPollStatus(parsedStatus) {
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
+	}
+	if task.Status == model.TaskStatusSuccess && task.PrivateData.BillingPending {
+		if parsedStatus != model.TaskStatusSuccess || taskResult.BillingPending || len(taskResult.UsageFacts) == 0 {
+			return retryPendingTaskBilling(ctx, task)
+		}
+		// Persist a claim before moving money. If the process crashes during
+		// accounting, leave a review marker instead of replaying a refund.
+		task.PrivateData.BillingPending = false
+		task.PrivateData.BillingReview = true
+		task.Data = RedactVideoResponseBody(responseBody)
+		won, claimErr := task.UpdatePendingBilling()
+		if claimErr != nil || !won {
+			return claimErr
+		}
+		SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
+			result, _, evalErr := EvaluateTaskCompletionUsage(bc.TieredSnapshot, taskResult.UsageFacts)
+			if evalErr == nil && task.Quota == result.ActualQuotaAfterGroup {
+				task.PrivateData.BillingReview = false
+				_, err = task.UpdateWithStatus(model.TaskStatusSuccess)
+				return err
+			}
+		}
+		return nil
 	}
 
 	task.Data = RedactVideoResponseBody(responseBody)
@@ -597,6 +637,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 		shouldFinalizeBilling = true
+		task.PrivateData.BillingPending = taskResult.BillingPending
 	case model.TaskStatusFailure:
 		logger.LogJson(ctx, common.LogText("Task %s failed", taskId), task)
 		task.Status = model.TaskStatusFailure
@@ -670,10 +711,30 @@ func MaterializeRemoteTaskVideo(ctx context.Context, remoteURL, apiKey string) s
 // finalizeTerminalTask 终态统一收尾（状态 CAS 赢家调用，恰好一次）：采样 + 结算 + 失败兜底退款。
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
+	if task.PrivateData.BillingPending {
+		return
+	}
 	billingSettled := SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+}
+
+// Successful generation and pending billing are independent: an unavailable
+// usage endpoint must never turn a delivered video into a refunded failure.
+func retryPendingTaskBilling(ctx context.Context, task *model.Task) error {
+	task.PrivateData.BillingPolls++
+	giveUp := constant.TaskPollMaxFailures > 0 && task.PrivateData.BillingPolls >= constant.TaskPollMaxFailures
+	if constant.TaskTimeoutMinutes > 0 && task.FinishTime > 0 && time.Now().Unix()-task.FinishTime >= int64(constant.TaskTimeoutMinutes)*60 {
+		giveUp = true
+	}
+	if giveUp {
+		task.PrivateData.BillingPending = false
+		task.PrivateData.BillingReview = true
+		logger.LogWarn(ctx, common.LogText("task %s requires manual billing reconciliation after %d attempts", task.TaskID, task.PrivateData.BillingPolls))
+	}
+	_, err := task.UpdatePendingBilling()
+	return err
 }
 
 func RedactVideoResponseBody(body []byte) []byte {
@@ -716,6 +777,9 @@ func truncateBase64(s string) string {
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func SettleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	if taskResult.BillingPending {
+		return true
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -805,6 +869,9 @@ func unrecognizedPollDetail(reason string, body []byte) string {
 }
 
 func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, class string, statusCode int, detail string) error {
+	if task.PrivateData.BillingPending && task.Status == model.TaskStatusSuccess {
+		return retryPendingTaskBilling(ctx, task)
+	}
 	task.PrivateData.PollFailures++
 	// TASK_POLL_MAX_FAILURES <= 0 disables the consecutive-failure cutoff, matching
 	// TASK_TIMEOUT_MINUTES semantics; the 24h sweep remains the only backstop.

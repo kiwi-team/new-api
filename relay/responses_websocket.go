@@ -101,16 +101,17 @@ type responsesWSCallState struct {
 }
 
 type responsesWSSession struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	client         *websocket.Conn
-	runner         ResponsesWSRequestRunner
-	request        *http.Request
-	requestID      string
-	logContext     *gin.Context
-	nextEventIndex int
-	workers        sync.WaitGroup
-	closeOnce      sync.Once
+	alertConfigVersion string
+	ctx                context.Context
+	cancel             context.CancelFunc
+	client             *websocket.Conn
+	runner             ResponsesWSRequestRunner
+	request            *http.Request
+	requestID          string
+	logContext         *gin.Context
+	nextEventIndex     int
+	workers            sync.WaitGroup
+	closeOnce          sync.Once
 
 	clientWriteMu sync.Mutex
 	targetWriteMu sync.Mutex
@@ -267,6 +268,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	policy := service.RequestPolicy(c)
 	modelName := create.Request.Model
 	started := time.Now()
+	requestContext, requestSpan := common.BeginAlertSpan(c.Request.Context(), common.AlertHealthEvent{Layer: "request", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), Model: modelName, Protocol: "openai_responses", Stream: true, OutputCovered: true})
+	c.Request = c.Request.WithContext(requestContext)
+	var attemptSpan *common.AlertSpan
 	var info *relaycommon.RelayInfo
 	billingPrepared := false
 	defer func() {
@@ -278,6 +282,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info = &relaycommon.RelayInfo{OriginModelName: modelName, UsingGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), StartTime: started}
 		}
 		perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		outcome := service.AlertRelayOutcome(c.Request.Context(), info, apiErr)
+		attemptSpan.End(context.Background(), outcome)
+		requestSpan.End(context.Background(), outcome)
 		if apiErr == nil && info != nil {
 			service.RecordStreamError(c, info.StreamStatus)
 		}
@@ -308,6 +315,21 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
 			return apiErr
 		}
+		if err := appmodel.CheckChannelModelAvailability(c.Request.Context(), s.lockedChannelID, modelName); err != nil {
+			return types.NewErrorWithStatusCode(errors.New("channel model is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		var currentChannel appmodel.Channel
+		if err := appmodel.DB.WithContext(c.Request.Context()).First(&currentChannel, s.lockedChannelID).Error; err != nil {
+			return types.NewErrorWithStatusCode(errors.New("channel configuration is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		key, _, version := appmodel.ResolveChannelModelIdentity(&currentChannel, modelName)
+		if s.alertConfigVersion != "" && s.alertConfigVersion != version {
+			return types.NewErrorWithStatusCode(errors.New("channel configuration changed; reconnect before starting a new response"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+		s.alertConfigVersion = version
+		alertContext, span := common.BeginAlertSpan(requestContext, common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: s.lockedChannelID, ChannelName: currentChannel.Name, Model: key, ConfigVersion: version, Protocol: "openai_responses", Stream: true, OutputCovered: true})
+		attemptSpan = span
+		c.Request = c.Request.WithContext(alertContext)
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
@@ -338,6 +360,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				return apiErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
+			if err := appmodel.CheckChannelModelAvailability(c.Request.Context(), channel.Id, modelName); err != nil {
+				return types.NewErrorWithStatusCode(errors.New("channel model is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+			attemptSpan.End(context.Background(), "failure")
+			key, _, version := appmodel.ResolveChannelModelIdentity(channel, modelName)
+			s.alertConfigVersion = version
+			alertContext, span := common.BeginAlertSpan(requestContext, common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: channel.Id, ChannelName: channel.Name, Model: key, ConfigVersion: version, Protocol: "openai_responses", Stream: true, OutputCovered: true})
+			attemptSpan = span
+			c.Request = c.Request.WithContext(alertContext)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
@@ -353,6 +384,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 			}
 			info.RetryIndex = retry.GetRetry()
+			info.TimingContext = c.Request.Context()
 			policy.BeginAttempt(channel, info.UsingGroup)
 			var payload []byte
 			payload, apiErr = buildResponsesWSCreatePayload(c, info, create.Request, create.Generate, create.StreamID)

@@ -3,6 +3,8 @@ package qwen_realtime
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -12,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -47,17 +48,22 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 	targetClosed := make(chan struct{})
 	errChan := make(chan error, 2)
 
-	usage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
-
+	var readers sync.WaitGroup
+	var stopping atomic.Bool
+	var usageTracker qwenRealtimeUsageTracker
 	var msgMu sync.Mutex
 	isFunASR := isFunASRRealtimeModel(info.UpstreamModelName)
 	isQwen3ASR := isQwen3ASRRealtimeModel(info.UpstreamModelName)
+	if !isFunASR && !isQwen3ASR {
+		info.RealtimeBillingUsage = &dto.RealtimeUsage{}
+	}
 	asrAccounted := make(map[string]int)
 	qwen3ASRTracker := newQwen3ASRUsageTracker()
 
 	// Upstream goroutine: Client → Upstream (direct passthrough, no parsing)
-	gopool.Go(func() {
+	readers.Go(func() {
+		defer close(clientClosed)
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in client reader: %v", r)
@@ -65,20 +71,29 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 		}()
 		for {
 			select {
-			case <-c.Done():
+			case <-c.Request.Context().Done():
 				return
 			default:
 				msgType, message, err := clientConn.ReadMessage()
 				if err != nil {
-					if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					if !stopping.Load() && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 						errChan <- fmt.Errorf("error reading from client: %v", err)
 					}
-					close(clientClosed)
 					return
 				}
 				if isQwen3ASR && msgType != websocket.TextMessage {
 					errChan <- fmt.Errorf("Qwen3 ASR only accepts JSON text messages with base64 PCM audio")
 					return
+				}
+				if isBeijingQwenRealtimeModel(info.UpstreamModelName) {
+					if msgType != websocket.TextMessage {
+						errChan <- fmt.Errorf("Qwen realtime accepts JSON text frames with base64 audio")
+						return
+					}
+					if err := validateQwenRealtimeClientEvent(message); err != nil {
+						errChan <- err
+						return
+					}
 				}
 				if isFunASR && msgType == websocket.TextMessage {
 					rewritten, rewriteErr := rewriteASRRunTaskModel(message, info.UpstreamModelName)
@@ -110,7 +125,9 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 				}
 				err = targetConn.WriteMessage(msgType, message)
 				if err != nil {
-					errChan <- fmt.Errorf("error writing to target: %v", err)
+					if !stopping.Load() {
+						errChan <- fmt.Errorf("error writing to target: %v", err)
+					}
 					return
 				}
 			}
@@ -118,7 +135,8 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 	})
 
 	// Downstream goroutine: Upstream → Client (passthrough + parse response.done for usage)
-	gopool.Go(func() {
+	readers.Go(func() {
+		defer close(targetClosed)
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in target reader: %v", r)
@@ -126,15 +144,14 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 		}()
 		for {
 			select {
-			case <-c.Done():
+			case <-c.Request.Context().Done():
 				return
 			default:
-				_, message, err := targetConn.ReadMessage()
+				msgType, message, err := targetConn.ReadMessage()
 				if err != nil {
-					if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					if !stopping.Load() && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 						errChan <- fmt.Errorf("error reading from target: %v", err)
 					}
-					close(targetClosed)
 					return
 				}
 				info.SetFirstResponseTime()
@@ -154,45 +171,93 @@ func QwenRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.Ne
 							return
 						}
 					}
-				} else if !isQwen3ASR {
+				} else if !isQwen3ASR && msgType == websocket.TextMessage {
 					event := &QwenRealtimeEvent{}
-					parseErr := common.Unmarshal(message, event)
-					if parseErr != nil {
-						logger.LogWarn(c, fmt.Sprintf("qwen_realtime: failed to parse downstream message: %v", parseErr))
-					} else if event.Type == QwenEventResponseDone && event.Response != nil && event.Response.Usage != nil {
-						accumulateUsage(usage, event.Response.Usage)
-						consumeErr := qwenReserveUsage(c, info, usage, sumUsage)
-						if consumeErr != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
+					if parseErr := common.Unmarshal(message, event); parseErr != nil {
+						info.RealtimeUsageIncomplete = true
+						if len(info.RealtimeUsageDiagnostics) < 32 {
+							diagnostic := relaycommon.RealtimeUsageDiagnostic{Reason: "invalid Qwen realtime upstream event"}
+							if len(message) <= 16<<10 {
+								diagnostic.Event = string(message)
+							}
+							info.RealtimeUsageDiagnostics = append(info.RealtimeUsageDiagnostics, diagnostic)
+						}
+						errChan <- fmt.Errorf("invalid Qwen realtime upstream event")
+						return
+					}
+					updated, usageErr := usageTracker.consume(info, event, sumUsage)
+					if updated {
+						// Keep already incurred usage even if reservation fails.
+						if reserveErr := service.ReserveWssUsage(c, info, sumUsage); reserveErr != nil {
+							errChan <- fmt.Errorf("reserve Qwen realtime usage: %w", reserveErr)
 							return
 						}
-						usage = &dto.RealtimeUsage{}
+					}
+					if usageErr != nil {
+						info.RealtimeUsageIncomplete = true
+						if len(info.RealtimeUsageDiagnostics) < 32 {
+							diagnostic := relaycommon.RealtimeUsageDiagnostic{Reason: usageErr.Error()}
+							if len(message) <= 16<<10 {
+								diagnostic.Event = string(message)
+							}
+							if event.Response != nil {
+								diagnostic.ResponseID, diagnostic.Status = event.Response.ID, event.Response.Status
+							}
+							info.RealtimeUsageDiagnostics = append(info.RealtimeUsageDiagnostics, diagnostic)
+						}
+						errChan <- usageErr
+						return
 					}
 				}
 
 				// Forward message to client
-				err = helper.WssResponseString(c, info, clientConn, string(message))
+				_ = clientConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if msgType == websocket.TextMessage {
+					err = helper.WssResponseString(c, info, clientConn, string(message))
+				} else {
+					err = clientConn.WriteMessage(msgType, message)
+				}
 				if err != nil {
-					errChan <- fmt.Errorf("error writing to client: %v", err)
+					if !stopping.Load() {
+						errChan <- fmt.Errorf("error writing to client: %v", err)
+					}
 					return
 				}
 			}
 		}
 	})
 
-	// Wait for either side to close or an error
+	// Stop both readers and wait before publishing usage or writing the error.
+	// A deadline interrupts the client reader without racing the upstream writer.
+	var relayErr error
 	select {
+	case relayErr = <-errChan:
 	case <-clientClosed:
 	case <-targetClosed:
-	case err := <-errChan:
-		logger.LogError(c, "qwen_realtime error: "+err.Error())
-	case <-c.Done():
+	case <-c.Request.Context().Done():
 	}
-
-	// Flush any remaining usage before returning
-	if usage.TotalTokens != 0 {
-		_ = qwenReserveUsage(c, info, usage, sumUsage)
+	stopping.Store(true)
+	_ = targetConn.Close()
+	_ = clientConn.UnderlyingConn().SetReadDeadline(time.Now())
+	readers.Wait()
+	for id := range usageTracker.pending {
+		info.RealtimeUsageIncomplete = true
+		if len(info.RealtimeUsageDiagnostics) < 32 {
+			info.RealtimeUsageDiagnostics = append(info.RealtimeUsageDiagnostics, relaycommon.RealtimeUsageDiagnostic{ResponseID: id, Status: "in_progress", Reason: "connection closed before terminal usage"})
+		}
 	}
+	if relayErr == nil {
+		select {
+		case relayErr = <-errChan:
+		default:
+		}
+	}
+	if relayErr != nil {
+		logger.LogWarn(c, "qwen_realtime: "+relayErr.Error())
+		_ = clientConn.SetWriteDeadline(time.Now().Add(time.Second))
+		helper.WssError(c, clientConn, types.OpenAIError{Type: "realtime_error", Code: "realtime_relay_error", Message: relayErr.Error()})
+	}
+	_ = clientConn.Close()
 
 	return nil, sumUsage
 }
@@ -204,14 +269,9 @@ func qwenReserveUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.
 		return fmt.Errorf("invalid usage pointer")
 	}
 
-	totalUsage.TotalTokens += usage.TotalTokens
-	totalUsage.InputTokens += usage.InputTokens
-	totalUsage.OutputTokens += usage.OutputTokens
-	totalUsage.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
-	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
-	totalUsage.InputTokenDetails.VideoTokens += usage.InputTokenDetails.VideoTokens
-	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
-	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
+	if err := addQwenRealtimeUsage(totalUsage, usage); err != nil {
+		return err
+	}
 
 	return service.ReserveWssUsage(ctx, info, totalUsage)
 }

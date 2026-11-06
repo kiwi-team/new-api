@@ -24,6 +24,7 @@ import { z } from 'zod'
 
 export const apiKeySchema = z.object({
   id: z.number(),
+  user_id: z.number().optional(),
   name: z.string(),
   key: z.string(),
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
@@ -48,6 +49,7 @@ export const apiKeySchema = z.object({
   allow_ips: z.string().nullish().default(''),
   /** Send a webhook alert every time this many dollars are consumed; 0 is off */
   alert_threshold: z.number().nullish().default(0),
+  alert_managed: z.boolean().optional(),
   /** JSON map of channel id -> multiplier applied to requests from this key */
   channel_ratios: z.string().nullish().default(''),
   /** JSON routing rules for this key; root-writable only */

@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 // 豆包端到端实时语音大模型 Realtime Dialogue
@@ -44,6 +45,9 @@ func isDoubaoRealtimeDialogue(info *relaycommon.RelayInfo) bool {
 }
 
 func (a *RealtimeAdaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if isSeeduplex(info) {
+		return seeduplexDialogueURL, nil
+	}
 	if isSeedASRStreaming(info) {
 		return seedASRStreamingURL, nil
 	}
@@ -54,6 +58,25 @@ func (a *RealtimeAdaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, er
 }
 
 func (a *RealtimeAdaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
+	if isSeeduplex(info) {
+		if info.ChannelSetting.TLSInsecureSkipVerify {
+			return errors.New("Seeduplex requires upstream TLS certificate verification")
+		}
+		appID, accessKey, apiKey, err := parseSeedASRAuth(info.ApiKey)
+		if err != nil {
+			return err
+		}
+		if apiKey != "" {
+			req.Set("X-Api-Key", apiKey)
+		} else {
+			req.Set("X-Api-App-ID", appID)
+			req.Set("X-Api-Access-Key", accessKey)
+			req.Set("X-Api-Resource-Id", doubaoRealtimeResourceID)
+			req.Set("X-Api-App-Key", doubaoRealtimeAppKey)
+		}
+		req.Set("X-Api-Request-Id", uuid.NewString())
+		return nil
+	}
 	if isSeedASRStreaming(info) {
 		return setupSeedASRStreamingHeaders(c, *req, info)
 	}
@@ -77,6 +100,10 @@ func (a *RealtimeAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo,
 }
 
 func (a *RealtimeAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if isSeeduplex(info) {
+		err, usage = handleSeeduplex(c, info)
+		return usage, err
+	}
 	if isSeedASRStreaming(info) {
 		err, usage = handleSeedASRStreaming(c, info)
 		return usage, err
@@ -89,7 +116,7 @@ func (a *RealtimeAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *
 }
 
 func (a *RealtimeAdaptor) GetModelList() []string {
-	return []string{"doubao-realtime", "doubao-seed-asr-2.0-streaming"}
+	return []string{"doubao-realtime", "doubao-seed-asr-2.0-streaming", "seeduplex-1.2.6.1"}
 }
 
 func (a *RealtimeAdaptor) GetChannelName() string {
@@ -185,6 +212,8 @@ func DoubaoRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 
 	sumUsage := &dto.RealtimeUsage{}
 	var msgMu sync.Mutex
+	tracker := service.NewRealtimeAlertTracker(common.AlertHealthEvent{RequestID: c.GetString(common.RequestIdKey), UserID: info.UserId, TokenID: c.GetInt("token_id"), ChannelID: info.ChannelId, ChannelName: c.GetString("channel_name"), Model: info.OriginModelName})
+	defer tracker.Close(c.Request.Context())
 
 	// Client → Upstream: 直接透传
 	gopool.Go(func() {
@@ -205,6 +234,23 @@ func DoubaoRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					}
 					close(clientClosed)
 					return
+				}
+				if frame, parseErr := parseRealtimeFrame(data); parseErr == nil {
+					kind := ""
+					switch frame.event {
+					case 200:
+						kind = "input_audio_buffer.append"
+					case 400:
+						kind = "input_audio_buffer.commit"
+					case 300, 500, 501, 502:
+						kind = "response.create"
+					}
+					if kind != "" {
+						if err := tracker.Admit(c.Request.Context(), kind); err != nil {
+							errChan <- err
+							return
+						}
+					}
 				}
 				collectRealtimeWsMessage(c, info, &msgMu, "client→upstream", data)
 				if err := targetConn.WriteMessage(msgType, data); err != nil {
@@ -234,6 +280,22 @@ func DoubaoRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					}
 					close(targetClosed)
 					return
+				}
+				// These events are decoded semantic output, not protocol acks.
+				// UsageResponse remains the existing billing source below.
+				if frame, parseErr := parseRealtimeFrame(data); parseErr == nil {
+					switch frame.event {
+					case 459:
+						tracker.NativeResponseStart(c.Request.Context())
+					case 550:
+						tracker.Observe(c.Request.Context(), "response.text.delta", "", gjson.GetBytes(frame.payload, "content").Str != "")
+					case 352:
+						tracker.Observe(c.Request.Context(), "response.audio.delta", "", len(frame.payload) > 0)
+					case 154:
+						tracker.Observe(c.Request.Context(), "response.done", "completed", false)
+					case 599:
+						tracker.Observe(c.Request.Context(), "response.done", "failed", false)
+					}
 				}
 				info.SetFirstResponseTime()
 				collectRealtimeWsMessage(c, info, &msgMu, "upstream→client", data)

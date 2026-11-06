@@ -503,6 +503,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
+	// Recovery probes validate transport and effective model output only. They
+	// must not become production usage, quota_data, or user billing facts.
+	if common.IsAlertRecoveryProbe(ctx) {
+		return testResult{context: c}
+	}
 
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	tok := time.Now()

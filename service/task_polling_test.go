@@ -3,8 +3,10 @@ package service
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -18,8 +20,13 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type taskPollingFetchAdaptor struct {
@@ -31,6 +38,129 @@ type taskPollingFetchAdaptor struct {
 	blockStarted chan struct{}
 	releaseBlock chan struct{}
 	blockOnce    sync.Once
+}
+
+func TestSuccessfulTaskPendingBillingDatabase(t *testing.T) {
+	for _, dialect := range []common.DatabaseType{common.DatabaseTypeSQLite, common.DatabaseTypeMySQL, common.DatabaseTypePostgreSQL} {
+		t.Run(string(dialect), func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case common.DatabaseTypeSQLite:
+				driver = sqlite.Open(":memory:")
+			case common.DatabaseTypeMySQL:
+				if os.Getenv("TEST_MYSQL_DSN") == "" {
+					t.Skip("TEST_MYSQL_DSN not configured")
+				}
+				driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+			case common.DatabaseTypePostgreSQL:
+				if os.Getenv("TEST_POSTGRES_DSN") == "" {
+					t.Skip("TEST_POSTGRES_DSN not configured")
+				}
+				driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
+			}
+			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("pending_%d_", time.Now().UnixNano())}})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			models := []any{&model.User{}, &model.Token{}, &model.Task{}, &model.Log{}, &model.Channel{}}
+			require.NoError(t, db.AutoMigrate(models...))
+			require.NoError(t, db.AutoMigrate(models...))
+			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
+			oldDB, oldLogDB := model.DB, model.LOG_DB
+			oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+			oldExport, oldRedis, oldMemory, oldBatch, oldLimit := common.DataExportEnabled, common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, constant.TaskPollMaxFailures
+			model.DB, model.LOG_DB = db, db
+			common.SetDatabaseTypes(dialect, dialect)
+			common.DataExportEnabled, common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled = false, false, false, false
+			constant.TaskPollMaxFailures = 2
+			t.Cleanup(func() {
+				model.DB, model.LOG_DB = oldDB, oldLogDB
+				common.SetDatabaseTypes(oldMain, oldLog)
+				common.DataExportEnabled, common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, constant.TaskPollMaxFailures = oldExport, oldRedis, oldMemory, oldBatch, oldLimit
+			})
+			var version string
+			query := "SELECT version()"
+			if dialect == common.DatabaseTypeSQLite {
+				query = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			seedUser(t, 710, 10000)
+			seedToken(t, 710, 710, "pending-test-key", 7000)
+			seedChannel(t, 710)
+			task := makeTask(710, 710, 4000, 710, BillingSourceWallet, 0)
+			task.TaskID, task.PrivateData.UpstreamTaskID = "task-pending-billing", "vendor-id"
+			task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{
+				ExprString: `tier("base", u("seconds") * 0.1)`, TaskUsageBilling: true, ExprVersion: 1,
+				GroupRatio: 1, QuotaPerUnit: 1000, UsageFacts: map[string]any{"seconds": float64(40)},
+			}
+			require.NoError(t, db.Create(task).Error)
+			ch := &model.Channel{Id: 710, Type: constant.ChannelTypeKling, Key: "official-key"}
+			adaptor := &scriptedPollingAdaptor{statusCode: http.StatusOK, body: []byte(`{"result":"video"}`), parse: &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, BillingPending: true, Url: "https://cdn.example/video.mp4"}}
+			require.NoError(t, updateVideoSingleTask(t.Context(), adaptor, ch, "vendor-id", map[string]*model.Task{"vendor-id": task}))
+			var persisted model.Task
+			require.NoError(t, db.First(&persisted, task.ID).Error)
+			assert.EqualValues(t, model.TaskStatusSuccess, persisted.Status)
+			assert.Equal(t, "100%", persisted.Progress)
+			assert.True(t, persisted.PrivateData.BillingPending)
+			assert.Equal(t, "https://cdn.example/video.mp4", persisted.GetResultURL())
+			assert.True(t, model.HasUnfinishedSyncTasks())
+			require.Len(t, model.GetAllUnFinishSyncTasks(10), 1)
+			assert.Equal(t, 10000, getUserQuota(t, 710))
+			assert.Equal(t, int64(0), countLogs(t))
+
+			// Reload after a completed generation, as a new process would do.
+			stale := persisted
+			adaptor.parse = &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(10)}}
+			require.NoError(t, updateVideoSingleTask(t.Context(), adaptor, ch, "vendor-id", map[string]*model.Task{"vendor-id": &persisted}))
+			require.NoError(t, db.First(&persisted, task.ID).Error)
+			assert.False(t, persisted.PrivateData.BillingPending)
+			assert.False(t, persisted.PrivateData.BillingReview)
+			assert.Equal(t, 1000, persisted.Quota)
+			assert.Equal(t, 13000, getUserQuota(t, 710))
+			assert.Equal(t, 10000, getTokenRemainQuota(t, 710))
+			assert.False(t, model.HasUnfinishedSyncTasks())
+			assert.Empty(t, model.GetAllUnFinishSyncTasks(10))
+			require.NoError(t, updateVideoSingleTask(t.Context(), adaptor, ch, "vendor-id", map[string]*model.Task{"vendor-id": &stale}))
+			assert.Equal(t, 13000, getUserQuota(t, 710), "a stale poller cannot refund twice")
+			assert.Equal(t, int64(1), countLogs(t))
+
+			// An upstream that loses a successful task is a billing review,
+			// never a generation failure or an automatic full refund.
+			task2 := makeTask(710, 710, 4000, 710, BillingSourceWallet, 0)
+			task2.TaskID, task2.PrivateData.UpstreamTaskID = "task-pending-review", "vendor-2"
+			task2.Status, task2.Progress = model.TaskStatusSuccess, "100%"
+			task2.PrivateData.BillingPending = true
+			require.NoError(t, db.Create(task2).Error)
+			adaptor.statusCode = http.StatusNotFound
+			for range 2 {
+				require.NoError(t, updateVideoSingleTask(t.Context(), adaptor, ch, "vendor-2", map[string]*model.Task{"vendor-2": task2}))
+			}
+			persisted = model.Task{}
+			require.NoError(t, db.First(&persisted, task2.ID).Error)
+			assert.EqualValues(t, model.TaskStatusSuccess, persisted.Status)
+			assert.True(t, persisted.PrivateData.BillingReview)
+			assert.False(t, persisted.PrivateData.BillingPending)
+			assert.Equal(t, 4000, persisted.Quota)
+			assert.Equal(t, 13000, getUserQuota(t, 710))
+			assert.False(t, model.HasUnfinishedSyncTasks())
+
+			task3 := makeTask(710, 999999, 4000, 710, BillingSourceWallet, 0)
+			task3.TaskID, task3.PrivateData.UpstreamTaskID = "task-missing-channel", "vendor-3"
+			task3.Status, task3.Progress = model.TaskStatusSuccess, "100%"
+			task3.PrivateData.BillingPending = true
+			require.NoError(t, db.Create(task3).Error)
+			require.Error(t, updateVideoTasks(t.Context(), "kling", 999999, []string{"vendor-3"}, map[string]*model.Task{"vendor-3": task3}))
+			persisted = model.Task{}
+			require.NoError(t, db.First(&persisted, task3.ID).Error)
+			assert.EqualValues(t, model.TaskStatusSuccess, persisted.Status)
+			assert.True(t, persisted.PrivateData.BillingPending)
+			assert.Equal(t, 1, persisted.PrivateData.BillingPolls)
+			assert.Equal(t, 13000, getUserQuota(t, 710))
+		})
+	}
 }
 
 type batchPollingAdaptor struct {

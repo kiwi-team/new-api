@@ -95,6 +95,7 @@ type taskResult struct {
 	RemoteURL        string  `json:"remoteUrl"`
 	CompletionTokens float64 `json:"completionTokens"`
 	TotalTokens      float64 `json:"totalTokens"`
+	BillingPending   bool    `json:"billingPending"`
 	State            any     `json:"state"`
 }
 
@@ -929,6 +930,10 @@ func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, bod
 		RemoteUrl:        parsed.RemoteURL,
 		CompletionTokens: positiveInt(parsed.CompletionTokens),
 		TotalTokens:      positiveInt(parsed.TotalTokens),
+		BillingPending:   parsed.BillingPending,
+	}
+	if parsed.BillingPending && (parsed.Status != model.TaskStatusSuccess || !slices.Contains(a.plugin.Meta.RequiredCapabilities, pluginruntime.CapabilityBillingPending)) {
+		return nil, fmt.Errorf("billingPending requires a successful task and billing-pending@1")
 	}
 	if pluginState, present := encodeReturnedPluginState(value); present {
 		if len(pluginState) > maxTaskPluginPersistedJSONBytes {

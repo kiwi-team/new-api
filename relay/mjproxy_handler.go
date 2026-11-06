@@ -230,8 +230,26 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
 	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, info.UsingGroup)
+	routingModel := c.GetString("original_model")
+	if routingModel == "" {
+		routingModel = modelName
+	}
+	span, gateErr := service.BeginAlertTaskAttempt(c, c.GetInt("channel_id"), routingModel)
+	if gateErr != nil {
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "channel_model_unavailable")
+	}
+	defer span.End(c.Request.Context(), "ignored")
 	mjResp, _, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	accepted := service.RecordMidjourneyPolicyResponse(c, mjResp, err)
+	outcome := "failure"
+	if accepted {
+		outcome = "success"
+	} else if c.Request.Context().Err() != nil || mjResp.StatusCode > 0 && mjResp.StatusCode < 500 {
+		outcome = "ignored"
+	}
+	span.End(c.Request.Context(), outcome)
+	c.Set("alert_outcome", outcome)
+
 	if err != nil {
 		return &mjResp.Response
 	}
@@ -586,8 +604,26 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	}
 
 	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, relayInfo.UsingGroup)
+	routingModel := c.GetString("original_model")
+	if routingModel == "" {
+		routingModel = modelName
+	}
+	span, gateErr := service.BeginAlertTaskAttempt(c, c.GetInt("channel_id"), routingModel)
+	if gateErr != nil {
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "channel_model_unavailable")
+	}
+	defer span.End(c.Request.Context(), "ignored")
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	accepted := service.RecordMidjourneyPolicyResponse(c, midjResponseWithStatus, err)
+	outcome := "failure"
+	if accepted {
+		outcome = "success"
+	} else if c.Request.Context().Err() != nil || midjResponseWithStatus.StatusCode > 0 && midjResponseWithStatus.StatusCode < 500 {
+		outcome = "ignored"
+	}
+	span.End(c.Request.Context(), outcome)
+	c.Set("alert_outcome", outcome)
+
 	if err != nil {
 		return &midjResponseWithStatus.Response
 	}

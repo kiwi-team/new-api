@@ -1,6 +1,6 @@
 export type JSONValue = null | boolean | number | string | readonly JSONValue[] | {readonly [key: string]: JSONValue};
 /** json-clone@1 and submit-sse-delta@1 are accepted for earlier hosts; new plugins need neither. */
-export type HostCapability = "json-clone@1" | "submit-sse-delta@1" | "json-order@1" | "duration-auto@1";
+export type HostCapability = "json-clone@1" | "submit-sse-delta@1" | "json-order@1" | "duration-auto@1" | "billing-pending@1";
 /** Kinds of upstream a driver can address: the vendor API itself, or another New API gateway with the same plugin installed. */
 export type UpstreamKind = "vendor" | "new_api";
 /** Host-injected on every driver hook context. With "new_api" the driver uses its own native-route prefix and the host already set Bearer credentials. */
@@ -65,7 +65,7 @@ export interface BatchQueryContext {baseUrl: string; apiKey?: string; authHeader
 export type HookHTTPResponse = {readonly status: number; readonly headers: Readonly<Record<string, string>>}
 export interface RequestDescriptor {/** Submit-only preparation state, at most 1 MiB; exposed as ctx.state to later submission hooks. Return it from parseSubmitResponse to persist. */ state?: JSONValue; responseType?: "json" | "sse"; url: string; method?: string; headers?: Record<string, string>; /** JSON body may contain FilePlaceholder objects at any depth; the host replaces each with a Base64 or data-URL string. */ body?: unknown; credentialless?: boolean; action?: string; model?: string; rewriteModel?: string; bodyType?: "json" | "multipart"; parts?: readonly {name: string; value?: unknown; fileRef?: string; filename?: string}[]}
 export interface UpstreamResponse {statusCode: number; headers: Readonly<Record<string, readonly string[]>>; body: unknown}
-export interface NormalizedTaskResult {taskId?: string; status: "NOT_START" | "SUBMITTED" | "QUEUED" | "IN_PROGRESS" | "SUCCESS" | "FAILURE" | "UNKNOWN"; progress?: string; reason?: string; url?: string; remoteUrl?: string; completionTokens?: number; totalTokens?: number}
+export interface NormalizedTaskResult {/** Successful generation awaiting official usage. Requires billing-pending@1; the host retries without refunding or hiding the result. */ billingPending?: boolean; taskId?: string; status: "NOT_START" | "SUBMITTED" | "QUEUED" | "IN_PROGRESS" | "SUCCESS" | "FAILURE" | "UNKNOWN"; progress?: string; reason?: string; url?: string; remoteUrl?: string; completionTokens?: number; totalTokens?: number}
 export interface TaskArtifact {key: string; type: "video" | "audio" | "image" | "file"; mimeType?: string}
 export declare const meta: Meta;
 export declare const native: Record<string, ((ctx: NativeDecodeContext) => TaskIntent) | ((ctx: NativeDecodeContext, task: TaskView | readonly TaskView[]) => unknown)> & {error?: (ctx: NativeDecodeContext, error: {code: string; message: string; httpStatus: number; retryable: boolean}) => unknown};

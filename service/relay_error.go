@@ -1,7 +1,10 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"github.com/QuantumNous/new-api/i18n"
+	"html"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/alerting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -120,7 +124,34 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	if ShouldDisableChannel(channelError.ChannelType, err) {
 		if channelError.AutoBan {
 			reason := err.MaskSensitiveErrorWithStatusCode(upstreamURLs...)
+			modelName := ""
+			if relayInfo != nil {
+				modelName = relayInfo.OriginModelName
+			}
 			gopool.Go(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				mode, err := model.AlertChannelProtectionMode(ctx, channelError.ChannelId)
+				if err != nil {
+					return
+				}
+				if mode == "scoped" {
+					if modelName == "" {
+						return
+					}
+					hold, err := model.CommitScopedLegacyProtection(ctx, channelError.ChannelId, modelName)
+					if err != nil {
+						common.SysError(common.LogText("scoped channel protection failed"))
+						return
+					}
+					if hold != nil {
+						NotifyChannelWatchers("channel_model_isolated_"+strconv.FormatInt(hold.ID, 10), func(lang string) (string, string) {
+							params := map[string]any{"Channel": html.EscapeString(channelError.ChannelName), "Model": html.EscapeString(hold.ModelKey), "Reason": html.EscapeString(reason)}
+							return i18n.Translate(lang, "alert.model_isolated_subject", params), i18n.Translate(lang, "alert.model_isolated_content", params)
+						})
+					}
+					return
+				}
 				DisableChannel(channelError, reason)
 			})
 		}
@@ -177,12 +208,13 @@ func notifyPotentialChannelArrears(channelError types.ChannelError, err *types.N
 		return
 	}
 
-	notifyErr := SendFeishuNotify(webhookURL, common.OptionMap["feishu_qianfei_secret"], dto.FeishuNotify{
-		MsgType: "text",
-		Content: dto.FeishuContent{
-			Text: fmt.Sprintf("【渠道】%s（%d） 可能欠费了,请及时处理，错误信息：%s", channelError.ChannelName, channelError.ChannelId, err.MaskSensitiveErrorWithStatusCode()),
-		},
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	content := fmt.Sprintf("【渠道】%s（%d） 可能欠费了,请及时处理，错误信息：%s", channelError.ChannelName, channelError.ChannelId, err.MaskSensitiveErrorWithStatusCode())
+	notifyErr := alerting.DispatchLegacyNotice(ctx, "channel_arrears", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(cooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{Title: i18n.Translate("", "alert.legacy_channel_balance"), Content: content}, func(ctx context.Context) error {
+		return SendFeishuNotifyContext(ctx, webhookURL, common.OptionMap["feishu_qianfei_secret"], dto.FeishuNotify{MsgType: "text", Content: dto.FeishuContent{Text: content}})
+	}, alerting.LegacyNoticeCooldown{Key: strconv.Itoa(channelError.ChannelId), Duration: cooldown})
+
 	if notifyErr != nil {
 		common.SysError("failed to send potential channel arrears feishu notify: " + notifyErr.Error())
 	}
@@ -221,10 +253,12 @@ func notifySlowChannelError(c *gin.Context, channelError types.ChannelError, err
 	}
 	secret := common.OptionMap["slow_error_feishu_secret"]
 	gopool.Go(func() {
-		if notifyErr := SendFeishuNotify(webhookURL, secret, dto.FeishuNotify{
-			MsgType: "text",
-			Content: dto.FeishuContent{Text: content},
-		}); notifyErr != nil {
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if notifyErr := alerting.DispatchLegacyNotice(ctx, "slow_error", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(slowErrorAlertCooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{Title: i18n.Translate("", "alert.legacy_slow_error"), Content: content}, func(ctx context.Context) error {
+			return SendFeishuNotifyContext(ctx, webhookURL, secret, dto.FeishuNotify{MsgType: "text", Content: dto.FeishuContent{Text: content}})
+		}, alerting.LegacyNoticeCooldown{Key: strconv.Itoa(channelError.ChannelId), Duration: slowErrorAlertCooldown}); notifyErr != nil {
 			common.SysError("failed to send slow error feishu notify: " + notifyErr.Error())
 		}
 	})

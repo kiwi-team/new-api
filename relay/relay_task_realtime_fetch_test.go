@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -48,6 +49,62 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+func TestTryRealtimeKling4PreservesPendingBilling(t *testing.T) {
+	oldMemory := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = oldMemory })
+	var missingTask atomic.Bool
+	missingTask.Store(true)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/tasks", r.URL.Path)
+		assert.Equal(t, "vendor-pending", r.URL.Query().Get("task_ids"))
+		assert.Equal(t, "Bearer official-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		if missingTask.Load() {
+			_, _ = w.Write([]byte(`{"code":0,"data":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":[{"id":"vendor-pending","status":"succeeded","outputs":[{"type":"video","url":"https://cdn.example/video.mp4"}]}]}`))
+	}))
+	defer upstream.Close()
+	baseURL := upstream.URL
+	ch := model.Channel{Id: 9010, Type: constant.ChannelTypeKling, Name: "kling4-pending", Key: "official-key", BaseURL: &baseURL, Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(&ch).Error)
+	user := model.User{Id: 9010, Username: "kling4-pending-user", AffCode: "kling4-pending-aff", Quota: 1000}
+	require.NoError(t, model.DB.Create(&user).Error)
+	task := &model.Task{TaskID: "task-kling4-pending", UserId: user.Id, ChannelId: ch.Id, Platform: "kling", Status: model.TaskStatusInProgress, Progress: "50%", Quota: 500,
+		Properties: model.Properties{OriginModelName: "kling-4.0", UpstreamModelName: "kling-4.0"},
+		PrivateData: model.TaskPrivateData{UpstreamTaskID: "vendor-pending", Key: "official-key", BillingSource: "wallet", PluginState: []byte(`{"kling4":true,"resolution":"1080p","videoInput":"none"}`),
+			BillingContext: &model.TaskBillingContext{TieredSnapshot: &billingexpr.BillingSnapshot{ExprString: `tier("base", u("seconds"))`, ExprVersion: 1, TaskUsageBilling: true, QuotaPerUnit: 1, GroupRatio: 1, UsageFacts: map[string]any{"seconds": float64(500)}}}},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	t.Cleanup(func() {
+		model.DB.Delete(task)
+		model.DB.Unscoped().Delete(&user)
+		model.DB.Delete(&ch)
+	})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID, nil)
+	_, done := tryRealtimeFetch(c, task, true)
+	require.False(t, done)
+	assert.EqualValues(t, model.TaskStatusInProgress, task.Status)
+	missingTask.Store(false)
+	_, done = tryRealtimeFetch(c, task, true)
+	require.True(t, done)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, stored.Status)
+	assert.Equal(t, "100%", stored.Progress)
+	assert.True(t, stored.PrivateData.BillingPending)
+	assert.Equal(t, 500, stored.Quota)
+	assert.Equal(t, "https://cdn.example/video.mp4", stored.GetResultURL())
+	assert.True(t, model.HasUnfinishedSyncTasks())
+	_, done = tryRealtimeFetch(c, &stored, true)
+	require.True(t, done)
+	require.NoError(t, model.DB.First(&user, user.Id).Error)
+	assert.Equal(t, 1000, user.Quota)
 }
 
 // 客户端 GET 通常比 15 秒一轮的后台轮询更早看到上游的终态。tryRealtimeFetch 一旦

@@ -28,6 +28,24 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse Qwen realtime base URL: %w", err)
 	}
+	if baseURL.Hostname() == "" || baseURL.User != nil || baseURL.Fragment != "" {
+		return "", fmt.Errorf("Qwen realtime base URL must contain a host without credentials or a fragment")
+	}
+	if isBeijingQwenRealtimeModel(info.UpstreamModelName) {
+		if baseURL.Path != "" && baseURL.Path != "/" {
+			return "", fmt.Errorf("Qwen realtime base URL must be a domain root without an API path")
+		}
+		host := strings.ToLower(baseURL.Hostname())
+		if strings.HasSuffix(host, ".aliyuncs.com") && baseURL.Scheme != "https" && baseURL.Scheme != "wss" {
+			return "", fmt.Errorf("Qwen realtime workspace endpoints require HTTPS or WSS")
+		}
+		if strings.HasSuffix(host, ".aliyuncs.com") && !strings.HasSuffix(host, ".cn-beijing.maas.aliyuncs.com") {
+			return "", fmt.Errorf("this Qwen realtime model requires a Beijing workspace endpoint")
+		}
+		if strings.HasSuffix(host, ".cn-beijing.maas.aliyuncs.com") && info.Organization != "" && strings.TrimSuffix(host, ".cn-beijing.maas.aliyuncs.com") != info.Organization {
+			return "", fmt.Errorf("Qwen realtime workspace header must match the endpoint workspace")
+		}
+	}
 	switch baseURL.Scheme {
 	case "http":
 		baseURL.Scheme = "ws"
@@ -99,6 +117,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 func (a *Adaptor) GetModelList() []string {
 	return []string{
+		"qwen3.8-omni-flash-realtime", "qwen-audio-3.1-realtime-plus", "qwen-audio-3.1-realtime-flash",
 		"qwen3-omni-flash-realtime",
 		"fun-asr-realtime", "fun-asr-realtime-2026-02-28", "fun-asr-realtime-2025-11-07", "fun-asr-realtime-2025-09-15",
 		"fun-asr-flash-8k-realtime", "fun-asr-flash-8k-realtime-2026-01-28",

@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TaskStatus string
@@ -143,6 +145,11 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
+	// BillingPending keeps a successful result available while official usage
+	// is retried. BillingReview records exhausted retries or an interrupted claim.
+	BillingPending bool `json:"billing_pending,omitempty"`
+	BillingReview  bool `json:"billing_review,omitempty"`
+	BillingPolls   int  `json:"billing_polls,omitempty"`
 	// ResultDiscarded marks an immediate terminal result whose submit route
 	// declared retainResult: false. The upstream snapshot was never written
 	// and every retrieval surface treats the task as not found. The zero
@@ -226,7 +233,7 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
 		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
-		!p.ResultDiscarded {
+		!p.ResultDiscarded && !p.BillingPending && !p.BillingReview && p.BillingPolls == 0 {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -393,7 +400,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = tasksAwaitingPolling().Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -406,13 +413,36 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 // the scheduler skips creating a row entirely.
 func HasUnfinishedSyncTasks() bool {
 	var id int64
-	err := DB.Model(&Task{}).
-		Where("progress != ?", "100%").
-		Where("status != ?", TaskStatusFailure).
-		Where("status != ?", TaskStatusSuccess).
+	err := tasksAwaitingPolling().Model(&Task{}).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
+}
+
+// JSON extraction is isolated here because PostgreSQL JSON has no LIKE
+// operator, while MySQL normalizes whitespace in stored JSON documents.
+func pendingTaskBillingCondition() clause.Expression {
+	switch common.MainDatabaseType() {
+	case common.DatabaseTypePostgreSQL:
+		return gorm.Expr(`private_data->>'billing_pending' = ?`, "true")
+	case common.DatabaseTypeMySQL:
+		return gorm.Expr(`JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.billing_pending')) = ?`, "true")
+	default:
+		return gorm.Expr(`json_extract(private_data, '$.billing_pending') = ?`, true)
+	}
+}
+
+func tasksAwaitingPolling() *gorm.DB {
+	unfinished := DB.Where("progress != ?", "100%").Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess})
+	pending := DB.Where("status = ?", TaskStatusSuccess).Where(pendingTaskBillingCondition())
+	return DB.Where(unfinished).Or(pending)
+}
+
+// UpdatePendingBilling guards the transition from retryable billing to a
+// claimed/manual-review state. A stale poller cannot settle the same refund.
+func (t *Task) UpdatePendingBilling() (bool, error) {
+	result := DB.Model(t).Where("status = ?", TaskStatusSuccess).Where(pendingTaskBillingCondition()).Select("*").Updates(t)
+	return result.RowsAffected > 0, result.Error
 }
 
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {

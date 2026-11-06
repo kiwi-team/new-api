@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   ChevronDown,
   KeyRound,
@@ -803,6 +804,10 @@ export function ApiKeysMutateDrawer({
                           </FormLabel>
                           <FormControl>
                             <Input
+                              disabled={
+                                !!(apiKeyData?.data ?? currentRow)
+                                  ?.alert_managed
+                              }
                               type='number'
                               min={0}
                               step={10}
@@ -819,8 +824,21 @@ export function ApiKeysMutateDrawer({
                             />
                           </FormControl>
                           <FormDescription>
-                            {t(
-                              'Alerts go to the webhook set in Profile settings. 0 disables them; the trigger may lag slightly behind the exact amount.'
+                            {(apiKeyData?.data ?? currentRow)?.alert_managed ? (
+                              <Link
+                                to='/alerts'
+                                search={{
+                                  event_id: undefined,
+                                  token_id: (apiKeyData?.data ?? currentRow)
+                                    ?.id,
+                                }}
+                              >
+                                {t('This alert is managed in Alert center.')}
+                              </Link>
+                            ) : (
+                              t(
+                                'Alerts go to the webhook set in Profile settings. 0 disables them; the trigger may lag slightly behind the exact amount.'
+                              )
                             )}
                           </FormDescription>
                           <FormMessage />

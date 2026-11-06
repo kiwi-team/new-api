@@ -25,6 +25,7 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'alert.manage'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -51,6 +52,16 @@ export type SecurityProofScope =
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | {
+      scope: 'alert.manage'
+      context: {
+        rule_id: number
+        owner_user_id: number
+        expected_revision: number
+        config_hash: string
+        operation: 'save' | 'release'
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -91,6 +102,7 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'alert.manage'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

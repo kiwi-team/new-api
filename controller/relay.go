@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -180,6 +181,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 		if relayFormat != types.RelayFormatOpenAIRealtime {
 			perfmetrics.RecordRelayResult(c.Request.Context(), relayInfo, resultErr)
 		}
+		c.Set("alert_outcome", service.AlertRelayOutcome(c.Request.Context(), relayInfo, resultErr))
 		if recovered != nil {
 			panic(recovered)
 		}
@@ -251,6 +253,27 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.TimingContext = timingContext
 		}
 		attemptStart := time.Now()
+		alertMetadata := common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: channel.Id, ChannelName: channel.Name, Model: relayInfo.OriginModelName, Protocol: string(relayFormat), Stream: relayInfo.IsStream, OutputCovered: relayInfo.IsStream && (relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatClaude || relayFormat == types.RelayFormatGemini || relayFormat == types.RelayFormatOpenAIResponses)}
+		if full, err := model.CacheGetChannel(channel.Id); err == nil && full != nil {
+			alertMetadata.Model, _, alertMetadata.ConfigVersion = model.ResolveChannelModelIdentity(full, relayInfo.OriginModelName)
+		}
+		if relayFormat == types.RelayFormatOpenAIRealtime {
+			alertMetadata.SampleClass = "transport"
+		}
+		if requestSpan := common.AlertSpanFromContext(timingContext); requestSpan != nil {
+			requestSpan.Bind(alertMetadata)
+		}
+		alertContext, alertSpan := common.BeginAlertSpan(timingContext, alertMetadata)
+		defer alertSpan.End(context.Background(), "failure")
+		if alertSpan != nil {
+			if c.GetBool(common.KeyChannelRaceAttempt) {
+				alertSpan.SetRaceParticipant()
+			}
+			c.Request = c.Request.WithContext(alertContext)
+			relayInfo.TimingContext = alertContext
+		}
+		c.Set("alert_protocol", string(relayFormat))
+		c.Set("alert_stream", relayInfo.IsStream)
 		relayInfo.ChannelAttemptStartTime = attemptStart
 		originalWriter := c.Writer
 		channelSetting, _ := common.GetContextKeyType[relaykitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
@@ -273,6 +296,9 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 		common.AnnotateTimingAttempt(timingContext, c.GetString(common.UpstreamRequestIdKey), c.GetString(common.KeyChannelRaceResult))
+		alertSpan.End(c.Request.Context(), service.AlertRelayOutcome(c.Request.Context(), relayInfo, newAPIError))
+		c.Request = c.Request.WithContext(timingContext)
+		relayInfo.TimingContext = timingContext
 		timingAttempt.End()
 		c.Writer = originalWriter
 		attemptUseTimeMs := max(time.Since(attemptStart).Milliseconds(), 1)
@@ -362,7 +388,15 @@ func addUsedChannelTime(c *gin.Context, useTimeMs int64) {
 	times = append(times, useTimeMs)
 	common.SetContextKey(c, constant.ContextKeyUseChannelTime, times)
 }
-func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (selected *model.Channel, apiErr *types.NewAPIError) {
+	defer func() {
+		if selected != nil && apiErr == nil {
+			if err := model.CheckChannelModelAvailability(c.Request.Context(), selected.Id, info.OriginModelName); err != nil {
+				selected = nil
+				apiErr = types.NewErrorWithStatusCode(errors.New("channel model is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+		}
+	}()
 	if pin, found, _ := service.GetChannelConstraints(c).ResolvedPin(); found {
 		channel, err := model.CacheGetChannel(pin.ChannelId)
 		if err != nil || channel == nil {
@@ -550,6 +584,7 @@ func RelayTaskPluginEndpoint(c *gin.Context, fallback gin.HandlerFunc) {
 }
 
 func RelayTaskFetch(c *gin.Context) {
+	c.Set("alert_sample_class", "maintenance")
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, &taskdto.TaskError{
@@ -629,6 +664,14 @@ func executeTaskSubmissionWith(
 			diagnostics.refund(stage)
 			relayInfo.Billing.Refund(c)
 		}
+		outcome := "success"
+		if !durable {
+			outcome = "failure"
+			if taskErr != nil && taskErr.LocalError {
+				outcome = "ignored"
+			}
+		}
+		c.Set("alert_outcome", outcome)
 	}()
 	stage = "before_attempt"
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
@@ -693,12 +736,33 @@ func executeTaskSubmissionWith(
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		stage = "submit"
+		if err := model.CheckChannelModelAvailability(c.Request.Context(), channel.Id, relayInfo.OriginModelName); err != nil {
+			taskErr = service.TaskErrorWrapperLocal(errors.New("channel model is unavailable"), "channel_unavailable", http.StatusServiceUnavailable)
+			break
+		}
 		timingContext, timingAttempt := common.BeginTimingAttempt(c.Request.Context(), channel.Id)
 		if timingAttempt != nil {
 			c.Request = c.Request.WithContext(timingContext)
 			relayInfo.TimingContext = timingContext
 		}
+		metadata := common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: channel.Id, ChannelName: channel.Name, Model: relayInfo.OriginModelName, Protocol: "task"}
+		metadata.Model, _, metadata.ConfigVersion = model.ResolveChannelModelIdentity(channel, metadata.Model)
+		common.AlertSpanFromContext(timingContext).Bind(metadata)
+		alertContext, span := common.BeginAlertSpan(timingContext, metadata)
+		defer span.End(context.Background(), "failure")
+		c.Request = c.Request.WithContext(alertContext)
+		relayInfo.TimingContext = alertContext
 		result, taskErr = submit(c, relayInfo)
+		outcome := "success"
+		if taskErr != nil {
+			outcome = "failure"
+			if taskErr.LocalError {
+				outcome = "ignored"
+			}
+		}
+		span.End(alertContext, outcome)
+		c.Request = c.Request.WithContext(timingContext)
+		relayInfo.TimingContext = timingContext
 		common.AnnotateTimingAttempt(timingContext, c.GetString(common.UpstreamRequestIdKey), c.GetString(common.KeyChannelRaceResult))
 		timingAttempt.End()
 		if requestErr := c.Request.Context().Err(); requestErr != nil {

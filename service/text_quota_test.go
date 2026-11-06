@@ -16,6 +16,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -81,8 +82,14 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 			model.DB, model.LOG_DB = db, logDB
 			common.SetDatabaseTypes(dialect.name, dialect.name)
 			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.QuotaDataEventRecord{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			oldExport, oldRedis, oldAlerting := common.DataExportEnabled, common.RedisEnabled, common.AlertingEnabled
+			common.DataExportEnabled, common.RedisEnabled, common.AlertingEnabled = true, false, false
+			t.Cleanup(func() {
+				common.DataExportEnabled, common.RedisEnabled, common.AlertingEnabled = oldExport, oldRedis, oldAlerting
+			})
+			t.Setenv("QUOTA_DATA_SPOOL_DIR", t.TempDir())
 			versionQuery := "select version()"
 			if dialect.name == common.DatabaseTypeSQLite {
 				versionQuery = "select sqlite_version()"
@@ -97,18 +104,33 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 
 func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	t.Helper()
+	savedTrust := operation_setting.GetQuotaSetting().TrustQuotaUSD
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 0.001
+	t.Cleanup(func() { operation_setting.GetQuotaSetting().TrustQuotaUSD = savedTrust })
 	const mixed = `len <= 32000 ? tier("short", fixed(0.01)) : tier("long", p * 2)`
 	const flat = `tier("request", fixed(0.01))`
 	const startingQuota = 2_000_000
 	const imageExpression = `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`
 	imageUsage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
 		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)}}}
+	seeduplexExpression, ok := billing_setting.GetBuiltinBillingExpr("seeduplex-1.2.6.1")
+	require.True(t, ok)
+	seeduplexRound := &dto.RealtimeUsage{InputTokens: 1000, OutputTokens: 110, TotalTokens: 1110,
+		InputTokenDetails: dto.InputTokenDetails{TextTokens: 400, AudioTokens: 600, CachedTokens: 700,
+			CachedTokensDetails: &dto.CachedTokenDetails{TextTokens: common.GetPointer(300), AudioTokens: common.GetPointer(400)}},
+		OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 50, AudioTokens: 60}}
+	seeduplexTotal := &dto.RealtimeUsage{InputTokens: 2000, OutputTokens: 220, TotalTokens: 2220,
+		InputTokenDetails: dto.InputTokenDetails{TextTokens: 800, AudioTokens: 1200, CachedTokens: 1400,
+			CachedTokensDetails: &dto.CachedTokenDetails{TextTokens: common.GetPointer(600), AudioTokens: common.GetPointer(800)}},
+		OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 100, AudioTokens: 120}}
 	operation_setting.SetToolPriceForTest("fixed_billing_tool", 4)
 	t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("fixed_billing_tool") })
 	for index, tc := range []struct {
 		name, expression                          string
 		estimate                                  int
 		usage                                     *dto.Usage
+		realtimeUsage                             *dto.RealtimeUsage
+		trustedRealtime                           bool
 		audio, stream, refund, insufficient, tool bool
 		realtime, reserveInsufficient             bool
 		wallet, outboundImages                    int
@@ -133,6 +155,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		{name: "image cache stream settles usage and refunds unused reservation", expression: imageExpression, estimate: 10000, usage: imageUsage, stream: true, want: 4113, unit: billingexpr.BillingUnitToken},
 		{name: "audio settlement records image cache billing inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, audio: true, want: 4113, unit: billingexpr.BillingUnitToken},
 		{name: "realtime records actual expression inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, want: 4000, unit: billingexpr.BillingUnitToken},
+		{name: "Seeduplex cumulative reservation settles once with cache details", expression: seeduplexExpression, estimate: 100, realtime: true, stream: true, realtimeUsage: seeduplexTotal, want: 6250, unit: billingexpr.BillingUnitToken},
+		{name: "Seeduplex trusted wallet still reserves realtime usage", expression: seeduplexExpression, estimate: 100, realtime: true, stream: true, trustedRealtime: true, realtimeUsage: seeduplexTotal, want: 6250, unit: billingexpr.BillingUnitToken},
+		{name: "Seeduplex wallet exhaustion rejects reservation and retains incurred overage", expression: seeduplexExpression, estimate: 100, realtime: true, stream: true, realtimeUsage: seeduplexTotal, wallet: 4000, reserveInsufficient: true, want: 6250, unit: billingexpr.BillingUnitToken},
 		{name: "image cache insufficient wallet never reserves tokens", expression: imageExpression, estimate: 10000, insufficient: true},
 		{name: "image quantity refunds missing images", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, want: 40000, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity keeps request when actual missing", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, want: 60000, unit: billingexpr.BillingUnitRequest},
@@ -177,9 +202,22 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation}
 			snapshot.EstimatedImageCount = trace.ImageCount
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
+			if tc.realtime {
+				info.RelayFormat = types.RelayFormatOpenAIRealtime
+			}
+			if tc.realtimeUsage != nil {
+				info.FirstResponseTime = info.StartTime.Add(150 * time.Millisecond)
+			}
+			info.ForcePreConsume = !tc.trustedRealtime
 			info.SetEstimatePromptTokens(tc.estimate)
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			ctx.Set("token_quota", startingQuota)
+			ctx.Set(common.RequestIdKey, fmt.Sprintf("fixed-billing-%d", user.Id))
+			eventID := model.QuotaDataActionID("consume", fmt.Sprintf("%s:%d", ctx.GetString(common.RequestIdKey), channel.Id))
+			t.Cleanup(func() {
+				require.NoError(t, db.Where("event_id = ?", eventID).Delete(&model.QuotaDataEventRecord{}).Error)
+			})
 			if tc.expression == imageExpression {
 				ctx.Request.URL.Path = "/v1/images/generations"
 				info.RelayMode = relayconstant.RelayModeImagesGenerations
@@ -192,7 +230,12 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 				require.Nil(t, apiErr)
 				held, err := model.GetUserQuota(user.Id, true)
 				require.NoError(t, err)
-				assert.Equal(t, quota-reservation, held)
+				if tc.trustedRealtime {
+					assert.Equal(t, quota, held)
+					assert.Zero(t, info.Billing.GetPreConsumedQuota())
+				} else {
+					assert.Equal(t, quota-reservation, held)
+				}
 				if tc.outboundImages > 0 {
 					reserveErr := PrepareImageBillingForRequest(ctx, info, tc.outboundImages)
 					if tc.reserveInsufficient {
@@ -229,9 +272,22 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 						info.ResponsesUsageInfo = &relaycommon.ResponsesUsageInfo{BuiltInTools: map[string]*relaycommon.BuildInToolInfo{"fixed_billing_tool": {CallCount: 1}}}
 					}
 					if tc.realtime {
-						PostWssConsumeQuota(ctx, info, info.OriginModelName, &dto.RealtimeUsage{
-							InputTokens: tc.usage.PromptTokens, OutputTokens: tc.usage.CompletionTokens, TotalTokens: tc.usage.TotalTokens,
-						}, nil)
+						usage := tc.realtimeUsage
+						if usage == nil {
+							usage = &dto.RealtimeUsage{InputTokens: tc.usage.PromptTokens, OutputTokens: tc.usage.CompletionTokens, TotalTokens: tc.usage.TotalTokens}
+						} else {
+							require.NoError(t, ReserveWssUsage(ctx, info, seeduplexRound))
+							assert.Equal(t, 3125, info.Billing.GetPreConsumedQuota())
+							if tc.reserveInsufficient {
+								require.Error(t, ReserveWssUsage(ctx, info, usage))
+								assert.Equal(t, 3125, info.Billing.GetPreConsumedQuota())
+							} else {
+								require.NoError(t, ReserveWssUsage(ctx, info, usage))
+								require.NoError(t, ReserveWssUsage(ctx, info, usage), "same cumulative target must not reserve twice")
+								assert.Equal(t, 6250, info.Billing.GetPreConsumedQuota())
+							}
+						}
+						PostWssConsumeQuota(ctx, info, info.OriginModelName, usage, nil)
 					} else if tc.audio {
 						PostAudioConsumeQuota(ctx, info, tc.usage, nil)
 					} else {
@@ -274,6 +330,30 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 							assert.Equal(t, float64(100), billable["cr"])
 							assert.Equal(t, float64(400), billable["img"])
 						}
+					} else if tc.realtimeUsage != nil {
+						assert.Equal(t, float64(1400), other["cache_tokens"])
+						assert.Equal(t, float64(600), other["text_cache_tokens"])
+						assert.Equal(t, float64(800), other["audio_cache_tokens"])
+						var savedUsage dto.RealtimeUsage
+						require.NoError(t, common.UnmarshalJsonStr(log.Usage, &savedUsage))
+						assert.Equal(t, tc.realtimeUsage, &savedUsage)
+						billable, ok := other["billing_tokens"].(map[string]any)
+						require.True(t, ok)
+						assert.Equal(t, float64(200), billable["p"])
+						assert.Equal(t, float64(400), billable["ai"])
+						assert.Equal(t, float64(1400), billable["cr"])
+						var record model.QuotaDataEventRecord
+						require.NoError(t, db.Where("event_id = ?", eventID).Take(&record).Error)
+						var event model.QuotaDataEvent
+						require.NoError(t, common.UnmarshalJsonStr(record.Payload, &event))
+						assert.Equal(t, 1400, event.Delta.CachedTokens)
+						assert.Equal(t, 2000, event.Delta.PromptTokens)
+						assert.Equal(t, 220, event.Delta.CompletionTokens)
+						assert.Equal(t, 6250, event.Delta.Quota)
+						assert.Equal(t, 1, event.Delta.Count, "reservation updates must not duplicate statistics")
+						assert.Equal(t, 1, event.Delta.CacheReadRequestCount)
+						assert.Equal(t, 1, event.Delta.StreamRequestCount)
+						assert.Equal(t, 150, event.Delta.FrtSum)
 					} else {
 						assert.NotContains(t, other, "billing_tokens")
 						assert.NotContains(t, other, "image_cache_tokens")

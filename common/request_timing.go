@@ -329,6 +329,9 @@ func (a *TimingAttempt) End() {
 }
 
 func ObserveTimingProtocol(ctx context.Context, event string, output bool, terminal bool, terminalKind ...string) {
+	if output {
+		ObserveAlertOutput(ctx)
+	}
 	t := TimingFromContext(ctx)
 	if t == nil {
 		return

@@ -323,8 +323,31 @@ func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.Log
 }
 
 func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, videoRatio, modelPrice, userGroupRatio float64) *model.LogOther {
-	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, 0, 0.0, modelPrice, userGroupRatio)
+	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, usage.InputTokenDetails.CachedTokens, relayInfo.PriceData.CacheRatio, modelPrice, userGroupRatio)
+	if details := usage.InputTokenDetails.CachedTokensDetails; details != nil {
+		if details.TextTokens != nil {
+			info.SetPublic("text_cache_tokens", *details.TextTokens)
+		}
+		if details.AudioTokens != nil {
+			info.SetPublic("audio_cache_tokens", *details.AudioTokens)
+		}
+	}
 	info.SetPublic("ws", true)
+	if relayInfo.RealtimeUsageIncomplete {
+		info.SetPublic("usage_incomplete", true)
+	}
+	if relayInfo.RealtimeBillingUsage != nil {
+		info.SetPublic("raw_usage", usage)
+		info.SetPublic("billable_usage", relayInfo.RealtimeBillingUsage)
+		info.SetPublic("billing_currency", "USD")
+		info.SetPublic("response_count", relayInfo.RealtimeResponseCount)
+		info.SetPublic("duplicate_responses", relayInfo.RealtimeDuplicateResponses)
+	}
+	if len(relayInfo.RealtimeUsageDiagnostics) > 0 {
+		info.SetPublic("usage_diagnostics", relayInfo.RealtimeUsageDiagnostics)
+	}
+	info.SetPublic("image_input", usage.InputTokenDetails.ImageTokens)
+	info.SetPublic("video_input", usage.InputTokenDetails.VideoTokens)
 	info.SetPublic("audio_input", usage.InputTokenDetails.AudioTokens)
 	info.SetPublic("audio_output", usage.OutputTokenDetails.AudioTokens)
 	info.SetPublic("text_input", usage.InputTokenDetails.TextTokens)

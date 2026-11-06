@@ -2,6 +2,7 @@ package qwen_realtime
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -33,32 +34,39 @@ const (
 
 // QwenRealtimeEvent is used to parse downstream WebSocket messages.
 type QwenRealtimeEvent struct {
-	EventId  string                `json:"event_id"`
-	Type     string                `json:"type"`
-	Response *QwenRealtimeResponse `json:"response,omitempty"`
-	Error    *QwenRealtimeError    `json:"error,omitempty"`
+	EventId    string                `json:"event_id"`
+	Type       string                `json:"type"`
+	ResponseID string                `json:"response_id,omitempty"`
+	Response   *QwenRealtimeResponse `json:"response,omitempty"`
+	Error      *QwenRealtimeError    `json:"error,omitempty"`
 }
 
 // QwenRealtimeResponse represents the response field in a response.done event.
 type QwenRealtimeResponse struct {
-	Usage *QwenRealtimeUsage `json:"usage,omitempty"`
+	ID         string             `json:"id"`
+	Status     string             `json:"status"`
+	Modalities []string           `json:"modalities,omitempty"`
+	Output     []dto.RealtimeItem `json:"output,omitempty"`
+	Usage      *QwenRealtimeUsage `json:"usage,omitempty"`
 }
 
 // raw usage: {"total_tokens": 622, "input_tokens": 532, "output_tokens": 90, "input_tokens_details": {"text_tokens": 314, "audio_tokens": 75, "video_tokens": 143}, "output_tokens_details": {"text_tokens": 25, "audio_tokens": 65}}
 // QwenRealtimeUsage holds token usage from the upstream response.
 type QwenRealtimeUsage struct {
-	TotalTokens         int               `json:"total_tokens"`
-	InputTokens         int               `json:"input_tokens"`
-	OutputTokens        int               `json:"output_tokens"`
-	InputTokensDetails  *QwenTokenDetails `json:"input_tokens_details,omitempty"`
-	OutputTokensDetails *QwenTokenDetails `json:"output_tokens_details,omitempty"`
+	TotalTokens         *int                       `json:"total_tokens,omitempty"`
+	InputTokens         *int                       `json:"input_tokens,omitempty"`
+	OutputTokens        *int                       `json:"output_tokens,omitempty"`
+	InputTokensDetails  *QwenTokenDetails          `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails *QwenTokenDetails          `json:"output_tokens_details,omitempty"`
+	Plugins             map[string]json.RawMessage `json:"plugins,omitempty"`
 }
 
 // QwenTokenDetails holds modality-level token breakdown.
 type QwenTokenDetails struct {
-	TextTokens  int `json:"text_tokens"`
-	AudioTokens int `json:"audio_tokens"`
-	VideoTokens int `json:"video_tokens,omitempty"`
+	TextTokens  *int `json:"text_tokens,omitempty"`
+	AudioTokens *int `json:"audio_tokens,omitempty"`
+	ImageTokens *int `json:"image_tokens,omitempty"`
+	VideoTokens *int `json:"video_tokens,omitempty"`
 }
 
 // QwenRealtimeError represents an error event from the upstream.
@@ -207,21 +215,4 @@ func asrUsageDelta(message []byte, accounted map[string]int) (*dto.RealtimeUsage
 			AudioTokens: delta,
 		},
 	}, clamp, nil
-}
-
-// accumulateUsage adds source QwenRealtimeUsage into the target dto.RealtimeUsage.
-// It safely handles nil InputTokensDetails and OutputTokensDetails.
-func accumulateUsage(target *dto.RealtimeUsage, source *QwenRealtimeUsage) {
-	target.TotalTokens += source.TotalTokens
-	target.InputTokens += source.InputTokens
-	target.OutputTokens += source.OutputTokens
-	if source.InputTokensDetails != nil {
-		target.InputTokenDetails.TextTokens += source.InputTokensDetails.TextTokens
-		target.InputTokenDetails.AudioTokens += source.InputTokensDetails.AudioTokens
-		target.InputTokenDetails.VideoTokens += source.InputTokensDetails.VideoTokens
-	}
-	if source.OutputTokensDetails != nil {
-		target.OutputTokenDetails.TextTokens += source.OutputTokensDetails.TextTokens
-		target.OutputTokenDetails.AudioTokens += source.OutputTokensDetails.AudioTokens
-	}
 }

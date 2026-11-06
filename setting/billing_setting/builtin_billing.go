@@ -12,6 +12,22 @@ const deepSeekFlashExpr = deepSeekPeak + ` ? tier("peak", p * 0.3 + cr * 0.006 +
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// Beijing USD per million tokens, checked 2026-11-05:
+	// https://www.alibabacloud.com/help/en/model-studio/qwen3-8-omni-flash-realtime
+	// https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-plus
+	// https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash
+	// Audio 3.1 excludes accompanying speech text in its per-response billing copy.
+	"qwen3.8-omni-flash-realtime":   `tier("beijing", p * 0.212 + ai * 0.848 + c * 0.636 + ao * 1.696)`,
+	"qwen-audio-3.1-realtime-plus":  `tier("beijing", p * 0.688 + ai * 5.501 + c * 5.501 + ao * 20.628)`,
+	"qwen-audio-3.1-realtime-flash": `tier("beijing", p * 0.212 + ai * 0.848 + c * 0.636 + ao * 1.696)`,
+	// https://docs.volcengine.com/docs/doubao-voice/billing-instructions?lang=zh
+	// CNY per million tokens, checked 2026-11-05; fixed conversion USD 1 =
+	// CNY 6.8. Cached text and audio both cost CNY 5; ai excludes cached audio.
+	"seeduplex-1.2.6.1": `tier("standard", (p * 10 + ai * 80 + cr * 5 + c * 80 + ao * 300) / 6.8)`,
+	// https://kling.ai/document-api/pricing/base/video.md (2026-11-05).
+	// Official international USD per billed second. The plugin reports output
+	// seconds without video input, otherwise max(input, output) + output.
+	"kling-4.0": `u("video_input") == "video" && u("resolution") == "1080p" ? tier("1080p_video", u("billable_seconds") * 0.141) : u("video_input") == "video" ? tier("720p_video", u("billable_seconds") * 0.094) : u("resolution") == "1080p" ? tier("1080p", u("billable_seconds") * 0.235) : tier("720p", u("billable_seconds") * 0.157)`,
 	// https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-asr-flash
 	// Beijing USD per million actual input/output tokens, checked 2026-10-26.
 	"qwen-audio-3.1-asr-flash": `tier("beijing", p * 0.113 + c * 0.382)`,

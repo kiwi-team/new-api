@@ -46,6 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { RelatedAlertsLink } from '@/features/alerts/components/related-alerts-link'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -214,6 +215,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         ariaLabel={t('Open menu')}
         contentClassName='w-48'
       >
+        <RelatedAlertsLink menu ownerID={user.id} />
         {isDisabled ? (
           <DropdownMenuItem onClick={() => handleManage('enable')}>
             {t('Enable')}

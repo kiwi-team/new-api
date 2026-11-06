@@ -4,6 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -199,4 +202,43 @@ func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 		_, listed := service.AccessTokenVerificationScope(scope)
 		assert.True(t, listed, "verification scope %s has no access token rule", scope)
 	}
+}
+
+func TestAlertMutationGuardsRunBeforeHandler(t *testing.T) {
+	oldSecure, oldLimit := common.SessionCookieSecure, common.CriticalRateLimitEnable
+	common.SessionCookieSecure, common.CriticalRateLimitEnable = true, false
+	t.Cleanup(func() { common.SessionCookieSecure, common.CriticalRateLimitEnable = oldSecure, oldLimit })
+	router := gin.New()
+	group := router.Group("/api/alerts", func(c *gin.Context) { c.Set("id", 1); c.Next() })
+	group.Use(alertRequestGuards()...)
+	mutations := 0
+	group.POST("/rules", func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatus(http.StatusRequestEntityTooLarge)
+			return
+		}
+		mutations++
+		c.Status(http.StatusNoContent)
+	})
+	for _, tc := range []struct {
+		name, origin, body string
+		status             int
+	}{
+		{"cross origin", "https://evil.test", "{}", http.StatusForbidden},
+		{"missing origin", "", "{}", http.StatusForbidden},
+		{"oversized", "https://panel.example.com", strings.Repeat("x", 128*1024+1), http.StatusRequestEntityTooLarge},
+		{"valid", "https://panel.example.com", "{}", http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/alerts/rules", strings.NewReader(tc.body))
+			if tc.origin != "" {
+				request.Header.Set("Origin", tc.origin)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, tc.status, response.Code)
+		})
+	}
+	assert.Equal(t, 1, mutations, "only the allowed, bounded request may reach mutation")
 }

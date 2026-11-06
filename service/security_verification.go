@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/hmac"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -22,6 +23,7 @@ const (
 	VerificationMethodOAuth              = "oauth"
 	VerificationMethodSession            = "session"
 	VerificationScopeChannelKeyRead      = "channel.key.read"
+	VerificationScopeAlertManage         = "alert.manage"
 	VerificationScopePasskeyRegister     = "passkey.register"
 	VerificationScopePasskeyDelete       = "passkey.delete"
 	VerificationScopeTwoFASetup          = "2fa.setup"
@@ -124,6 +126,16 @@ type AccessTokenRevokeContext struct {
 	Legacy  bool `json:"legacy,omitempty"`
 }
 
+// AlertManageContext binds step-up to the complete normalized rule (or release)
+// and expected revision. A proof cannot enable a different action or target.
+type AlertManageContext struct {
+	RuleID           int64  `json:"rule_id"`
+	OwnerUserID      int    `json:"owner_user_id"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	ConfigHash       string `json:"config_hash"`
+	Operation        string `json:"operation"`
+}
+
 const (
 	maxAccessTokenContextScopes   = 128
 	maxAccessTokenContextScopeLen = 64
@@ -163,6 +175,15 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeAlertManage:
+		var context AlertManageContext
+		if len(fields) != 5 || common.Unmarshal(operation.Context, &context) != nil || context.RuleID < 0 || context.OwnerUserID < 0 || context.ExpectedRevision < 0 || len(context.ConfigHash) != 64 || !slices.Contains([]string{"save", "release"}, context.Operation) {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		if _, err := hex.DecodeString(context.ConfigHash); err != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -325,6 +346,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 			return nil, model.ErrTwoFANotEnabled
 		}
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+		VerificationScopeAlertManage,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -393,6 +415,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+				VerificationScopeAlertManage,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:

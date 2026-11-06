@@ -441,6 +441,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := MigrateAlertModels(DB); err != nil {
+		return err
+	}
 	if err := MigrateHappyOysterModels(DB); err != nil {
 		return err
 	}

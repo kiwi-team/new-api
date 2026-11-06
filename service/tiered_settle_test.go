@@ -1,22 +1,31 @@
 package service
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // Claude Sonnet-style tiered expression: standard vs long-context
@@ -391,6 +400,45 @@ func TestTieredRealtimeLogContentDescribesExpressionBilling(t *testing.T) {
 
 	content := tieredRealtimeLogContent(relayInfo, usage, result)
 	assert.Equal(t, "Billing expression: tier audio, unit token, input 183 tokens (text 0, audio 183, image 0, video 0), output 0 tokens (text 0, audio 0, image 0), group ratio 1.00", content.Error())
+}
+
+func TestRealtimeCachedAudioUsesDisjointExpressionQuantities(t *testing.T) {
+	usage := &dto.RealtimeUsage{
+		InputTokens: 1000, OutputTokens: 110, TotalTokens: 1110,
+		InputTokenDetails: dto.InputTokenDetails{
+			TextTokens: 400, AudioTokens: 600, CachedTokens: 700,
+			CachedTokensDetails: &dto.CachedTokenDetails{TextTokens: common.GetPointer(300), AudioTokens: common.GetPointer(400)},
+		},
+		OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 50, AudioTokens: 60},
+	}
+	for _, tc := range []struct {
+		name     string
+		vars     map[string]bool
+		p, ai, c float64
+	}{
+		{"separate cache and audio", map[string]bool{"cr": true, "ai": true, "ao": true}, 100, 200, 50},
+		{"audio includes cache without cache price", map[string]bool{"ai": true}, 400, 600, 110},
+		{"cache only", map[string]bool{"cr": true}, 300, 600, 110},
+		{"no subcategories", nil, 1000, 600, 110},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := BuildTieredRealtimeTokenParams(usage, tc.vars)
+			assert.Equal(t, tc.p, params.P)
+			assert.Equal(t, tc.ai, params.AI)
+			assert.Equal(t, tc.c, params.C)
+			assert.Equal(t, float64(700), params.CR)
+			assert.Equal(t, float64(1000), params.Len)
+			assert.Equal(t, 600, usage.InputTokenDetails.AudioTokens, "billing must not change provider usage")
+		})
+	}
+	for _, audio := range []*int{nil, common.GetPointer(-1), common.GetPointer(701)} {
+		copy := *usage
+		copy.InputTokenDetails = usage.InputTokenDetails.Clone()
+		copy.InputTokenDetails.CachedTokensDetails.AudioTokens = audio
+		params := BuildTieredRealtimeTokenParams(&copy, map[string]bool{"cr": true, "ai": true})
+		assert.Zero(t, params.P)
+		assert.Equal(t, float64(600), params.AI, "missing or invalid detail must preserve legacy normalization")
+	}
 }
 
 func TestPrepareTieredBillingForSelectedGroupUpdatesReservation(t *testing.T) {
@@ -1144,4 +1192,145 @@ func TestSamePriceCacheReadsRemainInInput(t *testing.T) {
 			assert.Equal(t, separateParams.Len, params.Len, "tier conditions keep the full context length")
 		})
 	}
+}
+
+func TestRealtimeBillableUsageReservationSettlementAndRawLogs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, expression                               string
+		speechText, mixedText, speechQuota, finalQuota int
+	}{
+		{"Omni", `tier("beijing", p * 0.212 + ai * 0.848 + c * 0.636 + ao * 1.696)`, 200, 400, 1526, 1696},
+		{"Audio Plus", `tier("beijing", p * 0.688 + ai * 5.501 + c * 5.501 + ao * 20.628)`, 0, 200, 15162, 16056},
+		{"Audio Flash", `tier("beijing", p * 0.212 + ai * 0.848 + c * 0.636 + ao * 1.696)`, 0, 200, 1463, 1632},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			openRealtimeBillingDatabase(t)
+			const userID = 710
+			seedUser(t, userID, 500_000)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/realtime?model=alias", nil)
+			ctx.Set("token_name", "original-token")
+			ctx.Set("username", "test_user")
+			common.SetContextKey(ctx, constant.ContextKeyClientUserId, "original-uid")
+			common.SetContextKey(ctx, constant.ContextKeyClientScenairo, "voice")
+			info := &relaycommon.RelayInfo{
+				UserId: userID, IsPlayground: true, IsStream: true, OriginModelName: "alias", StartTime: time.Now(),
+				ChannelMeta:           &relaycommon.ChannelMeta{UpstreamModelName: "mapped-model"},
+				TieredBillingSnapshot: makeSnapshot(tc.expression, 1, 0, 0),
+				PriceData:             types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+			}
+			session := &BillingSession{relayInfo: info, funding: &WalletFunding{userId: userID}}
+			info.Billing = session
+			raw := &dto.RealtimeUsage{
+				InputTokens: 1700, OutputTokens: 1450, TotalTokens: 3150,
+				InputTokenDetails:  dto.InputTokenDetails{TextTokens: 1000, AudioTokens: 700},
+				OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 200, AudioTokens: 1250},
+			}
+			billable := *raw
+			billable.OutputTokenDetails.TextTokens = tc.speechText
+			billable.OutputTokens = 1250 + tc.speechText
+			billable.TotalTokens = billable.InputTokens + billable.OutputTokens
+			info.RealtimeBillingUsage = &billable
+			require.NoError(t, ReserveWssUsage(ctx, info, raw))
+			assert.Equal(t, tc.speechQuota, session.GetPreConsumedQuota())
+
+			// Follow a speech turn with a text-only turn. The connection's audio
+			// history must not exempt this new response's text output.
+			raw.InputTokens, raw.OutputTokens, raw.TotalTokens = 2700, 1650, 4350
+			raw.InputTokenDetails.TextTokens, raw.OutputTokenDetails.TextTokens = 2000, 400
+			billable.InputTokens, billable.InputTokenDetails.TextTokens = 2700, 2000
+			billable.OutputTokens = 1250 + tc.mixedText
+			billable.OutputTokenDetails.TextTokens = tc.mixedText
+			billable.TotalTokens = billable.InputTokens + billable.OutputTokens
+			info.RealtimeResponseCount, info.RealtimeDuplicateResponses = 2, 1
+			require.NoError(t, ReserveWssUsage(ctx, info, raw))
+			assert.Equal(t, tc.finalQuota, session.GetPreConsumedQuota())
+			quota, err := model.GetUserQuota(userID, false)
+			require.NoError(t, err)
+			assert.Equal(t, 500_000-tc.finalQuota, quota)
+
+			PostWssConsumeQuota(ctx, info, info.UpstreamModelName, raw, nil)
+			quota, err = model.GetUserQuota(userID, false)
+			require.NoError(t, err)
+			assert.Equal(t, 500_000-tc.finalQuota, quota, "settlement must not debit the cumulative reservation twice")
+			var logs []model.Log
+			require.NoError(t, model.LOG_DB.Where("user_id = ?", userID).Find(&logs).Error)
+			require.Len(t, logs, 1)
+			entry := logs[0]
+			assert.Equal(t, tc.finalQuota, entry.Quota)
+			assert.Equal(t, 2700, entry.PromptTokens)
+			assert.Equal(t, 1650, entry.CompletionTokens, "statistics retain free accompanying text")
+			assert.Equal(t, "original-token", entry.TokenName)
+			assert.Equal(t, "original-uid", entry.ClientUserId)
+			assert.Equal(t, "voice", entry.ClientScenairo)
+			var loggedUsage dto.RealtimeUsage
+			require.NoError(t, common.UnmarshalJsonStr(entry.Usage, &loggedUsage))
+			assert.Equal(t, *raw, loggedUsage)
+			var other struct {
+				RawUsage      dto.RealtimeUsage  `json:"raw_usage"`
+				BillableUsage dto.RealtimeUsage  `json:"billable_usage"`
+				BillingTokens map[string]float64 `json:"billing_tokens"`
+				Currency      string             `json:"billing_currency"`
+				ResponseCount int                `json:"response_count"`
+				Duplicates    int                `json:"duplicate_responses"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(entry.Other, &other))
+			assert.Equal(t, *raw, other.RawUsage)
+			assert.Equal(t, billable, other.BillableUsage)
+			assert.Equal(t, float64(tc.mixedText), other.BillingTokens["c"])
+			assert.Equal(t, "USD", other.Currency)
+			assert.Equal(t, 2, other.ResponseCount)
+			assert.Equal(t, 1, other.Duplicates)
+		})
+	}
+}
+
+// A disposable schema allows the exact same settlement/log assertions to run
+// against each supported database without replacing the package-wide fixture.
+func openRealtimeBillingDatabase(t *testing.T) {
+	t.Helper()
+	dialect := common.DatabaseType(os.Getenv("TEST_REALTIME_DB_DIALECT"))
+	var driver gorm.Dialector
+	switch dialect {
+	case "", common.DatabaseTypeSQLite:
+		dialect = common.DatabaseTypeSQLite
+		driver = sqlite.Open(":memory:")
+	case common.DatabaseTypeMySQL:
+		require.NotEmpty(t, os.Getenv("TEST_MYSQL_DSN"))
+		driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+	case common.DatabaseTypePostgreSQL:
+		require.NotEmpty(t, os.Getenv("TEST_POSTGRES_DSN"))
+		driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
+	default:
+		t.Fatalf("unsupported realtime test dialect %q", dialect)
+	}
+	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("realtime_%d_", time.Now().UnixNano())}})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	models := []any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}}
+	require.NoError(t, db.AutoMigrate(models...))
+	require.NoError(t, db.AutoMigrate(models...))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldMemory, oldBatch, oldExport, oldAlert, oldConsume := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.DataExportEnabled, common.AlertingEnabled, common.LogConsumeEnabled
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.DataExportEnabled, common.AlertingEnabled, common.LogConsumeEnabled = false, false, false, false, false, true
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.DataExportEnabled, common.AlertingEnabled, common.LogConsumeEnabled = oldRedis, oldMemory, oldBatch, oldExport, oldAlert, oldConsume
+	})
+	var version string
+	query := "SELECT version()"
+	if dialect == common.DatabaseTypeSQLite {
+		query = "SELECT sqlite_version()"
+	}
+	require.NoError(t, db.Raw(query).Scan(&version).Error)
+	t.Logf("database: %s %s", dialect, version)
 }

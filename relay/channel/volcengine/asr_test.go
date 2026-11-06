@@ -88,6 +88,12 @@ func TestVolcengineRealtimeProtocolUsesMappedModel(t *testing.T) {
 			wantURL: doubaoRealtimeDialogueURL,
 		},
 		{
+			name:    "Seeduplex on unified path",
+			model:   "seeduplex-1.2.6.1",
+			path:    "/v1/realtime?model=seeduplex-1.2.6.1",
+			wantURL: seeduplexDialogueURL,
+		},
+		{
 			name:    "Unsupported model",
 			model:   "unknown-realtime-model",
 			path:    "/v1/realtime",

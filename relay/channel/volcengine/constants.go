@@ -16,6 +16,7 @@ var ModelList = []string{
 	"seed-1-6-thinking-250715",
 	"doubao-seed-asr-2.0",
 	"doubao-seed-asr-2.0-streaming",
+	"seeduplex-1.2.6.1",
 }
 
 var ChannelName = "volcengine"

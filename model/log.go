@@ -499,7 +499,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if quotaEventID != "" {
 		quotaEventID = QuotaDataActionID("consume", fmt.Sprintf("%s:%d", quotaEventID, params.ChannelId))
 	}
-	if common.DataExportEnabled {
+	if common.DataExportEnabled || common.AlertingEnabled {
 		// Record before returning so shutdown can flush every completed request.
 		LogQuotaData(&LogQuotaDataCache{
 			EventID:                     quotaEventID,
@@ -612,7 +612,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	// 消费和退款都要进 quota_data:消耗统计页(/quota-statistics)与飞书告警都按
 	// SUM(quota) 聚合这张表,只写消费会让退款和差额结算的补扣永远不被冲减,
 	// 总消耗只增不减。退款以负值写入,与 logs 表同一套符号约定。
-	if (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) && common.DataExportEnabled {
+	if (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) && (common.DataExportEnabled || common.AlertingEnabled) {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
