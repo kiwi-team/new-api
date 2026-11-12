@@ -24,6 +24,10 @@ type TieredResultWrapper = billingexpr.TieredResult
 // report them as text-only. This function normalizes to text-only when
 // sub-categories are separately priced.
 func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool) billingexpr.TokenParams {
+	characters := 0
+	if usage.Characters != nil {
+		characters = *usage.Characters
+	}
 	p := float64(usage.PromptTokens)
 	c := float64(usage.CompletionTokens)
 	cr := float64(usage.PromptTokensDetails.CachedTokens)
@@ -122,6 +126,7 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 	}
 
 	return billingexpr.TokenParams{
+		Chars: float64(characters),
 		P:     p,
 		C:     c,
 		Len:   inputLen,

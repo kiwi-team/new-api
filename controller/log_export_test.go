@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -187,7 +188,13 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 					require.Len(t, own, 3)
 					assert.Equal(t, []any{"a-2", "a-1"}, exportedRequestIds(own))
 					assert.Equal(t, map[string]any{"success": true, "message": "", "data": map[string]any{"count": float64(2)}}, own[2])
-					assert.Equal(t, float64(1), own[0]["id"], "user exports carry list positions, not row ids")
+					if tc.kind == "clickhouse" {
+						assert.Equal(t, float64(1), own[0]["id"])
+					} else {
+						var stored model.Log
+						require.NoError(t, db.Where("request_id = ?", "a-2").First(&stored).Error)
+						assert.EqualValues(t, stored.Id, own[0]["id"], "user exports preserve the primary key")
+					}
 					assert.Empty(t, own[1]["channel_name"])
 					assert.NotContains(t, own[1]["other"], "admin_info")
 
@@ -321,6 +328,7 @@ func TestRequestLogIPDatabaseMatrix(t *testing.T) {
 					var failure model.ErrorLog
 					require.NoError(t, logDB.Where("request_id = ?", requestID).First(&failure).Error)
 					assert.Equal(t, source.ip, failure.Ip)
+					assert.Equal(t, "/v1/chat/completions", failure.RequestPath)
 					listedErrors := callLogHandler(t, GetAllErrorLogs, 1, common.RoleRootUser, "request_id="+requestID+"&page_size=20")
 					errorItems := listedErrors[0]["data"].(map[string]any)["items"].([]any)
 					require.Len(t, errorItems, 1)
@@ -395,6 +403,118 @@ func TestRequestLogIPDatabaseMatrix(t *testing.T) {
 					require.NoError(t, logDB.Where("request_id = ?", requestID).First(&failure).Error)
 					assert.Equal(t, source.ip, failure.Ip, "redacting API views does not erase the stored IP")
 				})
+			}
+		})
+	}
+}
+
+func TestLogIdentityLookupDatabaseMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, dialect := range []struct {
+		name, env string
+		typ       common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "AUDIT_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "AUDIT_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dialect.env != "" && dsn == "" {
+				t.Skip(dialect.env + " is not configured")
+			}
+			for _, separate := range []bool{false, true} {
+				for _, upgrade := range []bool{false, true} {
+					t.Run(fmt.Sprintf("separate=%t/upgrade=%t", separate, upgrade), func(t *testing.T) {
+						mainDB, _ := newAuditTestDatabase(t, dialect.name, dsn)
+						logDB := mainDB
+						if separate {
+							logDB, _ = newAuditTestDatabase(t, dialect.name, dsn)
+						}
+						useLogExportDatabases(t, mainDB, logDB, dialect.typ, dialect.typ)
+						require.NoError(t, mainDB.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
+						require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+						if upgrade {
+							require.NoError(t, logDB.Table("error_logs").AutoMigrate(&errorLogBeforeUpstreamID{}))
+							require.NoError(t, logDB.Table("error_logs").Create(&errorLogBeforeUpstreamID{Id: 99, Message: "legacy failure", Body: "legacy body", Ip: "203.0.113.8"}).Error)
+						}
+						for range 2 {
+							require.NoError(t, logDB.AutoMigrate(&model.ErrorLog{}))
+						}
+						assert.True(t, logDB.Migrator().HasIndex(&model.ErrorLog{}, "idx_error_request_id"))
+						assert.True(t, logDB.Migrator().HasIndex(&model.ErrorLog{}, "idx_error_ip"))
+						if upgrade {
+							var legacy model.ErrorLog
+							require.NoError(t, logDB.First(&legacy, 99).Error)
+							assert.Equal(t, "legacy failure", legacy.Message)
+							assert.Equal(t, "legacy body", legacy.Body)
+							assert.Equal(t, "203.0.113.8", legacy.Ip)
+							assert.Empty(t, legacy.RequestPath)
+						}
+						versionSQL := "SELECT version()"
+						if dialect.name == "sqlite" {
+							versionSQL = "SELECT sqlite_version()"
+						}
+						var version string
+						require.NoError(t, logDB.Raw(versionSQL).Scan(&version).Error)
+						t.Logf("database: %s %s", dialect.name, version)
+						require.NoError(t, mainDB.Create(&[]model.User{{Id: 1, Username: "owner", AffCode: "owner"}, {Id: 2, Username: "other", AffCode: "other"}}).Error)
+						previousSave, previousOptions := common.SaveErrorLog, common.OptionMap
+						common.SaveErrorLog, common.OptionMap = true, map[string]string{}
+						t.Cleanup(func() { common.SaveErrorLog, common.OptionMap = previousSave, previousOptions })
+						ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+						ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages?api_key=must-not-be-logged", nil)
+						ctx.Request.RemoteAddr = "[2001:db8::42]:45678"
+						ctx.Set("id", 1)
+						ctx.Set(common.RequestIdKey, "lookup-error")
+						service.RecordRequestError(ctx, types.NewErrorWithStatusCode(fmt.Errorf("invalid schema"), types.ErrorCodeInvalidRequest, http.StatusBadRequest))
+						var failure model.ErrorLog
+						require.NoError(t, logDB.Where("request_id = ?", "lookup-error").First(&failure).Error)
+						assert.Positive(t, failure.Id)
+						assert.Equal(t, "/v1/messages", failure.RequestPath)
+						assert.Equal(t, "2001:db8::42", failure.Ip)
+						for _, query := range []string{fmt.Sprintf("id=%d", failure.Id), "ip=2001:db8::42", fmt.Sprintf("id=%d&ip=2001:db8::42", failure.Id)} {
+							response := callLogHandler(t, GetAllErrorLogs, 1, common.RoleRootUser, query)[0]
+							require.Equal(t, true, response["success"])
+							items := response["data"].(map[string]any)["items"].([]any)
+							require.Len(t, items, 1)
+							item := items[0].(map[string]any)
+							assert.EqualValues(t, failure.Id, item["id"])
+							assert.Equal(t, failure.RequestPath, item["request_path"])
+							assert.Equal(t, failure.Ip, item["ip"])
+						}
+						for _, query := range []string{"id=invalid", "id=0", "id=-1", fmt.Sprintf("id=%d&ip=203.0.113.9", failure.Id)} {
+							response := callLogHandler(t, GetAllErrorLogs, 1, common.RoleRootUser, query)[0]
+							assert.EqualValues(t, 0, response["data"].(map[string]any)["total"])
+						}
+						recorder := httptest.NewRecorder()
+						export, _ := gin.CreateTestContext(recorder)
+						export.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/log/error-logs/export?id=%d&ip=2001:db8::42&start_timestamp=%d&end_timestamp=%d", failure.Id, time.Now().Unix()-60, time.Now().Unix()+1), nil)
+						export.Set("role", common.RoleRootUser)
+						ExportErrorLogsCSV(export)
+						rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(recorder.Body.String(), "\uFEFF"))).ReadAll()
+						require.NoError(t, err)
+						require.Len(t, rows, 2)
+						assert.Contains(t, rows[0], "RequestPath")
+						assert.Contains(t, rows[1], "/v1/messages")
+						assert.NotContains(t, recorder.Body.String(), "must-not-be-logged")
+						require.NoError(t, logDB.Create(&[]model.Log{{Id: 401, UserId: 1, CreatedAt: time.Now().Unix(), RequestId: "owned"}, {Id: 402, UserId: 2, CreatedAt: time.Now().Unix(), RequestId: "foreign"}}).Error)
+						for _, endpoint := range []struct {
+							handler gin.HandlerFunc
+							role    int
+						}{{GetAllLogs, common.RoleRootUser}, {GetUserLogs, common.RoleCommonUser}} {
+							response := callLogHandler(t, endpoint.handler, 1, endpoint.role, "id=401")[0]
+							require.Equal(t, true, response["success"])
+							items := response["data"].(map[string]any)["items"].([]any)
+							require.Len(t, items, 1)
+							assert.EqualValues(t, 401, items[0].(map[string]any)["id"])
+						}
+						for _, query := range []string{"id=402", "id=invalid", "id=0", "id=-1"} {
+							response := callLogHandler(t, GetUserLogs, 1, common.RoleCommonUser, query)[0]
+							assert.EqualValues(t, 0, response["data"].(map[string]any)["total"])
+						}
+					})
+				}
 			}
 		})
 	}

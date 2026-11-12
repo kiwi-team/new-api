@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
+	"github.com/QuantumNous/new-api/relay/channel/speech"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -45,6 +46,13 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	if info.RelayMode == relayconstant.RelayModeAudioSpeech && speech.Supports(info.ChannelType, request.Model) {
+		apiErr := nativeSpeechHelper(c, info, request, saveRequestResponse)
+		if apiErr != nil {
+			service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
+		}
+		return apiErr
 	}
 	qwenASR := ali_dashscope.IsQwenAudioASRModel(request.Model)
 	if qwenASR {
@@ -125,6 +133,73 @@ func AudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), extraContent, requestStr, responseStr)
 	}
 
+	return nil
+}
+
+func nativeSpeechHelper(c *gin.Context, info *relaycommon.RelayInfo, request *dto.AudioRequest, saveBodies bool) *types.NewAPIError {
+	prepared, err := speech.Prepare(request)
+	if err != nil {
+		if errors.Is(err, speech.ErrICLSystemVoice) {
+			err = errors.New(i18n.T(c, i18n.MsgRelayICLSystemVoice))
+		}
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if prepared.CharacterBilling() && info.TieredBillingSnapshot == nil && !info.PriceData.UsePrice && !info.PriceData.FreeModel {
+		return types.NewErrorWithStatusCode(errors.New("character-billed speech requires a chars expression or a per-request price"), types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	// A retry can first reveal a native speech model through channel mapping.
+	// Re-evaluate quantities against the original frozen expression, never the
+	// current mutable pricing settings.
+	estimate := 0
+	if !prepared.CharacterBilling() {
+		estimate = prepared.Characters
+	}
+	if snap := info.TieredBillingSnapshot; snap != nil {
+		input := billingexpr.RequestInput{}
+		if info.BillingRequestInput != nil {
+			input = *info.BillingRequestInput
+		}
+		params := billingexpr.TokenParams{P: float64(estimate), Len: float64(estimate), Chars: float64(prepared.Characters)}
+		raw, trace, err := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, params, input)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		}
+		multiplier := snap.PreConsumeMultiplier
+		if multiplier <= 0 || trace.BillingUnit == billingexpr.BillingUnitRequest {
+			multiplier = 1
+		}
+		before := raw / 1_000_000 * snap.QuotaPerUnit * multiplier
+		quota, err := billingexpr.QuotaRoundStrict(before * snap.GroupRatio)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		}
+		snap.EstimatedCharacters, snap.EstimatedPromptTokens = prepared.Characters, estimate
+		snap.EstimatedQuotaBeforeGroup, snap.EstimatedQuotaAfterGroup = before, quota
+		snap.EstimatedTier, snap.EstimatedBillingUnit, snap.EstimatedFixedPrice = trace.MatchedTier, trace.BillingUnit, trace.FixedPrice
+		info.PriceData.QuotaToPreConsume = quota
+		if err := service.PrepareTieredBillingForSelectedGroup(c, info); err != nil {
+			return err
+		}
+	}
+	info.SpeechCharacterEstimate = prepared.Characters
+	info.SetEstimatePromptTokens(estimate)
+	info.IsStream = prepared.Stream
+	result, runErr := speech.Run(c, info, prepared)
+	common.MarkResponseHandlingEnded(c)
+	if runErr == nil || result.Generated {
+		var requestBody, responseBody string
+		if saveBodies {
+			requestBody, responseBody = c.GetString("speech_request"), result.Response
+		}
+		var content []*common.Message
+		if runErr != nil {
+			content = append(content, common.NewMessage("Speech generation or delivery failed after audio generation"))
+		}
+		service.PostTextConsumeQuota(c, info, result.Usage, content, requestBody, responseBody)
+	}
+	if runErr != nil && !result.Written {
+		return types.NewError(runErr, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+	}
 	return nil
 }
 

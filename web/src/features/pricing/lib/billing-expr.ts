@@ -58,6 +58,14 @@ export type BillingVar = {
 
 export const BILLING_VARS: BillingVar[] = [
   {
+    key: 'chars',
+    field: 'characterPrice',
+    tierField: 'character_unit_cost',
+    label: 'Character price',
+    shortLabel: 'Characters',
+    side: 'input',
+  },
+  {
     key: 'p',
     field: 'inputPrice',
     tierField: 'input_unit_cost',
@@ -259,7 +267,7 @@ export type TierCondition = {
 }
 
 export type ParsedTier = {
-  billingUnit?: 'token' | 'request'
+  billingUnit?: 'token' | 'character' | 'request'
   fixedPrice?: number
   conditionText?: string
   label: string
@@ -291,7 +299,7 @@ function mapTokenTier(
     label: tier.label,
     ...(tier.imageCount ? { imageCount: true } : {}),
     conditions: tier.conditions,
-    ...(tier.billingUnit === 'request'
+    ...(tier.billingUnit
       ? { billingUnit: tier.billingUnit, fixedPrice: tier.fixedPrice }
       : {}),
     ...(tier.conditionText ? { conditionText: tier.conditionText } : {}),

@@ -324,8 +324,11 @@ func (m *Message) Unmarshal(data []byte) error {
 		return err
 	}
 
-	m.Serialization = SerializationBits(serializationCompression & 0b11110000)
+	m.Serialization = SerializationBits(serializationCompression >> 4)
 	m.Compression = CompressionBits(serializationCompression & 0b00001111)
+	if m.Version != Version1 || m.HeaderSize < HeaderSize4 || m.Compression != CompressionNone {
+		return fmt.Errorf("unsupported message header")
+	}
 
 	headerSize := 4 * int(m.HeaderSize)
 	readSize := 3
@@ -457,6 +460,9 @@ func (m *Message) readSessionID(buf *bytes.Buffer) error {
 	}
 
 	if size > 0 {
+		if uint64(size) > uint64(buf.Len()) {
+			return io.ErrUnexpectedEOF
+		}
 		m.SessionID = string(buf.Next(int(size)))
 	}
 
@@ -477,6 +483,9 @@ func (m *Message) readConnectID(buf *bytes.Buffer) error {
 	}
 
 	if size > 0 {
+		if uint64(size) > uint64(buf.Len()) {
+			return io.ErrUnexpectedEOF
+		}
 		m.ConnectID = string(buf.Next(int(size)))
 	}
 
@@ -498,6 +507,9 @@ func (m *Message) readPayload(buf *bytes.Buffer) error {
 	}
 
 	if size > 0 {
+		if uint64(size) > uint64(buf.Len()) {
+			return io.ErrUnexpectedEOF
+		}
 		m.Payload = buf.Next(int(size))
 	}
 

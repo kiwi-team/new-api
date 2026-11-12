@@ -94,6 +94,7 @@ function getLogTypeValue(value: unknown): LogTypeValue {
 }
 
 function buildSearchSourceKey(values: {
+  id?: unknown
   startTime?: unknown
   endTime?: unknown
   channel?: unknown
@@ -111,6 +112,7 @@ function buildSearchSourceKey(values: {
   type?: unknown
 }) {
   return [
+    values.id,
     values.startTime,
     values.endTime,
     values.channel,
@@ -168,6 +170,7 @@ export function CommonLogsFilterBar<TData>(
   const searchState = useMemo<CommonLogDraft>(() => {
     const { start, end } = getDefaultTimeRange()
     const sourceValues = {
+      id: searchParams.id,
       startTime: searchParams.startTime,
       endTime: searchParams.endTime,
       channel: searchParams.channel,
@@ -185,6 +188,7 @@ export function CommonLogsFilterBar<TData>(
       type: searchParams.type,
     }
     const filters: CommonLogFilters = {
+      id: searchParams.id || undefined,
       startTime: searchParams.startTime
         ? new Date(searchParams.startTime)
         : start,
@@ -208,6 +212,7 @@ export function CommonLogsFilterBar<TData>(
       logType: getLogTypeValue(searchParams.type),
     }
   }, [
+    searchParams.id,
     searchParams.startTime,
     searchParams.endTime,
     searchParams.channel,
@@ -350,6 +355,7 @@ export function CommonLogsFilterBar<TData>(
   )
 
   const hasExpandedFilters =
+    !!filters.id ||
     !!filters.token ||
     !!filters.username ||
     !!filters.channel ||
@@ -366,6 +372,7 @@ export function CommonLogsFilterBar<TData>(
     !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
 
   const expandedFilterCount = [
+    filters.id,
     filters.token,
     isAdmin ? filters.username : undefined,
     isAdmin ? filters.channel : undefined,
@@ -571,6 +578,16 @@ export function CommonLogsFilterBar<TData>(
           placeholder={t('Request ID')}
           value={filters.requestId || ''}
           onChange={(e) => handleChange('requestId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          aria-label={t('ID')}
+          placeholder={t('ID')}
+          inputMode='numeric'
+          value={filters.id || ''}
+          onChange={(event) => handleChange('id', event.target.value)}
           onKeyDown={handleKeyDown}
         />
       </LogsFilterField>

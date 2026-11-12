@@ -730,6 +730,7 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
   const [promptTokens, setPromptTokens] = useState(0)
   const [completionTokens, setCompletionTokens] = useState(0)
   const [extras, setExtras] = useState<ExtraTokenValues>({
+    characters: 0,
     cacheReadTokens: 0,
     cacheCreateTokens: 0,
     cacheCreate1hTokens: 0,
@@ -826,10 +827,13 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
             // guaranteed to have a non-null `field` (the `len` condition-only
             // variable is filtered out). Narrow the type here for safety.
             if (!variable.field) return null
-            const stateKey = variable.field.replace(
-              'Price',
-              'Tokens'
-            ) as keyof ExtraTokenValues
+            const stateKey =
+              variable.key === 'chars'
+                ? 'characters'
+                : (variable.field.replace(
+                    'Price',
+                    'Tokens'
+                  ) as keyof ExtraTokenValues)
             return (
               <div key={variable.key} className='space-y-1'>
                 <Label className='text-xs'>{t(variable.shortLabel)}</Label>

@@ -1,13 +1,18 @@
 package gemini
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math"
+	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -15,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/tidwall/sjson"
 )
 
 // ============================
@@ -44,6 +50,96 @@ var omniVideoOutputTokensPerSecond = map[string]int{
 	"720p":  5792,
 	"1080p": 8688,
 	"4k":    17376,
+}
+
+// ValidateOmniTaskRequest applies the same billable output limits on Gemini
+// and Vertex, including durations supplied in metadata.response_format.
+func ValidateOmniTaskRequest(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError {
+	modelName := cmp.Or(info.UpstreamModelName, info.OriginModelName)
+	if !IsOmniModel(modelName) {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	maxSeconds := 10
+	if modelName == "gemini-omni-1.2-flash" && !req.HasRefRole(relaycommon.RefRoleLastFrame) {
+		maxSeconds = 15
+	}
+	if req.Duration == 0 {
+		duration := any(req.Seconds)
+		if req.Seconds == "" {
+			if responseFormat, ok := req.Metadata["response_format"].(map[string]any); ok {
+				duration = responseFormat["duration"]
+			} else {
+				duration = nil
+			}
+		}
+		if duration != nil {
+			valid := false
+			switch value := duration.(type) {
+			case string:
+				seconds, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(value), "s"))
+				valid = err == nil && seconds >= 3 && seconds <= maxSeconds
+			case float64:
+				valid = value >= 3 && value <= float64(maxSeconds) && math.Trunc(value) == value
+			case int:
+				valid = value >= 3 && value <= maxSeconds
+			}
+			if !valid {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("Gemini Omni duration must be between 3 and %d seconds", maxSeconds), "invalid_seconds", http.StatusBadRequest)
+			}
+		}
+	}
+	seconds, resolution := resolveOmniOutputSettings(req)
+	if seconds < 3 || seconds > maxSeconds {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Gemini Omni duration must be between 3 and %d seconds", maxSeconds), "invalid_seconds", http.StatusBadRequest)
+	}
+	if _, ok := omniVideoOutputTokensPerSecond[resolution]; !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported Gemini Omni resolution: %s", resolution), "invalid_resolution", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// EstimateOmniUsage reserves token quantities only. Prices and group ratios
+// remain entirely in the frozen expression and task billing snapshot.
+func EstimateOmniUsage(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error) {
+	if !IsOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
+		return nil, fmt.Errorf("model %s has no native task usage meter", info.OriginModelName)
+	}
+	if taskErr := ValidateOmniTaskRequest(c, info); taskErr != nil {
+		return nil, taskErr.Error
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	seconds, resolution := resolveOmniOutputSettings(req)
+	imageCount := len(req.Images)
+	if imageCount == 0 && strings.TrimSpace(req.Image) != "" {
+		imageCount = 1
+	}
+	videoInput := false
+	if len(req.References) > 0 {
+		imageCount = 0
+		for _, ref := range req.References {
+			if ref.Type == relaycommon.RefTypeImage {
+				imageCount++
+			}
+			videoInput = videoInput || ref.Type == relaycommon.RefTypeVideo
+		}
+	}
+	inputTokens := float64(service.CountTokenInput(req.Prompt, req.Model)) + float64(imageCount)*1120
+	// Video/conversation context is not locally tokenizable. Reserve the
+	// published input ceiling and replace it with upstream usage on completion.
+	if videoInput || req.Metadata["previous_interaction_id"] != nil {
+		inputTokens = max(inputTokens, 131072)
+	}
+	return map[string]any{
+		"input_tokens": inputTokens, "text_output_tokens": float64(0),
+		"thought_tokens": float64(0), "video_output_tokens": float64(seconds * omniVideoOutputTokensPerSecond[resolution]),
+	}, nil
 }
 
 // OmniSecondsRatio returns the per-second billing multiplier for an Omni video task.
@@ -243,12 +339,12 @@ type omniSubmitResponse struct {
 
 // omniInteractionResponse is the polled interaction object.
 type omniInteractionResponse struct {
-	ID     string     `json:"id"`
-	Object string     `json:"object"`
-	Status string     `json:"status"`
-	Model  string     `json:"model"`
-	Steps  []omniStep `json:"steps"`
-	Usage  omniUsage  `json:"usage"`
+	ID     string          `json:"id"`
+	Object string          `json:"object"`
+	Status string          `json:"status"`
+	Model  string          `json:"model"`
+	Steps  []omniStep      `json:"steps"`
+	Usage  json.RawMessage `json:"usage"`
 	Error  *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -256,15 +352,110 @@ type omniInteractionResponse struct {
 
 type omniModalityTokens struct {
 	Modality string `json:"modality"`
-	Tokens   int    `json:"tokens"`
+	Tokens   *int   `json:"tokens"`
 }
 
 type omniUsage struct {
-	TotalInputTokens       int                  `json:"total_input_tokens"`
-	TotalOutputTokens      int                  `json:"total_output_tokens"`
-	TotalThoughtTokens     int                  `json:"total_thought_tokens"`
+	TotalInputTokens       *int                 `json:"total_input_tokens"`
+	TotalOutputTokens      *int                 `json:"total_output_tokens"`
+	TotalThoughtTokens     *int                 `json:"total_thought_tokens"`
 	InputTokensByModality  []omniModalityTokens `json:"input_tokens_by_modality"`
 	OutputTokensByModality []omniModalityTokens `json:"output_tokens_by_modality"`
+}
+
+// ParseOmniUsage extracts provider token facts from the usage object exposed
+// by Interactions and cascaded OpenAI-compatible video responses.
+func ParseOmniUsage(data []byte) map[string]any {
+	var usage omniUsage
+	if common.Unmarshal(data, &usage) != nil {
+		return nil
+	}
+	return usage.billingFacts()
+}
+
+// MarshalOmniVideo preserves validated provider usage across the public video
+// protocol so a downstream gateway can settle its own frozen token prices.
+func MarshalOmniVideo(video any, task *model.Task) ([]byte, error) {
+	body, err := common.Marshal(video)
+	if err != nil || task.Status != model.TaskStatusSuccess ||
+		!IsOmniModel(cmp.Or(task.Properties.UpstreamModelName, task.Properties.OriginModelName)) {
+		return body, err
+	}
+	var response struct {
+		Usage omniUsage `json:"usage"`
+	}
+	if common.Unmarshal(task.Data, &response) != nil || response.Usage.billingFacts() == nil {
+		return body, nil
+	}
+	usage, err := common.Marshal(response.Usage)
+	if err != nil {
+		return nil, err
+	}
+	return sjson.SetRawBytes(body, "usage", usage)
+}
+
+// billingFacts requires an unambiguous text/video split. Missing or malformed
+// usage keeps the reservation pending instead of guessing a final charge.
+func (usage omniUsage) billingFacts() map[string]any {
+	for _, total := range []*int{usage.TotalInputTokens, usage.TotalOutputTokens, usage.TotalThoughtTokens} {
+		if total != nil && (*total < 0 || *total > math.MaxInt32) {
+			return nil
+		}
+	}
+	inputTokens := int64(0)
+	for _, item := range usage.InputTokensByModality {
+		if item.Tokens == nil || *item.Tokens < 0 || *item.Tokens > math.MaxInt32 {
+			return nil
+		}
+		inputTokens += int64(*item.Tokens)
+		if inputTokens > math.MaxInt32 {
+			return nil
+		}
+	}
+	if usage.TotalInputTokens != nil {
+		inputTokens = int64(*usage.TotalInputTokens)
+	} else if usage.InputTokensByModality == nil {
+		return nil
+	}
+	output := map[string]int64{}
+	for _, item := range usage.OutputTokensByModality {
+		modality := strings.ToLower(strings.TrimSpace(item.Modality))
+		if item.Tokens == nil || *item.Tokens < 0 || *item.Tokens > math.MaxInt32 {
+			return nil
+		}
+		if modality != "text" && modality != "video" {
+			if *item.Tokens != 0 {
+				return nil
+			}
+			continue
+		}
+		output[modality] += int64(*item.Tokens)
+		if output[modality] > math.MaxInt32 {
+			return nil
+		}
+	}
+	outputTokens := output["text"] + output["video"]
+	if usage.TotalOutputTokens != nil {
+		total := int64(*usage.TotalOutputTokens)
+		if outputTokens > total || (total > 0 && len(output) == 0) || (len(output) == 2 && outputTokens != total) {
+			return nil
+		}
+		if _, hasVideo := output["video"]; !hasVideo {
+			output["video"] = total - output["text"]
+		} else if _, hasText := output["text"]; !hasText {
+			output["text"] = total - output["video"]
+		}
+	} else if usage.OutputTokensByModality == nil || outputTokens > math.MaxInt32 {
+		return nil
+	}
+	thoughtTokens := 0
+	if usage.TotalThoughtTokens != nil {
+		thoughtTokens = *usage.TotalThoughtTokens
+	}
+	return map[string]any{
+		"input_tokens": float64(inputTokens), "text_output_tokens": float64(output["text"]),
+		"thought_tokens": float64(thoughtTokens), "video_output_tokens": float64(output["video"]),
+	}
 }
 
 // ============================
@@ -464,26 +655,40 @@ func ParseOmniTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	}
 
 	ti := &relaycommon.TaskInfo{}
-	ti.InputTokens = max(op.Usage.TotalInputTokens, 0)
-	ti.OutputTokens = max(op.Usage.TotalOutputTokens, 0)
-	ti.ThoughtTokens = max(op.Usage.TotalThoughtTokens, 0)
-	for _, item := range op.Usage.InputTokensByModality {
-		if item.Tokens <= 0 {
+	var usage omniUsage
+	if common.Unmarshal(op.Usage, &usage) == nil {
+		ti.UsageFacts = usage.billingFacts()
+	} else {
+		usage = omniUsage{}
+	}
+	if usage.TotalInputTokens != nil {
+		ti.InputTokens = min(max(*usage.TotalInputTokens, 0), math.MaxInt32)
+	}
+	if usage.TotalOutputTokens != nil {
+		ti.OutputTokens = min(max(*usage.TotalOutputTokens, 0), math.MaxInt32)
+	}
+	if usage.TotalThoughtTokens != nil {
+		ti.ThoughtTokens = min(max(*usage.TotalThoughtTokens, 0), math.MaxInt32)
+	}
+	for _, item := range usage.InputTokensByModality {
+		if item.Tokens == nil || *item.Tokens <= 0 {
 			continue
 		}
 		if ti.InputTokensByModality == nil {
 			ti.InputTokensByModality = make(map[string]int)
 		}
-		ti.InputTokensByModality[strings.ToLower(item.Modality)] += item.Tokens
+		modality := strings.ToLower(item.Modality)
+		ti.InputTokensByModality[modality] += min(*item.Tokens, math.MaxInt32-ti.InputTokensByModality[modality])
 	}
-	for _, item := range op.Usage.OutputTokensByModality {
-		if item.Tokens <= 0 {
+	for _, item := range usage.OutputTokensByModality {
+		if item.Tokens == nil || *item.Tokens <= 0 {
 			continue
 		}
 		if ti.OutputTokensByModality == nil {
 			ti.OutputTokensByModality = make(map[string]int)
 		}
-		ti.OutputTokensByModality[strings.ToLower(item.Modality)] += item.Tokens
+		modality := strings.ToLower(item.Modality)
+		ti.OutputTokensByModality[modality] += min(*item.Tokens, math.MaxInt32-ti.OutputTokensByModality[modality])
 	}
 
 	if op.Error != nil && op.Error.Message != "" {

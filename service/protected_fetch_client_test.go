@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -13,6 +14,23 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDownloadWithContextCancelsBeforeFetchingAudio(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	system_setting.GetFetchSetting().EnableSSRFProtection = false
+	previousClient := httpClient
+	httpClient = http.DefaultClient
+	t.Cleanup(func() { httpClient = previousClient })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	t.Cleanup(server.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	resp, err := DoDownloadRequestWithContext(ctx, server.URL, "speech output")
+	if resp != nil {
+		require.NoError(t, resp.Body.Close())
+	}
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 type staticSSRFResolver map[string][]net.IPAddr
 

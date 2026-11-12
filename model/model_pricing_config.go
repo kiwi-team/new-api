@@ -271,6 +271,7 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			ModelPricingDescription: ModelPricingDescription{Effective: effectiveModelPricing(values, name)}}
 		entry.CacheWriteMode = ResolveCacheWriteMode(name, configured)
 		entry.BillingDetails = ResolveLegacyBillingDetails(name, entry.Effective, configured)
+		entry.UsageSchema = billing_setting.GetBuiltinTaskUsageSchema(name)
 		if plugin, ok := generation.GetByModel(name); ok {
 			entry.UsageSchema, _ = plugin.Meta.UsageForModel(name)
 		} else if target, ok := ResolveTaskModelAlias(generation, name); ok {

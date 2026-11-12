@@ -385,6 +385,7 @@ func updatePricing() {
 			}
 		}
 		usageModel := model
+		pricing.BillingUsageSchema = billing_setting.GetBuiltinTaskUsageSchema(model)
 		plugin, ok := pluginGeneration.GetByModel(model)
 		if !ok {
 			if target, resolved := ResolveTaskModelAlias(pluginGeneration, model); resolved {

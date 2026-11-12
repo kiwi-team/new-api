@@ -103,8 +103,9 @@ const plugin = {
 const previousConfig = useSystemConfigStore.getState().config
 const previousAuth = useAuthStore.getState().auth
 let client: QueryClient
-const i18n = createInstance()
+let i18n = createInstance()
 beforeEach(async () => {
+  i18n = createInstance()
   await i18n.init({
     lng: 'en',
     resources: { en },
@@ -120,6 +121,18 @@ beforeEach(async () => {
     { data: [], vendors: [] },
     { updatedAt: Date.now() + 60_000 }
   )
+})
+
+test('shows speech character prices with character units in consumption previews', () => {
+  const preview = renderPreview({
+    billing_mode: 'tiered_expr',
+    expr_b64: btoa('tier("speech", chars * 40)'),
+    matched_tier: 'speech',
+    billing_unit: 'character',
+    characters: 10000,
+  })
+  expect(preview.textContent).toContain('Characters $40/1M characters')
+  expect(preview.textContent).not.toContain('1M token')
 })
 afterEach(() => {
   client.clear()

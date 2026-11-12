@@ -1,6 +1,10 @@
 package billing_setting
 
-import "github.com/QuantumNous/new-api/constant"
+import (
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+)
 
 // deepSeekPeak is DeepSeek's peak window: Monday to Friday, 09:00-12:00 and
 // 14:00-18:00 Beijing time. The Chinese public holidays DeepSeek bills
@@ -12,6 +16,33 @@ const deepSeekFlashExpr = deepSeekPeak + ` ? tier("peak", p * 0.3 + cr * 0.006 +
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// Gemini API Standard USD/M tokens, checked 2026-11-12.
+	// https://aistudio.google.com/docs/pricing#gemini-omni-1.2-flash
+	// Task usage expressions return USD; thinking is separate from output.
+	"gemini-omni-1.2-flash": `tier("standard", u("input_tokens") * 1.5 / 1000000 + u("text_output_tokens") * 9 / 1000000 + u("thought_tokens") * 9 / 1000000 + u("video_output_tokens") * 12 / 1000000)`,
+	// H3 image regular CNY/M-token prices, checked 2026-11-11. Fixed
+	// conversion USD 1 = CNY 6.8, as with MiniMax speech below. Temporary
+	// provider promotions are not part of these regular default prices.
+	// https://platform.minimax.cn/docs/pricing/overview
+	"MiniMax-H3-Image":           `tier("china", (p * 15 + img * 10 + c * 25) / 6.8)`,
+	"MiniMax-H3-Image-Highspeed": `tier("china", (p * 15 + img * 20 + c * 50) / 6.8)`,
+	// Native speech prices checked 2026-11-10; chars is USD/M billable
+	// characters. Qwen uses Beijing international USD prices; Eleven uses
+	// public API pay-as-you-go. Doubao and MiniMax use domestic CNY prices
+	// with the explicit fixed conversion USD 1 = CNY 6.8.
+	// https://docs.modelstudio.console.alibabacloud.com/en/model-studio/qwen-audio-3-1-tts-plus
+	// https://elevenlabs.io/pricing/api
+	// https://docs.volcengine.com/docs/zh/doubao-voice/billing-instructions.md
+	// https://platform.minimax.cn/docs/pricing/overview
+	"qwen-audio-3.1-tts-plus":  `tier("beijing", chars * 20)`,
+	"qwen-audio-3.1-tts-flash": `tier("beijing", p * 0.212 + c * 1.696)`,
+	"qwen-audio-3.1-tts-next":  `tier("beijing", p * 0.848 + c * 1.696)`,
+	"eleven_v4":                `tier("standard", chars * 80)`,
+	"eleven_v4_turbo":          `tier("standard", chars * 40)`,
+	"seed-tts-2.0":             `tier("payg", chars * 300 / 6.8)`,
+	"seed-icl-2.0":             `tier("payg", chars * 300 / 6.8)`,
+	"speech-2.8-hd":            `tier("china", chars * 350 / 6.8)`,
+	"speech-2.8-turbo":         `tier("china", chars * 200 / 6.8)`,
 	// Beijing USD per million tokens, checked 2026-11-05:
 	// https://www.alibabacloud.com/help/en/model-studio/qwen3-8-omni-flash-realtime
 	// https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-plus
@@ -80,4 +111,26 @@ var builtinBillingExpr = map[string]string{
 	// requests each, the same pricing page. The calls carry no tokens.
 	constant.DeepSeekSearchModel: `tier("request", fixed(0.00075))`,
 	constant.DeepSeekFetchModel:  `tier("request", fixed(0.00075))`,
+}
+
+// GetBuiltinTaskUsageSchema describes native task meters for the existing
+// pricing editor and expression validation. It does not select a task protocol.
+func GetBuiltinTaskUsageSchema(modelName string) map[string]jsplugin.UsageFieldSchema {
+	if !relaycommon.IsGeminiOmniVideoModel(modelName) {
+		return nil
+	}
+	return map[string]jsplugin.UsageFieldSchema{
+		"input_tokens": {Type: "number", Unit: "token", Description: jsplugin.LocalizedText{
+			"en": "Input unit price", "zh": "输入单价",
+		}},
+		"text_output_tokens": {Type: "number", Unit: "token", Description: jsplugin.LocalizedText{
+			"en": "Text output unit price", "zh": "文本输出单价",
+		}},
+		"thought_tokens": {Type: "number", Unit: "token", Description: jsplugin.LocalizedText{
+			"en": "Thinking output unit price", "zh": "思考输出单价",
+		}},
+		"video_output_tokens": {Type: "number", Unit: "token", Description: jsplugin.LocalizedText{
+			"en": "Video output unit price", "zh": "视频输出单价",
+		}},
+	}
 }

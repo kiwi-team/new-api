@@ -31,11 +31,12 @@ type ErrorLog struct {
 	Param             string   `json:"param" gorm:"default:''"`
 	Code              string   `json:"code" gorm:"default:''"`
 	RequestId         string   `json:"request_id" gorm:"default:'';index:idx_error_request_id"`
+	RequestPath       string   `json:"request_path" gorm:"type:text"`
 	UpstreamRequestId string   `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);default:''"`
 	StatusCode        int      `json:"status_code" gorm:"default:0"`
 	UseTimeMs         int64    `json:"use_time_ms" gorm:"default:0"`
 	Body              string   `json:"body"` // Infer MySQL longtext instead of a default-sized varchar.
-	Ip                string   `json:"ip" gorm:"default:''"`
+	Ip                string   `json:"ip" gorm:"default:'';index:idx_error_ip"`
 	ClientUserId      string   `json:"client_user_id" gorm:"default:''"`
 	ClientScenairo    string   `json:"client_scenairo" gorm:"index;size:200;default:''"`
 	SessionId         string   `json:"session_id" gorm:"index:idx_error_session_id;size:128;default:''"`
@@ -92,6 +93,12 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 	num := pageSize
 	startIdx := (page - 1) * num
 	query := LOG_DB.Model(&ErrorLog{})
+	if req.Id != 0 {
+		query = query.Where("id = ?", req.Id)
+	}
+	if req.Ip != "" {
+		query = query.Where("ip = ?", req.Ip)
+	}
 	if channelId > 0 {
 		query = query.Where("channel_id = ? ", channelId)
 	}
@@ -167,6 +174,12 @@ func GetAllErrorLog(req *dto.ErrorLogsRequest) ([]*ErrorLog, int64, error) {
 // 与列表查询不同：导出需要 body 字段，故不 Omit。
 func GetErrorLogsForExport(req *dto.ErrorLogsRequest) ([]*ErrorLog, error) {
 	query := LOG_DB.Model(&ErrorLog{})
+	if req.Id != 0 {
+		query = query.Where("id = ?", req.Id)
+	}
+	if req.Ip != "" {
+		query = query.Where("ip = ?", req.Ip)
+	}
 	if req.ChannelId > 0 {
 		query = query.Where("channel_id = ?", req.ChannelId)
 	}
@@ -368,7 +381,7 @@ func isBinaryContentType(ct string) bool {
 		strings.HasPrefix(mt, "application/octet-stream")
 }
 
-func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestId string, upstreamRequestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool, timing ...*LogJSON) error {
+func SaveErrorLog(userId int, channelId int, channelName string, modelName string, err types.OpenAIError, body string, contentType string, requestPath string, requestId string, upstreamRequestId string, ip string, tokenId int, clientUserId string, clientScenairo string, extra string, header string, sessionId string, useTimeMs int64, includeBody bool, timing ...*LogJSON) error {
 	// 只调用一次 ToOpenAIError() 方法，避免重复调用
 	//openAIError := err.ToOpenAIError()
 
@@ -398,6 +411,7 @@ func SaveErrorLog(userId int, channelId int, channelName string, modelName strin
 		UseTimeMs:         useTimeMs,
 		TokenId:           tokenId,
 		RequestId:         requestId,
+		RequestPath:       sanitizeForPGText(requestPath),
 		UpstreamRequestId: upstreamRequestId,
 		ClientUserId:      clientUserId,
 		ClientScenairo:    clientScenairo,

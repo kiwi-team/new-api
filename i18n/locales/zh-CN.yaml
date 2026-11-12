@@ -2,6 +2,7 @@
 # 中文（简体）翻译文件
 
 # Errors returned to AI clients
+relay.invalid_request_format: "请求格式错误，请通过 IM 软件联系管理员"
 common.database_error: "数据库出错，请联系管理员"
 auth.user_banned: "用户已被封禁"
 token.get_info_failed: "获取令牌信息失败，请稍后重试"
@@ -349,6 +350,7 @@ task_plugin.unknown_meta_field: '插件元数据包含未知字段“{{.Field}}�
 
 # Audio transcription relay
 relay.audio_transcription_only: "此模型仅支持 POST /v1/audio/transcriptions"
+relay.icl_system_voice: "seed-icl-2.0 需要账号已有的复刻音色 ID；系统音色请使用 seed-tts-2.0 及其支持的 2.0 音色"
 relay.asr_response_invalid: "上游语音识别响应异常：{{.Error}}"
 
 # Unified alerting notifications

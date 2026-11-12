@@ -230,7 +230,9 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].ChannelName = ""
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
-	assignDisplayLogIds(logs, startIdx)
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		assignDisplayLogIds(logs, startIdx)
+	}
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational
@@ -670,6 +672,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // LogFilter is the usage-log search shared by the log list and the log export.
 // Username and Channel are administrator filters.
 type LogFilter struct {
+	Id                int
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
@@ -691,6 +694,9 @@ type LogFilter struct {
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.Id != 0 {
+		tx = tx.Where("logs.id = ?", f.Id)
+	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
 	}
@@ -933,8 +939,10 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 	}
 	count := 0
 	return streamLogs(tx, "logs.id desc", func(log *Log) error {
-		count++
-		log.Id = count
+		if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+			count++
+			log.Id = count
+		}
 		log.ChannelName = ""
 		log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
 		return fn(log)

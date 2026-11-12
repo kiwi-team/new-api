@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export const TOKEN_VARIABLES = [
+  'chars',
   'p',
   'c',
   'len',
@@ -139,7 +140,7 @@ export type BillingEvaluationResult =
       status: 'success'
       /** Token expressions are unscaled; task expressions already return cost. */
       cost: number
-      billingUnit: 'token' | 'request'
+      billingUnit: 'token' | 'character' | 'request'
       fixedPrice?: number
       imageCount?: number
       matchedTier: string

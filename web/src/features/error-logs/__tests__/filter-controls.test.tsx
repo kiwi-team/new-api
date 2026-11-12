@@ -120,7 +120,15 @@ describe('error log filter controls', () => {
           success: true,
           data: {
             items: logMessage
-              ? [{ id: 1, created_at: 1_793_750_400, message: logMessage }]
+              ? [
+                  {
+                    id: 401,
+                    created_at: 1_793_750_400,
+                    message: logMessage,
+                    request_path: '/v1/messages',
+                    ip: '2001:db8::42',
+                  },
+                ]
               : [],
             total: logMessage ? 21 : 0,
             page: config.params.p,
@@ -170,6 +178,42 @@ describe('error log filter controls', () => {
     expect(
       await screen.findByRole('option', { name: 'cust-42 (Acme)' })
     ).toBeVisible()
+  })
+
+  test('the list displays row IDs, request paths and IPs and applies ID and IP filters on Query', async () => {
+    await renderPage()
+    expect(await screen.findByRole('cell', { name: '401' })).toBeVisible()
+    expect(screen.getByRole('cell', { name: '/v1/messages' })).toBeVisible()
+    expect(screen.getByRole('cell', { name: '2001:db8::42' })).toBeVisible()
+    fireEvent.change(screen.getByLabelText('ID'), {
+      target: { value: ' 401 ' },
+    })
+    fireEvent.change(screen.getByLabelText('IP Address'), {
+      target: { value: ' 2001:db8::42 ' },
+    })
+    expect(listRequests).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Query' }))
+    await waitFor(() =>
+      expect(listRequests).toHaveBeenLastCalledWith(
+        expect.objectContaining({ p: 1, id: '401', ip: '2001:db8::42' })
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Query' })).toBeEnabled()
+    )
+    fireEvent.change(screen.getByLabelText('ID'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('IP Address'), {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Query' }))
+    await waitFor(() =>
+      expect(listRequests).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({
+          id: expect.anything(),
+          ip: expect.anything(),
+        })
+      )
+    )
   })
 
   test('a selected error-log filter can be cleared', async () => {

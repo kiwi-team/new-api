@@ -2,6 +2,7 @@ package sora
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	geminitask "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
@@ -41,21 +43,22 @@ type ImageURL struct {
 }
 
 type responseTask struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"`
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	ExpiresAt          int64  `json:"expires_at,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
-	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
-	VideoUrl           string `json:"video_url,omitempty"`
-	Url                string `json:"url,omitempty"`
-	ResultUrl          string `json:"result_url,omitempty"`
+	ID                 string          `json:"id"`
+	TaskID             string          `json:"task_id,omitempty"` //兼容旧接口
+	Object             string          `json:"object"`
+	Model              string          `json:"model"`
+	Status             string          `json:"status"`
+	Progress           int             `json:"progress"`
+	CreatedAt          int64           `json:"created_at"`
+	CompletedAt        int64           `json:"completed_at,omitempty"`
+	ExpiresAt          int64           `json:"expires_at,omitempty"`
+	Seconds            string          `json:"seconds,omitempty"`
+	Size               string          `json:"size,omitempty"`
+	RemixedFromVideoID string          `json:"remixed_from_video_id,omitempty"`
+	VideoUrl           string          `json:"video_url,omitempty"`
+	Url                string          `json:"url,omitempty"`
+	ResultUrl          string          `json:"result_url,omitempty"`
+	Usage              json.RawMessage `json:"usage,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
@@ -97,7 +100,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	return geminitask.ValidateOmniTaskRequest(c, info)
+}
+
+// OpenAI-compatible video gateways can serve Omni through /v1/videos while
+// retaining Omni's token billing. They must not use Sora's per-second meter.
+func (a *TaskAdaptor) ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
+	facts, _ := a.ExtractUsageFactsValidated(c, info)
+	return facts
+}
+
+func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error) {
+	return geminitask.EstimateOmniUsage(c, info)
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
@@ -161,7 +178,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	contentType := c.GetHeader("Content-Type")
 
 	if strings.HasPrefix(contentType, "application/json") {
-		var bodyMap map[string]interface{}
+		var bodyMap map[string]any
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
 			if newBody, err := common.Marshal(bodyMap); err == nil {
@@ -298,9 +315,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
-	fmt.Printf("6666 resTask: %#v", resTask)
 	taskResult := relaycommon.TaskInfo{
-		Code: 0,
+		Code: 0, UsageFacts: geminitask.ParseOmniUsage(resTask.Usage),
 	}
 
 	switch resTask.Status {
@@ -310,12 +326,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		if len(resTask.VideoUrl) > 0 {
-			taskResult.Url = resTask.VideoUrl
-		} else if len(resTask.ResultUrl) > 0 {
-			taskResult.Url = resTask.ResultUrl
-		} else if len(resTask.Url) > 0 {
-			taskResult.Url = resTask.Url
+		for _, candidate := range []string{resTask.VideoUrl, resTask.ResultUrl, resTask.Url} {
+			if url := strings.TrimSpace(candidate); url != "" {
+				taskResult.Url = url
+				break
+			}
 		}
 		// 上游没给地址时 Url 留空：由调用方用本机的 public task ID 拼内容代理地址。
 		// 这里不能拿 resTask.ID 去拼——那是上游的任务 ID，本机 task 表里查不到，

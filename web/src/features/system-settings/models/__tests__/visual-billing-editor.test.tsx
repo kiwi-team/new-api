@@ -34,6 +34,23 @@ const expression =
 const chainedExpression =
   'len <= 32000 && c <= 200 ? tier("discount", p * 0.8 + c * 2 + cr * 0.16 + cc * 0.17) : len <= 32000 ? tier("short", p * 0.8 + c * 8 + cr * 0.16 + cc * 0.17) : len <= 128000 ? tier("mid", p * 1.2 + c * 16 + cr * 0.16 + cc * 0.17) : tier("long", p * 2.4 + c * 24 + cr * 0.16 + cc * 0.17)'
 
+test('shows character units and an editable character price for speech rules', () => {
+  render(
+    <TieredPricingEditor
+      billingExpr='tier("speech", chars * 40)'
+      requestRuleExpr=''
+      onBillingExprChange={vi.fn()}
+      onRequestRuleExprChange={vi.fn()}
+    />
+  )
+  const rule = screen.getByRole('group', { name: 'Pricing tier speech' })
+  expect(within(rule).getByText('$/1M characters')).toBeVisible()
+  expect(
+    within(rule).getByRole('textbox', { name: 'Character price' })
+  ).toHaveValue('40')
+  expect(within(rule).queryByText(/1M token/)).not.toBeInTheDocument()
+})
+
 test.each([
   ['zhCN', '星期一'],
   ['zhTW', '星期一'],

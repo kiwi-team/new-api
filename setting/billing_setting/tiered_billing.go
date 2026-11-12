@@ -207,6 +207,9 @@ func SmokeTestExpr(exprStr string) error {
 // SmokeTestModelExpr validates built-in protocol usage dimensions that are not
 // provided by JavaScript task plugins.
 func SmokeTestModelExpr(modelName, exprStr string) error {
+	if schema := GetBuiltinTaskUsageSchema(modelName); schema != nil {
+		return SmokeTestTaskExpr(exprStr, schema)
+	}
 	if modelName == "happyoyster-1.0-directing" {
 		return SmokeTestTaskExpr(exprStr, map[string]jsplugin.UsageFieldSchema{
 			"price_scope":                       {Type: "string", Enum: []string{"international", "global"}},
@@ -242,6 +245,9 @@ func smokeTestExpr(exprStr string) error {
 	}
 
 	vectors := []billingexpr.TokenParams{
+		{Chars: 1},
+		{Chars: 10000},
+		{Chars: math.MaxInt32},
 		{P: 0, C: 0, Len: 0},
 		{P: 1000, C: 1000, Len: 1000},
 		{P: 100000, C: 100000, Len: 100000},

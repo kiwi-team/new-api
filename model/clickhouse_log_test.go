@@ -179,6 +179,7 @@ func TestClickHouseErrorTimingMigration(t *testing.T) {
 	require.NoError(t, db.Set("gorm:table_options", "ENGINE = MergeTree() ORDER BY id").AutoMigrate(&ErrorLog{}))
 	require.NoError(t, db.Exec("ALTER TABLE error_logs DROP COLUMN timing").Error)
 	require.NoError(t, db.Exec("ALTER TABLE error_logs DROP COLUMN upstream_request_id").Error)
+	require.NoError(t, db.Exec("ALTER TABLE error_logs DROP COLUMN request_path").Error)
 	require.NoError(t, db.Model(&ErrorLog{}).Create(map[string]any{"id": 1, "request_id": "legacy", "message": "legacy error"}).Error)
 	for range 2 {
 		require.NoError(t, migrateClickHouseLogDB())
@@ -188,7 +189,8 @@ func TestClickHouseErrorTimingMigration(t *testing.T) {
 	assert.Nil(t, legacy.Timing)
 	assert.Equal(t, "legacy error", legacy.Message)
 	assert.Empty(t, legacy.UpstreamRequestId)
-	row := ErrorLog{Id: 2, RequestId: "timed", UpstreamRequestId: "clickhouse-upstream-id", Timing: common.GetPointer(LogJSON(`{"schema_version":1,"phase":"error_log"}`))}
+	assert.Empty(t, legacy.RequestPath)
+	row := ErrorLog{Id: 2, RequestId: "timed", RequestPath: "/v1/messages", UpstreamRequestId: "clickhouse-upstream-id", Timing: common.GetPointer(LogJSON(`{"schema_version":1,"phase":"error_log"}`))}
 	require.NoError(t, db.Create(&row).Error)
 	text, err := GetErrorLogTiming(2)
 	require.NoError(t, err)
@@ -196,4 +198,5 @@ func TestClickHouseErrorTimingMigration(t *testing.T) {
 	var stored ErrorLog
 	require.NoError(t, db.Where("id = ?", 2).First(&stored).Error)
 	assert.Equal(t, "clickhouse-upstream-id", stored.UpstreamRequestId)
+	assert.Equal(t, "/v1/messages", stored.RequestPath)
 }

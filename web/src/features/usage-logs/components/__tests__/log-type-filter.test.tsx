@@ -37,6 +37,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import { buildApiParams } from '../../lib/utils'
 import { CommonLogsFilterBar } from '../common-logs-filter-bar'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
@@ -126,5 +127,27 @@ it('marks only retired log types as deprecated while keeping historical filters 
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({ type: ['7'], page: 1 })
+  )
+})
+
+it('applies a primary key ID filter and preserves it in the API query until reset', async () => {
+  const router = await renderFilter()
+  await userEvent.click(screen.getByRole('button', { name: 'Expand' }))
+  await userEvent.type(screen.getByRole('textbox', { name: 'ID' }), '401')
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({ id: '401', page: 1 })
+  )
+  expect(
+    buildApiParams({
+      page: 1,
+      pageSize: 20,
+      searchParams: router.state.location.search,
+      isAdmin: false,
+    })
+  ).toMatchObject({ id: '401' })
+  await userEvent.click(screen.getByRole('button', { name: 'Reset' }))
+  await waitFor(() =>
+    expect(router.state.location.search).not.toHaveProperty('id')
   )
 })

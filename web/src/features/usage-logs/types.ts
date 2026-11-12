@@ -49,6 +49,7 @@ export interface CommonFilters {
  * Common logs specific filters
  */
 export interface CommonLogFilters extends CommonFilters {
+  id?: string
   model?: string
   token?: string
   group?: string
@@ -246,7 +247,8 @@ export interface LogOtherData {
   // expression; the matched tier and request-rule traces come from the actual
   // settlement run.
   billing_mode?: string
-  billing_unit?: 'token' | 'request'
+  billing_unit?: 'token' | 'character' | 'request'
+  characters?: number
   fixed_price?: number
   image_count?: number
   expr_b64?: string
@@ -453,6 +455,7 @@ export interface TaskArtifactsResponse {
 // ============================================================================
 
 export interface GetLogsParams {
+  id?: string
   p?: number
   page_size?: number
   type?: number

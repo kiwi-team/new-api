@@ -121,6 +121,8 @@ func GetAllErrorLogs(c *gin.Context) {
 	trajId := strings.TrimSpace(c.Query("traj_id"))
 	sessionId := strings.TrimSpace(c.Query("session_id"))
 	logs, total, err := model.GetAllErrorLog(&hostdto.ErrorLogsRequest{
+		Id:           logIDFilter(c),
+		Ip:           strings.TrimSpace(c.Query("ip")),
 		RequestId:    requestId,
 		ChannelId:    channel,
 		ModelName:    modelName,
@@ -195,6 +197,8 @@ func ExportErrorLogsCSV(c *gin.Context) {
 	}
 
 	logs, err := model.GetErrorLogsForExport(&hostdto.ErrorLogsRequest{
+		Id:           logIDFilter(c),
+		Ip:           strings.TrimSpace(c.Query("ip")),
 		RequestId:    requestId,
 		ChannelId:    channel,
 		ModelName:    modelName,
@@ -233,7 +237,7 @@ func ExportErrorLogsCSV(c *gin.Context) {
 	_ = w.Write([]string{
 		"ID", "CreatedAt", "UserID", "ChannelId", "ChannelName", "TokenId", "TokenName",
 		"ModelName", "StatusCode", "Code", "Type", "Message", "Param", "UseTimeMs",
-		"RequestId", "IP", "ClientUserId", "ClientScenairo", "Body", "Extra", "Header", "UpstreamRequestId",
+		"RequestId", "IP", "ClientUserId", "ClientScenairo", "Body", "Extra", "Header", "RequestPath", "UpstreamRequestId",
 	})
 	for _, log := range logs {
 		_ = w.Write([]string{
@@ -258,6 +262,7 @@ func ExportErrorLogsCSV(c *gin.Context) {
 			log.Body,
 			deref(log.Extra),
 			deref(log.Header),
+			log.RequestPath,
 			log.UpstreamRequestId,
 		})
 	}

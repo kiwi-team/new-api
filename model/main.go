@@ -488,7 +488,7 @@ func migrateLOGDB() error {
 
 func migrateClickHouseLogDB() error {
 	if LOG_DB.Migrator().HasTable(&ErrorLog{}) {
-		for _, column := range []string{"timing Nullable(String)", "upstream_request_id String DEFAULT ''"} {
+		for _, column := range []string{"timing Nullable(String)", "upstream_request_id String DEFAULT ''", "request_path String DEFAULT ''"} {
 			if err := LOG_DB.Exec("ALTER TABLE error_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
 				return err
 			}

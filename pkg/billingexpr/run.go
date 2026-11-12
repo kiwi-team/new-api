@@ -56,6 +56,12 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		RequestRules: append([]RequestRuleTrace(nil), requestRules...),
 	}
 	headers := normalizeHeaders(request.Headers)
+	if usedVars["chars"] {
+		if math.IsNaN(params.Chars) || math.IsInf(params.Chars, 0) || params.Chars < 0 || params.Chars > math.MaxInt32 || math.Trunc(params.Chars) != params.Chars {
+			return 0, trace, fmt.Errorf("chars must be an integer between 0 and %d", math.MaxInt32)
+		}
+		trace.BillingUnit = BillingUnitCharacter
+	}
 	imageCount := 1
 	if usedVars["image_count"] {
 		if request.ImageCount != nil {
@@ -68,6 +74,7 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 	}
 
 	env := map[string]any{
+		"chars":       params.Chars,
 		"image_count": float64(imageCount),
 		"p":           params.P,
 		"c":           params.C,

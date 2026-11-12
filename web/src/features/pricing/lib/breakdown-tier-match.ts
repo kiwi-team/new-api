@@ -44,7 +44,7 @@ export function isBreakdownTierMatched(
   tiers: readonly BreakdownMatchTier[],
   matchedTierLabel?: string | null,
   usageFacts?: Record<string, string | number>,
-  billingUnit?: 'token' | 'request',
+  billingUnit?: 'token' | 'character' | 'request',
   fixedPrice?: number
 ): boolean {
   if (!('unitPrices' in tier) && billingUnit) {

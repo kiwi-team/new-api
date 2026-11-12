@@ -26,6 +26,14 @@ Powered by [expr-lang/expr](https://github.com/expr-lang/expr). Expressions are 
 
 ### Token Variables
 
+Speech adapters also supply `chars`, the nullable upstream billable character
+quantity (missing usage retains the reservation and is marked estimated). It
+is independent of all token counts: `tier("standard", chars * 40)` means
+USD 40 per million billable characters and emits `billing_unit: "character"`.
+Valid counts are integers from 0 through 2147483647. An explicit zero is valid;
+it must not be replaced by the request estimate. Pre-consume freezes
+`estimated_characters` alongside the expression and group ratio.
+
 **输入侧变量：**
 
 | 变量 | 含义 |
@@ -272,6 +280,26 @@ The usage-log UI treats `request_rules` as the authoritative rule list and rende
 ---
 
 ## Task Usage Expressions
+
+Native Gemini/Vertex Omni tasks expose `input_tokens`, `text_output_tokens`,
+`thought_tokens`, and `video_output_tokens` through the same `u()` interface.
+Unclaimed Omni models on OpenAI-compatible video channels use the same meter
+while preserving `/v1/videos` submission and polling. They must not inherit
+Sora's seconds/size facts. Explicit plugin bindings retain their own meter.
+Native Omni video query responses carry validated provider `usage` so a
+downstream gateway can settle from actual tokens. An older upstream that omits
+`usage` must be upgraded for exact billing; the downstream does not invent it.
+The native usage schema is shared by expression validation and the existing
+task pricing editor. Gemini Omni 1.2 Flash defaults to USD 1.50/M input,
+9/M text and thinking output, and 12/M video output (Standard, 2026-11-12).
+Each term divides by 1,000,000 because task expressions return USD directly.
+Thinking is separate from `total_output_tokens` and is charged once. Video
+output includes native audio; no separate audio charge is added.
+Submission reserves estimated quantities for the requested resolution and
+duration. Completion replaces them with validated upstream modality counts.
+Missing, invalid, or ambiguous usage keeps the successful task's reservation
+pending for billing retries rather than treating it as zero. Explicit zero
+usage settles to zero. Existing administrator pricing overrides remain intact.
 
 Task plugins can expose validated, provider-specific billing facts through
 `meta.usageSchema`. Expressions read those facts with `u("key")`. A literal key

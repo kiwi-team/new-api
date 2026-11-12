@@ -154,7 +154,8 @@ type RelayInfo struct {
 	FinalPreConsumedQuota   int // 最终预消耗的配额
 	// UsageBillingFallback retains the reserved charge when a successful provider
 	// response has no trustworthy usage. Actual token counters remain unknown/zero.
-	UsageBillingFallback string
+	UsageBillingFallback    string
+	SpeechCharacterEstimate int
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。

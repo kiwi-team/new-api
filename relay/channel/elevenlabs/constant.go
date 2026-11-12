@@ -1,6 +1,8 @@
 package elevenlabs
 
 var ModelList = []string{
+	"eleven_v4",
+	"eleven_v4_turbo",
 	"eleven_monolingual_v1",
 	"eleven_multilingual_v2",
 	"eleven_multilingual_v3",

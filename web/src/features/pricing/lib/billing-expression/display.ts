@@ -35,7 +35,7 @@ export type TokenTierCondition = {
 export type TokenTier = {
   conditionText?: string
   imageCount?: boolean
-  billingUnit?: 'token' | 'request'
+  billingUnit?: 'token' | 'character' | 'request'
   fixedPrice?: number
   label: string
   conditions: TokenTierCondition[]
@@ -127,7 +127,19 @@ function tokenTier(
       fixedPrice: body.args[0].value,
     }
   }
-  for (const term of flattenBinary(node.args[1], '+')) {
+  let priceBody = node.args[1]
+  let scale = 1
+  while (
+    priceBody.kind === 'binary' &&
+    priceBody.operator === '/' &&
+    priceBody.right.kind === 'literal' &&
+    typeof priceBody.right.value === 'number' &&
+    priceBody.right.value > 0
+  ) {
+    scale /= priceBody.right.value
+    priceBody = priceBody.left
+  }
+  for (const term of flattenBinary(priceBody, '+')) {
     if (term.kind !== 'binary' || term.operator !== '*') {
       return null
     }
@@ -175,10 +187,17 @@ function tokenTier(
       variable = 'p'
     }
     if (Object.hasOwn(prices, variable)) return null
-    prices[variable] = price
+    prices[variable] = price * scale
   }
   if (Object.keys(prices).length === 0) return null
-  return { label: node.args[0].value, conditions, prices }
+  return {
+    label: node.args[0].value,
+    conditions,
+    prices,
+    ...(Object.hasOwn(prices, 'chars')
+      ? { billingUnit: 'character' as const }
+      : {}),
+  }
 }
 
 /** Legacy token summary contract: ordered linear chain, never a minimum or partial price extraction. */

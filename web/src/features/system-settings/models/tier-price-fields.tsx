@@ -124,6 +124,9 @@ type TierPriceFieldsProps = {
 }
 export function TierPriceFields(props: TierPriceFieldsProps) {
   const { t } = useTranslation()
+  const characterOnly =
+    props.prices.chars !== undefined &&
+    Object.keys(props.prices).every((key) => key === 'chars')
   const hasMediaPricing = MEDIA_PRICE_VARS.some((variable) =>
     props.onInclude
       ? props.prices[variable.key] !== undefined
@@ -161,7 +164,10 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
   const billingControl = props.onBillingUnitChange && (
     <Select
       items={[
-        { value: 'token', label: t('Per token') },
+        {
+          value: 'token',
+          label: t(characterOnly ? 'Characters' : 'Per token'),
+        },
         { value: 'request', label: t('Per-call') },
       ]}
       value={props.billingUnit ?? 'token'}
@@ -180,7 +186,9 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false}>
         <SelectGroup>
-          <SelectItem value='token'>{t('Per token')}</SelectItem>
+          <SelectItem value='token'>
+            {t(characterOnly ? 'Characters' : 'Per token')}
+          </SelectItem>
           <SelectItem value='request'>{t('Per-call')}</SelectItem>
         </SelectGroup>
       </SelectContent>
@@ -201,6 +209,21 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
       </>
     )
   }
+  if (characterOnly) {
+    return (
+      <>
+        {billingControl}
+        <PriceField
+          currency={props.currency}
+          label={t('Character price')}
+          value={props.prices.chars ?? 0}
+          onChange={(value) => props.onChange('chars', value)}
+          hint={`${props.currency.symbol}/${t('1M characters')}`}
+          invalid={props.invalidVariables?.includes('chars')}
+        />
+      </>
+    )
+  }
   return (
     <>
       {billingControl}
@@ -213,6 +236,16 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
         </div>
 
         <div className='space-y-3'>
+          {props.prices.chars !== undefined && (
+            <PriceField
+              currency={props.currency}
+              label={t('Character price')}
+              value={props.prices.chars}
+              onChange={(value) => props.onChange('chars', value)}
+              hint={`${props.currency.symbol}/${t('1M characters')}`}
+              invalid={props.invalidVariables?.includes('chars')}
+            />
+          )}
           <div className='flex flex-wrap gap-x-4 gap-y-2'>
             {renderPriceVariable({ key: 'p', label: 'Input price' })}
             {renderPriceVariable({ key: 'c', label: 'Output price' })}

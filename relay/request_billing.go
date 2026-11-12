@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/ali_dashscope"
+	"github.com/QuantumNous/new-api/relay/channel/speech"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -27,6 +28,7 @@ import (
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	qwenASR := false
+	speechTokens := -1
 	if _, audio := info.Request.(*dto.AudioRequest); audio {
 		// Resolve on a separate view: pricing and the caller's model keep their
 		// original identity, while aliases receive the same validation/estimate.
@@ -35,6 +37,26 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 			return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 		}
 		qwenASR = ali_dashscope.IsQwenAudioASRModel(mapped.UpstreamModelName)
+		if speech.Supports(common.GetContextKeyInt(c, constant.ContextKeyChannelType), mapped.UpstreamModelName) {
+			if info.RelayMode != relayconstant.RelayModeAudioSpeech {
+				return types.NewErrorWithStatusCode(errors.New("this model requires /v1/audio/speech"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			audio := *info.Request.(*dto.AudioRequest)
+			audio.Model = mapped.UpstreamModelName
+			prepared, err := speech.Prepare(&audio)
+			if err != nil {
+				if errors.Is(err, speech.ErrICLSystemVoice) {
+					err = errors.New(i18n.T(c, i18n.MsgRelayICLSystemVoice))
+				}
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			info.SpeechCharacterEstimate = prepared.Characters
+			if prepared.CharacterBilling() {
+				speechTokens = 0
+			} else {
+				speechTokens = prepared.Characters
+			}
+		}
 		if qwenASR {
 			if info.RelayMode != relayconstant.RelayModeAudioTranscription {
 				return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayAudioTranscriptionOnly)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -73,7 +95,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 
 	var tokens int
 	var err error
-	if qwenASR {
+	if speechTokens >= 0 {
+		tokens = speechTokens
+	} else if qwenASR {
 		if constant.CountToken {
 			tokens = ali_dashscope.QwenAudioASRInputEstimate
 		}

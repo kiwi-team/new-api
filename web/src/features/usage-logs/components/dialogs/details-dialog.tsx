@@ -65,8 +65,14 @@ import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import {
+  formatLogQuota,
+  formatNumber,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -484,7 +490,8 @@ interface DetailsDialogProps {
 }
 
 export function DetailsDialog(props: DetailsDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const [payloadOpen, setPayloadOpen] = useState(false)
   const canViewRawPayload = useAuthStore(
@@ -1214,6 +1221,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
         {/* Tiered pricing breakdown (when billing_mode is tiered_expr) */}
         {isTieredBilling && other?.expr_b64 && (
           <DetailSection label={t('Dynamic Pricing')}>
+            {other.characters !== undefined && (
+              <DetailRow
+                label={t('Characters')}
+                value={formatNumber(other.characters, locale)}
+              />
+            )}
             {other.image_count !== undefined && (
               <DetailRow
                 label={t('Billable image count')}

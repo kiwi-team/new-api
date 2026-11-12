@@ -20,6 +20,7 @@ type RequestInput struct {
 // Fields beyond P and C are optional — when absent they default to 0,
 // which means cache-unaware expressions keep working unchanged.
 type TokenParams struct {
+	Chars float64 // billable characters, priced in USD per million characters
 	P     float64 // prompt tokens (text) — auto-excludes sub-categories priced separately
 	C     float64 // completion tokens (text) — auto-excludes sub-categories priced separately
 	Len   float64 // total input context length for tier conditions (non-Claude: raw prompt_tokens; Claude: text + cache read + cache creation)
@@ -43,8 +44,9 @@ type RequestRuleTrace struct {
 type BillingUnit string
 
 const (
-	BillingUnitToken   BillingUnit = "token"
-	BillingUnitRequest BillingUnit = "request"
+	BillingUnitToken     BillingUnit = "token"
+	BillingUnitCharacter BillingUnit = "character"
+	BillingUnitRequest   BillingUnit = "request"
 )
 
 // TraceResult holds side-channel info captured while an expression runs.
@@ -62,6 +64,7 @@ type TraceResult struct {
 // auto-group retry and settlement. It is fully serializable and contains no
 // compiled program pointers.
 type BillingSnapshot struct {
+	EstimatedCharacters       int            `json:"estimated_characters,omitempty"`
 	EstimatedImageCount       *int           `json:"estimated_image_count,omitempty"`
 	BillingMode               string         `json:"billing_mode"`
 	ModelName                 string         `json:"model_name"`
@@ -84,6 +87,7 @@ type BillingSnapshot struct {
 
 // TieredResult holds everything needed after running tiered settlement.
 type TieredResult struct {
+	Characters *int `json:"characters,omitempty"`
 	// BillingTokens records the actual normalized inputs for successful token
 	// billing that explicitly references img_cr. Logs serialize these through
 	// the shared injection path, not as additional snapshot state.

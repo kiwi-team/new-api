@@ -24,7 +24,10 @@ import {
 } from '@tanstack/react-table'
 import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
+
+import { DataTableView } from '@/components/data-table'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
@@ -56,6 +59,7 @@ const log = usageLogSchema.parse({
 })
 
 function Fixture(props: {
+  desktop?: boolean
   admin?: boolean
   visibility?: VisibilityState
   logs?: UsageLog[]
@@ -74,11 +78,15 @@ function Fixture(props: {
       <button type='button' onClick={() => context.setSensitiveVisible(false)}>
         Hide sensitive data
       </button>
-      <UsageLogsMobileList
-        table={table}
-        logCategory='common'
-        isLoading={props.loading}
-      />
+      {props.desktop ? (
+        <DataTableView table={table} />
+      ) : (
+        <UsageLogsMobileList
+          table={table}
+          logCategory='common'
+          isLoading={props.loading}
+        />
+      )}
     </>
   )
 }
@@ -124,6 +132,20 @@ it('shows model mismatch evidence when tapping the mobile model badge', async ()
   ).toBeVisible()
   expect(within(dialog).getByText('mapped-model')).toBeVisible()
   expect(within(dialog).getByText('unexpected-model')).toBeVisible()
+})
+
+it('keeps the primary key ID visible when sensitive metadata is hidden', async () => {
+  const user = userEvent.setup()
+  renderLogs({ logs: [{ ...log, id: 401 }] })
+  expect(screen.getByRole('button', { name: 'ID: 401' })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Hide sensitive data' }))
+  expect(screen.getByRole('button', { name: 'ID: 401' })).toBeVisible()
+})
+
+it('displays the database primary key in the desktop ID column', () => {
+  renderLogs({ desktop: true, logs: [{ ...log, id: 401 }] })
+  expect(screen.getByRole('columnheader', { name: 'ID' })).toBeVisible()
+  expect(screen.getByRole('cell', { name: '401' })).toBeVisible()
 })
 
 it('opens long channel text on tap and copies the complete value', async () => {
@@ -304,6 +326,9 @@ it('labels a task whose result was returned in the response as synchronous', () 
 })
 
 it('shows mapped model names in full when inspecting a mobile model badge', async () => {
+  const previousAuth = useAuthStore.getState().auth
+  onTestFinished(() => useAuthStore.setState({ auth: previousAuth }))
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   const user = userEvent.setup()
   renderLogs({
     logs: [

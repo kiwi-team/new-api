@@ -70,7 +70,7 @@ export type DynamicPriceEntry = {
   formattedRange?: string
   minValue?: number
   maxValue?: number
-  unit: 'token' | BillingUsageUnit | 'request' | 'image'
+  unit: 'token' | BillingUsageUnit | 'character' | 'request' | 'image'
   unitLabel?: string | Record<string, string>
   variable?: BillingVar
   description?: string | Record<string, string>
@@ -122,6 +122,7 @@ export function getTaskUsagePriceUnitLabelKey(
 export function getDynamicPriceUnitLabelKey(
   entry: DynamicPriceEntry
 ): string | null {
+  if (entry.unit === 'character') return '1M characters'
   if (entry.unit === 'second') return 's'
   if (entry.unit === 'count') return 'unit'
   if (entry.unit === 'credit') return 'credit'
@@ -132,7 +133,11 @@ export function getDynamicPriceUnitLabelKey(
   return null
 }
 
-const PRIMARY_DYNAMIC_FIELDS = new Set(['inputPrice', 'outputPrice'])
+const PRIMARY_DYNAMIC_FIELDS = new Set([
+  'inputPrice',
+  'outputPrice',
+  'characterPrice',
+])
 
 function isTaskPricingTier(tier: DynamicPricingTier): tier is ParsedTaskTier {
   return (
@@ -370,8 +375,14 @@ export function getDynamicPriceEntries(
             : variable.shortLabel,
         labelKind: 'i18n' as const,
         value,
-        formatted: formatDynamicUnitPrice(value, options),
-        unit: 'token' as const,
+        formatted: formatDynamicUnitPrice(
+          value,
+          variable.key === 'chars' ? { ...options, tokenUnit: 'M' } : options
+        ),
+        unit:
+          variable.key === 'chars'
+            ? ('character' as const)
+            : ('token' as const),
         variable,
       },
     ]

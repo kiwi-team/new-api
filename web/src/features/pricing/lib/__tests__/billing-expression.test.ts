@@ -48,6 +48,7 @@ import {
 } from '../tier-expr'
 
 const extras: ExtraTokenValues = {
+  characters: 0,
   cacheReadTokens: 100,
   cacheCreateTokens: 0,
   cacheCreate1hTokens: 0,
@@ -57,6 +58,25 @@ const extras: ExtraTokenValues = {
   audioInputTokens: 0,
   audioOutputTokens: 0,
 }
+
+test('prices billable speech characters independently of token counts and rejects invalid counts', () => {
+  const expression = 'tier("speech", chars * 300 / 6.8)'
+  const result = evaluateBillingExpression(expression, {
+    tokens: { chars: 10000 },
+  })
+  expect(result.status).toBe('success')
+  assert(result.status === 'success')
+  expect(result.cost / 1_000_000).toBeCloseTo(3 / 6.8)
+  expect(result.billingUnit).toBe('character')
+  expect(
+    evaluateBillingExpression(expression, { tokens: { chars: 0 } })
+  ).toMatchObject({ status: 'success', cost: 0 })
+  for (const chars of [-1, 0.5, 2147483648]) {
+    expect(
+      evaluateBillingExpression(expression, { tokens: { chars } }).status
+    ).toBe('invalid')
+  }
+})
 
 test('evaluates and round-trips separate image cache prices including an explicit zero', () => {
   const source =

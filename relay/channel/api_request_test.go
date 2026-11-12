@@ -189,6 +189,7 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	ctx.Request.Header.Set("X-Trace-Id", "trace-123")
 	ctx.Request.Header.Set("Accept-Encoding", "gzip")
+	ctx.Request.Header.Set("Xi-Api-Key", "client-provider-key")
 
 	info := &relaycommon.RelayInfo{
 		IsChannelTest: false,
@@ -205,6 +206,8 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 
 	_, hasAcceptEncoding := headers["accept-encoding"]
 	require.False(t, hasAcceptEncoding)
+	_, hasProviderKey := headers["xi-api-key"]
+	assert.False(t, hasProviderKey, "wildcard forwarding must not replace the channel credential")
 }
 
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {

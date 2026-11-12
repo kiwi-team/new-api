@@ -1,6 +1,7 @@
 package ali_dashscope
 
 var ModelList = []string{
+	"qwen-audio-3.1-tts-plus", "qwen-audio-3.1-tts-flash", "qwen-audio-3.1-tts-next",
 	"qwen3.8-omni-flash-realtime", "qwen-audio-3.1-realtime-plus", "qwen-audio-3.1-realtime-flash",
 	"qwen-audio-3.1-asr-flash",
 	"qwq-32b",

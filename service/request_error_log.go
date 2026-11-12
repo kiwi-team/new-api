@@ -229,7 +229,7 @@ func saveRequestError(c *gin.Context, apiErr types.OpenAIError, channelID int, c
 	}
 	if err := model.SaveErrorLog(c.GetInt("id"), channelID, channelName,
 		common.GetContextKeyString(c, constant.ContextKeyOriginalModel), apiErr, body,
-		c.GetHeader("Content-Type"), c.GetString(common.RequestIdKey), upstreamRequestId, c.ClientIP(),
+		c.GetHeader("Content-Type"), c.Request.URL.Path, c.GetString(common.RequestIdKey), upstreamRequestId, c.ClientIP(),
 		common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		common.GetContextKeyString(c, constant.ContextKeyClientUserId),
 		common.GetContextKeyString(c, constant.ContextKeyClientScenairo),

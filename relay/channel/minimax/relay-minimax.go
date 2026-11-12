@@ -2,6 +2,7 @@ package minimax
 
 import (
 	"fmt"
+	"strings"
 
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -13,6 +14,22 @@ func GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	baseUrl := info.ChannelBaseUrl
 	if baseUrl == "" {
 		baseUrl = channelconstant.GetChannelBaseURL(channelconstant.ChannelTypeMiniMax)
+	}
+	baseUrl = strings.TrimRight(baseUrl, "/")
+	model := info.GetUpstreamModelName()
+	if model == "" {
+		model = info.OriginModelName
+	}
+	if isH3ImageModel(model) {
+		if info.ChannelBaseUrl == "" {
+			baseUrl = "https://api.minimax.cn"
+		}
+		switch info.RelayMode {
+		case constant.RelayModeImagesGenerations:
+			return baseUrl + "/v1/images/generations", nil
+		case constant.RelayModeImagesEdits:
+			return baseUrl + "/v1/images/edits", nil
+		}
 	}
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:

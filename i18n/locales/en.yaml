@@ -1,6 +1,7 @@
 # English translations
 
 # Errors returned to AI clients
+relay.invalid_request_format: "Invalid request format. Please contact the administrator via IM software"
 common.database_error: "Database error, please contact the administrator"
 auth.user_banned: "User has been banned"
 token.get_info_failed: "Failed to get token info, please try again later"
@@ -348,6 +349,7 @@ task_plugin.unknown_meta_field: 'Plugin metadata contains an unknown field "{{.F
 
 # Audio transcription relay
 relay.audio_transcription_only: "This model only supports POST /v1/audio/transcriptions"
+relay.icl_system_voice: "seed-icl-2.0 requires an account-owned cloned voice ID; use seed-tts-2.0 with a supported 2.0 system voice"
 relay.asr_response_invalid: "Invalid upstream ASR response: {{.Error}}"
 
 # Unified alerting notifications

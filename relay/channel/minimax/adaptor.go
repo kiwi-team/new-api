@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -56,12 +57,12 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 	// 同步扩展字段的厂商自定义metadata
 	if len(request.Metadata) > 0 {
-		if err := json.Unmarshal(request.Metadata, &minimaxRequest); err != nil {
+		if err := common.Unmarshal(request.Metadata, &minimaxRequest); err != nil {
 			return nil, fmt.Errorf("error unmarshalling metadata to minimax request: %w", err)
 		}
 	}
 
-	jsonData, err := json.Marshal(minimaxRequest)
+	jsonData, err := common.Marshal(minimaxRequest)
 	if err != nil {
 		return nil, fmt.Errorf("error marshalling minimax request: %w", err)
 	}
@@ -78,6 +79,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if isH3ImageModel(request.Model) {
+		return convertH3ImageRequest(c, info, request)
+	}
 	if info.RelayMode != constant.RelayModeImagesGenerations {
 		return nil, fmt.Errorf("unsupported image relay mode: %d", info.RelayMode)
 	}
@@ -103,7 +107,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 	var extraBody dto.ExtraBody
 	if request.ExtraBody != nil {
-		err := json.Unmarshal(request.ExtraBody, &extraBody)
+		err := common.Unmarshal(request.ExtraBody, &extraBody)
 		if err != nil {
 			return nil, fmt.Errorf("error unmarshalling extra body: %w", err)
 		}
@@ -136,7 +140,14 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if info.RelayMode == constant.RelayModeAudioSpeech {
 		return handleTTSResponse(c, resp, info)
 	}
-	if info.RelayMode == constant.RelayModeImagesGenerations {
+	if info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits {
+		model := info.GetUpstreamModelName()
+		if model == "" {
+			model = info.OriginModelName
+		}
+		if isH3ImageModel(model) {
+			return h3ImageHandler(c, resp, info)
+		}
 		return miniMaxImageHandler(c, resp, info)
 	}
 

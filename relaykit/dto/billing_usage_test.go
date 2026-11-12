@@ -8,6 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSpeechUsagePreservesZeroAndClonesNativeSnapshot(t *testing.T) {
+	_, valid := (&BillingUsage{Source: "speech", SpeechUsage: &SpeechBillingUsage{}}).CanonicalUsage()
+	assert.False(t, valid, "missing speech quantities cannot replace meaningful top-level usage")
+	characters := 0
+	billing := &BillingUsage{Source: "speech", SpeechUsage: &SpeechBillingUsage{Characters: &characters, Native: []byte(`{"text_words":0}`)}}
+	canonical, valid := billing.CanonicalUsage()
+	require.True(t, valid)
+	require.NotNil(t, canonical.Characters)
+	assert.Zero(t, *canonical.Characters)
+	assert.Zero(t, canonical.TotalTokens)
+	characters = 99
+	billing.SpeechUsage.Native[0] = 'x'
+	assert.Zero(t, *canonical.Characters)
+	assert.JSONEq(t, `{"text_words":0}`, string(canonical.BillingUsage.SpeechUsage.Native))
+}
+
 func TestNewGeminiChatBillingUsageRequiresTokenContent(t *testing.T) {
 	require.Nil(t, NewGeminiChatBillingUsage(nil))
 	require.Nil(t, NewGeminiChatBillingUsage(&GeminiUsageMetadata{}))

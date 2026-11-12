@@ -20,6 +20,7 @@ var (
 		"gpt-image-2.5-flare",
 		"prefix:dall-e", // Deprecated upstream models; retained for compatible routes.
 		"gpt-image-",
+		"minimax-h3-image",
 		"qwen-image",
 		"z-image",
 		"wan2.7-image-pro",

@@ -70,7 +70,7 @@ type DynamicPricingBreakdownProps = {
    * the usage-log details dialog to show which tier the engine selected.
    */
   matchedTierLabel?: string | null
-  matchedBillingUnit?: 'token' | 'request'
+  matchedBillingUnit?: 'token' | 'character' | 'request'
   matchedFixedPrice?: number
   /** Request-rule traces emitted by the settlement run. */
   requestRules?: RequestRuleTrace[] | null
@@ -105,7 +105,7 @@ type BreakdownPriceField = {
   id: string
   label: string
   labelKind: DynamicPriceLabelKind
-  unit: BillingUsageUnit | 'request' | 'token' | 'image'
+  unit: BillingUsageUnit | 'request' | 'token' | 'character' | 'image'
   unitLabel?: string | Record<string, string>
   showTokenUnit?: boolean
   value: (tier: BreakdownTier) => number
@@ -117,6 +117,9 @@ function breakdownPriceFieldLabel(
 ): ReactNode {
   if (field.labelKind === 'schema') {
     return <span className='break-words whitespace-normal'>{field.label}</span>
+  }
+  if (field.unit === 'character') {
+    return `${t(field.label)} / ${t('1M characters')}`
   }
   return field.showTokenUnit
     ? `${t(field.label)} / ${t('1M token')}`
@@ -419,7 +422,7 @@ export function DynamicPricingBreakdown({
       id: variable.field ?? `price-${index}`,
       label: variable.shortLabel,
       labelKind: 'i18n' as const,
-      unit: 'token',
+      unit: variable.key === 'chars' ? 'character' : 'token',
       value: (tier: BreakdownTier) =>
         isTaskBreakdownTier(tier)
           ? 0

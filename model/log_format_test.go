@@ -113,7 +113,7 @@ func TestLegacyLogOtherVisibilityIsRoleSeparated(t *testing.T) {
 
 		formatUserLogs(logs, 10)
 
-		assert.Equal(t, 11, logs[0].Id)
+		assert.Equal(t, 99, logs[0].Id)
 		assert.Equal(t, 77, logs[0].ChannelId)
 		assert.Empty(t, logs[0].ChannelName)
 		parsed, err := common.StrToMap(logs[0].Other)

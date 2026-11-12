@@ -55,6 +55,22 @@ const summaryOptions = {
 }
 
 describe('expression price summaries', () => {
+  test('shows USD per million characters with either token display scale', () => {
+    const model = pricingModel({
+      billing_mode: 'tiered_expr',
+      billing_expr: 'tier("payg", chars * 300 / 6.8)',
+    })
+    const thousand = getDynamicPricingSummary(model, { tokenUnit: 'K' })
+    const million = getDynamicPricingSummary(model, { tokenUnit: 'M' })
+    expect(thousand?.isSpecialExpression).toBe(false)
+    expect(thousand?.primaryEntries).toHaveLength(1)
+    const entry = thousand?.primaryEntries[0]
+    assert(entry)
+    expect(entry.unit).toBe('character')
+    expect(entry.value).toBeCloseTo(300 / 6.8)
+    expect(entry.formatted).toBe(million?.primaryEntries[0].formatted)
+    expect(getDynamicPriceUnitLabelKey(entry)).toBe('1M characters')
+  })
   test('keeps request prices unchanged by token units and separates mixed billing units', () => {
     const model = pricingModel({
       billing_mode: 'tiered_expr',

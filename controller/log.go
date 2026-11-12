@@ -38,6 +38,19 @@ func parseUnicodeEscape(s string) (string, error) {
 	return buf.String(), nil
 }
 
+func logIDFilter(c *gin.Context) int {
+	value := strings.TrimSpace(c.Query("id"))
+	if value == "" {
+		return 0
+	}
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		// An invalid explicit ID must match no rows, never broaden the search.
+		return -1
+	}
+	return id
+}
+
 // logFilterFromQuery reads the log search shared by the log list and the log
 // export. Username and channel are read only for administrators.
 func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
@@ -45,6 +58,7 @@ func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	filter := model.LogFilter{
+		Id:                logIDFilter(c),
 		Type:              logType,
 		StartTimestamp:    startTimestamp,
 		EndTimestamp:      endTimestamp,

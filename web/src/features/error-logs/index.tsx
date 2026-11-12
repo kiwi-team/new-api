@@ -81,6 +81,8 @@ export function ErrorLogsPage() {
   )
   const [modelName, setModelName] = useState('')
   const [requestId, setRequestId] = useState('')
+  const [logId, setLogId] = useState('')
+  const [ip, setIp] = useState('')
   const [channelId, setChannelId] = useState('')
   const [tokenId, setTokenId] = useState('')
   const [clientUserId, setClientUserId] = useState('')
@@ -145,6 +147,8 @@ export function ErrorLogsPage() {
       : undefined,
     model_name: modelName.trim(),
     request_id: requestId.trim(),
+    id: logId.trim(),
+    ip: ip.trim(),
     channel: Number.parseInt(channelId, 10) || undefined,
     token_id: Number.parseInt(tokenId, 10) || undefined,
     client_user_id: clientUserId.trim(),
@@ -226,6 +230,25 @@ export function ErrorLogsPage() {
                   className='w-40'
                   value={modelName}
                   onChange={(event) => setModelName(event.target.value)}
+                />
+              </div>
+              <div className='grid gap-1.5'>
+                <Label htmlFor='el-id'>{t('ID')}</Label>
+                <Input
+                  id='el-id'
+                  className='w-36'
+                  inputMode='numeric'
+                  value={logId}
+                  onChange={(event) => setLogId(event.target.value)}
+                />
+              </div>
+              <div className='grid gap-1.5'>
+                <Label htmlFor='el-ip'>{t('IP Address')}</Label>
+                <Input
+                  id='el-ip'
+                  className='w-48'
+                  value={ip}
+                  onChange={(event) => setIp(event.target.value)}
                 />
               </div>
               <div className='grid gap-1.5'>
@@ -323,6 +346,18 @@ export function ErrorLogsPage() {
                 emptyClassName='text-muted-foreground py-8'
                 columns={[
                   { id: 'id', header: t('ID'), cell: (log) => log.id },
+                  {
+                    id: 'request-path',
+                    header: t('Request Path'),
+                    cellClassName: 'font-mono text-xs',
+                    cell: (log) => log.request_path || '-',
+                  },
+                  {
+                    id: 'ip',
+                    header: t('IP Address'),
+                    cellClassName: 'font-mono text-xs',
+                    cell: (log) => log.ip || '-',
+                  },
                   {
                     id: 'time',
                     header: t('Time'),

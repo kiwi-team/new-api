@@ -1,6 +1,8 @@
 package dto
 
 type ErrorLogsRequest struct {
+	Id           int    `json:"id,omitempty"`
+	Ip           string `json:"ip,omitempty"`
 	RequestId    string `json:"request_id,omitempty"`
 	ChannelId    int    `json:"channel_id,omitempty"`
 	ModelName    string `json:"model_name,omitempty"`

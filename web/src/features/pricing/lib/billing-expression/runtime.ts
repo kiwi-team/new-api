@@ -180,7 +180,7 @@ export function timeInBillingZone(
 class BillingRuntime {
   readonly requestRules: BillingRequestRule[]
   matchedTier = ''
-  billingUnit: 'token' | 'request' = 'token'
+  billingUnit: 'token' | 'character' | 'request' = 'token'
   fixedPrice?: number
   private readonly now: Date
   private readonly timeValues = new Map<string, Record<TimeFunction, number>>()
@@ -192,6 +192,7 @@ class BillingRuntime {
     private readonly context: BillingSimulationContext
   ) {
     this.now = context.now ?? new Date()
+    if (compiled.variables.has('chars')) this.billingUnit = 'character'
     this.requestRules = compiled.requestRules.map((rule) => ({
       cond: rule.cond,
       multiplier: rule.multiplier,
@@ -260,6 +261,17 @@ class BillingRuntime {
         return { value }
       }
       const value = this.context.tokens?.[node.name]
+      if (
+        node.name === 'chars' &&
+        value !== undefined &&
+        (!Number.isInteger(value) || value < 0 || value > 2147483647)
+      ) {
+        throw new BillingExpressionError({
+          code: 'number',
+          detail: 'chars must be an integer between 0 and 2147483647',
+          position: node.start,
+        })
+      }
       if (value === undefined) {
         throw new BillingExpressionError({
           code: 'missing_context',

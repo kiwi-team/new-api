@@ -323,7 +323,7 @@ export interface TieredBillingSummary {
     field: string
     shortLabel: string
     price: number
-    unit?: 'request' | 'image'
+    unit?: 'request' | 'image' | '1M characters'
   }>
 }
 
@@ -417,6 +417,7 @@ export function getTieredBillingSummary(
         field: v.field,
         shortLabel: v.shortLabel,
         price,
+        ...(v.key === 'chars' ? { unit: '1M characters' as const } : {}),
       })
     }
   }

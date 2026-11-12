@@ -73,21 +73,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate); taskErr != nil {
 		return taskErr
 	}
-	if !isOmniModel(cmp.Or(info.UpstreamModelName, info.OriginModelName)) {
-		return nil
-	}
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
-	}
-	seconds, resolution := resolveOmniOutputSettings(req)
-	if seconds < 3 || seconds > 10 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("Gemini Omni duration must be between 3 and 10 seconds"), "invalid_seconds", http.StatusBadRequest)
-	}
-	if _, ok := omniVideoOutputTokensPerSecond[resolution]; !ok {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported Gemini Omni resolution: %s", resolution), "invalid_resolution", http.StatusBadRequest)
-	}
-	return nil
+	return ValidateOmniTaskRequest(c, info)
+}
+
+func (a *TaskAdaptor) ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
+	facts, _ := a.ExtractUsageFactsValidated(c, info)
+	return facts
+}
+
+func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error) {
+	return EstimateOmniUsage(c, info)
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -254,6 +249,7 @@ func (a *TaskAdaptor) GetModelList() []string {
 		"veo-3.1-fast-generate-preview",
 		"gemini-omni-flash-preview",
 		"gemini-omni-1.1-flash-preview",
+		"gemini-omni-1.2-flash",
 	}
 }
 
@@ -447,7 +443,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		video.Error = &dto.OpenAIVideoError{Message: task.FailReason}
 	}
 
-	return common.Marshal(video)
+	return MarshalOmniVideo(video, task)
 }
 
 // ============================

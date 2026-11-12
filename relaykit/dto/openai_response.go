@@ -261,6 +261,8 @@ type CompletionsStreamResponse struct {
 }
 
 type Usage struct {
+	// Characters is the provider's billable character count, never a token count.
+	Characters           *int          `json:"characters,omitempty"`
 	PromptTokens         int           `json:"prompt_tokens"`
 	CompletionTokens     int           `json:"completion_tokens"`
 	TotalTokens          int           `json:"total_tokens"`

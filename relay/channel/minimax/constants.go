@@ -3,6 +3,7 @@ package minimax
 // https://www.minimaxi.com/document/guides/chat-model/V2?id=65e0736ab2845de20908e2dd
 
 var ModelList = []string{
+	"speech-2.8-hd", "speech-2.8-turbo",
 	"abab6.5-chat",
 	"abab6.5s-chat",
 	"abab6-chat",
@@ -24,6 +25,8 @@ var ModelList = []string{
 	"MiniMax-M2.5-highspeed",
 	"image-01",
 	"image-01-live",
+	"MiniMax-H3-Image",
+	"MiniMax-H3-Image-Highspeed",
 }
 
 var ChannelName = "minimax"

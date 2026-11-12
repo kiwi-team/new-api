@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -262,6 +263,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		switch platform {
 		case constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
 			constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)),
+			constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)),
+			constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)),
 			constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):
 			return &omniVideoTaskAdaptor{TaskAdaptor: adaptor, platform: platform}
 		}
@@ -270,7 +273,7 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	return getLegacyTaskAdaptor(platform)
 }
 
-// Numeric Google and Kling platforms can contain both plugin tasks and native
+// Numeric video platforms can contain both plugin tasks and native
 // Omni tasks. Preserve the protocol and plugin identity recorded at submission.
 type omniVideoTaskAdaptor struct {
 	*jspluginadaptor.TaskAdaptor
@@ -282,6 +285,10 @@ func (a *omniVideoTaskAdaptor) adaptorForTask(task *model.Task) channel.TaskAdap
 		return a.TaskAdaptor
 	}
 	nativeOmni := taskGemini.IsOmniTaskID(task.GetUpstreamTaskID())
+	if a.platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)) ||
+		a.platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)) {
+		nativeOmni = taskGemini.IsOmniModel(cmp.Or(task.Properties.UpstreamModelName, task.Properties.OriginModelName))
+	}
 	if a.platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)) {
 		modelName := task.Properties.UpstreamModelName
 		if modelName == "" {
@@ -368,8 +375,15 @@ func (a *legacyTaskAdaptorBridge) FetchTask(baseURL, key string, task *model.Tas
 	}, proxy)
 }
 
-func (a *legacyTaskAdaptorBridge) ParseTaskResult(_ *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
-	return a.legacyTaskAdaptor.ParseTaskResult(body)
+func (a *legacyTaskAdaptorBridge) ParseTaskResult(task *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+	result, err := a.legacyTaskAdaptor.ParseTaskResult(body)
+	if err == nil && result != nil && result.Status == model.TaskStatusSuccess && task != nil &&
+		(taskGemini.IsOmniTaskID(task.GetUpstreamTaskID()) || taskGemini.IsOmniModel(cmp.Or(task.Properties.UpstreamModelName, task.Properties.OriginModelName))) {
+		if billing := task.PrivateData.BillingContext; billing != nil && billing.TieredSnapshot != nil {
+			result.BillingPending = len(result.UsageFacts) == 0
+		}
+	}
+	return result, err
 }
 
 func (a *legacyTaskAdaptorBridge) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
@@ -380,8 +394,20 @@ func (a *legacyTaskAdaptorBridge) ConvertToOpenAIVideo(task *model.Task) ([]byte
 	return converter.ConvertToOpenAIVideo(task)
 }
 
+type legacyTaskUsageAdaptorBridge struct {
+	*legacyTaskAdaptorBridge
+	channel.TaskUsageFactsProvider
+	channel.TaskValidatedUsageFactsProvider
+}
+
 func bridgeLegacyTaskAdaptor(adaptor legacyTaskAdaptor) channel.TaskAdaptor {
-	return &legacyTaskAdaptorBridge{legacyTaskAdaptor: adaptor}
+	bridge := &legacyTaskAdaptorBridge{legacyTaskAdaptor: adaptor}
+	usage, hasUsage := adaptor.(channel.TaskUsageFactsProvider)
+	validated, hasValidated := adaptor.(channel.TaskValidatedUsageFactsProvider)
+	if hasUsage && hasValidated {
+		return &legacyTaskUsageAdaptorBridge{legacyTaskAdaptorBridge: bridge, TaskUsageFactsProvider: usage, TaskValidatedUsageFactsProvider: validated}
+	}
+	return bridge
 }
 
 func getLegacyTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
@@ -481,10 +507,13 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform, up
 			return platform, nil
 		}
 	}
-	// The Google/Vertex plugins implement Veo's predictLongRunning protocol.
-	// Unclaimed Omni models must keep using the existing Interactions adaptor.
+	// Omni keeps Interactions on Google/Vertex and /v1/videos on compatible
+	// channels. The default Veo/Sora plugin meters cannot price Omni tokens.
 	if taskGemini.IsOmniModel(upstreamModel) &&
-		(platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)) || platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi))) {
+		(platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)) ||
+			platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)) ||
+			platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)) ||
+			platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora))) {
 		return platform, getLegacyTaskAdaptor(platform)
 	}
 	// Kling's native Omni protocol is not implemented by the legacy video plugin.

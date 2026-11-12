@@ -89,7 +89,19 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
 	// Use the standard validation method for TaskSubmitReq
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate); taskErr != nil {
+		return taskErr
+	}
+	return geminitask.ValidateOmniTaskRequest(c, info)
+}
+
+func (a *TaskAdaptor) ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
+	facts, _ := a.ExtractUsageFactsValidated(c, info)
+	return facts
+}
+
+func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error) {
+	return geminitask.EstimateOmniUsage(c, info)
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -322,6 +334,7 @@ func (a *TaskAdaptor) GetModelList() []string {
 		"veo-3.1-fast-generate-preview",
 		"gemini-omni-flash-preview",
 		"gemini-omni-1.1-flash-preview",
+		"gemini-omni-1.2-flash",
 	}
 }
 func (a *TaskAdaptor) GetChannelName() string { return "vertex" }
@@ -557,7 +570,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		v.Error = &dto.OpenAIVideoError{Message: task.FailReason}
 	}
 
-	return common.Marshal(v)
+	return geminitask.MarshalOmniVideo(v, task)
 }
 
 // ============================

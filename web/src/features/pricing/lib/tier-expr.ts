@@ -255,6 +255,7 @@ export function tryParseVisualConfig(
 // ---------------------------------------------------------------------------
 
 const ESTIMATOR_VARS = [
+  { var: 'chars', stateKey: 'characters' },
   { var: 'cr', stateKey: 'cacheReadTokens' },
   { var: 'cc', stateKey: 'cacheCreateTokens' },
   { var: 'cc1h', stateKey: 'cacheCreate1hTokens' },
@@ -274,7 +275,7 @@ export type EvalResult = {
   cost: number
   matchedTier: string
   error: string | null
-  billingUnit?: 'token' | 'request'
+  billingUnit?: 'token' | 'character' | 'request'
 }
 
 export function evalExprLocally(

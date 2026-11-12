@@ -1,6 +1,9 @@
 package dto
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 const (
 	BillingUsageSourceClaudeMessages = "claude_messages"
@@ -16,12 +19,21 @@ const (
 )
 
 type BillingUsage struct {
+	SpeechUsage         *SpeechBillingUsage  `json:"speech_usage,omitempty"`
 	Source              string               `json:"source,omitempty"`
 	Semantic            string               `json:"semantic,omitempty"`
 	Estimated           bool                 `json:"estimated,omitempty"`
 	OpenAIUsage         *Usage               `json:"openai_usage,omitempty"`
 	ClaudeUsage         *ClaudeUsage         `json:"claude_usage,omitempty"`
 	GeminiUsageMetadata *GeminiUsageMetadata `json:"gemini_usage_metadata,omitempty"`
+}
+
+// SpeechBillingUsage retains native quantities independently of token conversions.
+type SpeechBillingUsage struct {
+	Characters   *int            `json:"characters,omitempty"`
+	InputTokens  *int            `json:"input_tokens,omitempty"`
+	OutputTokens *int            `json:"output_tokens,omitempty"`
+	Native       json.RawMessage `json:"native,omitempty"`
 }
 
 func NewClaudeMessagesBillingUsage(usage *ClaudeUsage) *BillingUsage {
@@ -225,6 +237,17 @@ func CloneBillingUsage(usage *BillingUsage) *BillingUsage {
 		return nil
 	}
 	clone := *usage
+	if usage.SpeechUsage != nil {
+		speech := *usage.SpeechUsage
+		for _, field := range []**int{&speech.Characters, &speech.InputTokens, &speech.OutputTokens} {
+			if *field != nil {
+				value := **field
+				*field = &value
+			}
+		}
+		speech.Native = append(json.RawMessage(nil), speech.Native...)
+		clone.SpeechUsage = &speech
+	}
 	clone.OpenAIUsage = cloneOpenAIUsage(usage.OpenAIUsage)
 	clone.ClaudeUsage = cloneClaudeUsage(usage.ClaudeUsage)
 	if usage.GeminiUsageMetadata != nil {
@@ -243,6 +266,19 @@ func (usage *BillingUsage) CanonicalUsage() (*Usage, bool) {
 	}
 	source := strings.TrimSpace(usage.Source)
 	semantic := strings.TrimSpace(usage.Semantic)
+	if speech := usage.SpeechUsage; speech != nil && source == "speech" && (speech.Characters != nil || speech.InputTokens != nil || speech.OutputTokens != nil) {
+		cloned := CloneBillingUsage(usage)
+		canonical := &Usage{Characters: cloned.SpeechUsage.Characters, UsageSource: "speech", UsageSemantic: BillingUsageSemanticOpenAI, BillingUsage: cloned}
+		if speech.InputTokens != nil {
+			canonical.PromptTokens = *speech.InputTokens
+		}
+		if speech.OutputTokens != nil {
+			canonical.CompletionTokens = *speech.OutputTokens
+		}
+		canonical.TotalTokens = canonical.PromptTokens + canonical.CompletionTokens
+		canonical.InputTokens, canonical.OutputTokens = canonical.PromptTokens, canonical.CompletionTokens
+		return canonical, true
+	}
 
 	// A structurally recognized but all-zero payload must not become the
 	// settlement source of truth; rejecting it lets settlement fall back to a
@@ -388,6 +424,10 @@ func cloneOpenAIUsage(usage *Usage) *Usage {
 		return nil
 	}
 	clone := *usage
+	if usage.Characters != nil {
+		value := *usage.Characters
+		clone.Characters = &value
+	}
 	clone.BillingUsage = nil
 	clone.PromptTokensDetails = usage.PromptTokensDetails.Clone()
 	if usage.InputTokensDetails != nil {

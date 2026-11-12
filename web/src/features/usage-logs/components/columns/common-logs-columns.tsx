@@ -369,6 +369,14 @@ export function useCommonLogsColumns(
   return useMemo(() => {
     const columns: ColumnDef<UsageLog>[] = [
       {
+        accessorKey: 'id',
+        header: t('ID'),
+        enableHiding: false,
+        cell: ({ row }) => (
+          <span className='font-mono text-xs'>{row.original.id}</span>
+        ),
+      },
+      {
         accessorKey: 'created_at',
         header: t('Time'),
         cell: ({ row }) => {

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -243,6 +241,11 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		UsageSemantic:        usageSemanticFromUsage(relayInfo, usage),
 	}
 	summary.IsClaudeUsageSemantic = summary.UsageSemantic == "anthropic"
+	if usage != nil && usage.UsageSource == "speech" && relayInfo.PriceData.UsePrice {
+		// Preserve an administrator's explicit per-request price without
+		// manufacturing token counts for a character-billed speech request.
+		summary.FixedPriceBilling = true
+	}
 
 	if usage == nil {
 		usage = &dto.Usage{
@@ -481,7 +484,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, common.NewMessage("Audio input cost {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaFromDecimal(q))}))
 	}
 
-	if !summary.hasBillableUsage() && relayInfo.UsageBillingFallback == "" && (billingUsage == nil || billingUsage.UsageSource != "dashscope") {
+	if !summary.hasBillableUsage() && relayInfo.UsageBillingFallback == "" && (billingUsage == nil || (billingUsage.UsageSource != "dashscope" && billingUsage.UsageSource != "speech")) {
 		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -517,6 +520,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
+	if billingUsage != nil && billingUsage.Characters != nil {
+		other.SetPublic("characters", *billingUsage.Characters)
+	}
 	if relayInfo.UsageBillingFallback != "" {
 		other.SetPublic("usage_estimated", true)
 		other.SetPublic("billing_fallback", relayInfo.UsageBillingFallback)
@@ -578,13 +584,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other.SetPublic("body_read_time_ms", bodyReadMs)
 	}
 
-	// TTS 按输入字符数计费，仅覆盖日志展示的额度与内容，不改变上面已结算的扣费。
+	// Logs, project accounting and quota_data must use the settled amount.
 	logQuota := summary.Quota
-	if ttsCount := common.GetContextKeyInt(ctx, constant.ContextKeyTTSCount); ttsCount > 0 {
-		ttsRatio := ratio_setting.GetTTSRatio(relayInfo.UpstreamModelName)
-		logQuota = common.QuotaFromFloat(float64(ttsCount) / 1000 * ttsRatio)
-		extraContent = []*common.Message{common.NewMessage("TTS ratio {{ratio}}, input characters {{count}}, cost {{quota}}", map[string]any{"ratio": fmt.Sprintf("%.2f", ttsRatio), "count": ttsCount, "quota": logger.FormatQuota(logQuota)})}
-	}
 
 	// Track project consumption and get project name for logging
 	projectName, planId, _ := TrackProjectConsumption(ctx, logQuota)

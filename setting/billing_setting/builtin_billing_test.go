@@ -285,7 +285,10 @@ func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
 	})
-	for _, name := range []string{"gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"} {
+	for name, want := range map[string]int{
+		"gpt-image-2": 4113, "gpt-image-2.5-sunburst": 4113, "gpt-image-2.5-flare": 4113,
+		"MiniMax-H3-Image": 1066, "MiniMax-H3-Image-Highspeed": 1691,
+	} {
 		t.Run(name, func(t *testing.T) {
 			*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
 			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
@@ -298,7 +301,7 @@ func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
 			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000},
 				service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)))
 			require.NoError(t, err)
-			assert.Equal(t, 4113, result.ActualQuotaAfterGroup)
+			assert.Equal(t, want, result.ActualQuotaAfterGroup)
 			encoded, err := common.Marshal(map[string]float64{name: 0})
 			require.NoError(t, err)
 			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(encoded)))

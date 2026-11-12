@@ -47,15 +47,15 @@ func DoWorkerRequest(req *WorkerRequest, timingContext ...context.Context) (*htt
 		return nil, fmt.Errorf("failed to marshal worker payload: %v", err)
 	}
 
-	request, err := http.NewRequest(http.MethodPost, workerUrl, bytes.NewBuffer(workerPayload))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
 	ctx := context.Background()
 	if len(timingContext) > 0 {
 		ctx = timingContext[0]
 	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, workerUrl, bytes.NewBuffer(workerPayload))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
 	return common.DoTimedHTTP(ctx, GetHttpClient(), request, "file_download", false)
 }
 
@@ -78,7 +78,7 @@ func DoDownloadRequestWithContext(ctx context.Context, originUrl string, reason 
 		}
 
 		common.SysLog(common.LogText("downloading from origin: %s, reason: %s", common.MaskSensitiveInfo(originUrl), strings.Join(reason, ", ")))
-		request, err := http.NewRequest(http.MethodGet, originUrl, nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, originUrl, nil)
 		if err != nil {
 			return nil, err
 		}

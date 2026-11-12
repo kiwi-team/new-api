@@ -267,11 +267,14 @@ function PricingRuleCard(
                         :{' '}
                         {formatPricingAmount(price.value, props.currency) ||
                           '—'}
+                        /
+                        {t(
+                          price.variable === 'chars'
+                            ? '1M characters'
+                            : '1M token'
+                        )}
                       </span>
                     ))}
-                    <span className='text-muted-foreground'>
-                      /{t('1M token')}
-                    </span>
                   </>
                 )}
               </span>

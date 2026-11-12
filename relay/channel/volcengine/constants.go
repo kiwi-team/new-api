@@ -1,6 +1,7 @@
 package volcengine
 
 var ModelList = []string{
+	"seed-tts-2.0", "seed-icl-2.0",
 	"Doubao-pro-128k",
 	"Doubao-pro-32k",
 	"Doubao-pro-4k",
