@@ -107,10 +107,7 @@ func ImportLegacyKey(ctx context.Context, actor Actor, vault *TargetVault, kind,
 			target := model.AlertTarget{OwnerUserID: snapshot.OwnerUserID, Name: "Imported Key period alert", Type: "feishu", Enabled: address != "", Language: "zh-CN", Revision: 1, CreatedAt: now, UpdatedAt: now}
 			if address != "" {
 				secret := TargetSecret{Address: address}
-				hint, err := ValidateTargetAddress(ctx, "feishu", secret)
-				if err != nil {
-					return err
-				}
+				hint := legacyTargetAddressHint("feishu", address)
 				sealed, err := vault.Seal(snapshot.OwnerUserID, "feishu", secret)
 				if err != nil {
 					return err

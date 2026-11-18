@@ -13,6 +13,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type notificationEvidence struct {
+	Target      MonitoredTarget `json:"target"`
+	Measurement Measurement     `json:"measurement"`
+}
+
 // RenderNotification uses structured snapshots, never live credentials or raw
 // upstream errors. The rule and target names remain the names at trigger time.
 func RenderNotification(language string, event model.AlertEvent) string {
@@ -28,44 +33,55 @@ func RenderNotification(language string, event model.AlertEvent) string {
 		if common.UnmarshalJsonStr(event.Evidence, &notice) != nil {
 			return event.Summary
 		}
-		return notice.Title + "\n" + notice.Content
+		message := notice.Title + "\n" + notice.Content
+		if event.ID > 0 && event.CreatedAt > 0 {
+			location := time.UTC
+			var spec model.AlertRuleSpec
+			if common.UnmarshalJsonStr(event.RuleConfig, &spec) == nil {
+				if configured, err := time.LoadLocation(spec.Condition.Window.Timezone); err == nil {
+					location = configured
+				}
+			}
+			message += "\n" + i18n.Translate(language, "alert.notice.context", map[string]any{"Rule": spec.Name, "Time": time.UnixMilli(event.CreatedAt).In(location).Format(time.RFC3339), "EventID": event.ID, "Link": system_setting.ServerAddress + "/alerts?event_id=" + strconv.FormatInt(event.ID, 10)})
+		}
+		return message
 	}
 	if event.Kind == "test" {
 		return i18n.Translate(language, "alert.test")
 	}
 	var spec model.AlertRuleSpec
-	var evidence struct {
-		Target      MonitoredTarget `json:"target"`
-		Measurement Measurement     `json:"measurement"`
-	}
+	var evidence notificationEvidence
 	if common.UnmarshalJsonStr(event.RuleConfig, &spec) != nil || common.UnmarshalJsonStr(event.Evidence, &evidence) != nil {
 		return event.Summary
 	}
-	threshold, _ := RuleThreshold(spec, false)
-	value := strconv.FormatInt(evidence.Measurement.Value, 10)
-	thresholdText := strconv.FormatInt(threshold, 10)
-	if spec.Condition.Metric == "spend_net" || spec.Condition.Metric == "balance_remaining" {
-		unit := spec.QuotaUnit
-		if unit == 0 {
-			unit = int64(common.QuotaPerUnit)
-		}
-		value = decimal.NewFromInt(evidence.Measurement.Value).Div(decimal.NewFromInt(unit)).String() + " USD"
-		thresholdText = spec.Condition.ThresholdUSD + " USD"
-	}
-	if spec.Condition.Metric == "duration_ms" || spec.Condition.Metric == "ttft_ms" {
-		value += " ms"
-		thresholdText += " ms"
-	}
-	metric := i18n.Translate(language, "alert.metric."+spec.Condition.Metric)
-	if metric == "alert.metric."+spec.Condition.Metric {
-		metric = spec.Condition.Metric
-	}
+	value, thresholdText := notificationMetricValues(spec, evidence.Measurement, event.Kind == "recovery")
+	metric := notificationMetricName(language, spec.Condition)
+	location, timezone := notificationTimezone(spec)
 	message := i18n.Translate(language, "alert.message", map[string]any{
 		"Severity": spec.Severity, "Rule": spec.Name, "Target": event.TargetName, "Kind": i18n.Translate(language, "alert.kind."+event.Kind), "Metric": metric, "Value": value, "Threshold": thresholdText, "Samples": evidence.Measurement.Samples, "Coverage": evidence.Measurement.Status,
-		"Start": time.UnixMilli(evidence.Measurement.WindowStart).UTC().Format(time.RFC3339), "End": time.UnixMilli(evidence.Measurement.WindowEnd).UTC().Format(time.RFC3339), "Timezone": spec.Condition.Window.Timezone, "EventID": event.ID, "Link": system_setting.ServerAddress + "/alerts?event_id=" + strconv.FormatInt(event.ID, 10),
+		"Start": time.UnixMilli(evidence.Measurement.WindowStart).In(location).Format(time.RFC3339), "End": time.UnixMilli(evidence.Measurement.WindowEnd).In(location).Format(time.RFC3339), "Timezone": timezone, "EventID": event.ID, "Link": system_setting.ServerAddress + "/alerts?event_id=" + strconv.FormatInt(event.ID, 10),
 	})
+	return message + notificationDetails(language, event, spec, evidence)
+}
+
+func notificationDetails(language string, event model.AlertEvent, spec model.AlertRuleSpec, evidence notificationEvidence) string {
+	message := ""
+	if traffic := evidence.Measurement.Traffic; traffic != nil && spec.Condition.Metric == "request_volume_change" {
+		message += "\n" + i18n.Translate(language, "alert.traffic.details", map[string]any{"Calls": traffic.Count, "Baseline": decimal.NewFromInt(traffic.BaselineScaled).Shift(-4).String(), "Change": decimal.NewFromInt(traffic.ChangeBPS).Shift(-2).String() + "%", "Direction": i18n.Translate(language, "alert.traffic."+spec.Condition.ChangeDirection)})
+	}
+	if target := evidence.Target; target.ID > 0 {
+		switch target.Type {
+		case "account":
+			message += "\n" + i18n.Translate(language, "alert.target.account", map[string]any{"ID": target.ID})
+		case "api_key":
+			message += "\n" + i18n.Translate(language, "alert.target.api_key", map[string]any{"ID": target.ID, "Owner": target.OwnerUserID})
+		}
+	}
 	if event.Kind == "milestone" {
 		message += "\n" + i18n.Translate(language, "alert.milestone.range", map[string]any{"First": event.MilestoneFirst, "Last": event.MilestoneLast, "Step": spec.Trigger.StepUSD})
+		if step, err := decimal.NewFromString(spec.Trigger.StepUSD); err == nil {
+			message += "\n" + i18n.Translate(language, "alert.milestone.amount", map[string]any{"Amount": step.Mul(decimal.NewFromInt(event.MilestoneLast)).String(), "Step": step.String()})
+		}
 	}
 	report := evidence.Measurement.Report
 	if report == nil {
@@ -96,4 +112,51 @@ func RenderNotification(language string, event model.AlertEvent) string {
 		detail.WriteString("\n" + i18n.Translate(language, "alert.report.partial"))
 	}
 	return detail.String()
+}
+
+// notificationMetricValues keeps units consistent across text and card delivery.
+func notificationMetricValues(spec model.AlertRuleSpec, measurement Measurement, recovery bool) (string, string) {
+	threshold, _ := RuleThreshold(spec, recovery)
+	value := strconv.FormatInt(measurement.Value, 10)
+	thresholdText := strconv.FormatInt(threshold, 10)
+	metric := spec.Condition.Metric
+	if strings.HasSuffix(metric, "_rate") || metric == "budget_remaining_ratio" || metric == "request_volume_change" {
+		return decimal.NewFromInt(measurement.Value).Shift(-2).String() + "%", decimal.NewFromInt(threshold).Shift(-2).String() + "%"
+	}
+	if metric == "spend_net" || metric == "balance_remaining" {
+		unit := spec.QuotaUnit
+		if unit == 0 {
+			unit = int64(common.QuotaPerUnit)
+		}
+		amount := spec.Condition.ThresholdUSD
+		if recovery && spec.Condition.RecoveryThresholdUSD != "" {
+			amount = spec.Condition.RecoveryThresholdUSD
+		}
+		return decimal.NewFromInt(measurement.Value).Div(decimal.NewFromInt(unit)).String() + " USD", amount + " USD"
+	}
+	if metric == "duration_ms" || metric == "ttft_ms" || metric == "evaluation_lag" || metric == "source_lag" {
+		value += " ms"
+		thresholdText += " ms"
+	}
+	return value, thresholdText
+}
+
+func notificationMetricName(language string, condition model.AlertCondition) string {
+	if condition.Metric == "request_volume_change" {
+		return i18n.Translate(language, "alert.traffic."+condition.ChangeDirection)
+	}
+	name := i18n.Translate(language, "alert.metric."+condition.Metric)
+	if name == "alert.metric."+condition.Metric {
+		return condition.Metric
+	}
+	return name
+}
+
+func notificationTimezone(spec model.AlertRuleSpec) (*time.Location, string) {
+	if name := spec.Condition.Window.Timezone; name != "" {
+		if location, err := time.LoadLocation(name); err == nil {
+			return location, name
+		}
+	}
+	return time.UTC, "UTC"
 }

@@ -3,6 +3,7 @@ package alerting
 import (
 	"context"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +35,11 @@ func LegacyNoticeSourceReady(kind string) bool {
 }
 
 type LegacyNotice struct {
-	Type    string `json:"type"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Values  []any  `json:"values,omitempty"`
+	ChannelID int    `json:"channel_id,omitempty"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	Values    []any  `json:"values,omitempty"`
 }
 
 type LegacyNoticeCooldown struct {
@@ -141,7 +143,7 @@ func ImportLegacyNotice(ctx context.Context, actor Actor, vault *TargetVault, ki
 				secret.Secret = values[keys[1]]
 			}
 			if secret.Address != "" {
-				target, err := vault.Save(ctx, actor, 0, 0, TargetInput{Name: "Imported " + kind, Type: "feishu", Enabled: true, Language: "zh-CN", Credentials: &secret, CredentialAction: "replace"})
+				target, err := vault.save(ctx, actor, 0, 0, TargetInput{Name: "Imported " + kind, Type: "feishu", Enabled: true, Language: "zh-CN", Credentials: &secret, CredentialAction: "replace"}, true)
 				if err != nil {
 					return err
 				}
@@ -157,7 +159,7 @@ func ImportLegacyNotice(ctx context.Context, actor Actor, vault *TargetVault, ki
 						return ErrInvalid
 					}
 					secret := TargetSecret{Address: email}
-					target, err := vault.Save(ctx, actor, 0, 0, TargetInput{Name: "Imported UID budget email", Type: "email", Enabled: true, Language: "zh-CN", Credentials: &secret, CredentialAction: "replace"})
+					target, err := vault.save(ctx, actor, 0, 0, TargetInput{Name: "Imported UID budget email", Type: "email", Enabled: true, Language: "zh-CN", Credentials: &secret, CredentialAction: "replace"}, true)
 					if err != nil {
 						return err
 					}
@@ -166,6 +168,9 @@ func ImportLegacyNotice(ctx context.Context, actor Actor, vault *TargetVault, ki
 			}
 		}
 		spec := model.AlertRuleSpec{QuotaUnit: int64(common.QuotaPerUnit), Name: "Compatible " + snapshot.Name, Category: "system", Severity: "P1", Enabled: len(targets) > 0, ManagementMode: "platform_enforced", Scope: model.AlertScope{Type: "system", GroupMode: "per_entity"}, Condition: model.AlertCondition{Metric: "legacy_notice", LegacySignal: kind, Operator: "gte", ThresholdCount: 1, Window: model.AlertWindow{Type: "rolling", DurationSeconds: 60, Timezone: "Asia/Shanghai"}}, Trigger: model.AlertTrigger{Mode: "once", RepeatSeconds: 1800}, Notify: model.AlertNotify{TargetIDs: targets}, Recovery: model.AlertRecovery{Mode: "manual"}}
+		if len(targets) == 0 {
+			return &BlockedAction{Code: "migration_destination_missing"}
+		}
 		if kind == "user_notifications" {
 			spec.Scope.Type, spec.Scope.GroupMode, spec.Severity = "account", "aggregate", "P2"
 		}
@@ -256,7 +261,7 @@ func SwitchLegacyNotice(ctx context.Context, actor Actor, id string, expected in
 				}
 				next = "legacy"
 				var unfinished int64
-				if err := tx.Model(&model.AlertJob{}).Where("rule_id = ? AND status <> ?", rule.ID, "succeeded").Where("status <> ?", "shadow").Count(&unfinished).Error; err != nil {
+				if err := tx.Model(&model.AlertJob{}).Where("rule_id = ? AND status IN ?", rule.ID, []string{"pending", "running", "retry_wait"}).Count(&unfinished).Error; err != nil {
 					return err
 				}
 				if unfinished > 0 {
@@ -314,6 +319,9 @@ func DispatchLegacyNotice(ctx context.Context, kind, object, identity, name stri
 				}
 				if spec.Condition.Metric != "legacy_notice" || spec.Condition.LegacySignal != kind {
 					return &BlockedAction{Code: "migration_rule_changed"}
+				}
+				if (kind == "channel_arrears" || kind == "slow_error") && len(spec.Scope.ChannelIDs) > 0 && !slices.Contains(spec.Scope.ChannelIDs, notice.ChannelID) {
+					return nil
 				}
 				now := time.Now().UnixMilli()
 				body, err := common.Marshal(notice)

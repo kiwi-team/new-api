@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -259,12 +260,14 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if len(info.UploadedGeminiFileNames) > 0 {
 		apiKey := info.ApiKey
 		fileNames := info.UploadedGeminiFileNames
-		defer CleanupGeminiFiles(apiKey, fileNames)
+		ctx := service.WithGoogleRequestPrivacy(context.Background(), service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+		defer CleanupGeminiFiles(apiKey, fileNames, ctx)
 	}
 	// Clean up uploaded GCS objects after response is fully handled
 	if len(info.UploadedGCSObjects) > 0 {
 		gcsObjects := info.UploadedGCSObjects
-		defer CleanupGCSObjects(gcsObjects)
+		ctx := service.WithGoogleRequestPrivacy(context.Background(), service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+		defer CleanupGCSObjects(gcsObjects, ctx)
 	}
 
 	// Deep research models have their own SSE format

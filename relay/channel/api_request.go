@@ -58,7 +58,7 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
 	} else {
 		req.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 		req.Set("Accept", c.Request.Header.Get("Accept"))
-		if info.IsStream && c.Request.Header.Get("Accept") == "" {
+		if info.IsStream && (info.BufferStreamResponse || c.Request.Header.Get("Accept") == "") {
 			req.Set("Accept", "text/event-stream")
 		}
 	}
@@ -364,6 +364,9 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if info.BufferStreamResponse {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -434,6 +437,16 @@ func DoWssRequest(a interface {
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	handshake, err := http.NewRequest(http.MethodGet, fullRequestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	handshake.Header = targetHeader
+	handshake, err = service.PrepareGoogleRequest(handshake, service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+	if err != nil {
+		return nil, err
+	}
+	targetHeader = handshake.Header
 	dialer := *websocket.DefaultDialer
 	if info.ChannelSetting.Proxy != "" {
 		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
@@ -579,6 +592,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
+	client, err = service.GooglePrivacyHTTPClient(client, service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+	if err != nil {
+		return nil, err
+	}
 	// Clients are cached and shared across channels, so override redirect
 	// behavior on a shallow copy instead of mutating the cached client. This
 	// still reuses its transport and connection pools, including HTTP/2's
@@ -596,7 +613,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	var stopPinger context.CancelFunc
 	var pingerDone <-chan struct{}
-	if info.IsStream {
+	if info.IsStream && !info.BufferStreamResponse {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
 		generalSettings := operation_setting.GetGeneralSetting()

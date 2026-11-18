@@ -169,25 +169,12 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
-		if fmtMessage.Content == nil || (fmtMessage.IsStringContent() && fmtMessage.StringContent() == "") {
-			fmtMessage.SetStringContent("...")
-		}
 		formatMessages = append(formatMessages, fmtMessage)
 		lastMessage = fmtMessage
 	}
 
 	claudeMessages := make([]dto.ClaudeMessage, 0)
-	isFirstMessage := true
 	var systemMessages []dto.ClaudeMediaMessage
-	placeholderUserMessage := dto.ClaudeMessage{
-		Role: "user",
-		Content: []dto.ClaudeMediaMessage{
-			{
-				Type: "text",
-				Text: kitutil.GetPointer[string]("..."),
-			},
-		},
-	}
 
 	for _, message := range formatMessages {
 		if message.Role == "system" {
@@ -211,16 +198,10 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			continue
 		}
 
-		if isFirstMessage {
-			isFirstMessage = false
-			if message.Role != "user" {
-				claudeMessages = append(claudeMessages, placeholderUserMessage)
-			}
-		}
-
 		claudeMessage := dto.ClaudeMessage{
 			Role: message.Role,
 		}
+		hasSignedThinking := message.Role == "assistant" && message.GetReasoningContent() != "" && message.Signature != ""
 		if message.Role == "tool" {
 			if len(claudeMessages) > 0 && claudeMessages[len(claudeMessages)-1].Role == "user" {
 				lastClaudeMessage := claudeMessages[len(claudeMessages)-1]
@@ -249,31 +230,19 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 					Content:   message.Content,
 				},
 			}
-		} else if message.IsStringContent() && message.ToolCalls == nil {
-			// assistant 回传带 signature 的思考块时，需要还原为 thinking + text 的数组内容，
-			// 否则 Claude 会因缺少已签名的思考块而报错或无法复用上一轮推理
-			if message.Role == "assistant" && message.GetReasoningContent() != "" && message.Signature != "" {
-				contentBlocks := []dto.ClaudeMediaMessage{{
-					Type:      "thinking",
-					Thinking:  kitutil.GetPointer[string](message.GetReasoningContent()),
-					Signature: message.Signature,
-				}}
-				if text := message.StringContent(); text != "" {
-					contentBlocks = append(contentBlocks, dto.ClaudeMediaMessage{
-						Type: "text",
-						Text: kitutil.GetPointer[string](text),
-					})
-				}
-				claudeMessage.Content = contentBlocks
-			} else {
-				text := message.StringContent()
-				if text == "" {
-					text = "..."
-				}
-				claudeMessage.Content = text
-			}
+		} else if message.IsStringContent() && message.ToolCalls == nil && !hasSignedThinking {
+			claudeMessage.Content = message.StringContent()
 		} else {
 			claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
+			// Signed thinking must precede text and tool_use blocks, including
+			// assistant tool calls whose text content is null or empty.
+			if hasSignedThinking {
+				claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+					Type:      "thinking",
+					Thinking:  kitutil.GetPointer(message.GetReasoningContent()),
+					Signature: message.Signature,
+				})
+			}
 			for _, mediaMessage := range message.ParseContent() {
 				switch mediaMessage.Type {
 				case "text":
@@ -329,18 +298,10 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 					})
 				}
 			}
-			if len(claudeMediaMessages) == 0 {
-				// Every part was omitted; Claude rejects an empty content array.
-				claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{Type: "text", Text: kitutil.GetPointer("...")})
-			}
 			claudeMessage.Content = claudeMediaMessages
 		}
 		claudeMessages = append(claudeMessages, claudeMessage)
 	}
-	if len(claudeMessages) == 0 && len(systemMessages) > 0 {
-		claudeMessages = append(claudeMessages, placeholderUserMessage)
-	}
-
 	if len(systemMessages) > 0 {
 		claudeRequest.System = systemMessages
 	}
@@ -351,6 +312,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	// floor) has had its chance to satisfy the required field.
 	if claudeRequest.MaxTokens == nil {
 		return nil, sharedclaude.ErrMissingMaxTokens
+	}
+	if err := sharedclaude.ValidateMessages(claudeRequest.Messages); err != nil {
+		return nil, reasoning.AsClientError(err)
 	}
 	return &claudeRequest, nil
 }

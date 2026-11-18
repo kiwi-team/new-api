@@ -5,9 +5,13 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,8 +142,17 @@ func SendFeishuNotifyContext(ctx context.Context, webhookURL string, secret stri
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	// 序列化负载
-	payloadBytes, err := common.Marshal(data)
+	payload := struct {
+		dto.FeishuNotify
+		Timestamp string `json:"timestamp,omitempty"`
+		Sign      string `json:"sign,omitempty"`
+	}{FeishuNotify: data}
+	if secret != "" {
+		payload.Timestamp = strconv.FormatInt(time.Now().Unix(), 10)
+		mac := hmac.New(sha256.New, []byte(payload.Timestamp+"\n"+secret))
+		payload.Sign = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	}
+	payloadBytes, err := common.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal webhook payload: %v", err)
 	}
@@ -150,12 +163,6 @@ func SendFeishuNotifyContext(ctx context.Context, webhookURL string, secret stri
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-
-	// 如果有 secret，生成签名
-	if secret != "" {
-		signature := generateSignature(secret, payloadBytes)
-		req.Header.Set("X-Webhook-Signature", signature)
-	}
 
 	// 发送请求
 	client := GetHttpClient()
@@ -168,6 +175,26 @@ func SendFeishuNotifyContext(ctx context.Context, webhookURL string, secret stri
 	// 检查响应状态
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook request failed with status code: %d", resp.StatusCode)
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 65537))
+	if err != nil || len(responseBody) > 65536 {
+		return errors.New("invalid feishu webhook response")
+	}
+	var result struct {
+		Code       *int `json:"code"`
+		StatusCode *int `json:"StatusCode"`
+	}
+	if common.Unmarshal(responseBody, &result) != nil {
+		return errors.New("invalid feishu webhook response")
+	}
+	if result.Code == nil {
+		result.Code = result.StatusCode
+	}
+	if result.Code == nil {
+		return errors.New("invalid feishu webhook response")
+	}
+	if *result.Code != 0 {
+		return fmt.Errorf("feishu webhook rejected notification (code %d)", *result.Code)
 	}
 	return nil
 }

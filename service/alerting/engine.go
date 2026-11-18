@@ -138,13 +138,29 @@ func (e *Engine) ApplyMeasurement(ctx context.Context, rule model.AlertRule, spe
 	}
 	return model.WithAlertState(ctx, rule, target.Type, target.ID, target.Model, func(tx *gorm.DB, state *model.AlertRuleState) error {
 		stamp := now.UnixMilli()
+		if spec.Condition.Metric == "request_volume_change" {
+			var err error
+			m, err = restoreTrafficBaseline(state, m, spec.Condition.ChangeDirection)
+			if err != nil {
+				return err
+			}
+		}
 		state.TargetName = target.Name
 		state.DataStatus, state.LastValue, state.LastCount, state.UpdatedAt = m.Status, strconv.FormatInt(m.Value, 10), m.Samples, stamp
 		if m.Status != "complete" {
+			if spec.Condition.Metric == "request_volume_change" && state.Status != "firing" {
+				state.Baseline = 0
+				state.PeriodKey = ""
+			}
 			state.PendingAt, state.RecoveryAt = 0, 0
 			return nil
 		}
-		_, _, period, err := WindowBounds(rule, spec.Condition, now)
+		periodTime := now
+		if m.WindowStart > 0 {
+			// The accepted window may still belong to the previous civil period.
+			periodTime = time.UnixMilli(m.WindowStart)
+		}
+		_, _, period, err := WindowBounds(rule, spec.Condition, periodTime)
 		if err != nil {
 			return err
 		}
@@ -153,10 +169,10 @@ func (e *Engine) ApplyMeasurement(ctx context.Context, rule model.AlertRule, spe
 			state.PeriodKey = period
 			state.Status = "normal"
 			state.IncidentID = 0
-			state.PendingAt = 0
+			state.PendingAt, state.RecoveryAt = 0, 0
 		}
 		if (mode == "once" || mode == "once_per_period") && state.Status == "firing" {
-			return nil
+			return e.maybeEscalate(tx, rule, spec, target, m, state, stamp)
 		}
 		firing := matches(m.Value, threshold, spec.Condition.Operator)
 		if mode == "milestone" {
@@ -184,6 +200,10 @@ func (e *Engine) ApplyMeasurement(ctx context.Context, rule model.AlertRule, spe
 				// Closing ends this follow-up, not future protection. A continuing
 				// condition must satisfy a fresh pending interval and incident.
 				state.Status, state.PendingAt, state.RecoveryAt, state.IncidentID = "normal", 0, 0, 0
+				if spec.Condition.Metric == "request_volume_change" {
+					state.Baseline = 0
+					state.PeriodKey = ""
+				}
 				return nil
 			}
 		}
@@ -197,7 +217,11 @@ func (e *Engine) ApplyMeasurement(ctx context.Context, rule model.AlertRule, spe
 					state.RecoveryAt = stamp
 				}
 				if stamp-state.RecoveryAt >= spec.Condition.RecoverySeconds*1000 {
-					state.Status, state.PendingAt = "resolved", 0
+					state.Status, state.PendingAt, state.RecoveryAt = "resolved", 0, 0
+					if spec.Condition.Metric == "request_volume_change" {
+						state.Baseline = 0
+						state.PeriodKey = ""
+					}
 					if state.IncidentID != 0 {
 						if err := tx.Model(&model.AlertIncident{}).Where("id = ?", state.IncidentID).Updates(map[string]any{"status": "resolved", "resolved_at": stamp, "updated_at": stamp}).Error; err != nil {
 							return err
@@ -216,16 +240,25 @@ func (e *Engine) ApplyMeasurement(ctx context.Context, rule model.AlertRule, spe
 			return e.maybeEscalate(tx, rule, spec, target, m, state, stamp)
 		}
 		if !firing {
-			state.Status, state.PendingAt = "normal", 0
+			if spec.Condition.Metric == "request_volume_change" {
+				state.Baseline = 0
+				state.PeriodKey = ""
+			}
+			state.Status, state.PendingAt, state.RecoveryAt = "normal", 0, 0
 			return nil
 		}
 		if state.PendingAt == 0 {
+			if spec.Condition.Metric == "request_volume_change" && m.Traffic != nil {
+				state.Baseline = m.Traffic.BaselineScaled
+				state.PeriodKey = fmt.Sprintf("%d:%d", m.Traffic.BaselineStart, m.Traffic.BaselineEnd)
+				m.Traffic.Frozen = true
+			}
 			state.PendingAt = stamp
 			if m.ThresholdCrossedAt > 0 {
 				state.PendingAt = max(m.ThresholdCrossedAt, rule.EffectiveAt)
 			}
 		}
-		state.Status = "pending"
+		state.Status, state.RecoveryAt = "pending", 0
 		if stamp-state.PendingAt < spec.Condition.HoldSeconds*1000 {
 			return nil
 		}

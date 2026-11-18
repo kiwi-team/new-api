@@ -5,6 +5,7 @@ package alerting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -20,6 +21,27 @@ import (
 
 var ErrForbidden = errors.New("alert access denied")
 var ErrInvalid = errors.New("invalid alert configuration")
+var ErrRuleDeliveryRequired = fmt.Errorf("%w: select at least one notification target or automatic action", ErrInvalid)
+
+type RuleTargetValidationError struct {
+	Field    string
+	Disabled bool
+}
+
+func (e *RuleTargetValidationError) Error() string {
+	if e.Disabled {
+		return "Enable the selected notification target before enabling this rule."
+	}
+	return "Select notification targets available to this rule."
+}
+
+func (e *RuleTargetValidationError) Unwrap() error {
+	if e.Disabled {
+		return ErrInvalid
+	}
+	return ErrForbidden
+}
+
 var alertUSDPattern = regexp.MustCompile(`^[0-9]{1,16}(\.[0-9]{1,8})?$`)
 
 type Actor struct {
@@ -29,7 +51,7 @@ type Actor struct {
 
 func (a Actor) Root() bool { return a.Role == common.RoleRootUser }
 
-var Metrics = []string{"legacy_notice", "spend_net", "request_count", "input_tokens", "output_tokens", "cached_tokens", "cache_write_5m_tokens", "cache_write_1h_tokens", "success_rate", "failure_rate", "timeout_rate", "timeout_count", "consecutive_failures", "ttft_ms", "duration_ms", "slow_request_count", "slow_request_rate", "inflight_overdue_count", "task_failure_count", "task_overdue", "evaluation_lag", "source_lag", "delivery_backlog", "balance_remaining", "budget_remaining_ratio"}
+var Metrics = []string{"legacy_notice", "spend_net", "request_count", "request_started_count", "request_volume_change", "input_tokens", "output_tokens", "cached_tokens", "cache_write_5m_tokens", "cache_write_1h_tokens", "success_rate", "failure_rate", "timeout_rate", "timeout_count", "consecutive_failures", "ttft_ms", "duration_ms", "slow_request_count", "slow_request_rate", "inflight_overdue_count", "task_failure_count", "task_overdue", "evaluation_lag", "source_lag", "delivery_backlog", "balance_remaining", "budget_remaining_ratio"}
 
 func USDQuota(value string) (int64, error) {
 	return usdQuota(value, int64(common.QuotaPerUnit))
@@ -81,7 +103,7 @@ func validate(ctx context.Context, db *gorm.DB, actor Actor, owner int, spec *mo
 		return ErrForbidden
 	}
 	scope := &spec.Scope
-	if !slices.Contains([]string{"account", "api_key", "channel", "channel_model", "system", "uid_budget", "project_budget"}, scope.Type) {
+	if !slices.Contains([]string{"account", "api_key", "channel", "channel_model", "model", "system", "uid_budget", "project_budget"}, scope.Type) {
 		return ErrInvalid
 	}
 	platform := PlatformScope(scope.Type)
@@ -206,6 +228,67 @@ func validate(ctx context.Context, db *gorm.DB, actor Actor, owner int, spec *mo
 		}
 	}
 	c := &spec.Condition
+	if scope.Type == "model" {
+		if !trafficMetric(c.Metric) && c.Metric != "request_count" {
+			return ErrInvalid
+		}
+		if len(scope.ChannelIDs) > 0 || len(scope.EntityIDs) > 0 || scope.ModelSelector.Mode != "explicit" || scope.ModelSelector.IncludeFuture || len(scope.ModelSelector.Models) == 0 {
+			return ErrInvalid
+		}
+		names := slices.Clone(scope.ModelSelector.Models)
+		slices.Sort(names)
+		names = slices.Compact(names)
+		for _, name := range names {
+			if strings.TrimSpace(name) == "" || len(name) > 4096 || strings.ContainsAny(name, "\x00\r\n") {
+				return ErrInvalid
+			}
+		}
+		scope.ModelSelector.Models = names
+		if c.LatencyBasis != "" && c.LatencyBasis != "gateway_request" {
+			return ErrInvalid
+		}
+	}
+	if trafficMetric(c.Metric) {
+		if spec.Trigger.Mode == "" {
+			spec.Trigger.Mode = "incident"
+		}
+		if c.Window.Type == "" {
+			c.Window.Type = "rolling"
+		}
+		if spec.Trigger.Mode != "incident" || len(spec.Actions) > 0 || c.Window.Type != "rolling" {
+			return ErrInvalid
+		}
+		if c.Metric == "request_volume_change" {
+			if c.Baseline == nil || !slices.Contains([]string{"increase", "decrease"}, c.ChangeDirection) || !slices.Contains([]string{"gt", "gte"}, c.Operator) || c.ThresholdBPS <= 0 || c.ThresholdBPS > 100000000 || c.RecoveryThresholdBPS < 0 || c.RecoveryThresholdBPS >= c.ThresholdBPS {
+				return ErrInvalid
+			}
+			if c.ChangeDirection == "decrease" && c.ThresholdBPS > 10000 {
+				return ErrInvalid
+			}
+			b := c.Baseline
+			switch b.Mode {
+			case "manual":
+				if b.Count <= 0 || b.Count > 1000000000 || b.HistorySeconds != 0 || b.MinimumCount != 0 {
+					return ErrInvalid
+				}
+			case "historical":
+				if b.HistorySeconds == 0 {
+					b.HistorySeconds = 1800
+				}
+				if b.MinimumCount == 0 {
+					b.MinimumCount = 20
+				}
+				if b.Count != 0 || b.HistorySeconds < c.Window.DurationSeconds || b.HistorySeconds < 60 || b.HistorySeconds > 86400 || b.MinimumCount < 1 || b.MinimumCount > 1000000000 {
+					return ErrInvalid
+				}
+			default:
+				return ErrInvalid
+			}
+		}
+	}
+	if c.Metric != "request_volume_change" && (c.Baseline != nil || c.ChangeDirection != "") {
+		return ErrInvalid
+	}
 
 	if c.Metric == "legacy_notice" && (!actor.Root() || spec.ManagementMode != "platform_enforced" || !IsLegacyNoticeKind(c.LegacySignal) || len(spec.Actions) > 0 || spec.Trigger.Mode != "once" || (c.LegacySignal == "user_notifications" && scope.Type != "account") || (c.LegacySignal != "user_notifications" && scope.Type != "system")) {
 		return ErrInvalid
@@ -215,6 +298,22 @@ func validate(ctx context.Context, db *gorm.DB, actor Actor, owner int, spec *mo
 	}
 	if c.Metric == "legacy_notice" && (c.ThresholdCount != 1 || c.Operator != "gte" || c.HoldSeconds != 0 || c.Window.Type != "rolling" || c.Window.DurationSeconds != 60 || c.Window.Timezone != "Asia/Shanghai" || spec.Acknowledgement.Required) {
 		return ErrInvalid
+	}
+	if c.Metric == "legacy_notice" && len(scope.ChannelIDs) > 0 {
+		if c.LegacySignal != "channel_arrears" && c.LegacySignal != "slow_error" {
+			return ErrInvalid
+		}
+		ids := slices.Clone(scope.ChannelIDs)
+		slices.Sort(ids)
+		ids = slices.Compact(ids)
+		var count int64
+		if err := db.WithContext(ctx).Model(&model.Channel{}).Where("id IN ?", ids).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != int64(len(ids)) {
+			return ErrInvalid
+		}
+		scope.ChannelIDs = ids
 	}
 	if spec.Trigger.Mode == "milestone" {
 		if c.Window.Type != "cumulative" {
@@ -325,7 +424,10 @@ func validate(ctx context.Context, db *gorm.DB, actor Actor, owner int, spec *mo
 		if c.MinSamples < 0 || c.MinSamples > 100000 {
 			return ErrInvalid
 		}
-		if c.Metric != "spend_net" && c.MinSamples == 0 {
+		if c.Metric == "request_count" || trafficMetric(c.Metric) {
+			c.MinSamples = 0
+		}
+		if c.Metric != "spend_net" && c.Metric != "request_count" && !trafficMetric(c.Metric) && c.MinSamples == 0 {
 			c.MinSamples = 1
 		}
 	}
@@ -411,23 +513,38 @@ func validate(ctx context.Context, db *gorm.DB, actor Actor, owner int, spec *mo
 		}
 	}
 	if len(spec.Notify.TargetIDs) == 0 && len(spec.Actions) == 0 {
-		return ErrInvalid
+		return ErrRuleDeliveryRequired
 	}
 	slices.Sort(spec.Notify.TargetIDs)
 	spec.Notify.TargetIDs = slices.Compact(spec.Notify.TargetIDs)
 	slices.Sort(spec.Acknowledgement.EscalationTargetIDs)
 	spec.Acknowledgement.EscalationTargetIDs = slices.Compact(spec.Acknowledgement.EscalationTargetIDs)
-	ids := append(slices.Clone(spec.Notify.TargetIDs), spec.Acknowledgement.EscalationTargetIDs...)
-	for _, id := range ids {
-		var target model.AlertTarget
-		if err := db.WithContext(ctx).First(&target, id).Error; err != nil {
-			return ErrForbidden
-		}
-		if target.OwnerUserID != owner && !(actor.Root() && spec.ManagementMode == "platform_enforced" && target.OwnerUserID == 0) {
-			return ErrForbidden
-		}
-		if spec.Enabled && !target.Enabled {
-			return ErrInvalid
+	for _, selection := range []struct {
+		field string
+		ids   []int64
+	}{
+		{"notify.target_ids", spec.Notify.TargetIDs},
+		{"acknowledgement.escalation_target_ids", spec.Acknowledgement.EscalationTargetIDs},
+	} {
+		for _, id := range selection.ids {
+			var target model.AlertTarget
+			if err := db.WithContext(ctx).First(&target, id).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return &RuleTargetValidationError{Field: selection.field}
+				}
+				return err
+			}
+			if target.OwnerUserID != owner {
+				if !actor.Root() {
+					return &RuleTargetValidationError{Field: selection.field}
+				}
+				// Cross-account recipients are approved by Root and must not
+				// become editable by the rule's ordinary owner.
+				spec.ManagementMode = "platform_enforced"
+			}
+			if spec.Enabled && !target.Enabled {
+				return &RuleTargetValidationError{Field: selection.field, Disabled: true}
+			}
 		}
 	}
 	for _, action := range spec.Actions {
@@ -641,6 +758,12 @@ func RuleResponse(row model.AlertRule) (map[string]any, error) {
 
 func RuleThreshold(spec model.AlertRuleSpec, recovery bool) (int64, error) {
 	c := spec.Condition
+	if c.Metric == "request_volume_change" {
+		if recovery {
+			return c.RecoveryThresholdBPS, nil
+		}
+		return c.ThresholdBPS, nil
+	}
 	if c.Metric == "spend_net" || c.Metric == "balance_remaining" {
 		value := c.ThresholdUSD
 		if recovery {
@@ -686,5 +809,5 @@ func VisibleRule(ctx context.Context, actor Actor, id int64, write bool) (model.
 
 // PlatformScope names domains that may only be configured by Root.
 func PlatformScope(scope string) bool {
-	return slices.Contains([]string{"channel", "channel_model", "system", "uid_budget", "project_budget"}, scope)
+	return slices.Contains([]string{"channel", "channel_model", "model", "system", "uid_budget", "project_budget"}, scope)
 }

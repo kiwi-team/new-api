@@ -234,6 +234,9 @@ func ThinkingAdaptor(geminiRequest *dto.GeminiChatRequest, info *relaycommon.Rel
 
 // Setting safety to the lowest possible values since Gemini is already powerless enough
 func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) (*dto.GeminiChatRequest, error) {
+	if c != nil && c.Request != nil {
+		c.Request = c.Request.WithContext(service.WithGoogleRequestPrivacy(c.Request.Context(), service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting)))
+	}
 
 	geminiRequest := dto.GeminiChatRequest{
 		Contents: make([]dto.GeminiChatContent, 0, len(textRequest.Messages)),
@@ -2255,6 +2258,10 @@ func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]s
 	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client: %v", err)
+	}
+	client, err = service.GooglePrivacyHTTPClient(client, setting.GoogleRequestPrivacy)
+	if err != nil {
+		return nil, err
 	}
 
 	allModels := make([]string, 0)

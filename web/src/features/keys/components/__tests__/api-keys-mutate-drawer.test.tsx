@@ -22,7 +22,13 @@ import {
   createMemoryHistory,
   RouterContextProvider,
 } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
 const { createInstance } = await import('i18next')
@@ -55,8 +61,55 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
-  apiClient.get = async (url) => {
+type DirectoryUser = { id: number; username: string; display_name?: string }
+
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  users: DirectoryUser[] = [
+    { id: 1, username: 'root' },
+    { id: 42, username: 'alice' },
+  ]
+) {
+  apiClient.get = async (url, config) => {
+    const path = new URL(url, 'http://localhost')
+    const userMatch = path.pathname.match(/^\/api\/user\/(\d+)$/)
+    if (userMatch) {
+      return {
+        data: {
+          success: true,
+          data: users.find((user) => user.id === Number(userMatch[1])),
+        },
+      }
+    }
+    if (
+      path.pathname === '/api/user/' ||
+      path.pathname === '/api/user/search'
+    ) {
+      const params = (config as { params?: { p?: number; page_size?: number } })
+        ?.params
+      const page = Number(params?.p ?? path.searchParams.get('p') ?? 1)
+      const pageSize = Math.min(
+        100,
+        Number(params?.page_size ?? path.searchParams.get('page_size') ?? 50)
+      )
+      const keyword = (path.searchParams.get('keyword') ?? '').toLowerCase()
+      const matches = users.filter((user) =>
+        [user.username, user.display_name ?? '', String(user.id)].some(
+          (value) => value.toLowerCase().includes(keyword)
+        )
+      )
+      return {
+        data: {
+          success: true,
+          data: {
+            items: matches.slice((page - 1) * pageSize, page * pageSize),
+            total: matches.length,
+            page,
+            page_size: pageSize,
+          },
+        },
+      }
+    }
     switch (url) {
       case '/api/status':
         return { data: { data: { default_use_auto_group: true } } }
@@ -78,18 +131,6 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
           data: {
             success: true,
             data: { groups: ['vip', 'default'], max_count: 3 },
-          },
-        }
-      case '/api/user/':
-        return {
-          data: {
-            success: true,
-            data: {
-              items: [
-                { id: 1, username: 'root' },
-                { id: 42, username: 'alice' },
-              ],
-            },
           },
         }
       default:
@@ -220,6 +261,7 @@ function selectComboboxOption(
 }
 
 afterEach(() => {
+  cleanup()
   apiClient.get = originalGet
   apiClient.post = originalPost
   useAuthStore.getState().auth.reset()
@@ -362,19 +404,129 @@ describe('API keys mutate drawer Auto group integration', () => {
       ?.querySelector<HTMLButtonElement>('button')
     if (!ownerTrigger) throw new Error('Expected owner combobox trigger')
     fireEvent.click(ownerTrigger)
-    await waitFor(() => {
-      expect(document.querySelector('[data-slot="combobox-item"]')).toBeTruthy()
-    })
-    const targetOption = [
-      ...document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]'),
-    ].find((option) => option.textContent?.includes('alice (ID: 42)'))
-    if (!targetOption) throw new Error('Expected target user option')
-    fireEvent.click(targetOption)
+    fireEvent.click(
+      await screen.findByRole('option', { name: 'alice (ID: 42)' })
+    )
 
     changeInput(getControlByLabel('Name'), 'delegated')
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.user_id).toBe(42)
+  })
+})
+
+describe('API keys mutate drawer owner search', () => {
+  test('keeps My account available when loading users fails and retries the directory', async () => {
+    installApiFixtures([])
+    const fixtureGet = apiClient.get
+    let unavailable = true
+    apiClient.get = async (url, config) => {
+      if (url === '/api/user/' && unavailable) {
+        return { data: { success: false, message: 'Directory unavailable' } }
+      }
+      return fixtureGet(url, config)
+    }
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'root',
+      role: ROLE.SUPER_ADMIN,
+    })
+    await renderCreateDrawer()
+
+    const owner = screen.getByRole('combobox', { name: 'Create for user' })
+    fireEvent.click(owner)
+    expect(await screen.findByText('Failed to load users')).toBeVisible()
+    expect(screen.getByRole('option', { name: 'My account' })).toBeVisible()
+    expect(owner).toHaveTextContent('My account')
+    unavailable = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(
+      await screen.findByRole('option', { name: 'alice (ID: 42)' })
+    ).toBeVisible()
+  })
+
+  test.each(['aLi', '20'])(
+    'finds users beyond the first 200 by name or partial ID (%s) and submits their ID',
+    async (keyword) => {
+      const createdPayloads: Array<Record<string, unknown>> = []
+      const users = Array.from({ length: 205 }, (_, index) => ({
+        id: index + 1,
+        username: index === 204 ? 'long-tail-user' : `member-${index + 1}`,
+        display_name: index === 204 ? 'Remote Alice' : '',
+      }))
+      installApiFixtures(createdPayloads, users)
+      useAuthStore.getState().auth.setUser({
+        id: 1,
+        username: 'root',
+        role: ROLE.SUPER_ADMIN,
+      })
+      await renderCreateDrawer()
+
+      const owner = screen.getByRole('combobox', { name: 'Create for user' })
+      expect(owner).toHaveTextContent('My account')
+      fireEvent.click(owner)
+      expect(
+        await screen.findByRole('option', { name: 'My account' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('option', { name: /Remote Alice/ })
+      ).not.toBeInTheDocument()
+      fireEvent.change(screen.getByPlaceholderText('Filter by name or ID...'), {
+        target: { value: keyword },
+      })
+      fireEvent.click(
+        await screen.findByRole('option', { name: /Remote Alice/ })
+      )
+      expect(owner).toHaveTextContent('Remote Alice (long-tail-user) (ID: 205)')
+      changeInput(getControlByLabel('Name'), 'remote-owner')
+      fireEvent.click(findButton('Save changes', true))
+      await waitFor(() => expect(createdPayloads).toHaveLength(1))
+      expect(createdPayloads[0]?.user_id).toBe(205)
+    }
+  )
+
+  test('loads users after page 200 and can switch back to My account after a search', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(
+      createdPayloads,
+      Array.from({ length: 205 }, (_, index) => ({
+        id: index + 1,
+        username: `member-${index + 1}`,
+      }))
+    )
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'root',
+      role: ROLE.SUPER_ADMIN,
+    })
+    await renderCreateDrawer()
+
+    const owner = screen.getByRole('combobox', { name: 'Create for user' })
+    fireEvent.click(owner)
+    for (const lastID of [50, 100, 150, 200]) {
+      await screen.findByRole('option', {
+        name: `member-${lastID} (ID: ${lastID})`,
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Load more users' }))
+    }
+    fireEvent.click(
+      await screen.findByRole('option', { name: 'member-205 (ID: 205)' })
+    )
+    expect(owner).toHaveTextContent('member-205 (ID: 205)')
+
+    fireEvent.click(owner)
+    const search = screen.getByPlaceholderText('Filter by name or ID...')
+    fireEvent.change(search, { target: { value: 'missing-user' } })
+    expect(await screen.findByText('No matching items')).toBeVisible()
+    expect(owner).toHaveTextContent('member-205 (ID: 205)')
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.click(await screen.findByRole('option', { name: 'My account' }))
+    expect(owner).toHaveTextContent('My account')
+
+    changeInput(getControlByLabel('Name'), 'self-owner')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.user_id).toBeUndefined()
   })
 })
 

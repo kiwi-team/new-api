@@ -20,12 +20,15 @@ import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { toIntlLocale } from '@/i18n/languages'
 
 import { alertLabel } from '../lib/labels'
+import { formatAlertMetricValue } from '../lib/rule-form'
 import type { Preview } from '../types'
 
 export function PreviewResults(props: { preview: Preview }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
     <section className='mt-4 space-y-2' aria-label={t('Preview')}>
       <h3 className='font-medium'>{t('Preview')}</h3>
@@ -43,7 +46,13 @@ export function PreviewResults(props: { preview: Preview }) {
           {
             id: 'value',
             header: t('Value'),
-            cell: (row) => row.measurement.value,
+            cell: (row) =>
+              formatAlertMetricValue(
+                props.preview.config.condition.metric,
+                row.measurement.value,
+                locale,
+                row.measurement
+              ),
           },
           {
             id: 'coverage',

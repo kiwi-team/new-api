@@ -62,7 +62,11 @@ func ReplayRule(ctx context.Context, rule model.AlertRule, spec model.AlertRuleS
 			m := Measurement{Status: "complete", WindowStart: windowStart, WindowEnd: windowEnd, AttributionCovered: true}
 			// SQL's consistent snapshot and exact rank calculation are shared with
 			// live evaluation, rather than approximating p95 from means.
-			m, err = measureMetricSQL(context.WithValue(ctx, freshMetricKey{}, true), historical, spec, target, m, time.UnixMilli(at))
+			if trafficMetric(spec.Condition.Metric) {
+				m, err = measureTraffic(ctx, historical, spec, target, m, now)
+			} else {
+				m, err = measureMetricSQL(context.WithValue(ctx, freshMetricKey{}, true), historical, spec, target, m, time.UnixMilli(at))
+			}
 			if err != nil {
 				return nil, err
 			}

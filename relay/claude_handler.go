@@ -80,6 +80,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
+	if info.BufferStreamResponse {
+		if saveRequestResponse {
+			requestStr, err = bufferedClientRequestLog(c)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
+			}
+		}
+		request.Stream = common.GetPointer(true)
+	}
+
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
@@ -89,7 +99,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		//service.PostClaudeConsumeQuota(c, info, usage, requestStr, responseStr)
-		service.PostTextConsumeQuota(c, info, usage, nil, requestStr, responseStr)
+		service.PostTextConsumeQuota(c, info, usage, nil, requestStr, info.BufferedResponseJSON)
 		return nil
 	}
 
@@ -159,6 +169,24 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	}
 
+	if info.BufferStreamResponse {
+		// The final constraint also covers raw-body passthrough and overrides.
+		data, readErr := io.ReadAll(requestBody)
+		if readErr != nil {
+			return types.NewError(readErr, types.ErrorCodeConvertRequestFailed)
+		}
+		data, err = forceBufferedStreamRequest(info, data)
+		if err != nil {
+			return newBufferedStreamError(c, info, err)
+		}
+		body, closer, bodyErr := relaycommon.NewOutboundJSONBody(data)
+		if bodyErr != nil {
+			return types.NewError(bodyErr, types.ErrorCodeConvertRequestFailed)
+		}
+		defer closer.Close()
+		requestBody = body
+	}
+
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
@@ -178,7 +206,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var streamRecorder *helper.StreamResponseRecorder
-	if saveRequestResponse && httpResp != nil {
+	if saveRequestResponse && httpResp != nil && !info.BufferStreamResponse {
 		// 使用流式记录器包装原始响应体，不影响实时传输
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
@@ -186,7 +214,12 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	//usage, newAPIError := adaptor.DoResponse(c, httpResp, relayInfo)
-	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	var usage any
+	if info.BufferStreamResponse {
+		usage, responseStr, newAPIError = doBufferedStreamResponse(c, httpResp, info, adaptor)
+	} else {
+		usage, newAPIError = adaptor.DoResponse(c, httpResp, info)
+	}
 	common.MarkResponseHandlingEnded(c)
 	//log.Printf("usage: %v", usage)
 	if newAPIError != nil {

@@ -48,7 +48,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -71,6 +70,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
+import { UserSelect } from '@/features/users/components/user-select'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups, getUserGroupsForUser } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
@@ -88,7 +88,6 @@ import {
   updateApiKey,
   getApiKey,
   getTokenAutoGroups,
-  getUserOptions,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -136,23 +135,6 @@ export function ApiKeysMutateDrawer({
   const defaultUseAutoGroup = status?.default_use_auto_group === true
   const targetOwnerUserId =
     targetUserId === 'self' ? undefined : Number(targetUserId)
-
-  const { data: userOptionsData = [] } = useQuery({
-    queryKey: ['keys', 'user-options'],
-    queryFn: getUserOptions,
-    enabled: open && isRoot && !isUpdate,
-    staleTime: 5 * 60 * 1000,
-  })
-  const ownerOptions = useMemo(
-    () => [
-      { value: 'self', label: t('My account') },
-      ...userOptionsData.map((user) => ({
-        value: String(user.id),
-        label: `${user.username} (ID: ${user.id})`,
-      })),
-    ],
-    [t, userOptionsData]
-  )
 
   // Fetch models
   const { data: modelsData } = useQuery({
@@ -471,15 +453,14 @@ export function ApiKeysMutateDrawer({
                     {t('Create for user')}
                   </FormLabel>
                   <FormControl>
-                    <Combobox
+                    <UserSelect
                       id='api-key-owner'
-                      options={ownerOptions}
-                      value={targetUserId}
+                      label={t('Create for user')}
+                      includeSelf
+                      value={targetOwnerUserId ?? 0}
                       onValueChange={(value) =>
-                        setTargetUserId(value ?? 'self')
+                        setTargetUserId(value > 0 ? String(value) : 'self')
                       }
-                      placeholder={t('My account')}
-                      searchPlaceholder={t('Search...')}
                     />
                   </FormControl>
                   <FormDescription>

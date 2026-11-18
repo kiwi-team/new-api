@@ -3,6 +3,7 @@ package helper
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -460,6 +461,20 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 			return hosttypes.PriceData{}, err
 		}
 	}
+	usageBilling := false
+	if request, image := info.Request.(*dto.ImageRequest); image &&
+		(info.OriginModelName == relaycommon.Seedream55Model || info.ChannelMeta != nil && info.UpstreamModelName == relaycommon.Seedream55Model) &&
+		len(billingexpr.UsedUsageKeys(exprStr)) > 0 {
+		if billingexpr.UsesFixedPricingByHash(exprStr, exprHash) {
+			return hosttypes.PriceData{}, fmt.Errorf("fixed pricing cannot be combined with image usage pricing")
+		}
+		_, facts, prepareErr := relaycommon.PrepareSeedream55Request(c, *request)
+		if prepareErr != nil {
+			return hosttypes.PriceData{}, prepareErr
+		}
+		requestInput.Usage = facts
+		usageBilling = true
+	}
 
 	rawCost, trace, err := billingexpr.RunExprByHashWithRequest(exprStr, exprHash, billingexpr.TokenParams{
 		Chars: float64(info.SpeechCharacterEstimate),
@@ -475,7 +490,9 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit
 	// Scale the reservation, preserving the expression's context-length tier
 	// and leaving actual settlement and fixed request prices unchanged.
-	if trace.BillingUnit != billingexpr.BillingUnitRequest {
+	if usageBilling {
+		quotaBeforeGroup = rawCost * common.QuotaPerUnit
+	} else if trace.BillingUnit != billingexpr.BillingUnitRequest {
 		quotaBeforeGroup *= preConsumeMultiplier
 	}
 	preConsumedQuota, err := billingexpr.QuotaRoundStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
@@ -492,6 +509,8 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	}
 
 	snapshot := &billingexpr.BillingSnapshot{
+		TaskUsageBilling:          usageBilling,
+		UsageFacts:                maps.Clone(requestInput.Usage),
 		EstimatedCharacters:       info.SpeechCharacterEstimate,
 		EstimatedImageCount:       trace.ImageCount,
 		BillingMode:               billing_setting.BillingModeTieredExpr,

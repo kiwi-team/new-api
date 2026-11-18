@@ -14,6 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
+type alertTargetTestCooldownError struct {
+	RetryAfterSeconds int64
+}
+
+func (e *alertTargetTestCooldownError) Error() string {
+	return "Please wait 60 seconds between notification tests."
+}
+
 func GetAlertTarget(c *gin.Context) {
 	id, ok := alertPathID(c)
 	if !ok {
@@ -58,6 +66,13 @@ func TestAlertTarget(c *gin.Context) {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
+			var current model.AlertTarget
+			if err := tx.Select("id", "revision", "last_test_at").First(&current, row.ID).Error; err != nil {
+				return err
+			}
+			if current.Revision == row.Revision && current.LastTestAt >= now-60000 {
+				return &alertTargetTestCooldownError{RetryAfterSeconds: max(1, (current.LastTestAt+60000-now+999)/1000)}
+			}
 			return model.ErrAlertConflict
 		}
 		event = model.AlertEvent{DedupKey: model.AlertIdentity("target-test", row.ID, now), OwnerUserID: row.OwnerUserID, Kind: "test", Severity: "P3", TargetName: row.Name, Summary: "Alert delivery test", CreatedAt: now}

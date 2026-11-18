@@ -43,6 +43,10 @@ func alertActor(c *gin.Context) alerting.Actor {
 
 func alertError(c *gin.Context, err error) {
 	status, data := alertErrorResponse(err)
+	var cooldown *alertTargetTestCooldownError
+	if errors.As(err, &cooldown) {
+		c.Header("Retry-After", strconv.FormatInt(cooldown.RetryAfterSeconds, 10))
+	}
 	if status == http.StatusForbidden || status == http.StatusNotFound {
 		objectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		_ = model.DB.WithContext(c.Request.Context()).Create(&model.AlertAudit{ActorID: c.GetInt("id"), OwnerUserID: c.GetInt("id"), Operation: "access.denied", ObjectID: objectID, CreatedAt: time.Now().UnixMilli()}).Error
@@ -56,15 +60,26 @@ func alertErrorResponse(err error) (int, map[string]any) {
 	status, message := http.StatusInternalServerError, "Alert operation failed"
 	var blocked *alerting.BlockedAction
 	var targetValidation *alerting.TargetValidationError
+	var ruleTargetValidation *alerting.RuleTargetValidationError
+	var cooldown *alertTargetTestCooldownError
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		status, message = http.StatusNotFound, "Alert resource not found"
+	case errors.As(err, &ruleTargetValidation):
+		status, message = http.StatusForbidden, ruleTargetValidation.Error()
+		if ruleTargetValidation.Disabled {
+			status = http.StatusBadRequest
+		}
 	case errors.Is(err, alerting.ErrForbidden):
 		status, message = http.StatusForbidden, "Alert access denied"
+	case errors.As(err, &cooldown):
+		status, message = http.StatusTooManyRequests, cooldown.Error()
 	case errors.Is(err, model.ErrAlertConflict):
 		status, message = http.StatusConflict, "Alert configuration changed. Please reload."
 	case errors.As(err, &targetValidation):
 		status, message = http.StatusBadRequest, targetValidation.MessageKey
+	case errors.Is(err, alerting.ErrRuleDeliveryRequired):
+		status, message = http.StatusBadRequest, "Select at least one notification target or automatic action."
 	case errors.Is(err, alerting.ErrInvalid), errors.Is(err, alerting.ErrTargetRejected):
 		status, message = http.StatusBadRequest, "Invalid alert configuration"
 	case errors.Is(err, alerting.ErrTargetKeyUnavailable):
@@ -74,6 +89,8 @@ func alertErrorResponse(err error) (int, map[string]any) {
 		switch blocked.Code {
 		case "migration_not_ready":
 			message = "Migration requires notification mode, enabled statistics and an active destination."
+		case "migration_destination_missing":
+			message = "Configure a legacy notification destination before importing."
 		case "data_incomplete":
 			message = "Usage input incomplete"
 		case "migration_jobs_pending":
@@ -93,6 +110,12 @@ func alertErrorResponse(err error) (int, map[string]any) {
 	data["success"], data["message"] = false, text.Error()
 	if targetValidation != nil {
 		data["field"] = targetValidation.Field
+	}
+	if ruleTargetValidation != nil {
+		data["field"] = ruleTargetValidation.Field
+	}
+	if errors.Is(err, alerting.ErrRuleDeliveryRequired) {
+		data["field"] = "notify.target_ids"
 	}
 	if blocked != nil {
 		data["reason"] = blocked.Code
@@ -205,7 +228,8 @@ func alertRelatedRules(c *gin.Context) ([]int64, bool, error) {
 		if err != nil {
 			continue
 		}
-		if channel > 0 && (spec.Scope.Type == "channel" || spec.Scope.Type == "channel_model") && (slices.Contains(spec.Scope.ChannelIDs, channel) || slices.Contains(spec.Scope.EntityIDs, channel)) {
+		channelScoped := spec.Scope.Type == "channel" || spec.Scope.Type == "channel_model" || spec.Scope.Type == "system" && spec.Condition.Metric == "legacy_notice" && (spec.Condition.LegacySignal == "channel_arrears" || spec.Condition.LegacySignal == "slow_error")
+		if channel > 0 && channelScoped && (slices.Contains(spec.Scope.ChannelIDs, channel) || slices.Contains(spec.Scope.EntityIDs, channel)) {
 			ids = append(ids, rule.ID)
 		}
 		if token > 0 && rule.OwnerUserID == owner && (spec.Scope.Type == "account" || spec.Scope.Type == "api_key" && (slices.Contains(spec.Scope.EntityIDs, token) || spec.Scope.Selector == "all_owned" && spec.Scope.IncludeFuture)) {
@@ -242,7 +266,7 @@ func AlertCatalog(c *gin.Context) {
 	}
 	scopes := []string{"account", "api_key"}
 	if actor.Root() {
-		scopes = append(scopes, "channel", "channel_model", "system", "uid_budget", "project_budget")
+		scopes = append(scopes, "channel", "channel_model", "model", "system", "uid_budget", "project_budget")
 	}
 	budgetOptions, err := alerting.BudgetOptions(c.Request.Context(), actor)
 	if err != nil {
@@ -284,6 +308,94 @@ func AlertCatalog(c *gin.Context) {
 	alertOK(c, gin.H{"subscriptions": subscriptionOptions, "scopes": scopes, "metrics": slices.DeleteFunc(slices.Clone(alerting.Metrics), func(metric string) bool { return metric == "legacy_notice" }), "target_types": []string{"email", "feishu", "wecom", "webhook_v1", "webhook_v2", "bark", "gotify"}, "aggregations": []string{"mean", "p95", "p99"}, "deadline_kinds": []string{"first_output", "output_idle", "total"}, "enabled": common.AlertingEnabled, "actions_enabled": common.AlertingActionsEnabled, "encryption_configured": service.AlertTargetVault != nil, "read_all": actor.ReadAll || actor.Root(), "manage_platform": actor.Root(), "read_engine_health": authz.Can(actor.ID, actor.Role, authz.AlertEngineRead), "api_keys": keys, "budget_options": budgetOptions, "shadow_mode": common.AlertingShadowMode})
 }
 
+// alertRuleList applies configuration filters before pagination. Config is TEXT
+// on every supported database; scanning only IDs/configs in bounded batches
+// avoids dialect-specific JSON operators and tolerates a corrupt legacy rule.
+func alertRuleList(c *gin.Context, query *gorm.DB) ([]model.AlertRule, int64, int, error) {
+	page, limit := 0, alertPageSize(c, 200)
+	if raw, paged := c.GetQuery("page"); paged {
+		var err error
+		page, err = strconv.Atoi(raw)
+		if err != nil || page < 1 || page > 1000000 || c.Query("before_id") != "" {
+			return nil, 0, 0, alerting.ErrInvalid
+		}
+		limit = alertPageSize(c, 50)
+	}
+	status := c.Query("status")
+	if status != "" && status != "enabled" && status != "paused" {
+		return nil, 0, 0, alerting.ErrInvalid
+	}
+	if status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	if search := strings.TrimSpace(c.Query("q")); search != "" {
+		pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.ToLower(search)) + "%"
+		id, _ := strconv.ParseInt(search, 10, 64)
+		query = query.Where("LOWER(name) LIKE ? ESCAPE '!' OR id = ?", pattern, id)
+	}
+	scope, metric := c.Query("scope_type"), c.Query("metric")
+	severity, mode := c.Query("severity"), c.Query("management_mode")
+	for _, filter := range []struct {
+		value   string
+		allowed []string
+	}{
+		{scope, []string{"account", "api_key", "channel", "channel_model", "model", "system", "uid_budget", "project_budget"}},
+		{metric, alerting.Metrics},
+		{severity, []string{"P0", "P1", "P2", "P3"}},
+		{mode, []string{"user_managed", "platform_enforced"}},
+	} {
+		if filter.value != "" && !slices.Contains(filter.allowed, filter.value) {
+			return nil, 0, 0, alerting.ErrInvalid
+		}
+	}
+	var total int64
+	if scope != "" || metric != "" || severity != "" || mode != "" {
+		matching := make([]int64, 0)
+		var before int64
+		for {
+			batch := query.Session(&gorm.Session{}).Select("id", "config").Order("id desc").Limit(200)
+			if before > 0 {
+				batch = batch.Where("id < ?", before)
+			}
+			var candidates []model.AlertRule
+			if err := batch.Find(&candidates).Error; err != nil {
+				return nil, 0, 0, err
+			}
+			for _, row := range candidates {
+				spec, err := model.AlertRuleConfig(row)
+				if err != nil {
+					continue
+				}
+				if (scope == "" || spec.Scope.Type == scope) && (metric == "" || spec.Condition.Metric == metric) && (severity == "" || spec.Severity == severity) && (mode == "" || spec.ManagementMode == mode) {
+					matching = append(matching, row.ID)
+				}
+			}
+			if len(candidates) < 200 {
+				break
+			}
+			before = candidates[len(candidates)-1].ID
+		}
+		total = int64(len(matching))
+		if page > 0 {
+			page = min(page, max(1, (len(matching)+limit-1)/limit))
+		}
+		start := 0
+		if page > 0 {
+			start = (page - 1) * limit
+		}
+		query = query.Where("id IN ?", matching[start:min(start+limit, len(matching))])
+	} else if page > 0 {
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			return nil, 0, 0, err
+		}
+		page = min(page, max(1, int((total+int64(limit)-1)/int64(limit))))
+		query = query.Offset((page - 1) * limit)
+	}
+	rows := make([]model.AlertRule, 0, limit)
+	err := query.Order("id desc").Limit(limit).Find(&rows).Error
+	return rows, total, page, err
+}
+
 func ListAlertRules(c *gin.Context) {
 	query, err := alertOwnerFilter(c, model.DB.WithContext(c.Request.Context()).Model(&model.AlertRule{}))
 	if err != nil {
@@ -296,17 +408,10 @@ func ListAlertRules(c *gin.Context) {
 		return
 	}
 	if filtered {
-		if len(ids) == 0 {
-			alertOK(c, []any{})
-			return
-		}
 		query = query.Where("id IN ?", ids)
 	}
-	if search := strings.TrimSpace(c.Query("q")); search != "" {
-		query = query.Where("name LIKE ?", "%"+search+"%")
-	}
-	var rows []model.AlertRule
-	if err := query.Order("id desc").Limit(alertPageSize(c, 200)).Find(&rows).Error; err != nil {
+	rows, total, page, err := alertRuleList(c, query)
+	if err != nil {
 		alertError(c, err)
 		return
 	}
@@ -355,6 +460,10 @@ func ListAlertRules(c *gin.Context) {
 		response["last_evaluation_error"] = row.LastEvaluationError
 		response["runtime"] = gin.H{"data_status": status, "target_count": total, "updated_at": updated}
 		data = append(data, response)
+	}
+	if page > 0 {
+		alertOK(c, gin.H{"items": data, "total": total, "page": page, "page_size": alertPageSize(c, 50)})
+		return
 	}
 	alertOK(c, data)
 }
@@ -475,8 +584,10 @@ func PreviewAlertRule(c *gin.Context) {
 		}
 	}
 	now := time.Now()
+	// Preview reads available history; a synthetic activation time must not
+	// shorten a maximum-length window behind the accepted source watermark.
 	row := model.AlertRule{OwnerUserID: owner, EffectiveAt: now.Add(-24 * time.Hour).UnixMilli()}
-	if input.Trigger.Mode == "schedule_report" {
+	if input.Condition.Window.Type == "rolling" || input.Trigger.Mode == "schedule_report" {
 		row.EffectiveAt = 0
 	}
 	targets, err := alerting.ResolveTargets(c.Request.Context(), row, input.AlertRuleSpec)
@@ -611,7 +722,23 @@ func ListAlertTargets(c *gin.Context) {
 		return
 	}
 	if search := strings.TrimSpace(c.Query("q")); search != "" {
-		query = query.Where("name LIKE ?", "%"+search+"%")
+		if id, err := strconv.ParseInt(search, 10, 64); err == nil && id > 0 {
+			query = query.Where("name LIKE ? OR id = ?", "%"+search+"%", id)
+		} else {
+			query = query.Where("name LIKE ?", "%"+search+"%")
+		}
+	}
+	if raw := c.Query("ids"); raw != "" {
+		var ids []int64
+		for part := range strings.SplitSeq(raw, ",") {
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || id <= 0 || len(ids) >= 20 {
+				alertError(c, alerting.ErrInvalid)
+				return
+			}
+			ids = append(ids, id)
+		}
+		query = query.Where("id IN ?", ids)
 	}
 	var rows []model.AlertTarget
 	if err = query.Order("id desc").Limit(alertPageSize(c, 200)).Find(&rows).Error; err != nil {

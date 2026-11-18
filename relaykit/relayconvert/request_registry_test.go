@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	sharedgemini "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/gemini"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -383,6 +384,158 @@ func TestConvertRequestClaudeToResponsesDefaultsImageDetail(t *testing.T) {
 			{"type":"input_image","image_url":"data:image/png;base64,`+imageData+`","detail":"auto"}
 		]}
 	]`, string(responsesReq.Input))
+}
+
+func TestConvertRequestResponsesToClaudeMergesEmptyContentWithTools(t *testing.T) {
+	user := map[string]any{"role": "user", "content": "hi"}
+	call := map[string]any{"type": "function_call", "call_id": "call-1", "name": "exec", "arguments": "{}"}
+	toolOnly := []dto.ClaudeMediaMessage{{Type: "tool_use", Id: "call-1", Name: "exec", Input: map[string]any{}}}
+	placeholder := dto.ClaudeMediaMessage{Type: "text", Text: kitutil.GetPointer("...")}
+	for _, tc := range []struct {
+		name         string
+		input        []map[string]any
+		messageIndex int
+		wantContent  []dto.ClaudeMediaMessage
+	}{
+		{
+			name:         "null assistant before function call",
+			input:        []map[string]any{user, {"role": "assistant", "content": nil}, call},
+			messageIndex: 1, wantContent: toolOnly,
+		},
+		{
+			name:         "empty assistant array before function call",
+			input:        []map[string]any{user, {"role": "assistant", "content": []any{}}, call},
+			messageIndex: 1, wantContent: toolOnly,
+		},
+		{
+			name:         "empty assistant text before function call",
+			input:        []map[string]any{user, {"role": "assistant", "content": ""}, call},
+			messageIndex: 1, wantContent: toolOnly,
+		},
+		{
+			name: "empty assistant before custom tool call",
+			input: []map[string]any{user, {"role": "assistant", "content": nil},
+				{"type": "custom_tool_call", "call_id": "custom-1", "name": "exec", "input": "ls"}},
+			messageIndex: 1,
+			wantContent:  []dto.ClaudeMediaMessage{{Type: "tool_use", Id: "custom-1", Name: "exec", Input: map[string]any{"input": "ls"}}},
+		},
+		{
+			name:         "explicit ellipsis text before function call",
+			input:        []map[string]any{user, {"role": "assistant", "content": "..."}, call},
+			messageIndex: 1, wantContent: append([]dto.ClaudeMediaMessage{placeholder}, toolOnly...),
+		},
+		{
+			name: "empty user before tool result",
+			input: []map[string]any{user, call, {"role": "user", "content": nil},
+				{"type": "function_call_output", "call_id": "call-1", "output": "done"}},
+			messageIndex: 2,
+			wantContent:  []dto.ClaudeMediaMessage{{Type: "tool_result", ToolUseId: "call-1", Content: "done"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &dto.OpenAIResponsesRequest{
+				Model: "claude-test", MaxOutputTokens: kitutil.GetPointer(uint(1024)),
+				Input: mustRawMessage(t, tc.input),
+			}
+			result, err := ConvertRequest(context.Background(), &convmeta.Values{}, types.RelayFormatClaude, req)
+			require.NoError(t, err)
+			converted, ok := result.Value.(*dto.ClaudeRequest)
+			require.True(t, ok)
+			require.Greater(t, len(converted.Messages), tc.messageIndex)
+			wire, err := kitutil.Marshal(converted.Messages[tc.messageIndex].Content)
+			require.NoError(t, err)
+			wantWire, err := kitutil.Marshal(tc.wantContent)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(wantWire), string(wire))
+		})
+	}
+}
+
+func TestConvertRequestToClaudeDoesNotFabricateContext(t *testing.T) {
+	user := `{"role":"user","content":"hi"}`
+	chatCall := `{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"exec","arguments":"{}"}}]}`
+	responsesCall := `{"type":"function_call","call_id":"call-1","name":"exec","arguments":"{}"}`
+	for _, tc := range []struct {
+		name      string
+		chat      string
+		responses string
+		wantError string
+	}{
+		{name: "no messages", chat: `[]`, wantError: "requires at least one message"},
+		{name: "empty user text", chat: `[{"role":"user","content":""}]`, wantError: "messages[0].content must not be empty"},
+		{name: "null user content", chat: `[{"role":"user","content":null}]`, wantError: "messages[0].content must not be empty"},
+		{name: "empty user array", chat: `[{"role":"user","content":[]}]`, wantError: "messages[0].content must not be empty"},
+		{
+			name:      "empty assistant between user turns",
+			chat:      `[` + user + `,{"role":"assistant","content":null},{"role":"user","content":"continue"}]`,
+			wantError: "messages[1].content must not be empty",
+		},
+		{name: "assistant first", chat: `[{"role":"assistant","content":"hi"}]`, wantError: "must start with a user message"},
+		{
+			name: "empty tool list", chat: `[` + user + `,{"role":"assistant","tool_calls":[]}]`,
+			responses: `[` + user + `,{"role":"assistant","content":[]},{"role":"user","content":"continue"}]`,
+			wantError: "messages[1].content must not be empty",
+		},
+		{
+			name: "tool call first", chat: `[` + chatCall + `]`, responses: `[` + responsesCall + `]`,
+			wantError: "must start with a user message",
+		},
+		{name: "system only", chat: `[{"role":"system","content":"rules"}]`, wantError: "requires at least one message"},
+		{
+			name:      "empty tool result text",
+			chat:      `[` + user + `,` + chatCall + `,{"role":"tool","tool_call_id":"call-1","content":""}]`,
+			responses: `[` + user + `,` + responsesCall + `,{"type":"function_call_output","call_id":"call-1","output":""}]`,
+		},
+		{
+			name:      "null tool result",
+			chat:      `[` + user + `,` + chatCall + `,{"role":"tool","tool_call_id":"call-1","content":null}]`,
+			responses: `[` + user + `,` + responsesCall + `,{"type":"function_call_output","call_id":"call-1","output":null}]`,
+		},
+		{
+			name:      "empty tool result array",
+			chat:      `[` + user + `,` + chatCall + `,{"role":"tool","tool_call_id":"call-1","content":[]}]`,
+			responses: `[` + user + `,` + responsesCall + `,{"type":"function_call_output","call_id":"call-1","output":[]}]`,
+		},
+	} {
+		for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses} {
+			t.Run(tc.name+"/"+string(format), func(t *testing.T) {
+				var request any
+				if format == types.RelayFormatOpenAI {
+					req := &dto.GeneralOpenAIRequest{Model: "claude-test", MaxTokens: kitutil.GetPointer(uint(1024))}
+					require.NoError(t, kitutil.UnmarshalJsonStr(tc.chat, &req.Messages))
+					request = req
+				} else {
+					input := tc.responses
+					if input == "" {
+						input = tc.chat
+					}
+					req := &dto.OpenAIResponsesRequest{Model: "claude-test", MaxOutputTokens: kitutil.GetPointer(uint(1024))}
+					require.NoError(t, kitutil.UnmarshalJsonStr(input, &req.Input))
+					request = req
+				}
+				result, err := ConvertRequest(context.Background(), &convmeta.Values{}, types.RelayFormatClaude, request)
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+					assert.True(t, reasoning.IsClientError(err), "invalid message history must be a client error")
+					assert.Nil(t, result)
+					return
+				}
+				require.NoError(t, err)
+				converted, ok := result.Value.(*dto.ClaudeRequest)
+				require.True(t, ok)
+				require.Len(t, converted.Messages, 3)
+				blocks, err := converted.Messages[2].ParseContent()
+				require.NoError(t, err)
+				require.Len(t, blocks, 1)
+				assert.Equal(t, "tool_result", blocks[0].Type)
+				assert.Equal(t, "call-1", blocks[0].ToolUseId)
+				assert.Empty(t, blocks[0].Content)
+				wire, err := kitutil.Marshal(converted)
+				require.NoError(t, err)
+				assert.NotContains(t, string(wire), `"..."`)
+			})
+		}
+	}
 }
 
 func TestConvertRequestClaudeToResponsesDropsIncompatibleContextManagement(t *testing.T) {

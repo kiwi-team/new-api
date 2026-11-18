@@ -82,6 +82,12 @@ export type Channel = z.infer<typeof channelSchema>
 // ============================================================================
 
 export interface ChannelSettings {
+  google_request_privacy?: {
+    enabled: boolean
+    user_agent_mode?: 'preserve' | 'custom' | 'omit'
+    custom_user_agent?: string
+    sdk_version_headers?: 'preserve' | 'omit'
+  }
   task_plugin_key?: string
   task_extend_plugin_keys?: string[]
   force_format?: boolean
@@ -96,6 +102,11 @@ export interface ChannelSettings {
   /** `enabled` lets the channel upload attachments to Google */
   google_file_upload?: string
   google_file_bucket?: string
+  /** Behaviors keyed by the client model name before model mapping */
+  model_behaviors?: Record<
+    string,
+    { force_upstream_stream_for_non_stream?: boolean }
+  >
   /** JSON map of upstream model name -> name returned to the client */
   model_output_mapping?: string
   /** Restore the client-requested model when the upstream returns the mapped model */

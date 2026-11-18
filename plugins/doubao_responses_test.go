@@ -18,6 +18,10 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	taskplugin "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,6 +244,7 @@ func TestDoubaoImageSubmission(t *testing.T) {
 		layered := []string{"images_up_to_1_5k", "images_above_1_5k", "input_images", "layer_decomposition"}
 		oneTier := []string{"images_above_1_5k", "input_images"}
 		for name, usageKeys := range map[string][]string{
+			"doubao-seedream-5-5-261028":       layered,
 			"doubao-seedream-5-0-pro-260628":   layered,
 			"doubao-seedream-5-0-flash-260915": layered,
 			"doubao-seedream-5-0-lite-260128":  oneTier,
@@ -489,6 +494,7 @@ func keysOf(schema map[string]jsplugin.UsageFieldSchema) []string {
 // confirmed against live 400 responses (2026-09).
 func TestDoubaoImageValidation(t *testing.T) {
 	registry, plugin := newDoubaoPlugin(t)
+	const v55 = "doubao-seedream-5-5-261028"
 	const pro, flash, lite, v45, v40 = "doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-flash-260915", "doubao-seedream-5-0-lite-260128", "doubao-seedream-4-5-251128", "doubao-seedream-4-0-250828"
 	reference := "https://cdn.example/1.png"
 	manyReferences := make([]any, 0, 11)
@@ -501,6 +507,22 @@ func TestDoubaoImageValidation(t *testing.T) {
 		body    map[string]any
 		wantErr string
 	}{
+		{"5.5 rejects group generation", v55, map[string]any{"prompt": "a cat", "sequential_image_generation": "auto"}, "sequential_image_generation is not supported"},
+		{"5.5 rejects upstream streaming", v55, map[string]any{"prompt": "a cat", "stream": true}, "stream is not supported"},
+		{"5.5 reference images are bounded", v55, map[string]any{"prompt": "a cat", "image": manyReferences}, "at most 10 reference images"},
+		{"5.5 rejects fast prompt optimization", v55, map[string]any{"prompt": "a cat", "optimize_prompt_options": map[string]any{"mode": "fast"}}, "mode fast is not supported"},
+		{"5.5 rejects search", v55, map[string]any{"prompt": "a cat", "tools": []any{map[string]any{"type": "web_search"}}}, "tools are not supported"},
+		{"5.5 tops out at 2K", v55, map[string]any{"prompt": "a cat", "size": "4K"}, "size must be one of 1K, 1.5K, 2K"},
+		{"5.5 pixel area is bounded", v55, map[string]any{"prompt": "a cat", "size": "2200x2200"}, "outside the model's pixel"},
+		{"5.5 transparent jpeg is invalid", v55, map[string]any{"prompt": "a cat", "background": "transparent", "output_format": "jpeg"}, "cannot be combined with output_format jpeg"},
+		{"5.5 background is unavailable for layers", v55, map[string]any{"image": reference, "layer_decomposition": true, "background": "auto"}, "background is not supported with layer decomposition"},
+		{"5.5 layer options must be an object", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": 100}, "layer_decomposition_options must be an object"},
+		{"5.5 layer maximum includes the base image", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 1}}, "max_images must be an integer between 2 and 100"},
+		{"5.5 layer maximum is bounded", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 101}}, "max_images must be an integer between 2 and 100"},
+		{"5.5 layer maximum rejects fractions", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 2.5}}, "max_images must be an integer between 2 and 100"},
+		{"5.5 layer maximum rejects wrapped unsigned values", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": uint64(18446744073686646784)}}, "max_images must be an integer between 2 and 100"},
+		{"5.5 OCR is a boolean", v55, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"text_recognition": "true"}}, "text_recognition must be a boolean"},
+		{"older models reject layer options", pro, map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 100}}, "layer_decomposition_options is not supported"},
 		{"prompt is required", v40, map[string]any{}, "prompt is required"},
 		{"client streaming is rejected", v40, map[string]any{"prompt": "a cat", "stream": true}, "stream is not supported"},
 		{"base64 responses are not deliverable", v40, map[string]any{"prompt": "a cat", "response_format": "b64_json"}, "response_format must be url"},
@@ -683,7 +705,7 @@ func TestDoubaoImageResults(t *testing.T) {
 	})
 
 	t.Run("invalid input image counts keep the estimate while tiers settle", func(t *testing.T) {
-		for _, count := range []any{-1, 1.5, 15, "2"} {
+		for _, count := range []any{-1, 1.5, 11, 15, "2"} {
 			payload := map[string]any{"data": []any{map[string]any{"url": first, "size": "1424x800"}}, "usage": map[string]any{"generated_images": 1, "input_images": count}}
 			value, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete", proQuery, map[string]any{"status": "SUCCESS"}, payload)
 			require.NoError(t, err)
@@ -815,6 +837,18 @@ func TestDoubaoImageResponsesDecode(t *testing.T) {
 		assert.Equal(t, map[string]any{"model": "doubao-seedream-4-0-250828", "prompt": "a cat"}, resolved["requestBody"])
 	})
 
+	t.Run("5.5 Responses forwards layer options", func(t *testing.T) {
+		resolved, err := decode(t, map[string]any{
+			"model": "doubao-seedream-5-5-261028", "image": "https://cdn.example/ref.png", "layer_decomposition": true,
+			"layer_decomposition_options": map[string]any{"max_images": 100, "text_recognition": true}, "background": true,
+		})
+		require.NoError(t, err)
+		body, facts, _ := submitDoubaoImage(t, plugin, "image_to_image", resolved["requestBody"].(map[string]any))
+		assert.Equal(t, map[string]any{"max_images": float64(100), "text_recognition": true}, body["layer_decomposition_options"])
+		assert.NotContains(t, body, "background")
+		assert.Equal(t, float64(100), facts["images_above_1_5k"])
+	})
+
 	_, err = decode(t, map[string]any{"model": model, "input": "a cat", "response_format": "b64_json"})
 	require.ErrorContains(t, err, "response_format must be url")
 }
@@ -839,6 +873,7 @@ func decodeDoubaoOpenAIImage(t *testing.T, plugin *jsplugin.LoadedPlugin, operat
 // forwarded, and the facts never gain an image_count.
 func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 	registry, plugin := newDoubaoPlugin(t)
+	const v55 = "doubao-seedream-5-5-261028"
 	const pro, lite, v40 = "doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-lite-260128", "doubao-seedream-4-0-250828"
 	reference := "https://cdn.example/reference.png"
 	facts := func(lower, higher, inputs float64, layered bool) map[string]any {
@@ -852,6 +887,27 @@ func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 		extra     map[string]any // OpenAI fields accepted but not forwarded
 		wantFacts map[string]any
 	}{
+		{"5.5 transparent text to image", v55, "generate",
+			map[string]any{"prompt": "a transparent sticker", "size": "1K", "background": "transparent", "output_format": "png"},
+			nil, facts(1, 0, 0, false)},
+		{"5.5 transparent multi-reference image", v55, "edit",
+			map[string]any{"prompt": "combine the references", "image": []any{reference, "https://cdn.example/second.png"}, "background": "transparent"},
+			nil, facts(0, 1, 2, false)},
+		{"5.5 auto background", v55, "generate",
+			map[string]any{"prompt": "a cat", "background": "auto", "size": "1.5K"},
+			nil, facts(1, 0, 0, false)},
+		{"5.5 layer count and OCR", v55, "edit",
+			map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 100, "text_recognition": true}},
+			nil, facts(0, 100, 1, true)},
+		{"5.5 default layer count", v55, "edit",
+			map[string]any{"image": reference, "layer_decomposition": true},
+			nil, facts(0, 30, 1, true)},
+		{"5.5 automatic size uses model defaults", v55, "generate",
+			map[string]any{"prompt": "a cat"},
+			map[string]any{"size": "auto"}, facts(0, 1, 0, false)},
+		{"zero count retains the common API default", v55, "generate",
+			map[string]any{"prompt": "a cat"},
+			map[string]any{"n": 0}, facts(0, 1, 0, false)},
 		{"text to image", v40, "generate",
 			map[string]any{"prompt": "a cat", "size": "2K", "seed": 42, "watermark": false},
 			map[string]any{"n": 1, "response_format": "b64_json", "quality": "high", "user": "u1"}, facts(0, 1, 0, false)},
@@ -871,7 +927,15 @@ func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 			native, err := decodeDoubaoImage(t, registry, plugin, nativeBody)
 			require.NoError(t, err)
 			openaiBody := map[string]any{"model": tc.model}
-			maps.Copy(openaiBody, tc.native)
+			metadata := map[string]any{}
+			for key, value := range tc.native {
+				if slices.Contains([]string{"prompt", "image", "size", "background", "output_format"}, key) {
+					openaiBody[key] = value
+				} else {
+					metadata[key] = value
+				}
+			}
+			openaiBody["metadata"] = metadata
 			maps.Copy(openaiBody, tc.extra)
 			resolved, err := decodeDoubaoOpenAIImage(t, plugin, tc.operation, tc.model, map[string]any{"kind": "json", "value": openaiBody})
 			require.NoError(t, err)
@@ -886,6 +950,51 @@ func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 			assert.Equal(t, tc.wantFacts, facts)
 		})
 	}
+
+	t.Run("metadata cannot override standard fields and explicit options", func(t *testing.T) {
+		resolved, err := decodeDoubaoOpenAIImage(t, plugin, "generate", v55, map[string]any{"kind": "json", "value": map[string]any{
+			"model": v55, "prompt": "a cat", "n": 1, "size": "1024x1024", "seed": 0, "watermark": false,
+			"metadata": map[string]any{
+				"model": lite, "prompt": "changed", "n": 128, "size": "4K", "image": reference,
+				"response_format": "b64_json", "stream": true, "seed": 42, "watermark": true,
+				"safety_identifier": "user-hash",
+			},
+		}})
+		require.NoError(t, err)
+		body, usage, _ := submitDoubaoImage(t, plugin, "text_to_image", resolved["requestBody"].(map[string]any))
+		assert.Equal(t, map[string]any{"model": v55, "prompt": "a cat", "size": "1024x1024", "seed": float64(0), "watermark": false, "safety_identifier": "user-hash"}, body)
+		assert.Equal(t, facts(1, 0, 0, false), usage)
+	})
+
+	t.Run("images alias supplies references without image", func(t *testing.T) {
+		resolved, err := decodeDoubaoOpenAIImage(t, plugin, "edit", v55, map[string]any{"kind": "json", "value": map[string]any{
+			"prompt": "edit", "images": []any{reference}, "size": "1024x1024",
+		}})
+		require.NoError(t, err)
+		body, usage, _ := submitDoubaoImage(t, plugin, "image_to_image", resolved["requestBody"].(map[string]any))
+		assert.Equal(t, []any{reference}, body["image"])
+		assert.NotContains(t, body, "images")
+		assert.Equal(t, facts(1, 0, 1, false), usage)
+	})
+
+	t.Run("5.5 multipart edits parse layer options", func(t *testing.T) {
+		resolved, err := decodeDoubaoOpenAIImage(t, plugin, "edit", v55, map[string]any{
+			"kind": "multipart", "fields": map[string][]string{
+				"image": {reference}, "size": {"1K"},
+				"metadata": {`{"layer_decomposition":true,"layer_decomposition_options":{"max_images":2,"text_recognition":false}}`},
+			},
+		})
+		require.NoError(t, err)
+		body, usage, _ := submitDoubaoImage(t, plugin, "image_to_image", resolved["requestBody"].(map[string]any))
+		assert.Equal(t, map[string]any{"max_images": float64(2), "text_recognition": false}, body["layer_decomposition_options"])
+		assert.Equal(t, facts(2, 0, 1, true), usage)
+		_, err = decodeDoubaoOpenAIImage(t, plugin, "edit", v55, map[string]any{
+			"kind": "multipart", "fields": map[string][]string{
+				"image": {reference}, "metadata": {`{"layer_decomposition":true,"layer_decomposition_options":{"max_images":129}}`},
+			},
+		})
+		require.ErrorContains(t, err, "max_images must be an integer between 2 and 100")
+	})
 
 	t.Run("multipart edits send uploads as Base64 data URLs", func(t *testing.T) {
 		resolved, err := decodeDoubaoOpenAIImage(t, plugin, "edit", lite, map[string]any{"kind": "multipart",
@@ -930,6 +1039,12 @@ func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 			body      map[string]any
 			wantErr   string
 		}{
+			{"metadata must be an object", v55, "generate", map[string]any{"kind": "json", "value": map[string]any{"prompt": "a cat", "metadata": []any{}}}, "metadata must be an object"},
+			{"multipart metadata must be JSON", v55, "edit", map[string]any{"kind": "multipart", "fields": map[string][]string{"image": {reference}, "metadata": {"bad"}}}, "metadata must be a JSON string"},
+			{"multipart metadata must be an object", v55, "edit", map[string]any{"kind": "multipart", "fields": map[string][]string{"image": {reference}, "metadata": {"[]"}}}, "metadata must be an object"},
+			{"metadata layer counts are bounded", v55, "edit", map[string]any{"kind": "json", "value": map[string]any{"image": reference, "metadata": map[string]any{"layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 101}}}}, "max_images must be an integer between 2 and 100"},
+			{"metadata layer counts reject wrapped unsigned values", v55, "edit", map[string]any{"kind": "json", "value": map[string]any{"image": reference, "metadata": map[string]any{"layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": uint64(18446744073686646784)}}}}, "max_images must be an integer between 2 and 100"},
+			{"metadata cannot enable unsupported group generation", v55, "generate", map[string]any{"kind": "json", "value": map[string]any{"prompt": "a cat", "metadata": map[string]any{"sequential_image_generation": "auto"}}}, "sequential_image_generation is not supported"},
 			{"counts other than one", v40, "generate", map[string]any{"kind": "json", "value": map[string]any{"prompt": "a cat", "n": 2}}, "n must be 1"},
 			{"multipart counts other than one", lite, "edit", map[string]any{"kind": "multipart", "fields": map[string][]string{"prompt": {"a cat"}, "image": {reference}, "n": {"4"}}}, "n must be 1"},
 			{"streaming", v40, "generate", map[string]any{"kind": "json", "value": map[string]any{"prompt": "a cat", "stream": true}}, "stream is not supported"},
@@ -961,7 +1076,7 @@ func TestDoubaoOpenAIImageProtocol(t *testing.T) {
 		}
 		value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_image", "render"}, map[string]any{"model": lite}, map[string]any{"task_id": "task_public", "status": "SUCCESS", "created_at": 1789733150, "data": body})
 		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"created": float64(1789733150), "data": []any{map[string]any{"url": first}, map[string]any{"url": second}}}, alibabaObject(t, value))
+		assert.Equal(t, map[string]any{"created": float64(1789733150), "data": []any{map[string]any{"url": first}, map[string]any{"url": second}}, "metadata": alibabaObject(t, body)}, alibabaObject(t, value))
 	})
 }
 
@@ -1011,4 +1126,140 @@ func TestDoubaoImageEndpointMappingKeepsDeclaredModel(t *testing.T) {
 			assert.Equal(t, map[string]any{"images_up_to_1_5k": float64(0), "images_above_1_5k": float64(1), "input_images": float64(0), "layer_decomposition": false}, alibabaObject(t, facts))
 		})
 	}
+}
+
+// Run Seedream 5.5 requests through the host adaptor and frozen-expression
+// settlement. Prices are checked in CNY before the project's fixed USD
+// conversion, including the first reference and every independently sized layer.
+func TestDoubaoSeedream55Billing(t *testing.T) {
+	registry, plugin := newDoubaoPlugin(t)
+	const modelName = "doubao-seedream-5-5-261028"
+	reference := "https://cdn.example/reference.png"
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode(modelName))
+	expression, ok := billing_setting.GetBillingExpr(modelName)
+	require.True(t, ok)
+	schema, _ := plugin.Meta.UsageForModel(modelName)
+	require.NoError(t, billing_setting.SmokeTestTaskExpr(expression, schema))
+
+	tenReferences := make([]any, 10)
+	for i := range tenReferences {
+		tenReferences[i] = fmt.Sprintf("https://cdn.example/%d.png", i)
+	}
+	hundredLayers := make([]string, 100)
+	for i := range hundredLayers {
+		hundredLayers[i] = "1024x1024"
+	}
+	hundredLayers[0] = "2048x2048"
+	for _, tc := range []struct {
+		name                    string
+		request                 map[string]any
+		sizes                   []string
+		inputs, lower, higher   int
+		reservedCNY, settledCNY float64
+	}{
+		{"text to image", map[string]any{"prompt": "a sticker", "size": "1K", "background": "transparent"}, []string{"1024x1024"}, 0, 1, 0, .13, .13},
+		{"the first input image is charged", map[string]any{"prompt": "edit", "image": reference, "size": "1.5K"}, []string{"1536x1536"}, 1, 1, 0, .18, .18},
+		{"all ten input images are charged", map[string]any{"prompt": "combine", "image": tenReferences}, []string{"2048x2048"}, 10, 0, 1, .73, .73},
+		{"exactly 2.61M pixels uses the lower price", map[string]any{"prompt": "a cat", "size": "2610x1000"}, []string{"2610x1000"}, 0, 1, 0, .13, .13},
+		{"above 2.61M pixels uses the higher price", map[string]any{"prompt": "a cat", "size": "2611x1000"}, []string{"2611x1000"}, 0, 0, 1, .23, .23},
+		{"near the maximum pixel area uses the higher price", map[string]any{"prompt": "a cat", "size": "2150x2150"}, []string{"2150x2150"}, 0, 0, 1, .23, .23},
+		{"delivered size replaces the preset estimate", map[string]any{"prompt": "a cat", "size": "2K"}, []string{"1536x1536"}, 0, 1, 0, .23, .13},
+		{"upstream input usage replaces the estimate", map[string]any{"prompt": "edit", "image": []any{reference, "https://cdn.example/b.png"}, "size": "1K"}, []string{"1024x1024"}, 1, 1, 0, .23, .18},
+		{"explicit zero input usage is retained", map[string]any{"prompt": "edit", "image": reference, "size": "1K"}, []string{"1024x1024"}, 0, 1, 0, .18, .13},
+		{"default layer maximum settles each actual size", map[string]any{"image": reference, "layer_decomposition": true}, []string{"2048x2048", "2610x1000", "2611x1000"}, 1, 1, 2, 6.95, .64},
+		{"the minimum layer maximum includes the base", map[string]any{"image": reference, "layer_decomposition": true, "size": "1K", "layer_decomposition_options": map[string]any{"max_images": 2, "text_recognition": false}}, []string{"1024x1024", "1273x265"}, 1, 2, 0, .31, .31},
+		{"one base and 99 layers settle through an endpoint mapping", map[string]any{"image": reference, "layer_decomposition": true, "layer_decomposition_options": map[string]any{"max_images": 100, "text_recognition": true}}, hundredLayers, 1, 99, 1, 23.05, 13.15},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := map[string]any{"model": modelName}
+			maps.Copy(request, tc.request)
+			resolved, err := decodeDoubaoImage(t, registry, plugin, request)
+			require.NoError(t, err)
+			_, reservedFacts, _ := submitDoubaoImage(t, plugin, resolved["action"].(string), resolved["requestBody"].(map[string]any))
+			frozenFacts := maps.Clone(reservedFacts)
+			snapshot := &billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+				GroupRatio: 1, QuotaPerUnit: 500000, TaskUsageBilling: true, UsageFacts: reservedFacts,
+			}
+			reservation, _, err := service.EvaluateTaskCompletionUsage(snapshot, nil)
+			require.NoError(t, err)
+			assert.Equal(t, common.QuotaRound(tc.reservedCNY/6.8*500000), reservation.ActualQuotaAfterGroup)
+
+			entries := make([]any, 0, len(tc.sizes))
+			for i, size := range tc.sizes {
+				entry := map[string]any{"url": fmt.Sprintf("https://cdn.example/output-%d.png", i), "size": size, "output_format": "png"}
+				if tc.request["layer_decomposition"] == true {
+					entry["z_index"] = i
+					if i == 1 {
+						entry["text_recognition"] = map[string]any{"text": "Seedream", "lines": []any{map[string]any{"runs": []any{map[string]any{"text": "Seedream", "style": map[string]any{"bold": false}}}}}}
+					}
+				}
+				entries = append(entries, entry)
+			}
+			payload := map[string]any{"model": modelName, "data": entries, "usage": map[string]any{"input_images": tc.inputs, "generated_images": len(entries)}}
+			info := &relaycommon.RelayInfo{
+				OriginModelName: modelName, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "ep-seedream-55", ChannelBaseUrl: doubaoBaseURL},
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public", Action: resolved["action"].(string)},
+			}
+			adaptor := taskplugin.New(plugin)
+			adaptor.Init(info)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, doubaoImageRoute, nil)
+			ctx.Set("task_request", resolved["requestBody"])
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+			encoded, err := common.Marshal(payload)
+			require.NoError(t, err)
+			parsed, taskErr := adaptor.ParseResponse(ctx, &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(encoded))}, info)
+			require.Nil(t, taskErr)
+			require.NotNil(t, parsed.Immediate)
+			assert.Equal(t, "SUCCESS", parsed.Immediate.Status)
+			assert.Equal(t, map[string]any{"images_up_to_1_5k": float64(tc.lower), "images_above_1_5k": float64(tc.higher), "input_images": float64(tc.inputs)}, parsed.Immediate.UsageFacts)
+			settlement, facts, err := service.EvaluateTaskCompletionUsage(snapshot, parsed.Immediate.UsageFacts)
+			require.NoError(t, err)
+			assert.Nil(t, settlement.Clamp)
+			assert.Equal(t, common.QuotaRound(tc.settledCNY/6.8*500000), settlement.ActualQuotaAfterGroup)
+			assert.Equal(t, tc.request["layer_decomposition"] == true, facts["layer_decomposition"])
+			assert.Equal(t, frozenFacts, snapshot.UsageFacts, "completion must preserve the frozen reservation")
+
+			value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_image", "render"}, map[string]any{"model": modelName}, map[string]any{"status": "SUCCESS", "created_at": 1, "data": payload})
+			require.NoError(t, err)
+			rendered := alibabaObject(t, value)
+			assert.Equal(t, alibabaObject(t, payload), rendered["metadata"], "image clients receive sizes, layers, OCR and usage through metadata")
+			for _, item := range rendered["data"].([]any) {
+				assert.Len(t, item.(map[string]any), 1, "standard image entries contain only the URL")
+			}
+		})
+	}
+
+	t.Run("completion respects the 100 image ceiling", func(t *testing.T) {
+		payloads := make([]any, 101)
+		for i := range payloads {
+			payloads[i] = map[string]any{"url": fmt.Sprintf("https://cdn.example/%d.png", i), "size": "1024x1024"}
+		}
+		_, err := plugin.Engine.Call(t.Context(), "extractUsageOnComplete", map[string]any{"model": modelName}, map[string]any{"status": "SUCCESS"}, map[string]any{"data": payloads, "usage": map[string]any{"generated_images": 101}})
+		require.ErrorContains(t, err, "too many output images")
+	})
+
+	t.Run("administrator prices keep precedence", func(t *testing.T) {
+		settings.BillingExpr[modelName] = `tier("custom", u("input_images") * 0.1)`
+		actual, ok := billing_setting.GetBillingExpr(modelName)
+		require.True(t, ok)
+		assert.Equal(t, settings.BillingExpr[modelName], actual)
+		delete(settings.BillingExpr, modelName)
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"doubao-seedream-5-5-261028":0}`))
+		assert.Equal(t, billing_setting.BillingModeRatio, billing_setting.GetBillingMode(modelName))
+		_, ok = billing_setting.GetBillingExpr(modelName)
+		assert.False(t, ok)
+	})
 }

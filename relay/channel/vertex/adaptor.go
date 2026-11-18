@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -335,7 +336,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	// Clean up uploaded GCS objects after response is fully handled
 	if len(info.UploadedGCSObjects) > 0 {
 		gcsObjects := info.UploadedGCSObjects
-		defer gemini.CleanupGCSObjects(gcsObjects)
+		ctx := service.WithGoogleRequestPrivacy(context.Background(), service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+		defer gemini.CleanupGCSObjects(gcsObjects, ctx)
 	}
 
 	claudeAdaptor := claude.Adaptor{}

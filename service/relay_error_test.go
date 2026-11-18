@@ -173,7 +173,7 @@ func TestProcessChannelErrorSendsFeishuAlerts(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		_, _ = w.Write([]byte(`{"code":0}`))
 		notifications <- body
 	}))
 	t.Cleanup(server.Close)

@@ -144,6 +144,10 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 		}
 	}
 
+	jsonData, err = forceBufferedStreamRequest(info, jsonData)
+	if err != nil {
+		return nil, newBufferedStreamError(c, info, err)
+	}
 	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -164,13 +168,22 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 
 	httpResp = resp.(*http.Response)
-	clientStream := info.IsStream
+	clientStream := info.IsStream && !info.BufferStreamResponse
 	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	info.IsStream = clientStream || upstreamStream
 	if httpResp.StatusCode != http.StatusOK {
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return nil, newApiErr
+	}
+
+	if info.BufferStreamResponse {
+		usage, _, apiErr := doBufferedStreamResponse(c, httpResp, info, adaptor)
+		if apiErr != nil {
+			service.ResetStatusCode(apiErr, statusCodeMappingStr)
+			return nil, apiErr
+		}
+		return usage.(*dto.Usage), nil
 	}
 
 	if upstreamStream && clientStream {

@@ -66,8 +66,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	var requestBody io.Reader
 	var jsonData []byte
+	nativeSeedream := info.ApiType == constant.APITypeVolcEngine && (info.OriginModelName == relaycommon.Seedream55Model || info.UpstreamModelName == relaycommon.Seedream55Model)
 
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if !nativeSeedream && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -114,6 +115,27 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 	}
 	if jsonData != nil {
+		if nativeSeedream {
+			// Overrides and passthrough are a second quantity boundary. Normalize
+			// and validate the final Ark body before increasing the reservation.
+			var outbound dto.ImageRequest
+			if err := common.Unmarshal(jsonData, &outbound); err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			body, facts, err := relaycommon.PrepareSeedream55Request(nil, outbound)
+			if err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			body["model"] = info.UpstreamModelName
+			jsonData, err = common.Marshal(body)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			imageCount = int(facts["images_up_to_1_5k"].(float64) + facts["images_above_1_5k"].(float64))
+			if info.BillingRequestInput != nil {
+				info.BillingRequestInput.Usage = facts
+			}
+		}
 		// This is a different trust boundary from ingress: channel overrides
 		// and pass-through bodies can change the quantity actually submitted.
 		var outbound struct {
@@ -201,10 +223,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		imageN = common.QuotaRound(count)
 	}
 
-	if usage.(*dto.Usage).TotalTokens == 0 {
+	quantityBilling := nativeSeedream && info.TieredBillingSnapshot != nil && info.TieredBillingSnapshot.TaskUsageBilling
+	if usage.(*dto.Usage).TotalTokens == 0 && !quantityBilling {
 		usage.(*dto.Usage).TotalTokens = 1
 	}
-	if usage.(*dto.Usage).PromptTokens == 0 {
+	if usage.(*dto.Usage).PromptTokens == 0 && !quantityBilling {
 		usage.(*dto.Usage).PromptTokens = 1
 	}
 

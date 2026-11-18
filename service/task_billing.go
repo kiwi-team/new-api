@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -27,6 +28,10 @@ import (
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
 	tokenName := c.GetString("token_name")
 	requestBody := TaskRequestLogBody(c)
+	responseBody := ""
+	if os.Getenv("SAVE_REQUEST_RESPONSE") == "true" {
+		responseBody = c.GetString(string(constant.ContextKeyTaskResponseStr))
+	}
 	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	// 支持任务仅按次计费
 	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
@@ -82,21 +87,54 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	attachQuotaSaturation(c, info, other)
 	// uid / 场景 / 项目归属与同步链路（text_quota、mjproxy）保持一致：不带这些列，
 	// 日志页按 uid 过滤和 UID 消耗预警（按 client_user_id 聚合 logs）都会漏掉任务消费。
+	useTimeSeconds := 0
+	if !info.StartTime.IsZero() {
+		useTimeSeconds = int(max(time.Now().Unix()-info.StartTime.Unix(), 0))
+	}
+	// Observed tokens describe upstream work; task pricing continues to use the
+	// frozen image/seconds/credit facts. Keep metrics even when body saving is off.
+	usage := &dto.Usage{}
+	usageJSON := ""
+	if value, exists := c.Get(string(constant.ContextKeyTaskTokenUsage)); exists {
+		if measured, ok := value.(*dto.Usage); ok && measured != nil {
+			usage = measured
+			if encoded, err := common.Marshal(measured); err == nil {
+				usageJSON = string(encoded)
+			}
+		}
+	}
+	if usage.PromptTokensDetails.CachedTokens > 0 {
+		other.SetPublic("cache_tokens", usage.PromptTokensDetails.CachedTokens)
+	}
+	// Consume-log input counters exclude cache subsets, matching text relay
+	// logs. Keep the full upstream count in logs.usage for inspection.
+	promptTokens := usage.PromptTokens
+	if usage.UsageSemantic != "anthropic" {
+		promptTokens = max(promptTokens-usage.PromptTokensDetails.CachedTokens-usage.PromptTokensDetails.CacheCreationTokensTotal(), 0)
+	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId:      info.ChannelId,
-		ModelName:      info.OriginModelName,
-		TokenName:      tokenName,
-		Quota:          info.PriceData.Quota,
-		Content:        logContent,
-		TokenId:        info.TokenId,
-		Group:          info.UsingGroup,
-		Other:          other,
-		Request:        requestBody,
-		ClientUserId:   common.GetContextKeyString(c, constant.ContextKeyClientUserId),
-		ClientScenairo: common.GetContextKeyString(c, constant.ContextKeyClientScenairo),
-		RequestId:      c.GetString(common.RequestIdKey),
-		ProjectName:    common.GetContextKeyString(c, constant.ContextKeyProjectName),
-		PlanId:         common.GetContextKeyInt(c, constant.ContextKeyProjectPlanId),
+		PromptTokens:                promptTokens,
+		CompletionTokens:            usage.CompletionTokens,
+		CachedTokens:                usage.PromptTokensDetails.CachedTokens,
+		ClaudeCacheCreation5mTokens: usage.ClaudeCacheCreation5mTokens,
+		ClaudeCacheCreation1hTokens: usage.ClaudeCacheCreation1hTokens,
+		Usage:                       usageJSON,
+		UseTimeSeconds:              useTimeSeconds,
+		ChannelId:                   info.ChannelId,
+		ModelName:                   info.OriginModelName,
+		TokenName:                   tokenName,
+		Quota:                       info.PriceData.Quota,
+		Content:                     logContent,
+		TokenId:                     info.TokenId,
+		Group:                       info.UsingGroup,
+		Other:                       other,
+		Request:                     requestBody,
+		Response:                    responseBody,
+		ClientUserId:                common.GetContextKeyString(c, constant.ContextKeyClientUserId),
+		ClientScenairo:              common.GetContextKeyString(c, constant.ContextKeyClientScenairo),
+		RequestId:                   c.GetString(common.RequestIdKey),
+		ProjectName:                 common.GetContextKeyString(c, constant.ContextKeyProjectName),
+		PlanId:                      common.GetContextKeyInt(c, constant.ContextKeyProjectPlanId),
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -287,8 +325,8 @@ func appendTaskLogInfo(task *model.Task, other *model.LogOther) {
 		other.SetPublic("task_id", task.TaskID)
 	}
 	if task.PrivateData.ResultDiscarded {
-		// The result was delivered inline and the upstream snapshot was not
-		// persisted, so no artifact can be retrieved for this task.
+		// The result was delivered inline without retaining task.data. Artifact
+		// retrieval stays unavailable even when logs.response records the reply.
 		other.SetPublic("result_discarded", true)
 	}
 	if task.PrivateData.Execution != nil {

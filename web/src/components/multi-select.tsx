@@ -71,8 +71,13 @@ interface MultiSelectProps {
   createLabel?: string
   /** Empty state text. Defaults to "No matching items". */
   emptyText?: string
+  /** Optional remote search and pagination, composed by the calling feature. */
+  onSearchChange?: (value: string) => void
+  footer?: React.ReactNode
   /** Optional `id` to wire labels/aria-describedby to the input. */
   id?: string
+  'aria-invalid'?: React.AriaAttributes['aria-invalid']
+  'aria-describedby'?: string
   /** Disable the entire control. */
   disabled?: boolean
   /**
@@ -220,6 +225,7 @@ export function MultiSelect(props: MultiSelectProps) {
   )
 
   const handleInputValueChange = (value: string) => {
+    props.onSearchChange?.(value)
     if (!props.allowCreate) {
       setInputValue(value)
       return
@@ -259,6 +265,7 @@ export function MultiSelect(props: MultiSelectProps) {
     // feel snappier and matches popular chip-style multiselects.
     if (next.length > props.selected.length) {
       setInputValue('')
+      props.onSearchChange?.('')
     }
   }
 
@@ -309,12 +316,19 @@ export function MultiSelect(props: MultiSelectProps) {
       inputValue={inputValue}
       onInputValueChange={handleInputValueChange}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen && props.onSearchChange) {
+          setInputValue('')
+          props.onSearchChange('')
+        }
+      }}
       disabled={props.disabled}
     >
       <ComboboxChips
         ref={chipsAnchorRef}
         className={cn('w-full', props.className)}
+        aria-invalid={props['aria-invalid']}
       >
         <ComboboxValue>
           {(values: string[]) => {
@@ -414,6 +428,8 @@ export function MultiSelect(props: MultiSelectProps) {
         </ComboboxValue>
         <ComboboxChipsInput
           id={props.id}
+          aria-invalid={props['aria-invalid']}
+          aria-describedby={props['aria-describedby']}
           placeholder={
             props.selected.length === 0 && !props.renderSelectedSummary
               ? placeholder
@@ -483,6 +499,7 @@ export function MultiSelect(props: MultiSelectProps) {
         <ComboboxEmpty>
           {props.emptyText ?? t('No matching items')}
         </ComboboxEmpty>
+        {props.footer}
       </ComboboxContent>
     </Combobox>
   )

@@ -36,6 +36,7 @@ const (
 	ContextKeyChannelBaseUrl                    ContextKey = "base_url"
 	ContextKeyChannelType                       ContextKey = "channel_type"
 	ContextKeyChannelSetting                    ContextKey = "channel_setting"
+	ContextKeyChannelModels                     ContextKey = "channel_models"
 	ContextKeyChannelOtherSetting               ContextKey = "channel_other_setting"
 	ContextKeyChannelParamOverride              ContextKey = "param_override"
 	ContextKeyChannelHeaderOverride             ContextKey = "header_override"
@@ -86,6 +87,12 @@ const (
 	ContextKeyAudioUrl       ContextKey = "audio_url"
 	ContextKeyTTSCount       ContextKey = "tts_word_count"
 	ContextKeySdkResponseStr ContextKey = "sdk_response_str"
+	// ContextKeyTaskResponseStr carries the submission response to the consume
+	// log independently of task.data retention and plugin result conversion.
+	ContextKeyTaskResponseStr ContextKey = "task_response_str"
+	// ContextKeyTaskTokenUsage holds measured token counters independently of
+	// response-body logging and provider-specific task billing quantities.
+	ContextKeyTaskTokenUsage ContextKey = "task_token_usage"
 	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
 	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
 

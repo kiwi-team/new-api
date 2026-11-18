@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -82,12 +83,66 @@ func SaveAlertRule(ctx context.Context, row *AlertRule, expectedRevision int64) 
 			if err := jobs.Updates(map[string]any{"status": "canceled", "last_error": "authorization_revoked", "locked_by": "", "locked_until": 0, "updated_at": row.UpdatedAt}).Error; err != nil {
 				return err
 			}
+			if err := reauthorizeAlertActions(tx, old, *row, spec); err != nil {
+				return err
+			}
 		}
 		if err := tx.Create(&AlertRuleRevision{RuleID: row.ID, Revision: row.Revision, Config: row.Config, CreatedBy: row.UpdatedBy, CreatedAt: row.UpdatedAt}).Error; err != nil {
 			return err
 		}
 		return tx.Create(&AlertAudit{ActorID: row.UpdatedBy, OwnerUserID: row.OwnerUserID, Operation: "rule.save", ObjectID: row.ID, Revision: row.Revision, CreatedAt: row.UpdatedAt}).Error
 	})
+}
+
+// A presentation edit is a newly approved revision of the same action policy.
+// Requeue its live work under that revision, fencing any previously claimed
+// worker. Event identity, expiry and attempt history remain unchanged.
+func reauthorizeAlertActions(tx *gorm.DB, old, current AlertRule, spec AlertRuleSpec) error {
+	if !old.Enabled || !current.Enabled || old.OwnerUserID != current.OwnerUserID || old.Generation != current.Generation || len(spec.Actions) == 0 {
+		return nil
+	}
+	previous, err := AlertRuleConfig(old)
+	if err != nil {
+		return err
+	}
+	previous.Name, previous.Notify, previous.Acknowledgement = spec.Name, spec.Notify, spec.Acknowledgement
+	previous.Severity, previous.Category = spec.Severity, spec.Category
+	if AlertIdentity(previous) != AlertIdentity(spec) {
+		return nil
+	}
+	var ids []int64
+	if err := lockForUpdate(tx).Model(&AlertJob{}).
+		Where("rule_id = ? AND rule_revision = ? AND kind = ? AND expires_at > ? AND status IN ?", current.ID, old.Revision, "action", current.UpdatedAt, []string{"pending", "retry_wait", "running"}).
+		Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	for start := 0; start < len(ids); start += 200 {
+		batch := ids[start:min(start+200, len(ids))]
+		result := tx.Model(&AlertJob{}).Where("id IN ? AND rule_revision = ?", batch, old.Revision).Updates(map[string]any{
+			"rule_revision": current.Revision,
+			"status":        gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "running", "pending"),
+			"locked_by":     "", "locked_until": 0, "updated_at": current.UpdatedAt,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != int64(len(batch)) {
+			return ErrAlertConflict
+		}
+		outbox := make([]AlertOutbox, 0, len(batch))
+		audits := make([]AlertAudit, 0, len(batch))
+		for _, id := range batch {
+			outbox = append(outbox, AlertOutbox{ID: AlertIdentity("action-reauthorize", id, current.Revision), Kind: "action", Reference: strconv.FormatInt(id, 10), CreatedAt: current.UpdatedAt})
+			audits = append(audits, AlertAudit{ActorID: current.UpdatedBy, OwnerUserID: current.OwnerUserID, Operation: "action.reauthorize", ObjectID: id, Revision: current.Revision, CreatedAt: current.UpdatedAt})
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&outbox).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&audits).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func AlertRuleAllowsNotification(spec AlertRuleSpec, targetID int64) bool {

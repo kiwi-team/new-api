@@ -25,7 +25,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
-	"google.golang.org/api/option"
 )
 
 type geminiUploadedObject struct {
@@ -35,10 +34,12 @@ type geminiUploadedObject struct {
 	Size        int64
 	MIMEType    string
 	Generation  int64
+	Privacy     *dto.GoogleRequestPrivacySettings
 }
 
 func (o geminiUploadedObject) remove(ctx context.Context, c *gin.Context) {
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(o.Credentials)))
+	ctx = WithGoogleRequestPrivacy(ctx, o.Privacy)
+	client, err := NewGoogleStorageClient(ctx, o.Credentials)
 	if err == nil {
 		defer client.Close()
 		object := client.Bucket(o.Bucket).Object(o.Name)
@@ -99,7 +100,8 @@ func PrepareGeminiFileAttempt(c *gin.Context, info *relaycommon.RelayInfo) *type
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Minute)
 	defer cancel()
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(info.ApiKey)))
+	ctx = WithGoogleRequestPrivacy(ctx, GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting))
+	client, err := NewGoogleStorageClient(ctx, info.ApiKey)
 	if err != nil {
 		return FileRoutingError("file_transfer_failed", "could not initialize GCS upload", 502)
 	}
@@ -154,6 +156,7 @@ func PrepareGeminiFileAttempt(c *gin.Context, info *relaycommon.RelayInfo) *type
 
 func (p *GeminiFilePlan) upload(ctx context.Context, c *gin.Context, client *storage.Client, info *relaycommon.RelayInfo, file *GeminiPlannedFile, remaining int64) (geminiUploadedObject, *types.NewAPIError) {
 	object := geminiUploadedObject{Credentials: info.ApiKey, Bucket: info.ChannelSetting.GoogleFileBucket, Name: "new-api/requests/" + common.GetUUID(), MIMEType: file.MIMEType}
+	object.Privacy = GoogleRequestPrivacyFromContext(ctx)
 	response, apiErr := p.download(ctx, file)
 	if apiErr != nil {
 		return object, apiErr

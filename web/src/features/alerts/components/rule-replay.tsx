@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { toIntlLocale } from '@/i18n/languages'
 
 import { alertLabel } from '../lib/labels'
+import { formatAlertMetricValue } from '../lib/rule-form'
 
 export type ReplayPoint = {
   target: { type: string; id: number; name: string; model: string }
@@ -35,7 +36,10 @@ export type ReplayPoint = {
   }
   matched: boolean
 }
-export function ReplayResults({ points }: { points: ReplayPoint[] }) {
+export function ReplayResults(props: {
+  points: ReplayPoint[]
+  metric: string
+}) {
   const { t, i18n } = useTranslation()
   const date = new Intl.DateTimeFormat(toIntlLocale(i18n.language), {
     dateStyle: 'short',
@@ -50,7 +54,7 @@ export function ReplayResults({ points }: { points: ReplayPoint[] }) {
         )}
       </p>
       <StaticDataTable
-        data={points}
+        data={props.points}
         getRowKey={(point) =>
           `${point.target.type}:${point.target.id}:${point.target.model}:${point.at}`
         }
@@ -68,7 +72,13 @@ export function ReplayResults({ points }: { points: ReplayPoint[] }) {
           {
             id: 'value',
             header: t('Value'),
-            cell: (point) => point.measurement.value,
+            cell: (point) =>
+              formatAlertMetricValue(
+                props.metric,
+                point.measurement.value,
+                toIntlLocale(i18n.resolvedLanguage || i18n.language),
+                point.measurement
+              ),
           },
           {
             id: 'samples',

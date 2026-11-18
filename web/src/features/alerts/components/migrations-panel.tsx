@@ -57,9 +57,9 @@ type LegacyToken = {
   configured: boolean
 }
 type MigrationList = {
-  migrations: Migration[]
-  legacy_tokens: LegacyToken[]
-  legacy_quota_items: MigrationCandidate[]
+  migrations?: Migration[] | null
+  legacy_tokens?: LegacyToken[] | null
+  legacy_quota_items?: MigrationCandidate[] | null
   truncated: boolean
 }
 export function MigrationsPanel(props: { catalog: Catalog }) {
@@ -125,7 +125,13 @@ export function MigrationsPanel(props: { catalog: Catalog }) {
   })
   if (query.isPending) return <LoadingState />
   if (query.isError) return <ErrorState onRetry={() => void query.refetch()} />
-  const list = query.data
+  // Empty Go slices can arrive as null; older responses can omit a list.
+  const list = {
+    ...query.data,
+    migrations: query.data.migrations ?? [],
+    legacy_tokens: query.data.legacy_tokens ?? [],
+    legacy_quota_items: query.data.legacy_quota_items ?? [],
+  }
   const legacyItems = [
     ...list.legacy_tokens.map((token) => ({
       kind: 'token_spend',

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -25,7 +26,7 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 	var err error
 	if snap := info.TieredBillingSnapshot; snap != nil && snap.BillingMode == "tiered_expr" {
 		// Token-only image expressions must not acquire a quantity multiplier.
-		if snap.EstimatedImageCount == nil {
+		if snap.EstimatedImageCount == nil && !snap.TaskUsageBilling {
 			return nil
 		}
 		request := billingexpr.RequestInput{}
@@ -40,11 +41,16 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 			return types.NewErrorWithStatusCode(runErr, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		beforeGroup := cost / 1_000_000 * snap.QuotaPerUnit
-		if trace.BillingUnit != billingexpr.BillingUnitRequest && snap.PreConsumeMultiplier != 0 {
+		if snap.TaskUsageBilling {
+			beforeGroup = cost * snap.QuotaPerUnit
+		} else if trace.BillingUnit != billingexpr.BillingUnitRequest && snap.PreConsumeMultiplier != 0 {
 			beforeGroup *= snap.PreConsumeMultiplier
 		}
 		quota, err = billingexpr.QuotaRoundStrict(beforeGroup * info.PriceData.GroupRatioInfo.GroupRatio)
 		if err == nil {
+			if snap.TaskUsageBilling {
+				snap.UsageFacts = maps.Clone(request.Usage)
+			}
 			snap.EstimatedImageCount = trace.ImageCount
 			snap.EstimatedQuotaBeforeGroup = beforeGroup
 			snap.EstimatedQuotaAfterGroup = quota

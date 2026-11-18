@@ -43,6 +43,7 @@ const (
 	VerificationScopeAdminUserCreate       = "admin.user.create"
 	VerificationScopeAdminUserUpdate       = "admin.user.update"
 	VerificationScopeAdminUserDelete       = "admin.user.delete"
+	VerificationScopeAdminUserBatchDelete  = "admin.user.batch.delete"
 	VerificationScopeAdminUserManage       = "admin.user.manage"
 	VerificationScopeAdminUserPasskeyReset = "admin.user.passkey.reset"
 	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
@@ -86,6 +87,10 @@ type AccountUnbindingContext struct {
 
 type AdminUserContext struct {
 	UserID int `json:"user_id"`
+}
+
+type AdminUserBatchDeleteContext struct {
+	UserIDs []int `json:"user_ids"`
 }
 
 type AdminUserManageContext struct {
@@ -225,6 +230,19 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
+	case VerificationScopeAdminUserBatchDelete:
+		var context AdminUserBatchDeleteContext
+		if len(fields) != 1 || common.Unmarshal(operation.Context, &context) != nil || len(context.UserIDs) == 0 || len(context.UserIDs) > 100 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		for _, id := range context.UserIDs {
+			if id <= 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		}
+		slices.Sort(context.UserIDs)
+		context.UserIDs = slices.Compact(context.UserIDs)
+		normalized = context
 	case VerificationScopeAdminUserManage:
 		var context AdminUserManageContext
 		if len(fields) != 2 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || !slices.Contains(adminUserManageActions, context.Action) {
@@ -350,7 +368,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
-		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
+		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete, VerificationScopeAdminUserBatchDelete,
 		VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
@@ -403,6 +421,9 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
 	}
+	if scope == VerificationScopeAdminUserBatchDelete && state.Role != common.RoleRootUser {
+		return nil, ErrVerificationForbidden
+	}
 	if err := requireAccessTokenVerificationScope(identity, scope); err != nil {
 		return nil, err
 	}
@@ -416,7 +437,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 			switch scope {
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAlertManage,
-				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
+				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete, VerificationScopeAdminUserBatchDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."

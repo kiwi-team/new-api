@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/gin-gonic/gin/binding"
@@ -78,6 +79,24 @@ func JsonStringify(v any) string {
 
 func PrintJson(prefix string, v any) {
 	fmt.Println(prefix + ":" + JsonStringify(v))
+}
+
+// WriteJson writes v as indented JSON to prefix.json, overwriting any existing file.
+func WriteJson(prefix string, v any) {
+	filename := prefix + ".json"
+	data, err := Marshal(v)
+	if err != nil {
+		SysError(LogText("failed to marshal JSON file %s: %v", filename, err))
+		return
+	}
+	data, err = IndentJson(data)
+	if err != nil {
+		SysError(LogText("failed to format JSON file %s: %v", filename, err))
+		return
+	}
+	if err := os.WriteFile(filename, data, 0o600); err != nil {
+		SysError(LogText("failed to write JSON file %s: %v", filename, err))
+	}
 }
 
 func IndentJson(data []byte) ([]byte, error) {

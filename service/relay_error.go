@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
-	"github.com/QuantumNous/new-api/i18n"
 	"html"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -155,8 +156,8 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 				DisableChannel(channelError, reason)
 			})
 		}
-		notifyPotentialChannelArrears(channelError, err)
 	}
+	notifyPotentialChannelArrears(channelError, err)
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		userId := c.GetInt("id")
@@ -188,7 +189,15 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func notifyPotentialChannelArrears(channelError types.ChannelError, err *types.NewAPIError) {
-	if !IsInAutoDisableList(strings.ToLower(err.Error())) {
+	if channelError.ChannelId <= 0 {
+		return
+	}
+	message := strings.ToLower(err.Error())
+	// Billing notifications are independent of channel-disable policy. A generic
+	// 403 alone does not establish a balance problem; retain the known provider
+	// signal and existing keyword matches as possible-arrears notifications.
+	aliAccessDenied := err.StatusCode == http.StatusForbidden && strings.Contains(message, "access denied") && strings.Contains(message, "model-studio/error-code#access-denied")
+	if err.StatusCode != http.StatusPaymentRequired && !aliAccessDenied && !strings.Contains(message, "insufficient balance") && !strings.Contains(message, "insufficient_balance") && !IsInAutoDisableList(message) {
 		return
 	}
 	webhookURL := strings.TrimSpace(common.OptionMap["feishu_qianfei_webhook_url"])
@@ -211,7 +220,7 @@ func notifyPotentialChannelArrears(channelError types.ChannelError, err *types.N
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	content := fmt.Sprintf("【渠道】%s（%d） 可能欠费了,请及时处理，错误信息：%s", channelError.ChannelName, channelError.ChannelId, err.MaskSensitiveErrorWithStatusCode())
-	notifyErr := alerting.DispatchLegacyNotice(ctx, "channel_arrears", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(cooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{Title: i18n.Translate("", "alert.legacy_channel_balance"), Content: content}, func(ctx context.Context) error {
+	notifyErr := alerting.DispatchLegacyNotice(ctx, "channel_arrears", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(cooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{ChannelID: channelError.ChannelId, Title: i18n.Translate("", "alert.legacy_channel_balance"), Content: content}, func(ctx context.Context) error {
 		return SendFeishuNotifyContext(ctx, webhookURL, common.OptionMap["feishu_qianfei_secret"], dto.FeishuNotify{MsgType: "text", Content: dto.FeishuContent{Text: content}})
 	}, alerting.LegacyNoticeCooldown{Key: strconv.Itoa(channelError.ChannelId), Duration: cooldown})
 
@@ -256,7 +265,7 @@ func notifySlowChannelError(c *gin.Context, channelError types.ChannelError, err
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if notifyErr := alerting.DispatchLegacyNotice(ctx, "slow_error", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(slowErrorAlertCooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{Title: i18n.Translate("", "alert.legacy_slow_error"), Content: content}, func(ctx context.Context) error {
+		if notifyErr := alerting.DispatchLegacyNotice(ctx, "slow_error", "site", model.AlertIdentity(channelError.ChannelId, time.Now().Unix()/int64(slowErrorAlertCooldown/time.Second)), channelError.ChannelName, alerting.LegacyNotice{ChannelID: channelError.ChannelId, Title: i18n.Translate("", "alert.legacy_slow_error"), Content: content}, func(ctx context.Context) error {
 			return SendFeishuNotifyContext(ctx, webhookURL, secret, dto.FeishuNotify{MsgType: "text", Content: dto.FeishuContent{Text: content}})
 		}, alerting.LegacyNoticeCooldown{Key: strconv.Itoa(channelError.ChannelId), Duration: slowErrorAlertCooldown}); notifyErr != nil {
 			common.SysError("failed to send slow error feishu notify: " + notifyErr.Error())

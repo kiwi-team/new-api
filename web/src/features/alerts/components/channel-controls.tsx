@@ -269,7 +269,7 @@ function ModelControlsDialog(props: {
           },
           {
             id: 'holds',
-            header: t('Isolation sources'),
+            header: t('Automatic disable records'),
             cell: (row) =>
               row.holds.map((hold) => hold.target_name).join(', ') || t('None'),
           },

@@ -78,12 +78,18 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	privacy     *dto.GoogleRequestPrivacySettings
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+	a.privacy = service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting)
+}
+
+func (a *TaskAdaptor) SetGoogleRequestPrivacy(policy *dto.GoogleRequestPrivacySettings) {
+	a.privacy = policy
 }
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
@@ -396,6 +402,10 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		if err != nil {
 			return nil, fmt.Errorf("new proxy http client failed: %w", err)
 		}
+		client, err = service.GooglePrivacyHTTPClient(client, a.privacy)
+		if err != nil {
+			return nil, err
+		}
 		return common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query_http"), client, req, "task_query", true)
 	}
 
@@ -431,6 +441,10 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	client, err = service.GooglePrivacyHTTPClient(client, a.privacy)
+	if err != nil {
+		return nil, err
 	}
 	return common.DoTimedHTTP(common.OutboundTimingContext(a.RequestTimingContext(), "task_query_http"), client, req, "task_query", true)
 }

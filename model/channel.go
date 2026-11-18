@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/samber/lo"
+	"github.com/tidwall/sjson"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -1359,6 +1360,24 @@ func (channel *Channel) ValidateSettings() error {
 	}
 	if err := channelParams.ValidateHTTPTransport(); err != nil {
 		return err
+	}
+	if err := channelParams.GoogleRequestPrivacy.Validate(); err != nil {
+		return err
+	}
+	if err := channelParams.NormalizeModelBehaviors(); err != nil {
+		return err
+	}
+	if channelParams.ModelBehaviors != nil {
+		// Preserve unrelated settings, including fields from newer gateways.
+		encoded, err := common.Marshal(channelParams.ModelBehaviors)
+		if err != nil {
+			return err
+		}
+		normalized, err := sjson.SetRaw(*channel.Setting, "model_behaviors", string(encoded))
+		if err != nil {
+			return err
+		}
+		channel.Setting = &normalized
 	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {

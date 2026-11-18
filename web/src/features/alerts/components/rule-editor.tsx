@@ -18,14 +18,27 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
@@ -34,11 +47,18 @@ import {
   useSecureVerification,
 } from '@/features/auth/secure-verification'
 import { SYSTEM_TASK_TYPE_LABEL } from '@/features/system-info/constants'
+import { UserSelect } from '@/features/users/components/user-select'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 
 import { alertRequest, getAlertChannels, previewRule, saveRule } from '../api'
+import { useTargetOptions } from '../hooks/use-target-options'
 import { alertLabel } from '../lib/labels'
 import {
   buildRule,
+  canUseRuleTarget,
+  isPercentageMetric,
+  isPlatformScope,
   metricAllowed,
   metricDefaults,
   ruleDefaults,
@@ -47,6 +67,7 @@ import {
 } from '../lib/rule-form'
 import { ruleTemplates } from '../lib/templates'
 import type { AlertRule, AlertTarget, Catalog, Preview } from '../types'
+import { RuleFieldHelp } from './rule-field-help'
 import { PreviewResults } from './rule-preview'
 import { ReplayResults, type ReplayPoint } from './rule-replay'
 
@@ -62,7 +83,8 @@ type Props = {
 }
 
 export function RuleEditor(props: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const verification = useSecureVerification()
   const defaults = ruleDefaults(props.rule, props.owner)
   if (!props.rule && props.initialChannelID) {
@@ -86,6 +108,12 @@ export function RuleEditor(props: Props) {
     defaultValues: defaults,
   })
   const values = form.watch()
+  const isChannel =
+    values.scope === 'channel' || values.scope === 'channel_model'
+  const isBudget =
+    values.scope === 'uid_budget' || values.scope === 'project_budget'
+  const platform = isPlatformScope(values.scope)
+  const ruleOwner = platform ? 0 : values.owner
   const [preview, setPreview] = useState<Preview | null>(null)
   const [previewInput, setPreviewInput] = useState('')
   // Compare normalized values: resolver output has schema key order, while
@@ -106,24 +134,61 @@ export function RuleEditor(props: Props) {
       alertRequest<Catalog>(`catalog?owner_user_id=${values.owner}`),
     enabled:
       props.catalog.manage_platform &&
+      !platform &&
       values.owner > 0 &&
       values.owner !== props.owner,
   })
-  const ownerTargets = useQuery({
-    queryKey: ['alerts', 'targets', 'owner', values.owner],
-    queryFn: () =>
-      alertRequest<AlertTarget[]>(`targets?owner_user_id=${values.owner}`),
-    enabled:
-      props.catalog.manage_platform &&
-      values.owner > 0 &&
-      values.owner !== props.owner,
+  const notificationOptions = useTargetOptions(props.catalog.manage_platform)
+  const escalationOptions = useTargetOptions(props.catalog.manage_platform)
+  const [chosenTargets, setChosenTargets] = useState<AlertTarget[]>([])
+  const selectedIDs = [
+    ...new Set([...values.targets, ...values.escalationTargets]),
+  ]
+    .map(Number)
+    .sort((a, b) => a - b)
+  const selectedTargets = useQuery({
+    queryKey: ['alerts', 'targets', 'selected', selectedIDs],
+    queryFn: async () => {
+      const requests = []
+      for (let offset = 0; offset < selectedIDs.length; offset += 20) {
+        const ids = selectedIDs.slice(offset, offset + 20)
+        requests.push(
+          alertRequest<AlertTarget[] | null>(
+            `targets?scope=all&ids=${ids.join(',')}`
+          )
+        )
+      }
+      return (await Promise.all(requests)).flatMap((targets) => targets ?? [])
+    },
+    enabled: props.catalog.manage_platform && selectedIDs.length > 0,
+    meta: { errorToast: false },
   })
-  const isChannel =
-    values.scope === 'channel' || values.scope === 'channel_model'
-  const isBudget =
-    values.scope === 'uid_budget' || values.scope === 'project_budget'
-  const platform = isChannel || values.scope === 'system' || isBudget
+  const anotherOwner =
+    props.catalog.manage_platform &&
+    !platform &&
+    values.owner > 0 &&
+    values.owner !== props.owner
+  const catalogForOwner = anotherOwner ? ownerCatalog.data : props.catalog
+  const targetsByID = new Map(
+    [
+      ...props.targets,
+      ...(notificationOptions.query.data?.pages.flat() ?? []),
+      ...(escalationOptions.query.data?.pages.flat() ?? []),
+      ...(selectedTargets.data ?? []),
+      ...chosenTargets,
+    ].map((target) => [target.id, target])
+  )
   const inflight = values.metric === 'inflight_overdue_count'
+  const percentage = isPercentageMetric(values.metric)
+  const volumeChange = values.metric === 'request_volume_change'
+  const traffic = ['request_started_count', 'request_volume_change'].includes(
+    values.metric
+  )
+  const percentageMaximum =
+    volumeChange && values.changeDirection === 'increase' ? 1000000 : 100
+  const usesAggregation = ['duration_ms', 'ttft_ms'].includes(values.metric)
+  const thresholdError = form.formState.errors.threshold
+  const recoveryThresholdError = form.formState.errors.recoveryThreshold
   const legacy = !!values.legacySignal
   const metrics = [
     ...props.catalog.metrics,
@@ -134,12 +199,10 @@ export function RuleEditor(props: Props) {
         value: String(channel.id),
         label: channel.name,
       }))
-    : (ownerCatalog.data?.api_keys ?? props.catalog.api_keys ?? []).map(
-        (key) => ({
-          value: String(key.id),
-          label: key.name,
-        })
-      )
+    : (catalogForOwner?.api_keys ?? []).map((key) => ({
+        value: String(key.id),
+        label: key.name,
+      }))
   const entityOptions = isBudget
     ? (props.catalog.budget_options ?? [])
         .filter((item) => item.type === values.scope)
@@ -148,23 +211,60 @@ export function RuleEditor(props: Props) {
   const modelOptions = [
     ...new Set(
       (channels.data ?? [])
-        .filter((channel) => values.entities.includes(String(channel.id)))
+        .filter(
+          (channel) =>
+            values.scope === 'model' ||
+            values.entities.includes(String(channel.id))
+        )
         .flatMap((channel) => channel.models.split(','))
     ),
   ]
     .filter(Boolean)
     .map((name) => ({ value: name, label: name }))
-  const targetOptions = (ownerTargets.data ?? props.targets)
+  const targetOptions = [...targetsByID.values()]
     .filter(
       (target) =>
-        target.enabled &&
-        (target.owner_user_id === values.owner ||
-          (platform && target.owner_user_id === 0))
+        (target.enabled || !values.enabled) &&
+        canUseRuleTarget(target, values, props.catalog.manage_platform)
     )
-    .map((target) => ({ value: String(target.id), label: target.name }))
+    .map((target) => ({
+      value: String(target.id),
+      label: target.enabled ? target.name : `${target.name} (${t('Disabled')})`,
+      hint: props.catalog.manage_platform
+        ? `${t('Owner user')}: #${target.owner_user_id} · ID: ${target.id}`
+        : undefined,
+    }))
+  const validateNotificationTargets = (input: RuleFormValues) => {
+    let valid = true
+    for (const field of ['targets', 'escalationTargets'] as const) {
+      let message = ''
+      for (const id of input[field]) {
+        const target = targetsByID.get(Number(id))
+        if (
+          !target ||
+          !canUseRuleTarget(target, input, props.catalog.manage_platform)
+        ) {
+          message = 'Select notification targets available to this rule.'
+          break
+        }
+        if (input.enabled && !target.enabled) {
+          message =
+            'Enable the selected notification target before enabling this rule.'
+          break
+        }
+      }
+      if (message) {
+        form.setError(field, { type: 'validate', message })
+        valid = false
+      } else {
+        form.clearErrors(field)
+      }
+    }
+    return valid
+  }
   const previewMutation = useMutation({
     mutationFn: async (input: RuleFormValues) =>
-      previewRule(buildRule(input), platform ? 0 : input.owner, props.rule),
+      previewRule(buildRule(input), ruleOwner, props.rule),
     onSuccess: (result, input) => {
       setPreview(result)
       setPreviewInput(JSON.stringify(input))
@@ -173,8 +273,9 @@ export function RuleEditor(props: Props) {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!preview || !previewCurrent) return false
+      if (!validateNotificationTargets(values)) return false
       let proof: string | undefined
-      if (preview.config.enabled && preview.config.actions.length) {
+      if (preview.config.enabled && preview.config.actions?.length) {
         const result = await verification.requestVerification({
           scope: 'alert.manage',
           context: preview.verification_context,
@@ -182,11 +283,11 @@ export function RuleEditor(props: Props) {
         if (!result) return false
         proof = result.proof_token
       }
-      await saveRule(preview, platform ? 0 : values.owner, props.rule, proof)
+      await saveRule(preview, ruleOwner, props.rule, proof)
       return true
     },
     onSuccess: (saved) => {
-      if (saved) props.onSaved(platform ? 0 : values.owner)
+      if (saved) props.onSaved(ruleOwner)
     },
   })
   const [replayInput, setReplayInput] = useState('')
@@ -194,7 +295,7 @@ export function RuleEditor(props: Props) {
     mutationFn: (input: RuleFormValues) =>
       alertRequest<ReplayPoint[]>('rules/backtest', 'POST', {
         config: buildRule(input),
-        owner_user_id: platform ? 0 : input.owner,
+        owner_user_id: ruleOwner,
         rule_id: props.rule?.id ?? 0,
       }),
     onSuccess: (_, input) => setReplayInput(JSON.stringify(input)),
@@ -212,10 +313,20 @@ export function RuleEditor(props: Props) {
         'balance_remaining',
         'budget_remaining_ratio',
         'inflight_overdue_count',
+        'request_count',
+        'request_started_count',
+        'request_volume_change',
       ].includes(metric)
     ) {
       form.setValue('samples', 0)
     }
+    if (['request_started_count', 'request_volume_change'].includes(metric)) {
+      form.setValue('trigger', 'incident')
+      form.setValue('window', 'rolling')
+      form.setValue('action', '')
+      form.setValue('autoRecovery', false)
+    }
+    if (metric === 'request_volume_change') form.setValue('recoveryHold', 120)
     if (metric === 'balance_remaining') {
       form.setValue('action', '')
       form.setValue('autoRecovery', false)
@@ -225,20 +336,35 @@ export function RuleEditor(props: Props) {
     form.setValue('operator', defaults.operator)
   }
   const setScope = (scope: RuleFormValues['scope']) => {
+    if (isPlatformScope(scope) !== platform) {
+      form.setValue('targets', [])
+      form.setValue('escalationTargets', [])
+    }
+    if (!isPlatformScope(scope) && values.owner === 0) {
+      form.setValue('owner', props.owner)
+    }
+    if (scope === 'model') {
+      form.setValue('allModels', false)
+      form.setValue('futureModels', false)
+    }
     form.setValue('scope', scope)
     form.setValue('entities', [])
     form.setValue('models', [])
+    form.setValue('recoveryModels', [])
     form.setValue('action', '')
     if (!metricAllowed(values.metric, scope)) {
-      setMetric(
-        ['uid_budget', 'project_budget'].includes(scope)
-          ? 'budget_remaining_ratio'
-          : 'duration_ms'
-      )
+      let metric = 'duration_ms'
+      if (scope === 'model') metric = 'request_started_count'
+      if (['uid_budget', 'project_budget'].includes(scope)) {
+        metric = 'budget_remaining_ratio'
+      }
+      setMetric(metric)
     }
   }
   const select = (
     name:
+      | 'baselineMode'
+      | 'changeDirection'
       | 'balancePool'
       | 'subscription'
       | 'taskType'
@@ -259,7 +385,16 @@ export function RuleEditor(props: Props) {
     options: { value: string; label: string }[]
   ) => (
     <div className='space-y-1'>
-      <Label htmlFor={`alert-${name}`}>{t(label)}</Label>
+      <div className='flex items-center gap-1.5'>
+        <Label htmlFor={`alert-${name}`}>{t(label)}</Label>
+        <RuleFieldHelp
+          field={name}
+          label={label}
+          metric={values.metric}
+          direction={values.changeDirection}
+          mode={values.trigger}
+        />
+      </div>
       <NativeSelect
         id={`alert-${name}`}
         className='w-full'
@@ -299,19 +434,36 @@ export function RuleEditor(props: Props) {
   )
   const number = (
     name:
+      | 'baselineCount'
+      | 'baselineMinutes'
+      | 'baselineMinimumCount'
       | 'minutes'
       | 'samples'
       | 'hold'
       | 'deadlineSeconds'
       | 'slowSeconds'
+      | 'recoveryHold'
       | 'recoveryDuration'
       | 'recoveryTTFT'
       | 'repeat',
     label: string
   ) => (
     <div className='space-y-1'>
-      <Label htmlFor={`alert-${name}`}>{t(label)}</Label>
+      <div className='flex items-center gap-1.5'>
+        <Label htmlFor={`alert-${name}`}>{t(label)}</Label>
+        <RuleFieldHelp
+          field={name}
+          label={label}
+          metric={values.metric}
+          direction={values.changeDirection}
+          mode={values.trigger}
+        />
+      </div>
       <Input
+        aria-invalid={!!form.formState.errors[name]}
+        aria-describedby={
+          form.formState.errors[name] ? `alert-${name}-error` : undefined
+        }
         id={`alert-${name}`}
         type='number'
         readOnly={legacy}
@@ -319,6 +471,13 @@ export function RuleEditor(props: Props) {
         min={0}
         {...form.register(name, { valueAsNumber: true })}
       />
+      {form.formState.errors[name] && (
+        <FieldError id={`alert-${name}-error`}>
+          {form.formState.errors[name]?.type === 'custom'
+            ? t(form.formState.errors[name]?.message || 'Enter a valid number.')
+            : t('Enter a valid number.')}
+        </FieldError>
+      )}
     </div>
   )
   const toggle = (
@@ -343,6 +502,17 @@ export function RuleEditor(props: Props) {
         disabled={legacy && name !== 'enabled'}
         onCheckedChange={(checked) => {
           form.setValue(name, checked)
+          if (name === 'enforced' && !checked && !platform) {
+            for (const field of ['targets', 'escalationTargets'] as const) {
+              form.setValue(
+                field,
+                values[field].filter(
+                  (id) =>
+                    targetsByID.get(Number(id))?.owner_user_id === values.owner
+                )
+              )
+            }
+          }
           if (name === 'allModels') {
             form.setValue('models', [])
             if (!checked) form.setValue('futureModels', false)
@@ -353,36 +523,118 @@ export function RuleEditor(props: Props) {
     </div>
   )
   const multi = (
-    name: 'entities' | 'targets' | 'models' | 'escalationTargets',
+    name:
+      | 'entities'
+      | 'targets'
+      | 'models'
+      | 'recoveryModels'
+      | 'escalationTargets',
     label: string,
-    options: { value: string; label: string }[]
-  ) => (
-    <div className='space-y-1'>
-      <Label htmlFor={`alert-${name}`}>{t(label)}</Label>
+    options: { value: string; label: string; hint?: string }[]
+  ) => {
+    let source: ReturnType<typeof useTargetOptions> | undefined
+    if (props.catalog.manage_platform && name === 'targets') {
+      source = notificationOptions
+    }
+    if (props.catalog.manage_platform && name === 'escalationTargets') {
+      source = escalationOptions
+    }
+    let emptyText: string | undefined
+    let footer: ReactNode
+    if (source) {
+      const query = source.query
+      if (source.pendingSearch || source.query.isPending) {
+        emptyText = t('Loading...')
+      }
+      if (source.query.isError) {
+        emptyText = t('Failed to load notification targets')
+        footer = (
+          <Button
+            type='button'
+            variant='ghost'
+            className='w-full'
+            onClick={() => void query.refetch()}
+          >
+            {t('Retry')}
+          </Button>
+        )
+      } else if (source.query.hasNextPage) {
+        footer = (
+          <Button
+            type='button'
+            variant='ghost'
+            className='w-full'
+            disabled={source.query.isFetchingNextPage || source.pendingSearch}
+            onClick={() => void query.fetchNextPage()}
+          >
+            {source.query.isFetchingNextPage
+              ? t('Loading...')
+              : t('Load more notification targets')}
+          </Button>
+        )
+      }
+    }
+    return (
       <Controller
         control={form.control}
         name={name}
-        render={({ field }) => (
-          <MultiSelect
-            id={`alert-${name}`}
-            options={options}
-            selected={field.value}
-            onChange={field.onChange}
-            placeholder={t('Select')}
-          />
+        render={({ field, fieldState }) => (
+          <Field className='gap-1' data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={`alert-${name}`}>{t(label)}</FieldLabel>
+            <MultiSelect
+              id={`alert-${name}`}
+              aria-invalid={fieldState.invalid}
+              aria-describedby={
+                fieldState.error ? `alert-${name}-error` : undefined
+              }
+              options={options}
+              selected={field.value}
+              onChange={(ids) => {
+                if (name === 'targets' || name === 'escalationTargets') {
+                  const other =
+                    name === 'targets'
+                      ? values.escalationTargets
+                      : values.targets
+                  const chosen = [...new Set([...ids, ...other])].flatMap(
+                    (id) => {
+                      const target = targetsByID.get(Number(id))
+                      return target ? [target] : []
+                    }
+                  )
+                  setChosenTargets(chosen)
+                  if (
+                    props.catalog.manage_platform &&
+                    chosen.some((target) => target.owner_user_id !== ruleOwner)
+                  ) {
+                    form.setValue('enforced', true)
+                  }
+                }
+                field.onChange(ids)
+              }}
+              onSearchChange={source?.setSearch}
+              emptyText={emptyText}
+              footer={footer}
+              placeholder={t('Select')}
+            />
+            {fieldState.error?.message && (
+              <FieldError id={`alert-${name}-error`}>
+                {t(fieldState.error.message)}
+              </FieldError>
+            )}
+          </Field>
         )}
       />
-    </div>
-  )
+    )
+  }
   let thresholdLabel = 'Threshold (milliseconds or count)'
   if (['spend_net', 'balance_remaining'].includes(values.metric)) {
     thresholdLabel = 'Threshold (USD)'
-  } else if (
-    values.metric.endsWith('_rate') ||
-    values.metric === 'budget_remaining_ratio'
-  ) {
-    thresholdLabel = 'Threshold (basis points)'
+  } else if (percentage) {
+    thresholdLabel = volumeChange ? 'Change threshold (%)' : 'Threshold (%)'
   }
+  let recoveryThresholdLabel = 'Recovery threshold'
+  if (percentage) recoveryThresholdLabel = 'Recovery threshold (%)'
+  if (volumeChange) recoveryThresholdLabel = 'Recovery change threshold (%)'
   const actionOptions = [{ value: '', label: 'Notify only' }]
   if (values.scope === 'api_key' && values.trigger !== 'schedule_report') {
     actionOptions.push({
@@ -438,9 +690,11 @@ export function RuleEditor(props: Props) {
                 <Button
                   variant='outline'
                   disabled={busy}
-                  onClick={form.handleSubmit((input) =>
-                    replayMutation.mutate(input)
-                  )}
+                  onClick={form.handleSubmit((input) => {
+                    if (validateNotificationTargets(input)) {
+                      replayMutation.mutate(input)
+                    }
+                  })}
                 >
                   {t('Replay last hour')}
                 </Button>
@@ -459,12 +713,17 @@ export function RuleEditor(props: Props) {
       >
         <form
           id='alert-rule-form'
+          noValidate
           className='space-y-5'
           onChange={() => {
             setPreview(null)
             replayMutation.reset()
           }}
-          onSubmit={form.handleSubmit((input) => previewMutation.mutate(input))}
+          onSubmit={form.handleSubmit((input) => {
+            if (validateNotificationTargets(input)) {
+              previewMutation.mutate(input)
+            }
+          })}
         >
           {!props.rule && (
             <div className='space-y-1'>
@@ -476,15 +735,13 @@ export function RuleEditor(props: Props) {
                   const template = ruleTemplates.find(
                     (item) => item.name === event.target.value
                   )
-                  if (template) {
-                    form.reset({
-                      ...ruleDefaults(undefined, props.owner),
-                      ...template.values,
-                      name: t(template.name),
-                    })
-                    setPreview(null)
-                    replayMutation.reset()
-                  }
+                  form.reset({
+                    ...ruleDefaults(undefined, props.owner),
+                    ...template?.values,
+                    name: template ? t(template.name) : '',
+                  })
+                  setPreview(null)
+                  replayMutation.reset()
                 }}
               >
                 <NativeSelectOption value=''>
@@ -536,13 +793,30 @@ export function RuleEditor(props: Props) {
             </div>
             {props.catalog.manage_platform && !platform && (
               <div className='space-y-1'>
-                <Label htmlFor='alert-owner'>{t('Owner user ID')}</Label>
-                <Input
-                  id='alert-owner'
-                  readOnly={legacy}
-                  aria-disabled={legacy}
-                  type='number'
-                  {...form.register('owner', { valueAsNumber: true })}
+                <Label htmlFor='alert-owner'>{t('Owner user')}</Label>
+                <Controller
+                  control={form.control}
+                  name='owner'
+                  render={({ field, fieldState }) => (
+                    <UserSelect
+                      id='alert-owner'
+                      label={t('Owner user')}
+                      value={field.value}
+                      disabled={legacy}
+                      invalid={fieldState.invalid}
+                      onBlur={field.onBlur}
+                      onValueChange={(owner) => {
+                        if (owner === field.value) return
+                        field.onChange(owner)
+                        form.setValue('entities', [])
+                        form.setValue('targets', [])
+                        form.setValue('escalationTargets', [])
+                        form.setValue('subscription', '')
+                        setPreview(null)
+                        replayMutation.reset()
+                      }}
+                    />
+                  )}
                 />
               </div>
             )}
@@ -566,6 +840,8 @@ export function RuleEditor(props: Props) {
                 ])}
               </div>
             )}
+            {values.scope === 'model' &&
+              multi('models', 'Models', modelOptions)}
             {values.scope === 'channel_model' && (
               <>
                 <div className='flex flex-wrap gap-4'>
@@ -577,99 +853,288 @@ export function RuleEditor(props: Props) {
               </>
             )}
             {select(
-              'metric',
-              'Metric',
-              metrics.map((metric) => ({ value: metric, label: metric }))
-            )}
-            {values.metric === 'balance_remaining' && (
-              <>
-                {select('balancePool', 'Balance pool', [
-                  { value: 'wallet', label: 'Wallet' },
-                  { value: 'subscription', label: 'Subscription' },
-                ])}
-                {values.balancePool === 'subscription' &&
-                  select('subscription', 'Subscription', [
-                    { value: '', label: 'Select' },
-                    ...(
-                      ownerCatalog.data?.subscriptions ??
-                      props.catalog.subscriptions ??
-                      []
-                    ).map((subscription) => ({
-                      value: String(subscription.id),
-                      label: subscription.name,
-                    })),
-                  ])}
-              </>
-            )}
-            {['task_failure_count', 'task_overdue'].includes(values.metric) &&
-              select('taskType', 'Task type', [
-                { value: '', label: 'All' },
-                ...Object.entries(SYSTEM_TASK_TYPE_LABEL).map(
-                  ([value, label]) => ({ value, label })
-                ),
-              ])}
-            {select('operator', 'Operator', [
-              { value: 'gt', label: '>' },
-              { value: 'gte', label: '≥' },
-              { value: 'lt', label: '<' },
-              { value: 'lte', label: '≤' },
-            ])}
-            {select(
               'severity',
               'Severity',
               ['P0', 'P1', 'P2', 'P3'].map((value) => ({ value, label: value }))
             )}
-            {inflight
-              ? select('deadline', 'Deadline', [
-                  { value: 'first_output', label: 'No first output' },
-                  { value: 'output_idle', label: 'Output stalled' },
-                  { value: 'total', label: 'Total duration' },
-                ])
-              : select('window', 'Window', [
-                  { value: 'rolling', label: 'Rolling window' },
-                  { value: 'hour', label: 'Calendar hour' },
-                  { value: 'day', label: 'Calendar day' },
-                  { value: 'month', label: 'Calendar month' },
-                  { value: 'cumulative', label: 'Since activation' },
+            <FieldSet className='min-w-0 gap-4 rounded-lg border p-4 sm:col-span-2'>
+              <FieldLegend variant='label'>{t('Alert condition')}</FieldLegend>
+              <FieldGroup className='grid grid-cols-[minmax(0,0.7fr)_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.7fr)_minmax(0,1fr)]'>
+                <div className='col-span-2 sm:col-span-1'>
+                  {select(
+                    'metric',
+                    'Metric',
+                    metrics.map((metric) => ({ value: metric, label: metric }))
+                  )}
+                </div>
+                {select('operator', 'Comparison operator', [
+                  { value: 'gt', label: '>' },
+                  { value: 'gte', label: '≥' },
+                  ...(!volumeChange
+                    ? [
+                        { value: 'lt', label: '<' },
+                        { value: 'lte', label: '≤' },
+                      ]
+                    : []),
                 ])}
-            {inflight || values.metric === 'task_overdue'
-              ? number('deadlineSeconds', 'Deadline (seconds)')
-              : values.window === 'rolling' &&
-                number('minutes', 'Window (minutes)')}
-            {!inflight && number('samples', 'Minimum valid samples')}
-            {select(
-              'aggregation',
-              'Aggregation',
-              ['mean', 'p95', 'p99'].map((value) => ({ value, label: value }))
-            )}
-            <div className='space-y-1'>
-              <Label htmlFor='alert-threshold'>{t(thresholdLabel)}</Label>
-              <Input
-                id='alert-threshold'
-                readOnly={legacy}
-                aria-disabled={legacy}
-                inputMode='decimal'
-                {...form.register('threshold')}
-              />
-            </div>
-            {!inflight && (
-              <div className='space-y-1'>
-                <Label htmlFor='alert-recovery-threshold'>
-                  {t('Recovery threshold')}
-                </Label>
-                <Input
-                  id='alert-recovery-threshold'
-                  readOnly={legacy}
-                  aria-disabled={legacy}
-                  inputMode='decimal'
-                  {...form.register('recoveryThreshold')}
-                />
-              </div>
-            )}
-            {values.metric.startsWith('slow_request_') &&
-              number('slowSeconds', 'Slow request threshold (seconds)')}
-            {number('hold', 'Hold duration (seconds)')}
+                <Field className='gap-1' data-invalid={!!thresholdError}>
+                  <div className='flex items-center gap-1.5'>
+                    <FieldLabel htmlFor='alert-threshold'>
+                      {t(thresholdLabel)}
+                    </FieldLabel>
+                    <RuleFieldHelp
+                      field='threshold'
+                      label={thresholdLabel}
+                      metric={values.metric}
+                      direction={values.changeDirection}
+                      mode={values.trigger}
+                    />
+                  </div>
+                  {percentage ? (
+                    <InputGroup>
+                      <InputGroupInput
+                        id='alert-threshold'
+                        type='number'
+                        min={0}
+                        max={percentageMaximum}
+                        step={0.01}
+                        inputMode='decimal'
+                        readOnly={legacy}
+                        aria-disabled={legacy}
+                        aria-invalid={!!thresholdError}
+                        aria-describedby={
+                          thresholdError ? 'alert-threshold-error' : undefined
+                        }
+                        {...form.register('threshold')}
+                      />
+                      <InputGroupAddon align='inline-end' aria-hidden='true'>
+                        %
+                      </InputGroupAddon>
+                    </InputGroup>
+                  ) : (
+                    <Input
+                      id='alert-threshold'
+                      readOnly={legacy}
+                      aria-disabled={legacy}
+                      aria-invalid={!!thresholdError}
+                      inputMode='decimal'
+                      {...form.register('threshold')}
+                    />
+                  )}
+                  {percentage && thresholdError && (
+                    <FieldError id='alert-threshold-error'>
+                      {t(
+                        thresholdError.message ||
+                          'Enter a percentage from 0 to 100 with up to two decimal places.'
+                      )}
+                    </FieldError>
+                  )}
+                </Field>
+              </FieldGroup>
+              {volumeChange && (
+                <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+                  {select('changeDirection', 'Change direction', [
+                    { value: 'decrease', label: 'Decrease' },
+                    { value: 'increase', label: 'Increase' },
+                  ])}
+                  {select('baselineMode', 'Comparison baseline', [
+                    { value: 'historical', label: 'Historical average' },
+                    { value: 'manual', label: 'Manual baseline' },
+                  ])}
+                  {values.baselineMode === 'manual' ? (
+                    number('baselineCount', 'Baseline calls per window')
+                  ) : (
+                    <>
+                      {number('baselineMinutes', 'Baseline history (minutes)')}
+                      {number(
+                        'baselineMinimumCount',
+                        'Minimum baseline calls per window'
+                      )}
+                    </>
+                  )}
+                </FieldGroup>
+              )}
+              <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+                {values.metric === 'balance_remaining' && (
+                  <>
+                    {select('balancePool', 'Balance pool', [
+                      { value: 'wallet', label: 'Wallet' },
+                      { value: 'subscription', label: 'Subscription' },
+                    ])}
+                    {values.balancePool === 'subscription' &&
+                      select('subscription', 'Subscription', [
+                        { value: '', label: 'Select' },
+                        ...(catalogForOwner?.subscriptions ?? []).map(
+                          (subscription) => ({
+                            value: String(subscription.id),
+                            label: subscription.name,
+                          })
+                        ),
+                      ])}
+                  </>
+                )}
+                {['task_failure_count', 'task_overdue'].includes(
+                  values.metric
+                ) &&
+                  select('taskType', 'Task type', [
+                    { value: '', label: 'All' },
+                    ...Object.entries(SYSTEM_TASK_TYPE_LABEL).map(
+                      ([value, label]) => ({ value, label })
+                    ),
+                  ])}
+                {values.metric.startsWith('slow_request_') &&
+                  number('slowSeconds', 'Slow request threshold (seconds)')}
+                {number('hold', 'Hold duration (seconds)')}
+                {volumeChange &&
+                  number('recoveryHold', 'Recovery hold (seconds)')}
+                {!inflight && (
+                  <Field
+                    className='gap-1'
+                    data-invalid={!!recoveryThresholdError}
+                  >
+                    <div className='flex items-center gap-1.5'>
+                      <FieldLabel htmlFor='alert-recovery-threshold'>
+                        {t(recoveryThresholdLabel)}
+                      </FieldLabel>
+                      <RuleFieldHelp
+                        field='recoveryThreshold'
+                        label={recoveryThresholdLabel}
+                        metric={values.metric}
+                        direction={values.changeDirection}
+                        mode={values.trigger}
+                      />
+                    </div>
+                    {percentage ? (
+                      <InputGroup>
+                        <InputGroupInput
+                          id='alert-recovery-threshold'
+                          type='number'
+                          min={0}
+                          max={percentageMaximum}
+                          step={0.01}
+                          inputMode='decimal'
+                          readOnly={legacy}
+                          aria-disabled={legacy}
+                          aria-invalid={!!recoveryThresholdError}
+                          aria-describedby={
+                            recoveryThresholdError
+                              ? 'alert-recovery-threshold-error'
+                              : undefined
+                          }
+                          {...form.register('recoveryThreshold')}
+                        />
+                        <InputGroupAddon align='inline-end' aria-hidden='true'>
+                          %
+                        </InputGroupAddon>
+                      </InputGroup>
+                    ) : (
+                      <Input
+                        id='alert-recovery-threshold'
+                        readOnly={legacy}
+                        aria-disabled={legacy}
+                        aria-invalid={!!recoveryThresholdError}
+                        inputMode='decimal'
+                        {...form.register('recoveryThreshold')}
+                      />
+                    )}
+                    {percentage && recoveryThresholdError && (
+                      <FieldError id='alert-recovery-threshold-error'>
+                        {recoveryThresholdError.type === 'custom' &&
+                        recoveryThresholdError.message
+                          ? t(recoveryThresholdError.message)
+                          : t(
+                              'Enter a percentage from 0 to 100 with up to two decimal places.'
+                            )}
+                      </FieldError>
+                    )}
+                  </Field>
+                )}
+              </FieldGroup>
+            </FieldSet>
+            <FieldSet className='min-w-0 gap-4 rounded-lg border p-4 sm:col-span-2'>
+              <FieldLegend variant='label'>
+                {t('Calculation settings')}
+              </FieldLegend>
+              <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+                {traffic && (
+                  <p className='text-muted-foreground text-sm sm:col-span-2'>
+                    {t(
+                      'Model traffic counts gateway requests; channel traffic counts upstream attempts, including retries.'
+                    )}
+                  </p>
+                )}
+                {values.scope === 'model' && (
+                  <p className='text-muted-foreground text-sm sm:col-span-2'>
+                    {t(
+                      'Global model names match the model requested by the client.'
+                    )}
+                  </p>
+                )}
+                {inflight
+                  ? select('deadline', 'Deadline', [
+                      { value: 'first_output', label: 'No first output' },
+                      { value: 'output_idle', label: 'Output stalled' },
+                      { value: 'total', label: 'Total duration' },
+                    ])
+                  : select('window', 'Window', [
+                      { value: 'rolling', label: 'Rolling window' },
+                      ...(!traffic
+                        ? [
+                            { value: 'hour', label: 'Calendar hour' },
+                            { value: 'day', label: 'Calendar day' },
+                            { value: 'month', label: 'Calendar month' },
+                            { value: 'cumulative', label: 'Since activation' },
+                          ]
+                        : []),
+                    ])}
+                {inflight || values.metric === 'task_overdue'
+                  ? number('deadlineSeconds', 'Deadline (seconds)')
+                  : values.window === 'rolling' &&
+                    number('minutes', 'Window (minutes)')}
+                {usesAggregation &&
+                  select(
+                    'aggregation',
+                    'Aggregation',
+                    ['mean', 'p95', 'p99'].map((value) => ({
+                      value,
+                      label: value,
+                    }))
+                  )}
+                {!inflight &&
+                  !traffic &&
+                  values.metric !== 'request_count' &&
+                  number('samples', 'Minimum valid samples')}
+                {select('protocol', 'Protocol', [
+                  { value: '', label: 'All' },
+                  ...[
+                    'openai',
+                    'claude',
+                    'gemini',
+                    'openai_responses',
+                    'task',
+                    'realtime',
+                  ].map((value) => ({ value, label: value })),
+                ])}
+                {select('stream', 'Streaming', [
+                  { value: '', label: 'All' },
+                  { value: 'true', label: 'Streaming' },
+                  { value: 'false', label: 'Non-streaming' },
+                ])}
+                {!inflight && (
+                  <div className='space-y-1'>
+                    <Label htmlFor='alert-timezone'>{t('Timezone')}</Label>
+                    <Input
+                      id='alert-timezone'
+                      readOnly={legacy}
+                      aria-disabled={legacy}
+                      {...form.register('timezone')}
+                    />
+                  </div>
+                )}
+              </FieldGroup>
+            </FieldSet>
             {!inflight &&
+              !traffic &&
               select('trigger', 'Trigger', [
                 { value: 'incident', label: 'Incident lifecycle' },
                 { value: 'once', label: 'Once' },
@@ -693,35 +1158,20 @@ export function RuleEditor(props: Props) {
                 />
               </div>
             )}
-            {!inflight && (
-              <div className='space-y-1'>
-                <Label htmlFor='alert-timezone'>{t('Timezone')}</Label>
-                <Input
-                  id='alert-timezone'
-                  readOnly={legacy}
-                  aria-disabled={legacy}
-                  {...form.register('timezone')}
-                />
-              </div>
-            )}
-            {select('protocol', 'Protocol', [
-              { value: '', label: 'All' },
-              ...[
-                'openai',
-                'claude',
-                'gemini',
-                'openai_responses',
-                'task',
-                'realtime',
-              ].map((value) => ({ value, label: value })),
-            ])}
-            {select('stream', 'Streaming', [
-              { value: '', label: 'All' },
-              { value: 'true', label: 'Streaming' },
-              { value: 'false', label: 'Non-streaming' },
-            ])}
             {multi('targets', 'Notification targets', targetOptions)}
+            {platform && (
+              <p className='text-muted-foreground text-sm sm:col-span-2'>
+                {t('Root can select notification targets from any user.')}
+              </p>
+            )}
             {multi('escalationTargets', 'Escalation targets', targetOptions)}
+            {props.catalog.manage_platform && !platform && values.enforced && (
+              <p className='text-muted-foreground text-sm sm:col-span-2'>
+                {t(
+                  'Rules using another user’s notification targets are platform enforced.'
+                )}
+              </p>
+            )}
             {number('repeat', 'Repeat interval (seconds)')}
           </div>
           <div className='flex flex-wrap gap-4'>
@@ -738,7 +1188,7 @@ export function RuleEditor(props: Props) {
               !platform &&
               toggle('enforced', 'Platform enforced')}
           </div>
-          {!inflight && (
+          {!inflight && !traffic && (
             <fieldset
               className='space-y-3 rounded-lg border p-4'
               disabled={legacy}
@@ -777,7 +1227,7 @@ export function RuleEditor(props: Props) {
                         },
                       ])}
                       {values.scope === 'channel' &&
-                        multi('models', 'Models', modelOptions)}
+                        multi('recoveryModels', 'Models', modelOptions)}
                       {number(
                         'recoveryDuration',
                         'Probe duration limit (seconds)'
@@ -788,7 +1238,17 @@ export function RuleEditor(props: Props) {
                       )}
                       <p className='text-muted-foreground text-sm sm:col-span-2'>
                         {t(
-                          'Three qualifying probes over at least two minutes are required. Small probes do not verify full production capacity.'
+                          'At least {{count}} qualifying probes over {{seconds}} seconds are required. Small probes do not verify full production capacity.',
+                          {
+                            count: formatNumber(
+                              Math.max(3, values.recoverySuccesses),
+                              locale
+                            ),
+                            seconds: formatNumber(
+                              Math.max(120, values.recoveryObserveSeconds),
+                              locale
+                            ),
+                          }
                         )}
                       </p>
                     </div>
@@ -805,7 +1265,7 @@ export function RuleEditor(props: Props) {
         </form>
         {preview && previewCurrent && <PreviewResults preview={preview} />}
         {replayMutation.data && replayInput === inputFingerprint && (
-          <ReplayResults points={replayMutation.data} />
+          <ReplayResults points={replayMutation.data} metric={values.metric} />
         )}
       </Dialog>
       <SecureVerificationDialog {...verification.dialogProps} />

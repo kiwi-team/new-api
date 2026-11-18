@@ -113,6 +113,10 @@ type RelayInfo struct {
 	isFirstResponse         bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
+	ClientIsStream         bool // Immutable client contract, independent of the current upstream attempt.
+	BufferedResponseJSON   string
+	BufferStreamResponse   bool
+	UpstreamFirstChunkTime time.Time
 	IsGeminiBatchEmbedding bool
 	IsPlayground           bool
 	UsePrice               bool
@@ -329,13 +333,31 @@ func (info *RelayInfo) RequestedImageCount() int {
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	bufferedTextEntry := info.RelayFormat == types.RelayFormatClaude ||
+		(info.RelayFormat == types.RelayFormatOpenAI && info.RelayMode == relayconstant.RelayModeChatCompletions)
+	if info.BufferStreamResponse {
+		// A failed bridge has not committed a response. Its stream outcome
+		// belongs to that attempt, not to a subsequent non-stream success.
+		info.StreamStatus = nil
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, nil)
+	}
+	// Request may be nil for internal requests; keep their established mode.
+	if info.ChannelMeta == nil && info.Request != nil {
+		info.ClientIsStream = info.Request.IsStream(c.Request)
+	}
+	if info.Request != nil && bufferedTextEntry {
+		info.IsStream = info.ClientIsStream
+	}
+	info.BufferedResponseJSON = ""
+	info.BufferStreamResponse = false
+	info.UpstreamFirstChunkTime = time.Time{}
 	info.UsageBillingFallback = ""
 	info.ResponseModel = nil
 	info.FinalRequestRelayFormat = ""
 	info.RequestConversionChain = nil
 	info.InitRequestConversionChain()
-	// Per-attempt only. Do not clear StreamStatus, conversion diagnostics,
-	// LastError, or billing accumulators — those are request-scoped.
+	// Reset conversion state per attempt. Conversion diagnostics, LastError
+	// and billing accumulators remain request-scoped.
 	info.SendResponseCount = 0
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
@@ -401,6 +423,18 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 
 	info.ChannelMeta = channelMeta
+	if !info.ClientIsStream && !info.IsChannelTest && bufferedTextEntry {
+		behavior := channelSetting.ModelBehaviors[info.OriginModelName]
+		if behavior.ForceUpstreamStreamForNonStream {
+			for model := range strings.SplitSeq(common.GetContextKeyString(c, constant.ContextKeyChannelModels), ",") {
+				if strings.TrimSpace(model) == info.OriginModelName {
+					info.IsStream = true
+					info.BufferStreamResponse = true
+					break
+				}
+			}
+		}
+	}
 
 	// Channel identity feeds the converter options snapshot (e.g.
 	// OpenRouterDialect); drop the cache so a cross-channel retry rebuilds it.
@@ -715,6 +749,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		RequestURLPath:  c.Request.URL.String(),
 		RequestHeaders:  cloneRequestHeaders(c),
 		IsStream:        isStream,
+		ClientIsStream:  isStream,
 
 		StartTime:         startTime,
 		FirstResponseTime: startTime.Add(-time.Second),

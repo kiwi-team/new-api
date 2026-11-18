@@ -16,6 +16,12 @@ const deepSeekFlashExpr = deepSeekPeak + ` ? tier("peak", p * 0.3 + cr * 0.006 +
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	// https://docs.volcengine.com/docs/ark/model-pricing?lang=zh (2026-11-16).
+	// Seedream 5.5: CNY 0.05 per input image, 0.13 per output image <= 2.61M
+	// pixels, 0.23 above it (up to 4.63M). Each layer is an output image.
+	// USD 1 = CNY 6.8, as with the other domestic defaults below. Literal USD
+	// unit prices keep this task expression editable in the visual pricing UI.
+	"doubao-seedream-5-5-261028": `tier("standard", u("input_images") * 0.007352941176470588 + u("images_up_to_1_5k") * 0.01911764705882353 + u("images_above_1_5k") * 0.033823529411764704)`,
 	// Gemini API Standard USD/M tokens, checked 2026-11-12.
 	// https://aistudio.google.com/docs/pricing#gemini-omni-1.2-flash
 	// Task usage expressions return USD; thinking is separate from output.
@@ -116,6 +122,14 @@ var builtinBillingExpr = map[string]string{
 // GetBuiltinTaskUsageSchema describes native task meters for the existing
 // pricing editor and expression validation. It does not select a task protocol.
 func GetBuiltinTaskUsageSchema(modelName string) map[string]jsplugin.UsageFieldSchema {
+	if modelName == relaycommon.Seedream55Model {
+		return map[string]jsplugin.UsageFieldSchema{
+			"input_images":        {Type: "number", Unit: "count", Description: jsplugin.LocalizedText{"en": "Input image unit price", "zh": "输入图片单价"}},
+			"images_up_to_1_5k":   {Type: "number", Unit: "count", Description: jsplugin.LocalizedText{"en": "Image generation unit price (1.5K and below)", "zh": "图片生成单价（1.5K 及以下）"}},
+			"images_above_1_5k":   {Type: "number", Unit: "count", Description: jsplugin.LocalizedText{"en": "Image generation unit price (above 1.5K)", "zh": "图片生成单价（1.5K 以上）"}},
+			"layer_decomposition": {Type: "boolean", Description: jsplugin.LocalizedText{"en": "Whether layer decomposition is enabled", "zh": "是否开启图层拆分"}},
+		}
+	}
 	if !relaycommon.IsGeminiOmniVideoModel(modelName) {
 		return nil
 	}

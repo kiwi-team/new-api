@@ -49,6 +49,7 @@ type tokenResponse struct {
 	AlertManaged bool `json:"alert_managed,omitempty"`
 	*model.Token
 	AutoGroups []string `json:"auto_groups"`
+	Username   string   `json:"username,omitempty"`
 }
 
 func validateTokenChannelRules(raw string) error {
@@ -147,6 +148,29 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	return buildMaskedTokenResponses([]*model.Token{token})[0]
 }
 
+func buildTokenListResponses(tokens []*model.Token) ([]*tokenResponse, error) {
+	responses := buildMaskedTokenResponses(tokens)
+	if len(tokens) == 0 {
+		return responses, nil
+	}
+	userIDs := make([]int, 0, len(tokens))
+	for _, token := range tokens {
+		userIDs = append(userIDs, token.UserId)
+	}
+	var users []model.User
+	if err := model.DB.Unscoped().Select("id", "username").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	usernames := make(map[int]string, len(users))
+	for _, user := range users {
+		usernames[user.Id] = user.Username
+	}
+	for _, response := range responses {
+		response.Username = usernames[response.UserId]
+	}
+	return responses, nil
+}
+
 func getTokenRequestUserGroup(c *gin.Context, userID int) (string, error) {
 	if userID == c.GetInt("id") {
 		if userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup); userGroup != "" {
@@ -225,11 +249,16 @@ func GetAllTokens(c *gin.Context) {
 	}
 	if getTotal == 1 {
 		tokens, _ := model.GetAllUserTokens(userId, (p-1)*100, 100)
+		responses, err := buildTokenListResponses(tokens)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		total, _ := model.CountUserTokens(userId)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data":    buildMaskedTokenResponses(tokens),
+			"data":    responses,
 			"total":   total,
 		})
 		return
@@ -245,8 +274,13 @@ func GetAllTokens(c *gin.Context) {
 		clearTokenInfo(c, t)
 	}
 	total, _ := model.CountUserTokens(userId)
+	responses, err := buildTokenListResponses(tokens)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(responses)
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -291,8 +325,13 @@ func SearchTokens(c *gin.Context) {
 	// 	"message": "",
 	// 	"data":    tokens,
 	// })
+	responses, err := buildTokenListResponses(tokens)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(responses)
 	common.ApiSuccess(c, pageInfo)
 	return
 }

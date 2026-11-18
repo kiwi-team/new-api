@@ -26,6 +26,22 @@ const DEFAULT_VIDEO_PROFILE = { resolutions: SEEDANCE_RESOLUTIONS, maxDuration: 
 // reference and were confirmed by live 400s; background marks the models whose
 // documented transparency combination rules are enforced locally.
 const IMAGE_MODELS = {
+  "doubao-seedream-5-5-261028": {
+    presets: ["1K", "1.5K", "2K"],
+    minPixels: 921600,
+    maxPixels: 4624220,
+    maxReferenceImages: 10,
+    sequential: false,
+    layers: true,
+    layerOptions: true,
+    maxLayerImages: 100,
+    defaultLayerImages: 30,
+    outputFormat: true,
+    background: true,
+    nativeRGBA: true,
+    tools: false,
+    fastPromptMode: false,
+  },
   "doubao-seedream-5-0-pro-260628": {
     presets: ["1K", "1.5K", "2K"],
     minPixels: 921600,
@@ -110,8 +126,12 @@ const DEFAULT_IMAGE_PROFILE = {
   maxReferenceImages: 14,
   sequential: true,
   layers: true,
+  layerOptions: true,
+  maxLayerImages: 100,
+  defaultLayerImages: 30,
   outputFormat: true,
   background: true,
+  nativeRGBA: true,
   tools: true,
   fastPromptMode: true,
 };
@@ -120,30 +140,31 @@ const IMAGE_ACTIONS = ["text_to_image", "image_to_image"];
 // Official Seedream pricing boundary: every output image at or below 2.61
 // megapixels (1.5K and below) is priced separately from images above it.
 const IMAGE_TIER_MAX_PIXELS = 2610000;
-// Documented output ceiling: 15 images per group request, or one base image plus 16 layers.
+// Legacy layer ceiling: one base image plus 16 layers. Seedream 5.5's
+// profile raises this to 100 and reserves its requested maximum (default 30).
 const MAX_IMAGE_OUTPUTS = 17;
-// Documented reference-image ceiling across Seedream models; bounds usage.input_images.
-const MAX_REFERENCE_IMAGES = 14;
 // Documented per-image size ceiling for reference images.
 const MAX_INPUT_IMAGE_BYTES = 31457280;
 // Base64 references must be `data:image/<lowercase format>;base64,<payload>`.
 const IMAGE_DATA_URI = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2}$/;
-// Responses fields copied verbatim into the Ark body. `background` is excluded:
-// on /v1/responses it is the host's boolean background-execution flag, not Ark's
-// string transparency option. `tools` is filtered separately.
-const IMAGE_REQUEST_KEYS = [
-  "size",
+// Ark-specific image options belong in metadata on OpenAI Images requests.
+// Their existing top-level spellings remain accepted for compatibility.
+const IMAGE_VENDOR_KEYS = [
   "seed",
   "guidance_scale",
-  "response_format",
   "watermark",
   "optimize_prompt",
   "optimize_prompt_options",
   "sequential_image_generation",
   "sequential_image_generation_options",
-  "output_format",
   "layer_decomposition",
+  "layer_decomposition_options",
+  "safety_identifier",
 ];
+// Responses fields copied verbatim into the Ark body. `background` is excluded:
+// on /v1/responses it is the host's boolean background-execution flag, not Ark's
+// string transparency option. `tools` is filtered separately.
+const IMAGE_REQUEST_KEYS = ["size", "response_format", "output_format"].concat(IMAGE_VENDOR_KEYS);
 
 const IMAGE_UNIT_LABEL = { en: "image", zh: "张", "zh-TW": "張", fr: "image", ja: "枚", ru: "изображение", vi: "ảnh" };
 // Each output image is billed at its own pixel tier (official pricing bills
@@ -303,7 +324,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.3.0",
+  version: "1.4.0",
   author: { name: "QuantumNous" },
   channelTypes: [57, 45], // VolcEngine-type channels serve Ark video models with the same wire format
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
@@ -534,6 +555,14 @@ function convertImage(ctx) {
   }
   const layered = body.layer_decomposition === true;
   if (layered && !profile.layers) throw new Error("layer_decomposition is not supported by this model");
+  const layerOptions = objectValue(body.layer_decomposition_options, "layer_decomposition_options");
+  if (body.layer_decomposition_options !== undefined && !profile.layerOptions)
+    throw new Error("layer_decomposition_options is not supported by this model");
+  const maxLayerImages = profile.maxLayerImages || MAX_IMAGE_OUTPUTS;
+  if (layerOptions.max_images !== undefined && (!Number.isInteger(layerOptions.max_images) || layerOptions.max_images < 2 || layerOptions.max_images > maxLayerImages))
+    throw new Error("layer_decomposition_options.max_images must be an integer between 2 and " + maxLayerImages);
+  if (layerOptions.text_recognition !== undefined && typeof layerOptions.text_recognition !== "boolean")
+    throw new Error("layer_decomposition_options.text_recognition must be a boolean");
   if (body.prompt !== undefined && typeof body.prompt !== "string") throw new Error("prompt must be a string");
   if (!layered && !trimmed(body.prompt)) throw new Error("prompt is required");
   const images = body.image === undefined ? [] : Array.isArray(body.image) ? body.image : [body.image];
@@ -558,12 +587,14 @@ function convertImage(ctx) {
     if (body.output_format !== "png" && body.output_format !== "jpeg") throw new Error("output_format must be png or jpeg");
     if (!profile.outputFormat) throw new Error("output_format is not supported by this model");
   }
-  // The API reference lists `background` for 5.0 pro and flash only, but a live
-  // probe showed lite accepting and ignoring it, so other models forward the
-  // value and only pro and flash's documented combination rules are enforced locally.
+  // Seedream 5.5 supports auto backgrounds and text/multi-reference RGBA
+  // generation; pro/flash still require exactly one input for transparency.
+  // Other models retain passthrough of the legacy background values.
   if (body.background !== undefined) {
-    if (body.background !== "opaque" && body.background !== "transparent") throw new Error("background must be opaque or transparent");
-    if (profile.background && body.background === "transparent" && images.length !== 1)
+    const backgrounds = profile.nativeRGBA ? ["auto", "opaque", "transparent"] : ["opaque", "transparent"];
+    if (!backgrounds.includes(body.background)) throw new Error("background must be " + backgrounds.join(" or "));
+    if (profile.background && layered) throw new Error("background is not supported with layer decomposition");
+    if (profile.background && !profile.nativeRGBA && body.background === "transparent" && images.length !== 1)
       throw new Error("background transparent requires exactly one input image");
     if (profile.background && body.background === "transparent" && body.output_format === "jpeg")
       throw new Error("background transparent cannot be combined with output_format jpeg");
@@ -595,7 +626,7 @@ function convertImage(ctx) {
   // from data[].size and usage.input_images. Unknown output sizes (`auto`)
   // reserve the higher tier.
   let imageCount = 1;
-  if (layered) imageCount = MAX_IMAGE_OUTPUTS;
+  if (layered) imageCount = layerOptions.max_images === undefined ? profile.defaultLayerImages || MAX_IMAGE_OUTPUTS : layerOptions.max_images;
   else if (sequential === "auto") imageCount = Math.max(1, Math.min(maxImages, 15 - images.length)); // reference + generated images ≤ 15
   const higherTier = size.pixels === null || size.pixels > IMAGE_TIER_MAX_PIXELS;
   return {
@@ -623,11 +654,12 @@ function imageURLEntries(body) {
 // usage.generated_images count that is fractional, negative, oversized or
 // inconsistent with the delivered payloads means the response is not
 // understood; the host then keeps the reservation instead of settling on a guess.
-function imagePayloads(body) {
+function imagePayloads(body, profile) {
   const payloads = imageEntries(body).filter((item) => trimmed(item.url) || trimmed(item.b64_json));
-  if (payloads.length > MAX_IMAGE_OUTPUTS) throw new Error("too many output images");
+  const maxImages = profile.maxLayerImages || MAX_IMAGE_OUTPUTS;
+  if (payloads.length > maxImages) throw new Error("too many output images");
   const count = (body.usage || {}).generated_images;
-  if (count !== undefined && (!Number.isInteger(count) || count < 0 || count > MAX_IMAGE_OUTPUTS || count !== payloads.length))
+  if (count !== undefined && (!Number.isInteger(count) || count < 0 || count > maxImages || count !== payloads.length))
     throw new Error("invalid upstream generated_images");
   return payloads;
 }
@@ -639,7 +671,7 @@ function imagePayloads(body) {
 // the estimated reference count only when it is a bounded integer.
 function imageUsage(body, profile) {
   const usage = body.usage || {};
-  const payloads = imagePayloads(body);
+  const payloads = imagePayloads(body, profile);
   const facts = {};
   if (hasLowerImageTier(profile)) {
     let lower = 0,
@@ -661,7 +693,7 @@ function imageUsage(body, profile) {
   } else {
     facts.images_above_1_5k = payloads.length;
   }
-  if (Number.isInteger(usage.input_images) && usage.input_images >= 0 && usage.input_images <= MAX_REFERENCE_IMAGES) facts.input_images = usage.input_images;
+  if (Number.isInteger(usage.input_images) && usage.input_images >= 0 && usage.input_images <= profile.maxReferenceImages) facts.input_images = usage.input_images;
   return facts;
 }
 
@@ -886,7 +918,7 @@ export function extractUsageOnSubmit(ctx, body) {
   // the delivered output count alone. Task expressions settle the tiered
   // facts through extractUsageOnComplete instead.
   if (!imageTask(ctx)) return null;
-  const count = imagePayloads(body || {}).length;
+  const count = imagePayloads(body || {}, imageProfile(ctx)).length;
   return count ? { image_count: count } : {};
 }
 
@@ -1062,8 +1094,9 @@ export const protocols = {
     },
   },
   // OpenAI Images API. The host pins ctx.model, returns the synchronous result
-  // inline and owns response_format. Requests map onto the same Ark body as the
-  // native route, so validation and usage facts are identical.
+  // inline and owns response_format. Common fields stay at the top level;
+  // metadata carries Ark options and the original response, as on the other
+  // image plugins. Validation and billing use the normalized Ark body.
   openai_image: {
     decodeRequest: function (ctx) {
       const model = trimmed(ctx.model);
@@ -1087,7 +1120,7 @@ export const protocols = {
           if (req[key] !== "true" && req[key] !== "false") throw new Error(key + " must be true or false");
           req[key] = req[key] === "true";
         }
-        for (const key of ["optimize_prompt_options", "sequential_image_generation_options", "tools"]) {
+        for (const key of ["metadata", "images", "optimize_prompt_options", "sequential_image_generation_options", "layer_decomposition_options", "tools"]) {
           if (req[key] === undefined) continue;
           try {
             req[key] = JSON.parse(req[key]);
@@ -1111,25 +1144,42 @@ export const protocols = {
         throw new Error("stream is not supported; the complete image response is returned once all images are generated");
       if (req.response_format !== undefined && req.response_format !== "url" && req.response_format !== "b64_json")
         throw new Error("response_format must be url or b64_json");
-      // Seedream has no per-request image count; multiple images come from group generation.
-      if (req.n !== undefined && req.n !== null && req.n !== 1) throw new Error("n must be 1; use sequential_image_generation for multiple images");
+      // Match the common image API's n=0 default. Seedream's group/layer
+      // counts are separate vendor options, not multiple independent outputs.
+      if (req.n !== undefined && req.n !== null && req.n !== 0 && req.n !== 1)
+        throw new Error("n must be 1 for this model; group and layer options are available through metadata on supported models");
       if (req.mask !== undefined) throw new Error("mask is not supported");
+      const metadata = objectValue(req.metadata, "metadata");
       const requestBody = { model: model };
+      for (const key of IMAGE_VENDOR_KEYS.concat(["tools"])) {
+        if (Object.prototype.hasOwnProperty.call(metadata, key)) requestBody[key] = metadata[key];
+      }
       for (const key of IMAGE_REQUEST_KEYS.concat(["prompt", "image", "background", "tools"])) {
         // The host inlines b64_json from the upstream URLs; Ark always answers with URLs.
+        // Explicit top-level fields retain precedence over metadata aliases.
         if (key !== "response_format" && Object.prototype.hasOwnProperty.call(req, key)) requestBody[key] = req[key];
       }
-      if (uploads.length) requestBody.image = [].concat(requestBody.image === undefined ? [] : requestBody.image, uploads);
+      const images = [].concat(requestBody.image === undefined ? [] : requestBody.image, req.images === undefined ? [] : req.images, uploads);
+      if (req.images !== undefined || uploads.length) requestBody.image = images;
+      // OpenAI auto size leaves dimensions to the model. Ark expresses that
+      // through the omitted generation size; layers retain their native auto.
+      if (requestBody.size === "auto" && requestBody.layer_decomposition !== true) delete requestBody.size;
       const converted = convertImage({ model: model, requestBody: requestBody });
       if (ctx.operation === "edit" && converted.action !== "image_to_image") throw new Error("image is required");
       return { kind: "submit", model: model, action: converted.action, requestBody: requestBody };
     },
     render: function (ctx, task) {
+      const body = artifactData(task);
       return {
         created: task.created_at,
-        data: imageURLEntries(artifactData(task)).map(function (item) {
-          return { url: trimmed(item.url) };
+        data: imageURLEntries(body).map(function (item) {
+          const image = { url: trimmed(item.url) };
+          if (typeof item.revised_prompt === "string") image.revised_prompt = item.revised_prompt;
+          return image;
         }),
+        // Keep sizes, layer coordinates, OCR and provider usage together,
+        // without changing the standard data[] image entries.
+        metadata: body,
       };
     },
   },

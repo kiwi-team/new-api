@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -110,6 +111,7 @@ type TaskAdaptor struct {
 	common.TimingScope `json:"-"`
 	plugin             *pluginruntime.LoadedPlugin
 	info               *relaycommon.RelayInfo
+	googlePrivacy      *kitdto.GoogleRequestPrivacySettings
 	submit             *requestDescriptor
 	routeRequest       *pluginruntime.RouteRequestContext
 	requestHeaders     map[string]string
@@ -123,7 +125,35 @@ type TaskAdaptor struct {
 }
 
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
-func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo)   { a.info = info }
+func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.info = info
+	a.googlePrivacy = nil
+	if info != nil && info.HasChannelMeta() {
+		a.googlePrivacy = service.GoogleRequestPrivacyForChannel(info.ChannelType, info.ChannelSetting)
+	}
+}
+
+// Native query/content entry points can create an adaptor without submission
+// context. Resolve only the Google plugins' policy from the persisted channel;
+// leave the original task credentials and plugin hook contract untouched.
+func (a *TaskAdaptor) resolveGoogleRequestPrivacy(task *model.Task) error {
+	if a.plugin.Meta.Key != "google" && a.plugin.Meta.Key != "vertex-ai" {
+		return nil
+	}
+	if task == nil || task.ChannelId <= 0 {
+		return nil
+	}
+	if a.info != nil && a.info.HasChannelMeta() && a.info.ChannelId == task.ChannelId {
+		a.googlePrivacy = service.GoogleRequestPrivacyForChannel(a.info.ChannelType, a.info.ChannelSetting)
+		return nil
+	}
+	channel, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		return fmt.Errorf("resolve Google task channel privacy settings: %w", err)
+	}
+	a.googlePrivacy = service.GoogleRequestPrivacyForChannel(channel.Type, channel.GetSetting())
+	return nil
+}
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
@@ -513,7 +543,10 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 
 func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (_ *channel.TaskSubmitResponse, taskErr *dto.TaskError) {
 	started := time.Now()
+	c.Set(string(constant.ContextKeyTaskResponseStr), "")
+	c.Set(string(constant.ContextKeyTaskTokenUsage), (*kitdto.Usage)(nil))
 	var responseBody any
+	var logBody []byte
 	var err error
 	streaming := a.submit != nil && a.submit.ResponseType == "sse"
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
@@ -531,6 +564,11 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 		// upstream may already have performed billable work.
 		defer resp.Body.Close()
 		responseBody, err = a.readSubmitEvents(c.Request.Context(), resp, a.submitContext(c, info))
+		if err == nil && os.Getenv("SAVE_REQUEST_RESPONSE") == "true" {
+			// The plugin has assembled the bounded SSE result; log that JSON
+			// snapshot before parseSubmitResponse can compact its taskData.
+			logBody, _ = common.Marshal(responseBody)
+		}
 	} else {
 		var body []byte
 		body, err = io.ReadAll(io.LimitReader(resp.Body, maxTaskPluginPersistedJSONBytes+1))
@@ -538,6 +576,9 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 			err = fmt.Errorf("task submit response exceeds size limit")
 		}
 		responseBody = string(body)
+		if err == nil && os.Getenv("SAVE_REQUEST_RESPONSE") == "true" {
+			logBody = body
+		}
 		var decoded any
 		if err == nil && common.Unmarshal(body, &decoded) == nil {
 			responseBody = decoded
@@ -547,6 +588,12 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 		failure := service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway, common.UpstreamAddresses(c)...)
 		failure.NoRetry = streaming
 		return nil, failure
+	}
+	if len(logBody) > 0 {
+		c.Set(string(constant.ContextKeyTaskResponseStr), string(logBody))
+	}
+	if usage := service.TaskTokenUsage(responseBody); usage != nil {
+		c.Set(string(constant.ContextKeyTaskTokenUsage), usage)
 	}
 	headers := make(map[string][]string, len(resp.Header))
 	maps.Copy(headers, resp.Header)
@@ -641,6 +688,11 @@ func (a *TaskAdaptor) GetChannelName() string { return a.plugin.Meta.Name }
 func (a *TaskAdaptor) FetchMode() string      { return a.plugin.Meta.FetchMode }
 
 func (a *TaskAdaptor) FetchBatchTasks(baseURL, key string, tasks []*model.Task, proxy string) (*http.Response, error) {
+	if len(tasks) > 0 {
+		if err := a.resolveGoogleRequestPrivacy(tasks[0]); err != nil {
+			return nil, err
+		}
+	}
 	taskContexts := make([]map[string]any, 0, len(tasks))
 	for _, task := range tasks {
 		taskCtx, err := a.queryContext(task, key, baseURL, proxy)
@@ -661,6 +713,9 @@ func (a *TaskAdaptor) FetchBatchTasks(baseURL, key string, tasks []*model.Task, 
 }
 
 func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
+	if err := a.resolveGoogleRequestPrivacy(task); err != nil {
+		return nil, err
+	}
 	ctx, err := a.queryContext(task, key, baseURL, proxy)
 	if err != nil {
 		return nil, err
@@ -699,6 +754,10 @@ func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
 		}
 		// A redirect reaches the plugin as it is; fetching its location is a
 		// new request, checked and counted again.
+		client, err := service.GooglePrivacyHTTPClient(client, a.googlePrivacy)
+		if err != nil {
+			return pluginruntime.FetchResponse{}, err
+		}
 		noRedirects := *client
 		if request.Credentialless {
 			noRedirects.Jar = nil
@@ -772,6 +831,10 @@ func (a *TaskAdaptor) doFetchDescriptor(baseURL, proxy string, descriptor reques
 		req.Header.Set(name, value)
 	}
 	client, err := service.GetHttpClientWithProxySettings(proxy, a.channelSetting())
+	if err != nil {
+		return nil, err
+	}
+	client, err = service.GooglePrivacyHTTPClient(client, a.googlePrivacy)
 	if err != nil {
 		return nil, err
 	}

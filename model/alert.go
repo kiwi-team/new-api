@@ -44,32 +44,43 @@ type AlertModelSelector struct {
 	IncludeFuture bool     `json:"include_future_models"`
 }
 
+// AlertTrafficBaseline defines calls per current rolling window. Historical
+// windows end where the current window begins, so they never overlap.
+type AlertTrafficBaseline struct {
+	Mode           string `json:"mode"`
+	Count          int64  `json:"count,omitempty"`
+	HistorySeconds int64  `json:"history_seconds,omitempty"`
+	MinimumCount   int64  `json:"minimum_count,omitempty"`
+}
+
 type AlertCondition struct {
-	LegacySignal           string      `json:"legacy_signal,omitempty"`
-	BalancePool            string      `json:"balance_pool,omitempty"`
-	SubscriptionID         int         `json:"subscription_id,omitempty"`
-	Metric                 string      `json:"metric"`
-	Aggregation            string      `json:"aggregation,omitempty"`
-	LatencyBasis           string      `json:"latency_basis,omitempty"`
-	Operator               string      `json:"operator"`
-	ThresholdMS            int64       `json:"threshold_ms,omitempty"`
-	ThresholdCount         int64       `json:"threshold_count,omitempty"`
-	ThresholdBPS           int64       `json:"threshold_bps,omitempty"`
-	ThresholdUSD           string      `json:"threshold_usd,omitempty"`
-	RecoveryThresholdMS    int64       `json:"recovery_threshold_ms,omitempty"`
-	RecoveryThresholdCount int64       `json:"recovery_threshold_count,omitempty"`
-	RecoveryThresholdBPS   int64       `json:"recovery_threshold_bps,omitempty"`
-	RecoveryThresholdUSD   string      `json:"recovery_threshold_usd,omitempty"`
-	SlowThresholdMS        int64       `json:"slow_threshold_ms,omitempty"`
-	MinSamples             int         `json:"min_samples,omitempty"`
-	HoldSeconds            int64       `json:"hold_seconds"`
-	RecoverySeconds        int64       `json:"recovery_seconds"`
-	DeadlineKind           string      `json:"deadline_kind,omitempty"`
-	DeadlineMS             int64       `json:"deadline_ms,omitempty"`
-	Window                 AlertWindow `json:"window"`
-	Protocol               string      `json:"protocol,omitempty"`
-	TaskType               string      `json:"task_type,omitempty"`
-	Stream                 *bool       `json:"stream,omitempty"`
+	Baseline               *AlertTrafficBaseline `json:"baseline,omitempty"`
+	ChangeDirection        string                `json:"change_direction,omitempty"`
+	LegacySignal           string                `json:"legacy_signal,omitempty"`
+	BalancePool            string                `json:"balance_pool,omitempty"`
+	SubscriptionID         int                   `json:"subscription_id,omitempty"`
+	Metric                 string                `json:"metric"`
+	Aggregation            string                `json:"aggregation,omitempty"`
+	LatencyBasis           string                `json:"latency_basis,omitempty"`
+	Operator               string                `json:"operator"`
+	ThresholdMS            int64                 `json:"threshold_ms,omitempty"`
+	ThresholdCount         int64                 `json:"threshold_count,omitempty"`
+	ThresholdBPS           int64                 `json:"threshold_bps,omitempty"`
+	ThresholdUSD           string                `json:"threshold_usd,omitempty"`
+	RecoveryThresholdMS    int64                 `json:"recovery_threshold_ms,omitempty"`
+	RecoveryThresholdCount int64                 `json:"recovery_threshold_count,omitempty"`
+	RecoveryThresholdBPS   int64                 `json:"recovery_threshold_bps,omitempty"`
+	RecoveryThresholdUSD   string                `json:"recovery_threshold_usd,omitempty"`
+	SlowThresholdMS        int64                 `json:"slow_threshold_ms,omitempty"`
+	MinSamples             int                   `json:"min_samples,omitempty"`
+	HoldSeconds            int64                 `json:"hold_seconds"`
+	RecoverySeconds        int64                 `json:"recovery_seconds"`
+	DeadlineKind           string                `json:"deadline_kind,omitempty"`
+	DeadlineMS             int64                 `json:"deadline_ms,omitempty"`
+	Window                 AlertWindow           `json:"window"`
+	Protocol               string                `json:"protocol,omitempty"`
+	TaskType               string                `json:"task_type,omitempty"`
+	Stream                 *bool                 `json:"stream,omitempty"`
 }
 
 type AlertWindow struct {

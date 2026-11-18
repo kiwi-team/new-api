@@ -35,10 +35,12 @@ const ADVANCED_SETTINGS_FIELDS = new Set<FieldPath<ChannelFormValues>>([
   'header_override',
   'status_code_mapping',
   'advanced_custom',
+  'force_upstream_stream_for_non_stream_models',
   'force_format',
   'thinking_to_content',
   'pass_through_body_enabled',
   'responses_websocket_enabled',
+  'google_request_privacy',
   'proxy',
   'http_protocol',
   'http2_connection_shards',
@@ -62,7 +64,10 @@ const ADVANCED_SETTINGS_FIELDS = new Set<FieldPath<ChannelFormValues>>([
 export function isAdvancedSettingsField(
   fieldName: string
 ): fieldName is FieldPath<ChannelFormValues> {
-  return ADVANCED_SETTINGS_FIELDS.has(fieldName as FieldPath<ChannelFormValues>)
+  return (
+    fieldName.startsWith('google_request_privacy.') ||
+    ADVANCED_SETTINGS_FIELDS.has(fieldName as FieldPath<ChannelFormValues>)
+  )
 }
 
 export function hasAdvancedSettingsErrors(

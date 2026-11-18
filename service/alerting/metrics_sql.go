@@ -225,7 +225,7 @@ COALESCE(SUM(CASE WHEN attribution_covered = ? THEN 1 ELSE 0 END),0) AS uncovere
 			m.Requests = append(m.Requests, RequestEvidence{Kind: "inflight", RequestID: example.RequestID, Layer: example.Layer, ChannelName: example.ChannelName, Model: example.ModelKey, StartedAt: example.StartedAt, LastOutputAt: example.LastOutputAt})
 		}
 	}
-	if spec.Trigger.Mode != "schedule_report" && m.Samples < int64(c.MinSamples) {
+	if spec.Trigger.Mode != "schedule_report" && c.Metric != "request_count" && m.Samples < int64(c.MinSamples) {
 		m.Status, m.Reason = "warming_up", "insufficient_samples"
 	}
 	if c.Window.Type == "rolling" && now.UnixMilli()-rule.EffectiveAt < c.Window.DurationSeconds*1000 {

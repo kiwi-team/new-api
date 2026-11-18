@@ -175,10 +175,7 @@ func importLegacyAccountRule(ctx context.Context, actor Actor, vault *TargetVaul
 			}
 			if address != "" {
 				secret := TargetSecret{Address: address}
-				hint, err := ValidateTargetAddress(ctx, "feishu", secret)
-				if err != nil {
-					return err
-				}
+				hint := legacyTargetAddressHint("feishu", address)
 				sealed, err := vault.Seal(owner, "feishu", secret)
 				if err != nil {
 					return err

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 
 	"google.golang.org/genai"
 )
@@ -25,9 +26,14 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 			MIMEType: mimeType,
 		}, nil
 	}
+	httpClient, err := service.GooglePrivacyHTTPClient(nil, service.GoogleRequestPrivacyFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		HTTPClient: httpClient,
+		APIKey:     apiKey,
+		Backend:    genai.BackendGeminiAPI,
 		//HTTPOptions: genai.HTTPOptions{
 		//	BaseURL:    baseUrl,
 		//	APIVersion: "v1",
@@ -91,13 +97,23 @@ func UploadFileToGemini(ctx context.Context, fileUri string, apiKey string, base
 
 // DeleteFileFromGemini deletes a previously uploaded file from the Gemini Files API.
 // This should be called after the request completes to free up storage space.
-func DeleteFileFromGemini(apiKey string, fileName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func DeleteFileFromGemini(apiKey string, fileName string, contexts ...context.Context) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = context.WithoutCancel(contexts[0])
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	httpClient, err := service.GooglePrivacyHTTPClient(nil, service.GoogleRequestPrivacyFromContext(ctx))
+	if err != nil {
+		fmt.Printf("failed to configure Gemini file cleanup: %v\n", err)
+		return
+	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		HTTPClient: httpClient,
+		APIKey:     apiKey,
+		Backend:    genai.BackendGeminiAPI,
 	})
 	if err != nil {
 		fmt.Printf("failed to create genai client for file deletion, err: %v\n", err)
@@ -112,9 +128,9 @@ func DeleteFileFromGemini(apiKey string, fileName string) {
 }
 
 // CleanupGeminiFiles deletes all uploaded files in the background.
-func CleanupGeminiFiles(apiKey string, fileNames []string) {
+func CleanupGeminiFiles(apiKey string, fileNames []string, contexts ...context.Context) {
 	for _, name := range fileNames {
-		go DeleteFileFromGemini(apiKey, name)
+		go DeleteFileFromGemini(apiKey, name, contexts...)
 	}
 }
 

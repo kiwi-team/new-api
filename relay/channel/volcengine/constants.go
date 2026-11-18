@@ -9,6 +9,7 @@ var ModelList = []string{
 	"Doubao-lite-32k",
 	"Doubao-lite-4k",
 	"Doubao-embedding",
+	"doubao-seedream-5-5-261028",
 	"doubao-seedream-4-0-250828",
 	"seedream-4-0-250828",
 	"doubao-seedance-1-0-pro-250528",

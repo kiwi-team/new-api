@@ -495,7 +495,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	common.ObserveTimingProtocol(c.Request.Context(), "response_parsed_at_ms", false, false)
-	if newModel := remapResponseModelName(info, simpleResponse.Model); newModel != simpleResponse.Model {
+	if newModel := remapResponseModelName(info, simpleResponse.Model); newModel != simpleResponse.Model && !info.BufferStreamResponse {
 		simpleResponse.Model = newModel
 		responseBody, _ = common.Marshal(simpleResponse)
 	}
@@ -585,7 +585,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	info.ApplyVendorToolUsage(responseBody)
 
 	forceFormat := false
-	if info.ChannelSetting.ForceFormat {
+	// Buffered aggregation already produces canonical Chat JSON and preserves
+	// streaming extensions; do not narrow it through the legacy response DTO.
+	if info.ChannelSetting.ForceFormat && !info.BufferStreamResponse {
 		forceFormat = true
 	}
 

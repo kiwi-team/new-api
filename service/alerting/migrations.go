@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 // ImportLegacyNotification copies the selected legacy destination without
 // changing its subscriptions or executor. Webhooks stay v1 unless the owner
 // explicitly identifies the existing address as a native Feishu bot.
+// Existing addresses are copied offline; delivery validates network access.
 func ImportLegacyNotification(ctx context.Context, actor Actor, vault *TargetVault, owner int, feishu bool) (*model.AlertTarget, error) {
 	if owner <= 0 || owner != actor.ID && !actor.Root() {
 		return nil, ErrForbidden
@@ -67,10 +70,31 @@ func ImportLegacyNotification(ctx context.Context, actor Actor, vault *TargetVau
 			return nil
 		}
 		var err error
-		target, err = vault.Save(ctx, actor, owner, 0, TargetInput{Name: "Imported notification / " + kind, Type: kind, Enabled: true, Language: i18n.ParseAcceptLanguage(setting.Language), Credentials: &secret, CredentialAction: "replace"})
+		target, err = vault.save(ctx, actor, owner, 0, TargetInput{Name: "Imported notification / " + kind, Type: kind, Enabled: true, Language: i18n.ParseAcceptLanguage(setting.Language), Credentials: &secret, CredentialAction: "replace"}, true)
 		return err
 	})
 	return target, err
+}
+
+// Legacy targets are already configured. Their masked hints must not require
+// DNS, connectivity or compliance with the policy for newly entered addresses.
+func legacyTargetAddressHint(kind, address string) string {
+	if kind == "email" {
+		parsed, err := mail.ParseAddress(address)
+		if err != nil {
+			return "***"
+		}
+		local, domain, ok := strings.Cut(parsed.Address, "@")
+		if !ok || local == "" {
+			return "***"
+		}
+		return local[:1] + "***@" + domain
+	}
+	u, err := url.Parse(address)
+	if err != nil || u.Hostname() == "" {
+		return "***"
+	}
+	return u.Scheme + "://" + u.Hostname() + "/…"
 }
 
 type LegacyTokenPreview struct {
@@ -153,10 +177,7 @@ func ImportLegacyToken(ctx context.Context, actor Actor, vault *TargetVault, tok
 		target := model.AlertTarget{OwnerUserID: user.Id, Name: "Migrated key alerts", Type: "feishu", Enabled: address != "", Language: i18n.ParseAcceptLanguage(user.GetSetting().Language), Revision: 1}
 		if address != "" {
 			secret := TargetSecret{Address: address}
-			hint, err := ValidateTargetAddress(ctx, "feishu", secret)
-			if err != nil {
-				return err
-			}
+			hint := legacyTargetAddressHint("feishu", address)
 			sealed, err := vault.Seal(user.Id, "feishu", secret)
 			if err != nil {
 				return err

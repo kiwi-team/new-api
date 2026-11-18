@@ -22,10 +22,11 @@ import { z } from 'zod'
 import { StaticDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 
+import { formatAlertMoney } from '../lib/event-summary'
 import { alertLabel } from '../lib/labels'
+import { formatAlertMetricValue, isPercentageMetric } from '../lib/rule-form'
 import type { RuleSpec } from '../types'
 
 const quantity = z.string().regex(/^-?[0-9]+$/)
@@ -49,6 +50,16 @@ const evidenceSchema = z.object({
     window_start: z.number(),
     window_end: z.number(),
     request_ids: z.array(z.string()).nullable(),
+    traffic: z
+      .object({
+        count: quantity,
+        baseline_scaled: quantity,
+        change_bps: quantity,
+        baseline_start: z.number(),
+        baseline_end: z.number(),
+        frozen: z.boolean(),
+      })
+      .optional(),
     requests: z
       .array(
         z.object({
@@ -112,29 +123,21 @@ export function EvidenceSummary(props: { evidence: string; config: RuleSpec }) {
       ? formatNumber(Number(value), locale)
       : value
   const amount = (value: string) => {
-    const unit = props.config.quota_unit || 500000
-    if (Number.isSafeInteger(Number(value))) {
-      return formatCurrencyFromUSD(Number(value) / unit, {
-        digitsLarge: 4,
-        digitsSmall: 8,
-        locale,
-      })
-    }
-    const q = BigInt(value),
-      u = BigInt(unit),
-      sign = q < 0n ? '-' : '',
-      positive = q < 0n ? -q : q
-    const fractional = (((positive % u) * 100000000n) / u)
-      .toString()
-      .padStart(8, '0')
-      .replace(/0+$/, '')
-    return `${sign}${positive / u}${fractional ? `.${fractional}` : ''} USD`
+    return formatAlertMoney(value, locale, props.config.quota_unit || undefined)
   }
-  const value = ['spend_net', 'balance_remaining'].includes(
+  let value = ['spend_net', 'balance_remaining'].includes(
     props.config.condition.metric
   )
     ? amount(m.value)
     : number(m.value)
+  if (isPercentageMetric(props.config.condition.metric)) {
+    value = formatAlertMetricValue(
+      props.config.condition.metric,
+      m.value,
+      locale,
+      m
+    )
+  }
   return (
     <section className='space-y-3 text-sm'>
       <div className='flex flex-wrap items-center gap-3'>
@@ -147,6 +150,42 @@ export function EvidenceSummary(props: { evidence: string; config: RuleSpec }) {
           {t('Valid samples')}: {number(m.samples)}
         </span>
       </div>
+      {m.traffic &&
+        props.config.condition.metric === 'request_volume_change' && (
+          <div className='space-y-1'>
+            <p>
+              {t('Started calls')}: {number(m.traffic.count)}
+            </p>
+            <p>
+              {t('Baseline calls per window')}:{' '}
+              {new Intl.NumberFormat(locale, {
+                maximumFractionDigits: 4,
+              }).format(Number(m.traffic.baseline_scaled) / 10000)}
+            </p>
+            <p>
+              {t('Change direction')}:{' '}
+              {t(
+                props.config.condition.change_direction === 'increase'
+                  ? 'Increase'
+                  : 'Decrease'
+              )}
+            </p>
+            {m.traffic.baseline_start > 0 && (
+              <p>
+                {t('Historical average')}:{' '}
+                {date.format(m.traffic.baseline_start)} –{' '}
+                {date.format(m.traffic.baseline_end)}
+              </p>
+            )}
+            {m.traffic.frozen && (
+              <p className='text-muted-foreground'>
+                {t(
+                  'Recovery uses the baseline frozen when the alert condition first matched.'
+                )}
+              </p>
+            )}
+          </div>
+        )}
       <p>
         {new Intl.DateTimeFormat(locale, {
           dateStyle: 'short',

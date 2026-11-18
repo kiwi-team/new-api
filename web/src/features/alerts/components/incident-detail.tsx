@@ -28,8 +28,10 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { toIntlLocale } from '@/i18n/languages'
 
 import { alertRequest } from '../api'
+import { formatAlertEventSummary } from '../lib/event-summary'
 import { alertLabel } from '../lib/labels'
 import type { AlertEvent, AlertHold, AlertIncident } from '../types'
 
@@ -39,8 +41,9 @@ export function IncidentDetailDialog(props: {
   onClose: () => void
   onEvent: (event: AlertEvent) => void
 }) {
-  const { t } = useTranslation(),
+  const { t, i18n } = useTranslation(),
     client = useQueryClient()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [closing, setClosing] = useState(false),
     [reason, setReason] = useState('')
   const query = useQuery({
@@ -99,7 +102,8 @@ export function IncidentDetailDialog(props: {
               {
                 id: 'summary',
                 header: t('Captured evidence'),
-                cell: (event) => event.summary,
+                cell: (event) =>
+                  formatAlertEventSummary(event.summary, t, locale),
               },
               {
                 id: 'details',
@@ -118,7 +122,7 @@ export function IncidentDetailDialog(props: {
           />
           {query.data.holds.length > 0 && (
             <>
-              <h3 className='font-medium'>{t('Isolation sources')}</h3>
+              <h3 className='font-medium'>{t('Automatic disable records')}</h3>
               <StaticDataTable
                 data={query.data.holds}
                 getRowKey={(hold) => hold.id}

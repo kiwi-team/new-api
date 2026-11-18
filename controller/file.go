@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/genai"
@@ -54,6 +55,7 @@ func UploadFileToGoogleStorage(ctx context.Context, fileUri string) (*genai.File
 	}
 	index = common.GetRandomInt(len(keys))
 	key := keys[index]
+	ctx = service.WithGoogleRequestPrivacy(ctx, service.GoogleRequestPrivacyForChannel(channel.Type, setting))
 	f, err := gemini.UploadFileToGoogle(ctx, fileUri, setting.GoogleFileBucket, key)
 	if err != nil {
 		return nil, err

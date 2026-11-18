@@ -21,6 +21,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LongText } from '@/components/long-text'
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useMediaQuery } from '@/hooks'
@@ -111,6 +112,17 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         ),
         size: 180,
         meta: { mobileTitle: true },
+      },
+      {
+        accessorKey: 'username',
+        header: t('Username'),
+        cell: ({ row }) => (
+          <LongText className='max-w-48'>
+            {row.original.username || row.original.user_id || '—'}
+          </LongText>
+        ),
+        enableSorting: false,
+        size: 180,
       },
       {
         accessorKey: 'status',

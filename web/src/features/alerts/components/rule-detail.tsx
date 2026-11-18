@@ -24,9 +24,12 @@ import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
+import { toIntlLocale } from '@/i18n/languages'
 
 import { alertRequest } from '../api'
+import { formatAlertMoney } from '../lib/event-summary'
 import { alertLabel } from '../lib/labels'
+import { formatAlertMetricValue } from '../lib/rule-form'
 import type { AlertRule } from '../types'
 import { ReportQuery } from './report-query'
 
@@ -34,12 +37,14 @@ export function RuleDetailDialog(props: {
   rule: AlertRule
   onClose: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const query = useQuery({
     queryKey: ['alerts', 'rule', props.rule.id],
     queryFn: () => alertRequest<AlertRule>(`rules/${props.rule.id}`),
     refetchInterval: 10000,
   })
+  const config = query.data?.config ?? props.rule.config
   return (
     <Dialog
       open
@@ -109,7 +114,28 @@ export function RuleDetailDialog(props: {
               {
                 id: 'value',
                 header: t('Value'),
-                cell: (state) => state.last_value,
+                cell: (state) => {
+                  const metric = config.condition.metric
+                  if (
+                    metric === 'spend_net' ||
+                    metric === 'balance_remaining'
+                  ) {
+                    return formatAlertMoney(
+                      state.last_value,
+                      locale,
+                      config.quota_unit || undefined
+                    )
+                  }
+                  return formatAlertMetricValue(
+                    metric,
+                    state.last_value,
+                    locale,
+                    {
+                      samples: state.last_count,
+                      status: state.data_status,
+                    }
+                  )
+                },
               },
               {
                 id: 'samples',

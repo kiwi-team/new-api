@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1087,6 +1088,10 @@ func DeleteUser(c *gin.Context) {
 // 级联硬删除每个用户名下的所有 token 以及用户记录本身。
 // 安全限制:只能删除角色严格低于当前操作者的用户(因此 root 无法删除其他 root / 自己)。
 func DeleteUserBatch(c *gin.Context) {
+	if c.GetInt("role") != common.RoleRootUser {
+		common.ApiErrorT(c, "Unauthorized, insufficient privileges")
+		return
+	}
 	var req struct {
 		Ids []int `json:"ids"`
 	}
@@ -1094,47 +1099,41 @@ func DeleteUserBatch(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	if len(req.Ids) == 0 {
-		common.ApiErrorMsg(c, "请选择要删除的用户")
+	if len(req.Ids) == 0 || len(req.Ids) > 100 {
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-
-	myRole := c.GetInt("role")
-
-	// 逐个校验权限:只删角色低于自己的用户,跳过不存在或不可删除(root/同级/更高)的
-	// 使用 IncludeDeleted 查询,使已注销(软删除)用户也能被校验并删除
-	deletableIds := make([]int, 0, len(req.Ids))
-	skipped := 0
 	for _, id := range req.Ids {
-		u, err := model.GetUserByIdIncludeDeleted(id)
-		if err != nil {
-			skipped++
-			continue
+		if id <= 0 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
 		}
-		if myRole <= u.Role {
-			skipped++
-			continue
-		}
-		deletableIds = append(deletableIds, id)
 	}
-
-	if len(deletableIds) == 0 {
-		common.ApiErrorMsg(c, "没有可删除的用户(无法删除管理员或 Root 用户)")
+	slices.Sort(req.Ids)
+	req.Ids = slices.Compact(req.Ids)
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserBatchDelete, service.AdminUserBatchDeleteContext{UserIDs: req.Ids})
+	if authorization == nil {
 		return
 	}
 
-	deleted, err := model.BatchDeleteUsers(deletableIds)
+	deleted, err := model.BatchDeleteUsers(req.Ids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	recordManageAuditFor(c, c.GetInt("id"), "user.batch_delete", map[string]any{
+		"user_ids":            req.Ids,
+		"deleted":             deleted,
+		"skipped":             len(req.Ids) - deleted,
+		"verification_method": authorization.Method,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
 			"deleted": deleted,
-			"skipped": skipped,
+			"skipped": len(req.Ids) - deleted,
 		},
 	})
 

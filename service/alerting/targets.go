@@ -177,13 +177,17 @@ func ValidateTargetAddress(ctx context.Context, kind string, secret TargetSecret
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" || u.Fragment != "" || len(secret.Address) > 4096 || (u.Port() != "" && u.Port() != "443") {
 		return "", &TargetValidationError{Field: "credentials.address", MessageKey: "Notification URL must use HTTPS on port 443 without a username, password or fragment."}
 	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname())
-	if err != nil || len(ips) == 0 {
-		return "", &TargetValidationError{Field: "credentials.address", MessageKey: "Notification hostname could not be resolved."}
-	}
-	for _, ip := range ips {
-		if !targetIPAllowed(ctx, u.Hostname(), ip.IP) {
-			return "", &TargetValidationError{Field: "credentials.address", MessageKey: "Notification destination is blocked by network access rules."}
+	// Local proxy Fake-IP answers are usable in dev without passing the
+	// production destination policy. URL and credential checks still apply.
+	if os.Getenv("ENV") != "dev" {
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname())
+		if err != nil || len(ips) == 0 {
+			return "", &TargetValidationError{Field: "credentials.address", MessageKey: "Notification hostname could not be resolved."}
+		}
+		for _, ip := range ips {
+			if !targetIPAllowed(ctx, u.Hostname(), ip.IP) {
+				return "", &TargetValidationError{Field: "credentials.address", MessageKey: "Notification destination is blocked by network access rules."}
+			}
 		}
 	}
 	if kind == "gotify" && secret.Token == "" {
@@ -192,8 +196,8 @@ func ValidateTargetAddress(ctx context.Context, kind string, secret TargetSecret
 	return "https://" + u.Hostname() + "/…", nil
 }
 
-// Dial-time validation pins a verified address for this connection. It remains
-// strict even when the application's unrelated fetch policy allows private IPs.
+// Dial-time validation pins a verified address for this connection unless
+// ENV=dev. Other environments retain the notification-specific IP policy.
 func NewTargetHTTPClient() *http.Client {
 	transport := &http.Transport{MaxIdleConns: 20, MaxIdleConnsPerHost: 2, IdleConnTimeout: time.Minute, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 8 * time.Second}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -201,22 +205,29 @@ func NewTargetHTTPClient() *http.Client {
 		if err != nil || port != "443" {
 			return nil, ErrTargetRejected
 		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil || len(ips) == 0 {
-			return nil, ErrTargetRejected
-		}
-		for _, ip := range ips {
-			if !targetIPAllowed(ctx, host, ip.IP) {
+		if os.Getenv("ENV") != "dev" {
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
 				return nil, ErrTargetRejected
 			}
+			for _, ip := range ips {
+				if !targetIPAllowed(ctx, host, ip.IP) {
+					return nil, ErrTargetRejected
+				}
+			}
+			address = net.JoinHostPort(ips[0].IP.String(), port)
 		}
 		dialer := net.Dialer{Timeout: 5 * time.Second}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		return dialer.DialContext(ctx, network, address)
 	}
 	return &http.Client{Transport: transport, Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 func (v *TargetVault) Save(ctx context.Context, actor Actor, owner int, id int64, input TargetInput) (*model.AlertTarget, error) {
+	return v.save(ctx, actor, owner, id, input, false)
+}
+
+func (v *TargetVault) save(ctx context.Context, actor Actor, owner int, id int64, input TargetInput, legacyImport bool) (*model.AlertTarget, error) {
 	if actor.ID <= 0 || owner != actor.ID && !actor.Root() {
 		return nil, ErrForbidden
 	}
@@ -281,9 +292,15 @@ func (v *TargetVault) Save(ctx context.Context, actor Actor, owner int, id int64
 			}
 			ctx = context.WithValue(ctx, platformTargetContextKey{}, true)
 		}
-		hint, err := ValidateTargetAddress(ctx, input.Type, *input.Credentials)
-		if err != nil {
-			return nil, err
+		var hint string
+		if legacyImport {
+			hint = legacyTargetAddressHint(input.Type, input.Credentials.Address)
+		} else {
+			var err error
+			hint, err = ValidateTargetAddress(ctx, input.Type, *input.Credentials)
+			if err != nil {
+				return nil, err
+			}
 		}
 		text, err := v.Seal(owner, input.Type, *input.Credentials)
 		if err != nil {
@@ -346,6 +363,7 @@ func (v *TargetVault) Deliver(ctx context.Context, target model.AlertTarget, eve
 		return 0, err
 	}
 	title, message := "new-api alert", RenderNotification(target.Language, event)
+	summary := message
 	if event.Kind == "legacy_notice" {
 		var notice LegacyNotice
 		if common.UnmarshalJsonStr(event.Evidence, &notice) != nil {
@@ -356,25 +374,24 @@ func (v *TargetVault) Deliver(ctx context.Context, target model.AlertTarget, eve
 	if target.Type == "email" {
 		return 0, common.SendEmailContext(ctx, title, secret.Address, html.EscapeString(message))
 	}
-	event.Summary = RenderNotification(target.Language, event)
 	stamp := strconv.FormatInt(time.Now().Unix(), 10)
 	payload := map[string]any{}
 	switch target.Type {
 	case "feishu":
-		payload = map[string]any{"msg_type": "text", "content": map[string]string{"text": html.EscapeString(event.Summary)}}
+		payload = map[string]any{"msg_type": "interactive", "card": renderFeishuCard(target.Language, event)}
 		if secret.Secret != "" {
 			mac := hmac.New(sha256.New, []byte(stamp+"\n"+secret.Secret))
 			payload["timestamp"] = stamp
 			payload["sign"] = base64.StdEncoding.EncodeToString(mac.Sum(nil))
 		}
 	case "wecom":
-		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": event.Summary}}
+		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": summary}}
 	case "bark":
 		payload = map[string]any{"title": title, "body": message}
 	case "gotify":
 		payload = map[string]any{"title": title, "message": message, "priority": max(1, min(secret.Priority, 10))}
 	case "webhook_v1":
-		payload = map[string]any{"type": "alert", "title": "new-api alert", "content": event.Summary, "timestamp": time.Now().Unix()}
+		payload = map[string]any{"type": "alert", "title": "new-api alert", "content": summary, "timestamp": time.Now().Unix()}
 		if event.Kind == "legacy_notice" {
 			var notice LegacyNotice
 			if common.UnmarshalJsonStr(event.Evidence, &notice) != nil {
@@ -386,7 +403,7 @@ func (v *TargetVault) Deliver(ctx context.Context, target model.AlertTarget, eve
 			}
 		}
 	case "webhook_v2":
-		payload = map[string]any{"version": 2, "event_id": event.ID, "kind": event.Kind, "summary": event.Summary, "created_at": event.CreatedAt}
+		payload = map[string]any{"version": 2, "event_id": event.ID, "kind": event.Kind, "summary": summary, "created_at": event.CreatedAt}
 	default:
 		return 0, ErrTargetRejected
 	}

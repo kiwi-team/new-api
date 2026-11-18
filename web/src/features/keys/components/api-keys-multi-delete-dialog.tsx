@@ -52,7 +52,7 @@ export function ApiKeysMultiDeleteDialog<TData>({
       const result = await batchDeleteApiKeys(ids)
 
       if (result.success) {
-        const count = result.data || ids.length
+        const count = result.data ?? 0
         toast.success(t('Successfully deleted {{count}} API key(s)', { count }))
         table.resetRowSelection()
         triggerRefresh()

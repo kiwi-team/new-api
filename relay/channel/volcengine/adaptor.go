@@ -171,6 +171,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	// 透传 image（单张 string 或多张 []string）以及 sequential_image_generation
 	// 等额外参数（落在 request.Extra），dto.MarshalJSON 默认不合并 Extra，这里手动合并。
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+		if info.OriginModelName == relaycommon.Seedream55Model || info.UpstreamModelName == relaycommon.Seedream55Model {
+			body, _, err := relaycommon.PrepareSeedream55Request(c, request)
+			if err != nil {
+				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			return body, nil
+		}
 		return mergeImageRequestExtra(request)
 	default:
 		return request, nil
@@ -354,6 +361,10 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if (info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits) &&
+		(info.OriginModelName == relaycommon.Seedream55Model || info.UpstreamModelName == relaycommon.Seedream55Model) {
+		return handleSeedream55ImageResponse(c, resp, info)
+	}
 	if isSeedASRFile(info) {
 		return handleSeedASRResponse(c, resp, info)
 	}

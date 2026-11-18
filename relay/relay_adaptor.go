@@ -89,6 +89,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/zhipu"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu_4v"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -364,6 +366,15 @@ func (a *legacyTaskAdaptorBridge) ParseResponse(c *gin.Context, resp *http.Respo
 }
 
 func (a *legacyTaskAdaptorBridge) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
+	if setter, ok := a.legacyTaskAdaptor.(interface {
+		SetGoogleRequestPrivacy(*dto.GoogleRequestPrivacySettings)
+	}); ok && task.ChannelId > 0 {
+		channel, err := model.CacheGetChannel(task.ChannelId)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Google task channel privacy settings: %w", err)
+		}
+		setter.SetGoogleRequestPrivacy(service.GoogleRequestPrivacyForChannel(channel.Type, channel.GetSetting()))
+	}
 	modelName := task.Properties.UpstreamModelName
 	if modelName == "" {
 		modelName = task.Properties.OriginModelName

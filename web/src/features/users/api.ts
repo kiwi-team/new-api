@@ -95,6 +95,29 @@ export async function searchUsers(
   return res.data
 }
 
+export async function getUserOptionsPage(
+  keyword: string,
+  page: number
+): Promise<NonNullable<GetUsersResponse['data']>> {
+  const params = {
+    p: page,
+    page_size: 50,
+    sort_by: 'id' as const,
+    sort_order: 'asc' as const,
+  }
+  const response = keyword.trim()
+    ? await searchUsers({ ...params, keyword: keyword.trim() })
+    : await getUsers(params)
+  return (
+    requireServerSuccess(response).data ?? {
+      items: [],
+      total: 0,
+      page,
+      page_size: params.page_size,
+    }
+  )
+}
+
 /**
  * Get single user by ID
  */
@@ -140,6 +163,18 @@ export async function deleteUser(
 ): Promise<ApiResponse> {
   const res = await api.delete(
     `/api/user/${id}/`,
+    securityProofConfig(proofToken)
+  )
+  return res.data
+}
+
+export async function batchDeleteUsers(
+  ids: number[],
+  proofToken: string
+): Promise<ApiResponse<{ deleted: number; skipped: number }>> {
+  const res = await api.post(
+    '/api/user/batch/delete',
+    { ids },
     securityProofConfig(proofToken)
   )
   return res.data

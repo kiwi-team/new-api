@@ -147,6 +147,7 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 			for _, channelType := range []int{constant.ChannelTypeVLLM, constant.ChannelTypeSGLang} {
 				t.Run(fmt.Sprint(channelType), func(t *testing.T) {
 					channel := &Channel{Type: channelType, Key: "EMPTY", Name: "inference", Status: common.ChannelStatusEnabled}
+					channel.SetSetting(dto.ChannelSettings{Proxy: "http://localhost:8080", ModelBehaviors: map[string]dto.ChannelModelBehavior{" m1 ": {ForceUpstreamStreamForNonStream: true}, "orphan": {ForceUpstreamStreamForNonStream: true}}})
 					require.NoError(t, channel.ValidateSettings())
 					require.NotNil(t, channel.GetOtherSettings().AdvancedCustom)
 					require.NoError(t, table.Create(channel).Error)
@@ -154,6 +155,8 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 						var loaded Channel
 						require.NoError(t, table.First(&loaded, channel.Id).Error)
 						assert.Equal(t, channelType, loaded.Type)
+						assert.Equal(t, channel.GetSetting(), loaded.GetSetting())
+						assert.True(t, loaded.GetSetting().ModelBehaviors["m1"].ForceUpstreamStreamForNonStream)
 						assert.Empty(t, loaded.OtherSettings)
 						defaults := loaded.GetOtherSettings().AdvancedCustom
 						require.NotNil(t, defaults)
@@ -299,6 +302,37 @@ func TestGeminiFileRoutingOptionsDatabaseMatrix(t *testing.T) {
 			saved := common.OptionMap["LargeFileChannels"]
 			common.OptionMapRWMutex.RUnlock()
 			assert.Equal(t, "[]", saved)
+		})
+	}
+}
+
+func TestChannelModelBehaviorValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		valid         bool
+	}{
+		{"legacy", `{"proxy":""}`, true},
+		{"trim and preserve orphan", `{"model_behaviors":{" m1 ":{"force_upstream_stream_for_non_stream":true},"orphan":{"force_upstream_stream_for_non_stream":true}},"future_setting":{"keep":true}}`, true},
+		{"empty model", `{"model_behaviors":{" ":{"force_upstream_stream_for_non_stream":true}}}`, false},
+		{"unknown behavior", `{"model_behaviors":{"m1":{"unknown":true}}}`, false},
+		{"invalid value", `{"model_behaviors":{"m1":{"force_upstream_stream_for_non_stream":"true"}}}`, false},
+		{"null value", `{"model_behaviors":{"m1":{"force_upstream_stream_for_non_stream":null}}}`, false},
+		{"null behavior", `{"model_behaviors":{"m1":null}}`, false},
+		{"normalized duplicate", `{"model_behaviors":{"m1":{}," m1 ":{}}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel := &Channel{Models: "m1,m2", Setting: common.GetPointer(tc.setting)}
+			err := channel.ValidateSettings()
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if tc.name == "trim and preserve orphan" {
+				assert.True(t, channel.GetSetting().ModelBehaviors["m1"].ForceUpstreamStreamForNonStream)
+				assert.True(t, channel.GetSetting().ModelBehaviors["orphan"].ForceUpstreamStreamForNonStream)
+				assert.Contains(t, *channel.Setting, `"future_setting":{"keep":true}`)
+			}
 		})
 	}
 }

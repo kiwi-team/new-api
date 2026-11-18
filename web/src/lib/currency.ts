@@ -485,6 +485,19 @@ export function formatBillingCurrencyFromUSD(
   return formatCurrencyValue(value, merged, meta)
 }
 
+/** Format an explicitly USD-denominated amount without display-currency conversion. */
+export function formatUSD(
+  amountUSD: number,
+  options?: CurrencyFormatOptions
+): string {
+  return formatCurrencyValue(amountUSD, mergeOptions(options), {
+    kind: 'currency',
+    symbol: '$',
+    currencyCode: 'USD',
+    exchangeRate: 1,
+  })
+}
+
 /**
  * Format raw quota values (token units) to display currency.
  *

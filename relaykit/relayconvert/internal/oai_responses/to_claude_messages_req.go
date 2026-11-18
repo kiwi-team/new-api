@@ -134,14 +134,6 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 				}
 				continue
 			}
-			if len(parts) == 0 {
-				parts = []dto.ClaudeMediaMessage{
-					{
-						Type: "text",
-						Text: kitutil.GetPointer("..."),
-					},
-				}
-			}
 			claudeRequest.Messages = append(claudeRequest.Messages, dto.ClaudeMessage{
 				Role:    role,
 				Content: parts,
@@ -157,13 +149,13 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	if len(systemMessages) > 0 {
 		claudeRequest.System = systemMessages
 	}
-	if len(claudeRequest.Messages) > 0 || len(systemMessages) > 0 {
-		claudeRequest.Messages = ensureClaudeMessagesStartWithUser(claudeRequest.Messages)
-	}
 	// Checked last so every injection path has had its chance to satisfy the
 	// required field.
 	if claudeRequest.MaxTokens == nil {
 		return nil, sharedclaude.ErrMissingMaxTokens
+	}
+	if err := sharedclaude.ValidateMessages(claudeRequest.Messages); err != nil {
+		return nil, reasoning.AsClientError(err)
 	}
 	return claudeRequest, nil
 }
@@ -339,21 +331,4 @@ func responsesClaudeRole(role string) string {
 	default:
 		return "user"
 	}
-}
-
-func ensureClaudeMessagesStartWithUser(messages []dto.ClaudeMessage) []dto.ClaudeMessage {
-	if len(messages) > 0 && messages[0].Role == "user" {
-		return messages
-	}
-	return append([]dto.ClaudeMessage{
-		{
-			Role: "user",
-			Content: []dto.ClaudeMediaMessage{
-				{
-					Type: "text",
-					Text: kitutil.GetPointer("..."),
-				},
-			},
-		},
-	}, messages...)
 }

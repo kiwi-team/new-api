@@ -61,6 +61,7 @@ const CONFIGURATION_BLOCKS = {
       'thinking_to_content',
       'pass_through_body_enabled',
       'responses_websocket_enabled',
+      'google_request_privacy',
       'ollama_openai_chat',
       'system_prompt',
       'system_prompt_override',
@@ -69,6 +70,7 @@ const CONFIGURATION_BLOCKS = {
   requestPolicy: {
     section: 'request',
     fields: [
+      'force_upstream_stream_for_non_stream_models',
       'model_output_mapping',
       'response_model_use_request_model',
       'path_whitelist',
@@ -160,6 +162,7 @@ export function getChannelConfigurationState(
       hasConfiguredJson(values.param_override) ||
       hasConfiguredJson(values.header_override),
     requestProcessing: Boolean(
+      values.google_request_privacy?.enabled ||
       (values.type === 1 && values.force_format) ||
       values.thinking_to_content ||
       (values.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
@@ -171,6 +174,7 @@ export function getChannelConfigurationState(
       values.system_prompt_override
     ),
     requestPolicy: Boolean(
+      values.force_upstream_stream_for_non_stream_models?.length ||
       values.model_output_mapping?.trim() ||
       values.response_model_use_request_model ||
       values.path_whitelist?.trim() ||

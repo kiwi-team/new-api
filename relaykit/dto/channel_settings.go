@@ -8,19 +8,22 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	SetRole                string `json:"set_role,omitempty"`
-	GoogleFileBucket       string `json:"google_file_bucket,omitempty"`
-	GoogleFileUpload       string `json:"google_file_upload,omitempty"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	ModelBehaviors         map[string]ChannelModelBehavior `json:"model_behaviors,omitempty"`
+	GoogleRequestPrivacy   *GoogleRequestPrivacySettings   `json:"google_request_privacy,omitempty"`
+	ForceFormat            bool                            `json:"force_format,omitempty"`
+	ThinkingToContent      bool                            `json:"thinking_to_content,omitempty"`
+	Proxy                  string                          `json:"proxy"`
+	SetRole                string                          `json:"set_role,omitempty"`
+	GoogleFileBucket       string                          `json:"google_file_bucket,omitempty"`
+	GoogleFileUpload       string                          `json:"google_file_upload,omitempty"`
+	PassThroughBodyEnabled bool                            `json:"pass_through_body_enabled,omitempty"`
+	SystemPrompt           string                          `json:"system_prompt,omitempty"`
+	SystemPromptOverride   bool                            `json:"system_prompt_override,omitempty"`
 	// ModelOutputMapping 输出模型重命名：键为上游响应中返回的模型名称，值为返回给用户的模型名称。
 	// 存储为 JSON 字符串，例如：{"zai-org/glm-4.7-flash": "glm-4.7"}
 	ModelOutputMapping string `json:"model_output_mapping,omitempty"`
@@ -58,6 +61,107 @@ type ChannelSettings struct {
 	// TLSInsecureSkipVerify accepts upstream certificates that fail
 	// verification, such as self-signed ones, for this channel only.
 	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+}
+
+// ChannelModelBehavior applies to the client model name before model mapping.
+type ChannelModelBehavior struct {
+	ForceUpstreamStreamForNonStream bool `json:"force_upstream_stream_for_non_stream,omitempty"`
+	invalidJSON                     bool
+}
+
+func (b *ChannelModelBehavior) UnmarshalJSON(data []byte) error {
+	type plain ChannelModelBehavior
+	var fields map[string]any
+	var decoded plain
+	if kitutil.Unmarshal(data, &fields) != nil || fields == nil || kitutil.Unmarshal(data, &decoded) != nil {
+		*b = ChannelModelBehavior{invalidJSON: true}
+		return nil
+	}
+	for key, value := range fields {
+		if key != "force_upstream_stream_for_non_stream" {
+			decoded.invalidJSON = true
+		}
+		if _, ok := value.(bool); !ok {
+			decoded.invalidJSON = true
+		}
+	}
+	*b = ChannelModelBehavior(decoded)
+	return nil
+}
+
+// NormalizeModelBehaviors validates settings at the save boundary. Orphaned
+// entries remain stored so temporarily removing a model does not erase policy.
+func (s *ChannelSettings) NormalizeModelBehaviors() error {
+	if s == nil || s.ModelBehaviors == nil {
+		return nil
+	}
+	normalized := make(map[string]ChannelModelBehavior, len(s.ModelBehaviors))
+	for model, behavior := range s.ModelBehaviors {
+		model = strings.TrimSpace(model)
+		if model == "" || behavior.invalidJSON {
+			return fmt.Errorf("Invalid channel model behavior")
+		}
+		if _, exists := normalized[model]; exists {
+			return fmt.Errorf("Duplicate channel model behavior")
+		}
+		normalized[model] = behavior
+	}
+	s.ModelBehaviors = normalized
+	return nil
+}
+
+// GoogleRequestPrivacySettings controls optional metadata on Google requests.
+// An absent or disabled policy preserves the existing request behavior.
+type GoogleRequestPrivacySettings struct {
+	Enabled           bool   `json:"enabled"`
+	UserAgentMode     string `json:"user_agent_mode,omitempty"`
+	CustomUserAgent   string `json:"custom_user_agent,omitempty"`
+	SDKVersionHeaders string `json:"sdk_version_headers,omitempty"`
+	invalidJSON       bool
+}
+
+// Preserve the enclosing channel settings when a stored privacy object has
+// invalid field types. Validate rejects it before use instead of triggering
+// the host's legacy destructive recovery for an unreadable settings document.
+func (s *GoogleRequestPrivacySettings) UnmarshalJSON(data []byte) error {
+	type plain GoogleRequestPrivacySettings
+	var decoded plain
+	if err := kitutil.Unmarshal(data, &decoded); err != nil {
+		*s = GoogleRequestPrivacySettings{invalidJSON: true}
+		return nil
+	}
+	*s = GoogleRequestPrivacySettings(decoded)
+	return nil
+}
+
+func (s *GoogleRequestPrivacySettings) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.invalidJSON {
+		return fmt.Errorf("Invalid Google request privacy settings")
+	}
+	if !slices.Contains([]string{"", "preserve", "custom", "omit"}, s.UserAgentMode) {
+		return fmt.Errorf("Invalid Google request privacy user agent mode")
+	}
+	if !slices.Contains([]string{"", "preserve", "omit"}, s.SDKVersionHeaders) {
+		return fmt.Errorf("Invalid Google request privacy SDK header mode")
+	}
+	if !s.Enabled || s.UserAgentMode != "custom" {
+		return nil
+	}
+	if len(s.CustomUserAgent) > 256 || strings.ContainsAny(s.CustomUserAgent, "\r\n") {
+		return fmt.Errorf("Custom user agent must be at most 256 bytes and contain no line breaks")
+	}
+	for _, c := range []byte(s.CustomUserAgent) {
+		if c < 32 && c != '\t' || c == 127 {
+			return fmt.Errorf("Custom user agent contains invalid header characters")
+		}
+	}
+	if strings.TrimSpace(s.CustomUserAgent) == "" {
+		return fmt.Errorf("Custom user agent is required")
+	}
+	return nil
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

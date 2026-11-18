@@ -10,19 +10,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/alerting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -102,6 +110,7 @@ type alertReleasedToken struct {
 func (alertReleasedToken) TableName() string { return "tokens" }
 
 func TestAlertingDatabaseMatrix(t *testing.T) {
+	t.Setenv("ENV", "production")
 	t.Setenv("QUOTA_DATA_SPOOL_DIR", t.TempDir())
 	t.Setenv("ALERTING_SPOOL_DIR", t.TempDir())
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
@@ -194,6 +203,8 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Run("withdrawn notification authorization", testAlertNotificationRevocation)
 			t.Run("low traffic and source loss", testAlertInflight)
 			t.Run("HTTP object isolation", testAlertHTTPIsolation)
+			t.Run("rule list pagination and filters", testAlertRuleList)
+			t.Run("rule preview requires a notification target or action", testAlertRuleDeliveryRequirement)
 			t.Run("scoped isolation and alternative guard", testAlertChannelIsolation)
 			t.Run("token holds and manual edit precedence", testAlertTokenHolds)
 			t.Run("net spending and milestones", testAlertMilestones)
@@ -208,6 +219,7 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Run("daily report cutover retains accepted dates", testAlertUserReportMigration)
 			t.Run("natural Key migration schedules an unambiguous boundary", testAlertKeyPeriodMigration)
 			t.Run("legacy event adapters retain checkpoints and a single executor", testAlertLegacyNoticeMigration)
+			t.Run("channel balance migration requires its legacy destination", testAlertChannelArrearsMigration)
 			t.Run("bad rule cannot starve other rules", testAlertEvaluationIsolation)
 			t.Run("reserved platform delivery and atomic limits", testAlertPriority)
 			t.Run("shared metric projection and late facts", testAlertMetricCache)
@@ -217,8 +229,182 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Run("independent watchdog deduplicates receipts", testAlertWatchdog)
 			t.Run("slow channel distribution and threshold calibration", testAlertSlowChannelCalibration)
 			t.Run("usage bridge with statistics and logs disabled", testAlertUsageBridge)
+			t.Run("natural periods follow accepted input", testAlertPeriodWatermark)
+			t.Run("recurrent incidents require fresh recovery", testAlertRecurrentRecovery)
+			t.Run("one-shot incidents retain acknowledgement escalation", testAlertOnceEscalation)
+			t.Run("realtime custom endpoints retain metric coverage", testAlertRealtimeCoverage)
+			t.Run("target tests distinguish cooldown from configuration changes", testAlertTargetTestCooldown)
+			t.Run("legacy channel notifications respect selected channels", testAlertLegacyChannelNotifications)
+			t.Run("traffic baselines and zero volume", testAlertTrafficBaselines)
+			t.Run("presentation edits retain approved actions", testAlertActionPresentationEdits)
+			t.Run("root selects targets across accounts", testAlertRootTargets)
 		})
 	}
+}
+
+func testAlertRuleDeliveryRequirement(t *testing.T) {
+	ctx := context.Background()
+	channel := model.Channel{Id: 49, Name: "usapi-gemini", Type: 24, Status: common.ChannelStatusEnabled, Models: "gemini-3.8-flash", Group: "default"}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	target := model.AlertTarget{OwnerUserID: 0, Name: "Platform Feishu", Type: "feishu", Enabled: true, Revision: 1}
+	require.NoError(t, model.DB.Create(&target).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Delete(&target).Error)
+		require.NoError(t, model.DB.Delete(&channel).Error)
+	})
+	var spec model.AlertRuleSpec
+	require.NoError(t, common.UnmarshalJsonStr(`{"name":"usapi-gemini channel","category":"health","severity":"P1","enabled":true,"management_mode":"platform_enforced","scope":{"type":"channel","selector":"ids","entity_ids":[],"channel_ids":[49],"group_mode":"per_entity","model_selector":{"mode":"explicit","models":[]}},"condition":{"metric":"success_rate","aggregation":"p95","latency_basis":"channel_attempt","operator":"lt","threshold_bps":9500,"recovery_threshold_bps":9900,"slow_threshold_ms":30000,"min_samples":2,"hold_seconds":30,"recovery_seconds":30,"deadline_kind":"first_output","deadline_ms":30000,"window":{"type":"rolling","duration_seconds":60,"timezone":"Asia/Shanghai","send_at":"00:10"}},"trigger":{"mode":"incident","repeat_seconds":100},"notify":{"target_ids":[],"on_recovery":true},"actions":[],"action_guard":{"min_remaining_channels":1,"on_no_alternative":"notify_only"},"recovery":{"mode":"manual"},"acknowledgement":{"required":true,"remind_after_seconds":300,"escalate_after_seconds":600,"escalation_target_ids":[]}}`, &spec))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", 3); c.Set("role", common.RoleRootUser); c.Next() })
+	router.POST("/rules/preview", controller.PreviewAlertRule)
+	router.POST("/rules/backtest", controller.PreviewAlertRule)
+	router.POST("/rules", controller.SaveAlertRule)
+	router.PATCH("/rules/:id", controller.SaveAlertRule)
+	for _, configured := range []bool{false, true} {
+		if configured {
+			spec.Notify.TargetIDs = []int64{target.ID}
+		}
+		body, err := common.Marshal(map[string]any{"config": spec, "owner_user_id": 0, "rule_id": 0, "expected_revision": 0})
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodPost, "/rules/preview", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var result struct {
+			Success    bool   `json:"success"`
+			MessageKey string `json:"message_key"`
+			Field      string `json:"field"`
+			Data       struct {
+				Config model.AlertRuleSpec `json:"config"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		if !configured {
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+			assert.False(t, result.Success)
+			assert.Equal(t, "Select at least one notification target or automatic action.", result.MessageKey)
+			assert.Equal(t, "notify.target_ids", result.Field)
+			continue
+		}
+		assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.True(t, result.Success)
+		assert.Equal(t, []int64{target.ID}, result.Data.Config.Notify.TargetIDs)
+		assert.EqualValues(t, 9500, result.Data.Config.Condition.ThresholdBPS)
+		assert.EqualValues(t, 9900, result.Data.Config.Condition.RecoveryThresholdBPS)
+	}
+	t.Run("maximum rolling preview reads a full accepted window without writes", func(t *testing.T) {
+		candidate := spec
+		candidate.Condition.Metric = "request_started_count"
+		candidate.Condition.Window.DurationSeconds = 86400
+		candidate.Condition.MinSamples = 0
+		candidate.Condition.Operator = "lt"
+		candidate.Condition.ThresholdCount, candidate.Condition.RecoveryThresholdCount = 1, 1
+		body, err := common.Marshal(map[string]any{"config": candidate, "owner_user_id": 0})
+		require.NoError(t, err)
+		var before, after int64
+		require.NoError(t, model.DB.Model(&model.AlertRule{}).Count(&before).Error)
+		request := httptest.NewRequest(http.MethodPost, "/rules/preview", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Targets []struct {
+					Measurement alerting.Measurement `json:"measurement"`
+				} `json:"targets"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success)
+		require.Len(t, result.Data.Targets, 1)
+		measured := result.Data.Targets[0].Measurement
+		assert.Equal(t, "complete", measured.Status, measured.Reason)
+		assert.EqualValues(t, 86400000, measured.WindowEnd-measured.WindowStart)
+		require.NoError(t, model.DB.Model(&model.AlertRule{}).Count(&after).Error)
+		assert.Equal(t, before, after)
+	})
+	t.Run("target ownership across preview replay create and edit", func(t *testing.T) {
+		personal := model.AlertTarget{OwnerUserID: 3, Name: "Root personal destination", Type: "feishu", Enabled: true, Revision: 1}
+		foreign := model.AlertTarget{OwnerUserID: 1, Name: "Other user destination", Type: "feishu", Enabled: true, Revision: 1}
+		disabled := model.AlertTarget{OwnerUserID: 0, Name: "Disabled platform destination", Type: "feishu", Enabled: false, Revision: 1}
+		for _, destination := range []*model.AlertTarget{&personal, &foreign, &disabled} {
+			require.NoError(t, model.DB.Create(destination).Error)
+		}
+		spec.Condition.ThresholdBPS = 9000
+		seed, err := alerting.SaveRule(ctx, alerting.Actor{ID: 3, Role: common.RoleRootUser}, 0, 0, 0, spec)
+		require.NoError(t, err)
+		created := []int64{seed.ID}
+		t.Cleanup(func() {
+			require.NoError(t, model.DB.Where("id IN ?", created).Delete(&model.AlertRule{}).Error)
+			for _, destination := range []*model.AlertTarget{&personal, &foreign, &disabled} {
+				require.NoError(t, model.DB.Delete(destination).Error)
+			}
+		})
+		for _, endpoint := range []struct{ method, path string }{{http.MethodPost, "/rules/preview"}, {http.MethodPost, "/rules/backtest"}, {http.MethodPost, "/rules"}, {http.MethodPatch, fmt.Sprintf("/rules/%d", seed.ID)}} {
+			for _, tc := range []struct {
+				name, field            string
+				targetID, escalationID int64
+				status                 int
+				message                string
+			}{
+				{"root personal", "", personal.ID, 0, http.StatusOK, ""},
+				{"other user", "", foreign.ID, 0, http.StatusOK, ""},
+				{"missing", "notify.target_ids", 1000000000, 0, http.StatusForbidden, "Select notification targets available to this rule."},
+				{"disabled", "notify.target_ids", disabled.ID, 0, http.StatusBadRequest, "Enable the selected notification target before enabling this rule."},
+				{"escalation other user", "", target.ID, foreign.ID, http.StatusOK, ""},
+				{"escalation missing", "acknowledgement.escalation_target_ids", target.ID, 1000000000, http.StatusForbidden, "Select notification targets available to this rule."},
+				{"escalation disabled", "acknowledgement.escalation_target_ids", target.ID, disabled.ID, http.StatusBadRequest, "Enable the selected notification target before enabling this rule."},
+				{"platform", "", target.ID, target.ID, http.StatusOK, ""},
+			} {
+				t.Run(endpoint.method+endpoint.path+tc.name, func(t *testing.T) {
+					candidate := spec
+					candidate.Notify.TargetIDs = []int64{tc.targetID}
+					candidate.Acknowledgement.EscalationTargetIDs = nil
+					if tc.escalationID > 0 {
+						candidate.Acknowledgement.EscalationTargetIDs = []int64{tc.escalationID}
+					}
+					revision := int64(0)
+					if endpoint.method == http.MethodPatch {
+						revision = seed.Revision
+					}
+					body, err := common.Marshal(map[string]any{"config": candidate, "owner_user_id": 0, "rule_id": 0, "expected_revision": revision})
+					require.NoError(t, err)
+					response := httptest.NewRecorder()
+					request := httptest.NewRequest(endpoint.method, endpoint.path, bytes.NewReader(body))
+					request.Header.Set("Content-Type", "application/json")
+					router.ServeHTTP(response, request)
+					var result struct {
+						Success    bool   `json:"success"`
+						MessageKey string `json:"message_key"`
+						Field      string `json:"field"`
+						Data       any    `json:"data"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+					assert.Equal(t, tc.status, response.Code, response.Body.String())
+					assert.Equal(t, tc.status == http.StatusOK, result.Success)
+					if tc.status != http.StatusOK {
+						assert.Equal(t, tc.message, result.MessageKey)
+						assert.Equal(t, tc.field, result.Field)
+						assert.Nil(t, result.Data)
+					} else if endpoint.path == "/rules" {
+						data, ok := result.Data.(map[string]any)
+						require.True(t, ok)
+						created = append(created, int64(data["id"].(float64)))
+					} else if endpoint.method == http.MethodPatch {
+						data, ok := result.Data.(map[string]any)
+						require.True(t, ok)
+						seed.Revision = int64(data["revision"].(float64))
+					}
+				})
+			}
+		}
+	})
+	spec.Notify.TargetIDs = nil
+	assert.ErrorIs(t, alerting.Validate(ctx, alerting.Actor{ID: 3, Role: common.RoleRootUser}, 0, &spec), alerting.ErrInvalid)
+	spec.Actions = []model.AlertAction{{Type: "disable_channel", Target: "matched_entity"}}
+	assert.NoError(t, alerting.Validate(ctx, alerting.Actor{ID: 3, Role: common.RoleRootUser}, 0, &spec), "action-only rules remain valid")
 }
 
 func testAlertSourcePrefix(t *testing.T) {
@@ -411,6 +597,64 @@ func (t alertHTTPTransport) RoundTrip(request *http.Request) (*http.Response, er
 	return t.send(request)
 }
 
+func alertNotificationFixture(t *testing.T, condition model.AlertCondition, value int64, kind string) model.AlertEvent {
+	t.Helper()
+	start := time.Date(2026, 11, 15, 13, 6, 28, 0, time.UTC)
+	config, err := common.Marshal(model.AlertRuleSpec{Name: "usapi-gemini", Severity: "P1", Condition: condition})
+	require.NoError(t, err)
+	evidence, err := common.Marshal(map[string]any{"measurement": alerting.Measurement{Value: value, Samples: 16, Status: "complete", WindowStart: start.UnixMilli(), WindowEnd: start.Add(time.Minute).UnixMilli()}})
+	require.NoError(t, err)
+	return model.AlertEvent{ID: 29, Kind: kind, TargetName: "usapi-gemini", RuleConfig: string(config), Evidence: string(evidence)}
+}
+
+func TestAlertNotificationPercentageAndTimezone(t *testing.T) {
+	condition := model.AlertCondition{Metric: "success_rate", ThresholdBPS: 9500, RecoveryThresholdBPS: 9900, Window: model.AlertWindow{Timezone: "Asia/Shanghai"}}
+	event := alertNotificationFixture(t, condition, 0, "trigger")
+	for _, tc := range []struct{ language, line, basisPoints string }{
+		{"en", "Success rate: 0%; threshold: 95%", "basis points"},
+		{"zh-CN", "成功率：0%；阈值：95%", "基点"},
+		{"zh-TW", "成功率：0%；閾值：95%", "基點"},
+	} {
+		t.Run(tc.language, func(t *testing.T) {
+			message := alerting.RenderNotification(tc.language, event)
+			assert.Contains(t, message, tc.line)
+			assert.NotContains(t, message, tc.basisPoints)
+			assert.Contains(t, message, "2026-11-15T21:06:28+08:00")
+			assert.Contains(t, message, "2026-11-15T21:07:28+08:00")
+			assert.Contains(t, message, "Asia/Shanghai")
+			assert.Contains(t, message, "/alerts?event_id=29")
+		})
+	}
+	for _, tc := range []struct {
+		metric, kind               string
+		value, threshold, recovery int64
+		want                       string
+	}{
+		{"success_rate", "trigger", 10000, 10000, 10000, "100%; threshold: 100%"},
+		{"failure_rate", "trigger", 1234, 500, 200, "12.34%; threshold: 5%"},
+		{"timeout_rate", "trigger", 1, 10, 0, "0.01%; threshold: 0.1%"},
+		{"slow_request_rate", "trigger", 8001, 8000, 7000, "80.01%; threshold: 80%"},
+		{"budget_remaining_ratio", "trigger", 1999, 2000, 3000, "19.99%; threshold: 20%"},
+		{"success_rate", "recovery", 9900, 9500, 9900, "99%; threshold: 99%"},
+	} {
+		t.Run(tc.metric+"/"+tc.kind, func(t *testing.T) {
+			event := alertNotificationFixture(t, model.AlertCondition{Metric: tc.metric, ThresholdBPS: tc.threshold, RecoveryThresholdBPS: tc.recovery}, tc.value, tc.kind)
+			assert.Contains(t, alerting.RenderNotification("en", event), tc.want)
+		})
+	}
+	for _, tc := range []struct{ metric, want string }{
+		{"request_count", "Requests: 16; threshold: 20"},
+		{"duration_ms", "Request duration: 16 ms; threshold: 200 ms"},
+	} {
+		t.Run(tc.metric, func(t *testing.T) {
+			event := alertNotificationFixture(t, model.AlertCondition{Metric: tc.metric, ThresholdCount: 20, ThresholdMS: 200}, 16, "trigger")
+			message := alerting.RenderNotification("en", event)
+			assert.Contains(t, message, tc.want)
+			assert.NotContains(t, message, "%")
+		})
+	}
+}
+
 func TestAlertDeliveryProtocolsAndBusinessErrors(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
 	vault, err := alerting.NewTargetVault("test-key", map[string]string{"test-key": key})
@@ -430,7 +674,8 @@ func TestAlertDeliveryProtocolsAndBusinessErrors(t *testing.T) {
 				require.NoError(t, common.Unmarshal(body, &payload))
 				switch kind {
 				case "feishu":
-					assert.Equal(t, "text", payload["msg_type"])
+					assert.Equal(t, "interactive", payload["msg_type"])
+					assert.NotNil(t, payload["card"])
 					stamp, ok := payload["timestamp"].(string)
 					require.True(t, ok)
 					mac := hmac.New(sha256.New, []byte(stamp+"\n"+secret.Secret))
@@ -473,6 +718,288 @@ func TestAlertDeliveryProtocolsAndBusinessErrors(t *testing.T) {
 				_, err := vault.Deliver(context.Background(), target, event)
 				require.Error(t, err, "HTTP 200 with a platform error is not successful delivery")
 				assert.NotContains(t, err.Error(), "private")
+			}
+		})
+	}
+}
+
+func feishuCardContents(value any) string {
+	var text strings.Builder
+	switch item := value.(type) {
+	case map[string]any:
+		if content, ok := item["content"].(string); ok {
+			text.WriteString(content + "\n")
+		}
+		for key, child := range item {
+			if key != "content" {
+				text.WriteString(feishuCardContents(child))
+			}
+		}
+	case []any:
+		for _, child := range item {
+			text.WriteString(feishuCardContents(child))
+		}
+	}
+	return text.String()
+}
+
+func TestAlertFeishuCards(t *testing.T) {
+	vault, err := alerting.NewTargetVault("cards", map[string]string{"cards": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))})
+	require.NoError(t, err)
+	secret := alerting.TargetSecret{Address: "https://1.1.1.1/fixture"}
+	sealed, err := vault.Seal(1, "feishu", secret)
+	require.NoError(t, err)
+	previous := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://console.example"
+	t.Cleanup(func() { system_setting.ServerAddress = previous })
+	for _, tc := range []struct{ kind, severity, color, emoji, title string }{
+		{"trigger", "P0", "red", "🚨", "异常触发"},
+		{"trigger", "P1", "red", "🚨", "异常触发"},
+		{"trigger", "P2", "orange", "🚨", "异常触发"},
+		{"trigger", "P3", "blue", "🚨", "异常触发"},
+		{"repeat", "P1", "red", "⏳", "异常持续"},
+		{"recovery", "P1", "green", "✅", "条件恢复"},
+		{"recovery_probe", "P1", "green", "🧪", "恢复探测合格"},
+		{"escalation", "P1", "purple", "📣", "未确认升级"},
+		{"unacknowledged", "P2", "orange", "⏰", "待人工确认"},
+		{"milestone", "P2", "orange", "💰", "消费档位"},
+		{"report", "P3", "blue", "📊", "使用汇总"},
+		{"report_revision", "P3", "blue", "📝", "使用汇总修订"},
+		{"report_data_gap", "P3", "yellow", "⚠️", "汇总数据覆盖不完整"},
+		{"test", "P3", "blue", "🔔", "通知测试"},
+		{"engine_health", "P1", "red", "🛠️", "告警服务异常"},
+	} {
+		t.Run(tc.kind+tc.severity, func(t *testing.T) {
+			event := alertNotificationFixture(t, model.AlertCondition{Metric: "success_rate", Operator: "lt", ThresholdBPS: 9500, RecoveryThresholdBPS: 9900, Window: model.AlertWindow{Timezone: "Asia/Shanghai"}}, 0, tc.kind)
+			event.Severity = tc.severity
+			event.CreatedAt = time.Date(2026, 11, 15, 13, 7, 28, 0, time.UTC).UnixMilli()
+			if tc.kind == "engine_health" {
+				event.Summary = "delivery_backlog"
+			}
+			vault.Client = &http.Client{Transport: alertHTTPTransport{send: func(request *http.Request) (*http.Response, error) {
+				var payload map[string]any
+				require.NoError(t, common.DecodeJson(request.Body, &payload))
+				assert.Equal(t, "interactive", payload["msg_type"])
+				card, ok := payload["card"].(map[string]any)
+				require.True(t, ok)
+				header, ok := card["header"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, tc.color, header["template"])
+				title, ok := header["title"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "plain_text", title["tag"])
+				assert.Contains(t, title["content"], tc.emoji)
+				assert.Contains(t, title["content"], tc.severity)
+				assert.Contains(t, title["content"], tc.title)
+				body, err := common.Marshal(card)
+				require.NoError(t, err)
+				assert.Contains(t, string(body), "https://console.example/alerts?event_id=29")
+				assert.NotContains(t, feishuCardContents(card), "alert.")
+				if tc.kind == "engine_health" {
+					assert.Contains(t, feishuCardContents(card), "通知投递积压")
+				}
+				assert.NotContains(t, feishuCardContents(card), "1970-")
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
+			}}}
+			_, err := vault.Deliver(context.Background(), model.AlertTarget{OwnerUserID: 1, Type: "feishu", KeyID: "cards", Ciphertext: sealed, Language: "zh-CN"}, event)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestAlertFeishuCardUnitsAndObjects(t *testing.T) {
+	vault, err := alerting.NewTargetVault("cards", map[string]string{"cards": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))})
+	require.NoError(t, err)
+	sealed, err := vault.Seal(1, "feishu", alerting.TargetSecret{Address: "https://1.1.1.1/fixture"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, language, kind, metric, object, want, threshold, icon string
+		value                                                       int64
+	}{
+		{"model failure", "zh-CN", "trigger", "failure_rate", "channel_model", "12.34%", "5%", "🧩", 1234},
+		{"channel recovery", "en", "recovery", "success_rate", "channel", "100%", "99%", "🌐", 10000},
+		{"model recovery", "zh-TW", "recovery", "duration_ms", "model", "100 ms", "10000 ms", "🧩", 100},
+		{"key spending", "zh-CN", "trigger", "spend_net", "api_key", "157.34 USD", "150 USD", "🔑", 157340000},
+		{"account spending", "en", "recovery", "spend_net", "account", "10 USD", "20 USD", "👤", 10000000},
+		{"system count", "en", "trigger", "request_count", "system", "16", "20", "⚙️", 16},
+		{"traffic change", "zh-CN", "trigger", "request_volume_change", "channel_model", "500%", "50%", "🧩", 50000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			condition := model.AlertCondition{Metric: tc.metric, Operator: "gt", ThresholdBPS: 500, RecoveryThresholdBPS: 9900, ThresholdMS: 30000, RecoveryThresholdMS: 10000, ThresholdUSD: "150", RecoveryThresholdUSD: "20", ThresholdCount: 20, Window: model.AlertWindow{Timezone: "Asia/Shanghai"}}
+			if tc.metric == "success_rate" {
+				condition.Operator = "lt"
+			}
+			if tc.metric == "request_volume_change" {
+				condition.ChangeDirection = "increase"
+				condition.ThresholdBPS = 5000
+			}
+			event := alertNotificationFixture(t, condition, tc.value, tc.kind)
+			spec := model.AlertRuleSpec{Name: "usapi-gemini model test", Severity: "P1", QuotaUnit: 1000000, Condition: condition}
+			config, err := common.Marshal(spec)
+			require.NoError(t, err)
+			event.RuleConfig = string(config)
+			target := alerting.MonitoredTarget{Type: tc.object, ID: 49, Name: "usapi-gemini", Model: "gemini-3.8-flash", OwnerUserID: 1}
+			if tc.object == "channel_model" {
+				target.Name += " / " + target.Model
+			}
+			measurement := alerting.Measurement{Value: tc.value, Samples: 16, Status: "complete", WindowStart: 1794741600000, WindowEnd: 1794741660000}
+			encoded, err := common.Marshal(map[string]any{"target": target, "measurement": measurement})
+			require.NoError(t, err)
+			event.Evidence = string(encoded)
+			vault.Client = &http.Client{Transport: alertHTTPTransport{send: func(request *http.Request) (*http.Response, error) {
+				var payload map[string]any
+				require.NoError(t, common.DecodeJson(request.Body, &payload))
+				text := feishuCardContents(payload["card"])
+				assert.Contains(t, text, tc.want)
+				assert.Contains(t, text, tc.threshold)
+				assert.Contains(t, text, tc.icon)
+				assert.NotContains(t, text, "alert.")
+				if tc.object == "channel_model" || tc.object == "model" {
+					assert.Contains(t, text, "gemini-3.8-flash")
+				}
+				if tc.metric == "success_rate" && tc.kind == "recovery" {
+					assert.Contains(t, text, "≥ 99%")
+				}
+				if tc.kind == "recovery" && tc.metric == "duration_ms" {
+					assert.Contains(t, text, "≤ 10000 ms")
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
+			}}}
+			_, err = vault.Deliver(context.Background(), model.AlertTarget{OwnerUserID: 1, Type: "feishu", KeyID: "cards", Ciphertext: sealed, Language: tc.language}, event)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestAlertFeishuCardDetailsAndBounds(t *testing.T) {
+	vault, err := alerting.NewTargetVault("cards", map[string]string{"cards": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))})
+	require.NoError(t, err)
+	sealed, err := vault.Seal(1, "feishu", alerting.TargetSecret{Address: "https://1.1.1.1/fixture"})
+	require.NoError(t, err)
+	previous := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://console.example"
+	t.Cleanup(func() { system_setting.ServerAddress = previous })
+	for _, kind := range []string{"report", "report_revision", "legacy_notice", "trigger", "recovery_probe", "malformed"} {
+		t.Run(kind, func(t *testing.T) {
+			name := `<at id=all></at> **literal** [name](https://attacker.example)`
+			spec := model.AlertRuleSpec{Name: name, Severity: "P2", QuotaUnit: 1000000, Condition: model.AlertCondition{Metric: "spend_net", ThresholdUSD: "150", Window: model.AlertWindow{Timezone: "Asia/Shanghai"}}}
+			measurement := alerting.Measurement{Value: 744720000, Samples: 120, Status: "complete"}
+			switch kind {
+			case "report", "report_revision":
+				measurement.Report = &alerting.ReportSummary{Totals: alerting.ReportUsage{Requests: 120, InputTokens: 12345}, Keys: []alerting.ReportUsage{{TokenName: "key2", TokenID: 2, Quota: 744720000, Requests: 120}}, Backfill: true}
+			case "trigger":
+				spec.Condition.Metric, spec.Condition.ChangeDirection = "request_volume_change", "increase"
+				measurement.Value = 50000
+				measurement.Traffic = &alerting.TrafficMeasurement{Count: 6, BaselineScaled: 10000, ChangeBPS: 50000}
+			}
+			config, err := common.Marshal(spec)
+			require.NoError(t, err)
+			evidence, err := common.Marshal(map[string]any{"target": alerting.MonitoredTarget{Type: "api_key", ID: 2, OwnerUserID: 1, Name: name}, "measurement": measurement})
+			require.NoError(t, err)
+			event := model.AlertEvent{ID: 29, Kind: kind, Severity: "P2", RuleConfig: string(config), Evidence: string(evidence), Summary: "Fallback notification"}
+			if kind == "legacy_notice" {
+				data, err := common.Marshal(alerting.LegacyNotice{ChannelID: 49, Title: "Slow channel error", Content: strings.Repeat("<&>模型💡", 10000)})
+				require.NoError(t, err)
+				event.Evidence = string(data)
+			}
+			if kind == "malformed" {
+				event.RuleConfig, event.Evidence = "invalid", "invalid"
+			}
+			vault.Client = &http.Client{Transport: alertHTTPTransport{send: func(request *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(request.Body)
+				require.NoError(t, err)
+				assert.LessOrEqual(t, len(body), 20*1024)
+				var payload map[string]any
+				require.NoError(t, common.Unmarshal(body, &payload))
+				card, ok := payload["card"].(map[string]any)
+				require.True(t, ok)
+				text := feishuCardContents(card)
+				assert.NotContains(t, string(body), "lark_md", "user names and legacy content must not become card markup or @all mentions")
+				assert.NotContains(t, text, "\ufffd", "truncation must preserve Unicode")
+				assert.NotContains(t, text, "alert.card.")
+				switch kind {
+				case "report", "report_revision":
+					assert.Contains(t, text, "744.72 USD")
+					assert.Contains(t, text, "key2")
+					assert.Contains(t, text, "12345")
+					assert.Contains(t, text, "补发报告")
+					assert.NotContains(t, text, "告警阈值")
+					assert.Contains(t, text, name)
+				case "trigger":
+					assert.Contains(t, text, "500%")
+					assert.Contains(t, text, "当前调用：6 次")
+					assert.Contains(t, text, "基线：1 次")
+				case "legacy_notice":
+					assert.Contains(t, text, "Slow channel error")
+					assert.Contains(t, text, "…")
+				case "recovery_probe":
+					assert.Contains(t, text, "恢复探测合格")
+					assert.NotContains(t, text, "告警阈值")
+				case "malformed":
+					assert.Contains(t, text, "Fallback notification")
+				}
+				assert.Contains(t, string(body), "https://console.example/alerts?event_id=29")
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
+			}}}
+			_, err = vault.Deliver(context.Background(), model.AlertTarget{OwnerUserID: 1, Type: "feishu", KeyID: "cards", Ciphertext: sealed, Language: "zh-CN"}, event)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestLegacyFeishuDeliveryProtocolsAndBusinessErrors(t *testing.T) {
+	if service.GetHttpClient() == nil {
+		service.InitHttpClient()
+	}
+	client := service.GetHttpClient()
+	previousTransport := client.Transport
+	t.Cleanup(func() { client.Transport = previousTransport })
+	for _, tc := range []struct {
+		name, secret, body string
+		status             int
+		wantError          bool
+	}{
+		{name: "unsigned success", body: `{"code":0}`, status: 200},
+		{name: "signed success", secret: "test-signing-secret", body: `{"code":0}`, status: 200},
+		{name: "legacy response", body: `{"StatusCode":0}`, status: 200},
+		{name: "business rejection", body: `{"code":19021,"msg":"private-response"}`, status: 200, wantError: true},
+		{name: "legacy rejection", body: `{"StatusCode":19021}`, status: 200, wantError: true},
+		{name: "missing code", body: `{}`, status: 200, wantError: true},
+		{name: "empty body", status: 204, wantError: true},
+		{name: "invalid JSON", body: `invalid-private-response`, status: 200, wantError: true},
+		{name: "oversized body", body: `{"code":0}` + strings.Repeat(" ", 65536), status: 200, wantError: true},
+		{name: "HTTP rejection", body: `{"code":0}`, status: 503, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client.Transport = alertHTTPTransport{send: func(request *http.Request) (*http.Response, error) {
+				assert.Equal(t, http.MethodPost, request.Method)
+				assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
+				assert.Empty(t, request.Header.Get("X-Webhook-Signature"))
+				var payload map[string]any
+				require.NoError(t, common.DecodeJson(request.Body, &payload))
+				assert.Equal(t, "text", payload["msg_type"])
+				assert.Equal(t, map[string]any{"text": "Test alert"}, payload["content"])
+				if tc.secret == "" {
+					assert.NotContains(t, payload, "timestamp")
+					assert.NotContains(t, payload, "sign")
+				} else {
+					stamp, ok := payload["timestamp"].(string)
+					require.True(t, ok)
+					seconds, err := strconv.ParseInt(stamp, 10, 64)
+					require.NoError(t, err)
+					assert.Positive(t, seconds)
+					mac := hmac.New(sha256.New, []byte(stamp+"\n"+tc.secret))
+					assert.Equal(t, base64.StdEncoding.EncodeToString(mac.Sum(nil)), payload["sign"])
+				}
+				return &http.Response{StatusCode: tc.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			}}
+			err := service.SendFeishuNotifyContext(context.Background(), "https://notify.example/hook/private-token", tc.secret, dto.FeishuNotify{MsgType: "text", Content: dto.FeishuContent{Text: "Test alert"}})
+			if tc.wantError {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "private-response")
+				assert.NotContains(t, err.Error(), "private-token")
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -836,6 +1363,177 @@ func testAlertIncident(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrAlertConflict)
 }
 
+func testAlertPeriodWatermark(t *testing.T) {
+	ctx := context.Background()
+	var source model.AlertWorkerCheckpoint
+	var instance model.SystemInstance
+	require.NoError(t, model.DB.First(&source, "id = ?", "alert-test-boot").Error)
+	require.NoError(t, model.DB.First(&instance, "node_name = ?", "alert-test-node").Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Save(&source).Error)
+		require.NoError(t, model.DB.Save(&instance).Error)
+	})
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	for _, period := range []string{"hour", "day", "month"} {
+		t.Run(period, func(t *testing.T) {
+			boundary := time.Date(2026, 11, 1, 0, 0, 0, 0, loc)
+			now := boundary.Add(2 * time.Second)
+			row, spec, target := alertRuleFixture(t, "spend_net")
+			token := model.Token{UserId: 1, Name: "Period " + period, Key: "period-" + period, Status: common.TokenStatusEnabled}
+			require.NoError(t, model.DB.Create(&token).Error)
+			target.ID, spec.Scope.EntityIDs = token.Id, []int{token.Id}
+			spec.Condition.Window = model.AlertWindow{Type: period, Timezone: "Asia/Shanghai"}
+			spec.Condition.MinSamples = 0
+			spec.Trigger.Mode = "once_per_period"
+			row.EffectiveAt = boundary.AddDate(0, -2, 0).UnixMilli()
+			encoded, err := common.Marshal(spec)
+			require.NoError(t, err)
+			require.NoError(t, model.DB.Model(&row).Updates(map[string]any{"effective_at": row.EffectiveAt, "config": string(encoded)}).Error)
+			require.NoError(t, model.DB.Model(&model.SystemInstance{}).Where("node_name = ?", instance.NodeName).Updates(map[string]any{"started_at": boundary.AddDate(0, -3, 0).Unix(), "last_seen_at": now.Unix()}).Error)
+			require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", source.ID).Updates(map[string]any{"healthy": true, "usage_healthy": true, "updated_at": now.UnixMilli(), "captured_at": boundary.Add(-4 * time.Second).UnixMilli(), "coverage_started_at": boundary.AddDate(0, -3, 0).UnixMilli()}).Error)
+			quota, err := alerting.USDQuota("200")
+			require.NoError(t, err)
+			fact := model.AlertObservation{ID: model.AlertIdentity("period-usage", period), Namespace: "usage", SourceID: "period-usage-" + period, Kind: "settlement", OccurredAt: boundary.Add(-time.Minute).UnixMilli(), UserID: 1, TokenID: token.Id, Quota: quota}
+			require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+			engine := alerting.Engine{BootID: "period-worker"}
+			previous := now.Add(-15 * time.Second)
+			start, end, _, err := alerting.WindowBounds(row, spec.Condition, previous)
+			require.NoError(t, err)
+			require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, alerting.Measurement{Status: "complete", Value: quota, Samples: 1, WindowStart: start, WindowEnd: end}, previous))
+			m, err := alerting.Measure(ctx, row, spec, target, now)
+			require.NoError(t, err)
+			require.Equal(t, "complete", m.Status)
+			require.Less(t, m.WindowEnd, boundary.UnixMilli())
+			require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, m, now))
+			var events []model.AlertEvent
+			require.NoError(t, model.DB.Where("rule_id = ? AND kind = ?", row.ID, "trigger").Find(&events).Error)
+			assert.Len(t, events, 1, "late input must retain the previous period's deduplication")
+			fact.ID, fact.SourceID, fact.OccurredAt = model.AlertIdentity("current-period-usage", period), "current-period-usage-"+period, boundary.Add(time.Second).UnixMilli()
+			require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+			now = boundary.Add(10 * time.Second)
+			require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", source.ID).Updates(map[string]any{"updated_at": now.UnixMilli(), "captured_at": now.Add(-time.Second).UnixMilli()}).Error)
+			m, err = alerting.Measure(ctx, row, spec, target, now)
+			require.NoError(t, err)
+			require.Equal(t, "complete", m.Status)
+			require.Equal(t, boundary.UnixMilli(), m.WindowStart)
+			require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, m, now))
+			require.NoError(t, model.DB.Where("rule_id = ? AND kind = ?", row.ID, "trigger").Find(&events).Error)
+			assert.Len(t, events, 2, "the new period must still have its own trigger")
+		})
+	}
+}
+
+func testAlertRecurrentRecovery(t *testing.T) {
+	ctx := context.Background()
+	row, spec, target := alertRuleFixture(t, "duration_ms")
+	spec.Condition.RecoverySeconds = 60
+	engine := alerting.Engine{BootID: "recurrent-worker"}
+	now := time.Now()
+	for _, step := range []struct {
+		seconds int
+		value   int64
+		status  string
+	}{
+		{0, 90000, "firing"},
+		{15, 1000, "firing"},
+		{75, 1000, "resolved"},
+		{90, 90000, "firing"},
+		{105, 1000, "firing"},
+		{164, 1000, "firing"},
+		{165, 1000, "resolved"},
+	} {
+		require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, alerting.Measurement{Status: "complete", Value: step.value, Samples: 10}, now.Add(time.Duration(step.seconds)*time.Second)))
+		var state model.AlertRuleState
+		require.NoError(t, model.DB.Where("rule_id = ?", row.ID).First(&state).Error)
+		assert.Equal(t, step.status, state.Status, "at %d seconds", step.seconds)
+		if step.status == "resolved" {
+			assert.Zero(t, state.RecoveryAt)
+		}
+	}
+	var incidents []model.AlertIncident
+	require.NoError(t, model.DB.Where("rule_id = ?", row.ID).Find(&incidents).Error)
+	require.Len(t, incidents, 2)
+	for _, incident := range incidents {
+		assert.Equal(t, "resolved", incident.Status)
+		assert.Positive(t, incident.ResolvedAt)
+	}
+}
+
+func testAlertOnceEscalation(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ mode, stop string }{{"once", ""}, {"once_per_period", ""}, {"once", "acknowledged_at"}, {"once", "closed_at"}} {
+		t.Run(tc.mode+"/"+tc.stop, func(t *testing.T) {
+			row, spec, target := alertRuleFixture(t, "duration_ms")
+			spec.Trigger.Mode, spec.Acknowledgement.Required = tc.mode, true
+			spec.Condition.Window = model.AlertWindow{Type: "day", Timezone: "Asia/Shanghai"}
+			now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+			engine := alerting.Engine{BootID: "once-worker"}
+			m := alerting.Measurement{Status: "complete", Value: 90000, Samples: 10}
+			for _, seconds := range []int{0, 301, 302} {
+				require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, m, now.Add(time.Duration(seconds)*time.Second)))
+			}
+			if tc.stop != "" {
+				require.NoError(t, model.DB.Model(&model.AlertIncident{}).Where("rule_id = ?", row.ID).Update(tc.stop, now.Add(303*time.Second).UnixMilli()).Error)
+			}
+			for _, seconds := range []int{601, 602} {
+				require.NoError(t, engine.ApplyMeasurement(ctx, row, spec, target, m, now.Add(time.Duration(seconds)*time.Second)))
+			}
+			for kind, want := range map[string]int64{"trigger": 1, "unacknowledged": 1, "escalation": 1} {
+				if kind == "escalation" && tc.stop != "" {
+					want = 0
+				}
+				var count int64
+				require.NoError(t, model.DB.Model(&model.AlertEvent{}).Where("rule_id = ? AND kind = ?", row.ID, kind).Count(&count).Error)
+				assert.Equal(t, want, count, kind)
+			}
+		})
+	}
+}
+
+func testAlertRealtimeCoverage(t *testing.T) {
+	ctx := context.Background()
+	oldEnabled, oldControls := common.AlertingEnabled, common.AlertingControlsEnabled
+	common.AlertingEnabled, common.AlertingControlsEnabled = true, true
+	t.Cleanup(func() {
+		common.AlertingEnabled, common.AlertingControlsEnabled = oldEnabled, oldControls
+		common.SetAlertHealthSink(nil)
+	})
+	baseURL := "https://custom-upstream.example.com"
+	channel := model.Channel{Name: "Realtime custom endpoint", Type: 1, Status: common.ChannelStatusEnabled, Models: "gpt-realtime", BaseURL: &baseURL, Group: "default", OtherSettings: "{}"}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	token := model.Token{UserId: 1, Name: "Realtime coverage", Key: "realtime-coverage-key", Status: common.TokenStatusEnabled}
+	require.NoError(t, model.DB.Create(&token).Error)
+	var terminal common.AlertHealthEvent
+	common.SetAlertHealthSink(func(_ context.Context, event common.AlertHealthEvent) error {
+		if event.Kind == "finished" && event.Layer == "channel_attempt" {
+			terminal = event
+		}
+		return nil
+	})
+	tracker := service.NewRealtimeAlertTracker(common.AlertHealthEvent{UserID: 1, TokenID: token.Id, ChannelID: channel.Id, Model: "gpt-realtime"})
+	require.NoError(t, tracker.Admit(ctx, "response.create"))
+	tracker.Observe(ctx, "response.done", "completed", false)
+	require.NotEmpty(t, terminal.SourceID)
+	require.NoError(t, model.AcceptAlertObservation(ctx, model.AlertObservation{ID: model.AlertIdentity("realtime-coverage", terminal.SourceID), Namespace: "health", SourceID: terminal.SourceID, Kind: terminal.Kind, Layer: terminal.Layer, Sequence: terminal.Sequence, StartedAt: terminal.StartedAt, OccurredAt: terminal.OccurredAt, UserID: terminal.UserID, ChannelID: terminal.ChannelID, ModelKey: terminal.Model, Protocol: terminal.Protocol, Stream: terminal.Stream, ConfigVersion: terminal.ConfigVersion, SampleClass: "production", Outcome: terminal.Outcome, DurationMS: terminal.DurationMS}))
+	now := time.Now().Add(2 * time.Second)
+	var source model.AlertWorkerCheckpoint
+	require.NoError(t, model.DB.First(&source, "id = ?", "alert-test-boot").Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Save(&source).Error) })
+	require.NoError(t, model.DB.Model(&source).Updates(map[string]any{"updated_at": now.UnixMilli(), "captured_at": now.Add(-time.Second).UnixMilli()}).Error)
+	row := model.AlertRule{EffectiveAt: now.Add(-time.Hour).UnixMilli()}
+	spec := model.AlertRuleSpec{Scope: model.AlertScope{Type: "channel_model", ChannelIDs: []int{channel.Id}, ModelSelector: model.AlertModelSelector{Models: []string{"gpt-realtime"}}}, Condition: model.AlertCondition{Metric: "duration_ms", Aggregation: "mean", LatencyBasis: "channel_attempt", MinSamples: 1, Window: model.AlertWindow{Type: "rolling", DurationSeconds: 60, Timezone: "Asia/Shanghai"}}}
+	targets, err := alerting.ResolveTargets(ctx, row, spec)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	m, err := alerting.Measure(ctx, row, spec, targets[0], now)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", m.Status)
+	assert.EqualValues(t, 1, m.Samples, "custom endpoint responses must contribute to channel metrics")
+	require.NoError(t, model.DB.Model(&channel).Update("base_url", "https://changed-upstream.example.com").Error)
+	assert.ErrorContains(t, tracker.Admit(ctx, "response.create"), "configuration changed")
+}
+
 func testAlertInflight(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -892,6 +1590,80 @@ func testAlertInflight(t *testing.T) {
 	assert.True(t, kinds["inflight"])
 }
 
+func testAlertRootTargets(t *testing.T) {
+	ctx := context.Background()
+	row, spec, _ := alertRuleFixture(t, "duration_ms")
+	ownTargetID := spec.Notify.TargetIDs[0]
+	var targets []model.AlertTarget
+	for i := range 205 {
+		targets = append(targets, model.AlertTarget{OwnerUserID: 2, Name: fmt.Sprintf("root-picker-%03d", i), Type: "email", Enabled: true, Revision: 1, Ciphertext: "private-fixture-ciphertext"})
+	}
+	require.NoError(t, model.DB.Create(&targets).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Where("name LIKE ?", "root-picker-%").Delete(&model.AlertTarget{}).Error)
+	})
+	actorID, actorRole := 3, common.RoleRootUser
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", actorID); c.Set("role", actorRole); c.Next() })
+	router.GET("/targets", controller.ListAlertTargets)
+	list := func(path string, expected int) []model.AlertTarget {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, expected, response.Code, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "private-fixture-ciphertext")
+		if expected != http.StatusOK {
+			return nil
+		}
+		var result struct {
+			Data []model.AlertTarget `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		return result.Data
+	}
+	first := list("/targets?scope=all&q=root-picker&limit=200", http.StatusOK)
+	require.Len(t, first, 200)
+	second := list(fmt.Sprintf("/targets?scope=all&q=root-picker&limit=200&before_id=%d", first[len(first)-1].ID), http.StatusOK)
+	require.Len(t, second, 5)
+	assert.Equal(t, targets[0].ID, second[len(second)-1].ID)
+	matched := list(fmt.Sprintf("/targets?scope=all&q=%d", targets[0].ID), http.StatusOK)
+	matchedIDs := make([]int64, len(matched))
+	for i := range matched {
+		matchedIDs[i] = matched[i].ID
+	}
+	assert.Contains(t, matchedIDs, targets[0].ID)
+	assert.Len(t, list(fmt.Sprintf("/targets?scope=all&ids=%d,%d", targets[0].ID, targets[204].ID), http.StatusOK), 2)
+	list("/targets?scope=all&ids=invalid", http.StatusBadRequest)
+	list("/targets?scope=all&ids="+strings.TrimSuffix(strings.Repeat("1,", 21), ","), http.StatusBadRequest)
+	spec.Notify.TargetIDs = []int64{targets[0].ID}
+	spec.Acknowledgement.EscalationTargetIDs = []int64{targets[204].ID}
+	spec.ManagementMode = "user_managed"
+	saved, err := alerting.SaveRule(ctx, alerting.Actor{ID: 3, Role: common.RoleRootUser}, 1, row.ID, row.Revision, spec)
+	require.NoError(t, err)
+	stored, err := model.AlertRuleConfig(*saved)
+	require.NoError(t, err)
+	assert.Equal(t, "platform_enforced", stored.ManagementMode)
+	assert.False(t, alerting.CanManage(alerting.Actor{ID: 1, Role: common.RoleCommonUser}, *saved))
+	actorID, actorRole = 1, common.RoleCommonUser
+	list("/targets?scope=all", http.StatusForbidden)
+	assert.Empty(t, list(fmt.Sprintf("/targets?ids=%d", targets[0].ID), http.StatusOK))
+	assert.Empty(t, list(fmt.Sprintf("/targets?q=%d", targets[0].ID), http.StatusOK))
+	for _, escalation := range []bool{false, true} {
+		candidate := spec
+		if escalation {
+			candidate.Notify.TargetIDs = []int64{ownTargetID}
+		}
+		err := alerting.Validate(ctx, alerting.Actor{ID: 1, Role: common.RoleCommonUser}, 1, &candidate)
+		require.ErrorIs(t, err, alerting.ErrForbidden)
+		var field *alerting.RuleTargetValidationError
+		require.ErrorAs(t, err, &field)
+		if escalation {
+			assert.Equal(t, "acknowledgement.escalation_target_ids", field.Field)
+		} else {
+			assert.Equal(t, "notify.target_ids", field.Field)
+		}
+	}
+}
+
 func testAlertHTTPIsolation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	row, _, _ := alertRuleFixture(t, "duration_ms")
@@ -926,7 +1698,196 @@ func testAlertHTTPIsolation(t *testing.T) {
 	assert.Equal(t, own.ID, related.Data[0].ID)
 }
 
+func testAlertRuleList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var rows []model.AlertRule
+	for i := range 205 {
+		spec := model.AlertRuleSpec{Name: fmt.Sprintf("list-fixture-%03d", i), Severity: "P1", Enabled: true, ManagementMode: "platform_enforced", Scope: model.AlertScope{Type: "channel"}, Condition: model.AlertCondition{Metric: "success_rate"}}
+		if i > 0 {
+			spec.Severity, spec.Scope.Type, spec.Condition.Metric = "P2", "account", "request_count"
+		}
+		encoded, err := common.Marshal(spec)
+		require.NoError(t, err)
+		rows = append(rows, model.AlertRule{OwnerUserID: 1, Name: spec.Name, Enabled: true, Revision: 1, Generation: 1, Config: string(encoded)})
+	}
+	require.NoError(t, model.DB.Create(&rows).Error)
+	paused := model.AlertRule{OwnerUserID: 1, Name: "list-fixture-paused", Config: rows[0].Config}
+	foreign := model.AlertRule{OwnerUserID: 2, Name: "list-fixture-foreign", Enabled: true, Config: rows[0].Config}
+	corrupt := model.AlertRule{OwnerUserID: 1, Name: "list-fixture-corrupt", Config: "invalid-json"}
+	require.NoError(t, model.DB.Create(&paused).Error)
+	require.NoError(t, model.DB.Create(&foreign).Error)
+	require.NoError(t, model.DB.Create(&corrupt).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Unscoped().Where("name LIKE ?", "list-fixture-%").Delete(&model.AlertRule{}).Error)
+	})
+	actorID, actorRole := 1, common.RoleCommonUser
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", actorID); c.Set("role", actorRole); c.Next() })
+	router.GET("/rules", controller.ListAlertRules)
+	type page struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+			Total    int `json:"total"`
+			Page     int `json:"page"`
+			PageSize int `json:"page_size"`
+		} `json:"data"`
+	}
+	seen := map[int64]bool{}
+	for number := 1; number <= 5; number++ {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/rules?page=%d&limit=50&q=LIST-FIXTURE&status=enabled", number), nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result page
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success)
+		assert.Equal(t, 205, result.Data.Total)
+		assert.Equal(t, number, result.Data.Page)
+		assert.Equal(t, 50, result.Data.PageSize)
+		previous := int64(1 << 62)
+		for _, row := range result.Data.Items {
+			assert.False(t, seen[row.ID], "pages must not repeat rules")
+			assert.Less(t, row.ID, previous)
+			seen[row.ID], previous = true, row.ID
+		}
+	}
+	assert.Len(t, seen, 205, "all rows beyond the old 200 limit must be reachable")
+	for _, test := range []struct {
+		query string
+		total int
+		id    int64
+	}{
+		{"q=list-fixture&status=enabled&scope_type=channel&metric=success_rate&severity=P1&management_mode=platform_enforced", 1, rows[0].ID},
+		{"q=list-fixture&status=paused&scope_type=channel", 1, paused.ID},
+		{fmt.Sprintf("q=%d", corrupt.ID), 1, corrupt.ID},
+		{"q=missing", 0, 0},
+		{"q=list-fixture-%25", 0, 0},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/rules?page=9&limit=50&"+test.query, nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result page
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.Equal(t, test.total, result.Data.Total)
+		assert.Equal(t, 1, result.Data.Page)
+		if test.total > 0 {
+			require.Len(t, result.Data.Items, test.total)
+			assert.Equal(t, test.id, result.Data.Items[0].ID)
+		}
+	}
+	for _, query := range []string{"page=0", "page=bad", "page=1000001", "page=1&before_id=2", "page=1&limit=201", "page=1&status=bad", "page=1&scope_type=bad", "page=1&metric=bad", "page=1&severity=bad", "page=1&management_mode=bad"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/rules?"+query, nil))
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+	}
+	for _, query := range []string{"scope=all", "owner_user_id=2"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/rules?page=1&"+query, nil))
+		assert.Equal(t, http.StatusForbidden, response.Code)
+	}
+	actorID, actorRole = 3, common.RoleRootUser
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/rules?page=1&scope=all&q=list-fixture&status=enabled", nil))
+	var all page
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &all))
+	assert.Equal(t, 206, all.Data.Total)
+	actorID, actorRole = 1, common.RoleCommonUser
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/rules?limit=2&before_id=%d&q=list-fixture&status=enabled", rows[204].ID), nil))
+	var legacy struct {
+		Data []struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &legacy))
+	require.Len(t, legacy.Data, 2)
+	assert.Equal(t, rows[203].ID, legacy.Data[0].ID)
+}
+
+func TestAlertTargetDevelopmentNetworkValidation(t *testing.T) {
+	for _, environment := range []string{"dev", "", "production", "DEV", "development"} {
+		t.Run(fmt.Sprintf("ENV=%q", environment), func(t *testing.T) {
+			t.Setenv("ENV", environment)
+			client := alerting.NewTargetHTTPClient()
+			t.Cleanup(client.CloseIdleConnections)
+			transport := client.Transport.(*http.Transport)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			for _, host := range []string{"127.0.0.1", "10.0.0.7", "169.254.169.254", "198.18.0.38", "::1", "2001:2::26"} {
+				address := "https://" + net.JoinHostPort(host, "443") + "/hook"
+				_, err := alerting.ValidateTargetAddress(context.Background(), "feishu", alerting.TargetSecret{Address: address})
+				if environment == "dev" {
+					assert.NoError(t, err, address)
+				} else {
+					assert.ErrorIs(t, err, alerting.ErrTargetRejected, address)
+				}
+				// A cancelled context lets us verify the actual connection policy
+				// without connecting to a private service or requiring port 443.
+				connection, err := transport.DialContext(ctx, "tcp", net.JoinHostPort(host, "443"))
+				if connection != nil {
+					_ = connection.Close()
+				}
+				if environment == "dev" {
+					assert.ErrorIs(t, err, context.Canceled, address)
+				} else {
+					assert.ErrorIs(t, err, alerting.ErrTargetRejected, address)
+				}
+			}
+		})
+	}
+
+	t.Run("dev validates and delivers without a DNS preflight", func(t *testing.T) {
+		t.Setenv("ENV", "dev")
+		var lookups atomic.Int64
+		previousResolver := net.DefaultResolver
+		net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+			lookups.Add(1)
+			return nil, errors.New("DNS is unavailable")
+		}}
+		t.Cleanup(func() { net.DefaultResolver = previousResolver })
+		secret := alerting.TargetSecret{Address: "https://unresolvable-target.invalid/hook?key=do-not-echo"}
+		hint, err := alerting.ValidateTargetAddress(context.Background(), "feishu", secret)
+		require.NoError(t, err)
+		assert.Equal(t, "https://unresolvable-target.invalid/…", hint)
+		vault, err := alerting.NewTargetVault("test-key", map[string]string{"test-key": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))})
+		require.NoError(t, err)
+		sealed, err := vault.Seal(1, "feishu", secret)
+		require.NoError(t, err)
+		target := model.AlertTarget{ID: 17, OwnerUserID: 1, Type: "feishu", Revision: 1, KeyID: "test-key", Ciphertext: sealed, Language: "en"}
+		var requests int
+		vault.Client = &http.Client{Transport: alertHTTPTransport{send: func(request *http.Request) (*http.Response, error) {
+			requests++
+			assert.Equal(t, secret.Address, request.URL.String())
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
+		}}}
+		status, err := vault.Deliver(context.Background(), target, model.AlertEvent{ID: 1, Kind: "test", Summary: "Local delivery test"})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, status)
+		assert.Equal(t, 1, requests)
+		assert.Zero(t, lookups.Load())
+	})
+
+	t.Run("dev retains URL format and required credential validation", func(t *testing.T) {
+		t.Setenv("ENV", "dev")
+		for _, test := range []struct{ kind, address string }{
+			{"feishu", "http://127.0.0.1/hook"},
+			{"feishu", "https://127.0.0.1:8443/hook"},
+			{"feishu", "https://user:password@127.0.0.1/hook"},
+			{"feishu", "https://127.0.0.1/hook#fragment"},
+			{"unknown", "https://127.0.0.1/hook"},
+			{"gotify", "https://127.0.0.1/hook"},
+			{"email", "invalid-email"},
+		} {
+			_, err := alerting.ValidateTargetAddress(context.Background(), test.kind, alerting.TargetSecret{Address: test.address})
+			assert.ErrorIs(t, err, alerting.ErrTargetRejected, test.address)
+		}
+	})
+}
+
 func TestAlertTargetCredentialBinding(t *testing.T) {
+	t.Setenv("ENV", "production")
 	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))
 	vault, err := alerting.NewTargetVault("key-1", map[string]string{"key-1": key})
 	require.NoError(t, err)
@@ -948,6 +1909,7 @@ func TestAlertTargetCredentialBinding(t *testing.T) {
 }
 
 func TestAlertTargetValidationResponse(t *testing.T) {
+	t.Setenv("ENV", "production")
 	vault, err := alerting.NewTargetVault("test", map[string]string{"test": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("v", 32)))})
 	require.NoError(t, err)
 	previous := service.AlertTargetVault
@@ -985,6 +1947,91 @@ func TestAlertTargetValidationResponse(t *testing.T) {
 			assert.Equal(t, tc.message, result.MessageKey)
 			assert.Equal(t, tc.field, result.Field)
 			assert.NotContains(t, response.Body.String(), "do-not-echo")
+		})
+	}
+}
+
+func testAlertTargetTestCooldown(t *testing.T) {
+	previousEnabled, previousVault := common.AlertingEnabled, service.AlertTargetVault
+	common.AlertingEnabled = true
+	t.Cleanup(func() {
+		common.AlertingEnabled, service.AlertTargetVault = previousEnabled, previousVault
+	})
+	vault, err := alerting.NewTargetVault("test-key", map[string]string{"test-key": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))})
+	require.NoError(t, err)
+	service.AlertTargetVault = vault
+	sealed, err := vault.Seal(1, "email", alerting.TargetSecret{Address: "test@example.com"})
+	require.NoError(t, err)
+	target := model.AlertTarget{OwnerUserID: 1, Name: "Test cooldown", Type: "email", Enabled: true, Revision: 1, Ciphertext: sealed, KeyID: "test-key", Language: "en", LastTestAt: time.Now().Add(-61 * time.Second).UnixMilli()}
+	require.NoError(t, model.DB.Create(&target).Error)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", 1); c.Set("role", common.RoleCommonUser); c.Next() })
+	router.POST("/targets/:id/test", controller.TestAlertTarget)
+	testTarget := func() *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, fmt.Sprintf("/targets/%d/test", target.ID), nil))
+		return response
+	}
+
+	first := testTarget()
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var accepted model.AlertTarget
+	require.NoError(t, model.DB.First(&accepted, target.ID).Error)
+	second := testTarget()
+	require.Equal(t, http.StatusTooManyRequests, second.Code, second.Body.String())
+	var result struct {
+		Success    bool   `json:"success"`
+		MessageKey string `json:"message_key"`
+	}
+	require.NoError(t, common.Unmarshal(second.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Equal(t, "Please wait 60 seconds between notification tests.", result.MessageKey)
+	retryAfter, err := strconv.Atoi(second.Header().Get("Retry-After"))
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, retryAfter, 1)
+	assert.LessOrEqual(t, retryAfter, 60)
+	var current model.AlertTarget
+	require.NoError(t, model.DB.First(&current, target.ID).Error)
+	assert.Equal(t, accepted.LastTestAt, current.LastTestAt, "rejected requests must not extend the cooldown")
+	assert.Equal(t, accepted.Revision, current.Revision)
+	var jobs, audits int64
+	require.NoError(t, model.DB.Model(&model.AlertJob{}).Where("target_id = ?", target.ID).Count(&jobs).Error)
+	require.NoError(t, model.DB.Model(&model.AlertAudit{}).Where("object_id = ? AND operation = ?", target.ID, "target.test").Count(&audits).Error)
+	assert.EqualValues(t, 1, jobs)
+	assert.EqualValues(t, 1, audits)
+
+	for _, test := range []struct {
+		name, column, message string
+		value                 any
+		status                int
+	}{
+		{"concurrent test", "last_test_at", "Please wait 60 seconds between notification tests.", time.Now().UnixMilli(), http.StatusTooManyRequests},
+		{"concurrent edit", "revision", "Alert configuration changed. Please reload.", gorm.Expr("revision + 1"), http.StatusConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, model.DB.Model(&target).Update("last_test_at", time.Now().Add(-61*time.Second).UnixMilli()).Error)
+			var changed atomic.Bool
+			require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register("alert_target_concurrent_change", func(tx *gorm.DB) {
+				row, ok := tx.Statement.Dest.(*model.AlertTarget)
+				if !ok || row.ID != target.ID || !changed.CompareAndSwap(false, true) {
+					return
+				}
+				require.NoError(t, model.DB.Model(&target).UpdateColumn(test.column, test.value).Error)
+			}))
+			t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove("alert_target_concurrent_change")) })
+			response := testTarget()
+			assert.True(t, changed.Load())
+			require.Equal(t, test.status, response.Code, response.Body.String())
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			assert.Equal(t, test.message, result.MessageKey)
+			if test.status == http.StatusTooManyRequests {
+				assert.NotEmpty(t, response.Header().Get("Retry-After"))
+			} else {
+				assert.Empty(t, response.Header().Get("Retry-After"))
+			}
+			require.NoError(t, model.DB.Model(&model.AlertJob{}).Where("target_id = ?", target.ID).Count(&jobs).Error)
+			assert.EqualValues(t, 1, jobs, "conflicting requests must not enqueue another test")
 		})
 	}
 }
@@ -1221,7 +2268,7 @@ func testAlertBatchMigration(t *testing.T) {
 		configured[item.ID] = item.Configured
 	}
 	assert.True(t, configured[91])
-	assert.True(t, configured[92], "configured is destination presence, not an SSRF bypass")
+	assert.True(t, configured[92])
 	assert.False(t, configured[93])
 	for _, item := range candidates.Data.Items {
 		if item.Kind == "user_notifications" && item.ObjectID == "93" {
@@ -1233,7 +2280,7 @@ func testAlertBatchMigration(t *testing.T) {
 	}
 	assert.NotContains(t, response.Body.String(), "batch-public-secret")
 	assert.NotContains(t, response.Body.String(), "ops@example.com")
-	payload := `{"items":[{"kind":"token_spend","object_id":"91"},{"kind":"token_spend","object_id":"92"},{"kind":"user_notifications","object_id":"91"}]}`
+	payload := `{"items":[{"kind":"token_spend","object_id":"91"},{"kind":"token_spend","object_id":"92"},{"kind":"unknown","object_id":"site"},{"kind":"user_notifications","object_id":"91"}]}`
 	// Denial runs before any item can be imported.
 	request := httptest.NewRequest(http.MethodPost, "/migrations/batch", strings.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
@@ -1270,6 +2317,7 @@ func testAlertBatchMigration(t *testing.T) {
 			Data    struct {
 				Items []struct {
 					Success   bool                 `json:"success"`
+					Status    int                  `json:"status"`
 					Migration model.AlertMigration `json:"migration"`
 					Error     struct {
 						MessageKey string `json:"message_key"`
@@ -1280,12 +2328,12 @@ func testAlertBatchMigration(t *testing.T) {
 		}
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 		require.True(t, result.Success)
-		require.Len(t, result.Data.Items, 3)
+		require.Len(t, result.Data.Items, 4)
 		assert.True(t, result.Data.Items[0].Success)
-		assert.False(t, result.Data.Items[1].Success)
-		assert.Equal(t, "Notification destination is blocked by network access rules.", result.Data.Items[1].Error.MessageKey)
-		assert.Equal(t, "credentials.address", result.Data.Items[1].Error.Field)
-		assert.True(t, result.Data.Items[2].Success, "one failure does not prevent later imports")
+		require.True(t, result.Data.Items[1].Success, "existing private destinations must be importable")
+		assert.False(t, result.Data.Items[2].Success)
+		assert.Equal(t, http.StatusBadRequest, result.Data.Items[2].Status)
+		assert.True(t, result.Data.Items[3].Success, "one failure does not prevent later imports")
 		migration := result.Data.Items[0].Migration
 		assert.Equal(t, "legacy", migration.Executor)
 		assert.Equal(t, "ambiguous", migration.Status)
@@ -1305,6 +2353,11 @@ func testAlertBatchMigration(t *testing.T) {
 		assert.EqualValues(t, 2, targets)
 		assert.EqualValues(t, 2, rules)
 		assert.Zero(t, jobs, "import does not send notifications or execute actions")
+		var privateTarget model.AlertTarget
+		require.NoError(t, model.DB.Where("owner_user_id = ? AND type = ?", 92, "feishu").First(&privateTarget).Error)
+		secret, err := vault.Open(privateTarget)
+		require.NoError(t, err)
+		assert.Equal(t, "https://127.0.0.1/batch-private-secret", secret.Address)
 	}
 	var user model.User
 	var token model.Token
@@ -1458,7 +2511,7 @@ func testAlertUserSpendMigration(t *testing.T) {
 	states := map[string]model.LegacyUserQuotaMilestone{"8": state, "9": state}
 	encoded, err := common.Marshal(states)
 	require.NoError(t, err)
-	for _, option := range []model.Option{{Key: "quota_alert_user_cumulative_milestone", Value: string(encoded)}, {Key: "uid_quota_warning_robot", Value: "https://8.8.8.8/account-bot"}} {
+	for _, option := range []model.Option{{Key: "quota_alert_user_cumulative_milestone", Value: string(encoded)}, {Key: "uid_quota_warning_robot", Value: "https://198.18.0.7/account-bot"}} {
 		require.NoError(t, model.DB.Create(&option).Error)
 	}
 	require.NoError(t, model.DB.Create(&model.QuotaData{UserID: 8, CreatedAt: now.Unix() - now.Unix()%3600, Quota: 1250000000}).Error)
@@ -1476,7 +2529,7 @@ func testAlertUserSpendMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, migration.ID, again.ID)
 	assert.Equal(t, "legacy", migration.Executor)
-	assert.NotContains(t, migration.Checkpoint, "8.8.8.8")
+	assert.NotContains(t, migration.Checkpoint, "198.18.0.7")
 	snapshot, err := alerting.LegacyUserSpendSnapshot(ctx, 8)
 	require.NoError(t, err)
 	assert.EqualValues(t, 750000000, snapshot.UnnotifiedQuota, "$3500 accumulated minus the old $2000 tier retains $1500")
@@ -1633,7 +2686,7 @@ func testAlertKeyPeriodMigration(t *testing.T) {
 		common.AlertingEnabled, common.AlertingControlsEnabled, common.AlertingShadowMode, common.DataExportEnabled = oldEnabled, oldControls, oldShadow, oldStats
 	})
 	require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", "alert-test-boot").Updates(map[string]any{"updated_at": now.UnixMilli(), "captured_at": now.Add(-time.Second).UnixMilli()}).Error)
-	configs := map[string]*model.LegacyKeyQuotaUserConfig{"1": {FeishuRobotURL: "https://8.8.8.8/key-bot", OneHour: []model.LegacyKeyQuotaRule{{QuotaUSD: 100, Action: "warn"}, {QuotaUSD: 200, Action: "warn"}}, OneDay: []model.LegacyKeyQuotaRule{{QuotaUSD: 500, Action: "disable_key"}}}, "2": {FeishuRobotURL: "https://8.8.8.8/other-key-bot"}}
+	configs := map[string]*model.LegacyKeyQuotaUserConfig{"1": {FeishuRobotURL: "http://10.0.0.7:8080/key-bot", OneHour: []model.LegacyKeyQuotaRule{{QuotaUSD: 100, Action: "warn"}, {QuotaUSD: 200, Action: "warn"}}, OneDay: []model.LegacyKeyQuotaRule{{QuotaUSD: 500, Action: "disable_key"}}}, "2": {FeishuRobotURL: "https://8.8.8.8/other-key-bot"}}
 	encoded, err := common.Marshal(configs)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Create(&model.Option{Key: "key_quota_warning_config", Value: string(encoded)}).Error)
@@ -1722,7 +2775,7 @@ func testAlertLegacyNoticeMigration(t *testing.T) {
 	require.NoError(t, err)
 	option := model.Option{Key: "uid_quota_warning_robot"}
 	require.NoError(t, model.DB.FirstOrCreate(&option, model.Option{Key: option.Key}).Error)
-	require.NoError(t, model.DB.Model(&option).Update("value", "https://8.8.8.8/uid-events").Error)
+	require.NoError(t, model.DB.Model(&option).Update("value", "https://127.0.0.1/uid-events").Error)
 	migration, err := alerting.ImportLegacyNotice(ctx, root, vault, "uid_day", "site")
 	require.NoError(t, err)
 	var rule model.AlertRule
@@ -1750,6 +2803,18 @@ func testAlertLegacyNoticeMigration(t *testing.T) {
 	assert.Error(t, alerting.SwitchLegacyNotice(ctx, root, migration.ID, 2, "rollback", snapshot.SnapshotHash, rule.Revision))
 	engine := alerting.Engine{BootID: "notice-delivery", Deliver: func(context.Context, model.AlertTarget, model.AlertEvent) (int, error) { return 200, nil }}
 	require.NoError(t, engine.RunJobs(ctx, "notify", time.Now()))
+	// Terminal work cannot be drained or retried. Retain both records while
+	// switching back to the legacy executor; only live work blocks rollback.
+	var finishedJobs []model.AlertJob
+	require.NoError(t, model.DB.Where("rule_id = ?", rule.ID).Find(&finishedJobs).Error)
+	require.GreaterOrEqual(t, len(finishedJobs), 2)
+	for i, job := range finishedJobs {
+		status := "expired"
+		if i%2 == 1 {
+			status = "canceled"
+		}
+		require.NoError(t, model.DB.Model(&job).Update("status", status).Error)
+	}
 	require.NoError(t, alerting.SwitchLegacyNotice(ctx, root, migration.ID, 2, "rollback", snapshot.SnapshotHash, rule.Revision))
 	require.NoError(t, alerting.DispatchLegacyNotice(ctx, "uid_day", "site", "uid-new-day", "persisted-uid", notice, legacy))
 	assert.Equal(t, 2, oldSends)
@@ -1783,6 +2848,87 @@ func testAlertLegacyNoticeMigration(t *testing.T) {
 	assert.Zero(t, user.Quota)
 	assert.Zero(t, user.UsedQuota)
 	require.NoError(t, engine.RunJobs(ctx, "notify", time.Now()))
+}
+
+func testAlertChannelArrearsMigration(t *testing.T) {
+	ctx := context.Background()
+	previousVault, previousControls := service.AlertTargetVault, common.AlertingControlsEnabled
+	common.AlertingControlsEnabled = true
+	t.Cleanup(func() {
+		service.AlertTargetVault, common.AlertingControlsEnabled = previousVault, previousControls
+	})
+	vault, err := alerting.NewTargetVault("active", map[string]string{"active": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))})
+	require.NoError(t, err)
+	service.AlertTargetVault = vault
+	option := model.Option{Key: "feishu_qianfei_webhook_url"}
+	require.NoError(t, model.DB.FirstOrCreate(&option, model.Option{Key: option.Key}).Error)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", 3); c.Set("role", common.RoleRootUser); c.Next() })
+	router.POST("/migrations", controller.ImportAlertMigration)
+	importTarget := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/migrations", strings.NewReader(`{"kind":"channel_arrears","object_id":"site"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	var result struct {
+		Success    bool                 `json:"success"`
+		MessageKey string               `json:"message_key"`
+		Reason     string               `json:"reason"`
+		Data       model.AlertMigration `json:"data"`
+	}
+	for _, address := range []string{"", " \t "} {
+		require.NoError(t, model.DB.Model(&option).Update("value", address).Error)
+		response := importTarget()
+		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.False(t, result.Success)
+		assert.Equal(t, "Configure a legacy notification destination before importing.", result.MessageKey)
+		assert.Equal(t, "migration_destination_missing", result.Reason)
+		var migrations, targets int64
+		require.NoError(t, model.DB.Model(&model.AlertMigration{}).Where("kind = ? AND object_id = ?", "channel_arrears", "site").Count(&migrations).Error)
+		require.NoError(t, model.DB.Model(&model.AlertTarget{}).Where("name = ?", "Imported channel_arrears").Count(&targets).Error)
+		assert.Zero(t, migrations)
+		assert.Zero(t, targets)
+	}
+	address := "https://198.18.0.38/channel-balance?key=legacy-secret"
+	require.NoError(t, model.DB.Model(&option).Update("value", address).Error)
+	require.NoError(t, model.DB.Save(&model.Option{Key: "feishu_qianfei_secret", Value: "channel-signature"}).Error)
+	snapshot, err := alerting.LegacyNoticeSnapshot(ctx, "channel_arrears", "site")
+	require.NoError(t, err)
+	assert.True(t, snapshot.DestinationPresent)
+	response := importTarget()
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success)
+	migration := result.Data
+	assert.Equal(t, "channel_arrears", migration.Kind)
+	assert.Equal(t, "site", migration.ObjectID)
+	assert.Equal(t, "legacy", migration.Executor)
+	assert.Equal(t, "observing", migration.Status)
+	var rule model.AlertRule
+	require.NoError(t, model.DB.First(&rule, migration.RuleID).Error)
+	spec, err := model.AlertRuleConfig(rule)
+	require.NoError(t, err)
+	assert.True(t, spec.Enabled)
+	assert.Equal(t, "channel_arrears", spec.Condition.LegacySignal)
+	require.Len(t, spec.Notify.TargetIDs, 1)
+	var target model.AlertTarget
+	require.NoError(t, model.DB.First(&target, spec.Notify.TargetIDs[0]).Error)
+	secret, err := vault.Open(target)
+	require.NoError(t, err)
+	assert.Equal(t, address, secret.Address)
+	assert.Equal(t, "channel-signature", secret.Secret)
+	response = importTarget()
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.Equal(t, migration.ID, result.Data.ID)
+	assert.Equal(t, migration.RuleID, result.Data.RuleID)
+	var targets int64
+	require.NoError(t, model.DB.Model(&model.AlertTarget{}).Where("name = ?", "Imported channel_arrears").Count(&targets).Error)
+	assert.EqualValues(t, 1, targets)
 }
 
 func testAlertEvaluationIsolation(t *testing.T) {
@@ -1959,6 +3105,149 @@ func testAlertMetricCache(t *testing.T) {
 	}
 }
 
+func testAlertActionPresentationEdits(t *testing.T) {
+	ctx := context.Background()
+	oldActions, oldShadow, oldControls := common.AlertingActionsEnabled, common.AlertingShadowMode, common.AlertingControlsEnabled
+	common.AlertingActionsEnabled, common.AlertingShadowMode, common.AlertingControlsEnabled = true, false, true
+	t.Cleanup(func() {
+		common.AlertingActionsEnabled, common.AlertingShadowMode, common.AlertingControlsEnabled = oldActions, oldShadow, oldControls
+	})
+	for i, tc := range []struct {
+		name, status, edit, expected string
+		reauthorize                  bool
+	}{
+		{"pending rename", "pending", "presentation", "succeeded", true},
+		{"retry delivery edit", "retry_wait", "presentation", "succeeded", true},
+		{"claimed action gets a fresh lease", "running", "presentation", "succeeded", true},
+		{"expired work is not revived", "pending", "expired", "expired", false},
+		{"canceled work stays terminal", "canceled", "presentation", "canceled", false},
+		{"changed condition requires a new event", "pending", "condition", "canceled", false},
+		{"changed action is not reauthorized", "pending", "action", "canceled", false},
+		{"paused rule withdraws authorization", "pending", "pause", "canceled", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			// Keep source coverage explicit even when the full database matrix
+			// takes longer than a producer heartbeat lease on a slow machine.
+			require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", "alert-test-boot").Updates(map[string]any{"healthy": true, "updated_at": now.UnixMilli(), "captured_at": now.Add(-time.Second).UnixMilli()}).Error)
+			require.NoError(t, model.DB.Model(&model.SystemInstance{}).Where("node_name = ?", "alert-test-node").Update("last_seen_at", now.Unix()).Error)
+			token := model.Token{Id: 55000 + i, UserId: 1, Name: tc.name, Key: fmt.Sprintf("presentation-action-%d", i), Status: common.TokenStatusEnabled}
+			require.NoError(t, model.DB.Create(&token).Error)
+			row, spec, target := alertRuleFixture(t, "request_count")
+			target.ID, target.Name = token.Id, token.Name
+			spec.Scope.EntityIDs = []int{token.Id}
+			spec.Condition.Operator, spec.Condition.ThresholdCount, spec.Condition.RecoveryThresholdCount = "gte", 1, 0
+			spec.Condition.MinSamples = 1
+			spec.Actions = []model.AlertAction{{Type: "disable_api_key", Target: "matched_entity"}}
+			saved, err := alerting.SaveRule(ctx, alerting.Actor{ID: 1, Role: common.RoleCommonUser}, 1, row.ID, row.Revision, spec)
+			require.NoError(t, err)
+			saved.EffectiveAt = now.Add(-10 * time.Minute).UnixMilli()
+			require.NoError(t, model.DB.Model(saved).Update("effective_at", saved.EffectiveAt).Error)
+			spec, err = model.AlertRuleConfig(*saved)
+			require.NoError(t, err)
+			fact := model.AlertObservation{ID: model.AlertIdentity("presentation-action", i), SourceID: fmt.Sprintf("presentation-action-life-%d", i), Namespace: "health", Kind: "finished", Layer: "request", Sequence: 1, OccurredAt: now.Add(-time.Minute).UnixMilli(), StartedAt: now.Add(-2 * time.Minute).UnixMilli(), UserID: 1, TokenID: token.Id, SampleClass: "production", Outcome: "success", AttributionCovered: true}
+			require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+			measured, err := alerting.Measure(ctx, *saved, spec, target, now)
+			require.NoError(t, err)
+			require.Equal(t, "complete", measured.Status, measured.Reason)
+			require.EqualValues(t, 1, measured.Value)
+			engine := alerting.Engine{BootID: "presentation-actions"}
+			require.NoError(t, engine.ApplyMeasurement(ctx, *saved, spec, target, measured, now))
+			var job model.AlertJob
+			require.NoError(t, model.DB.Where("rule_id = ? AND kind = ?", saved.ID, "action").First(&job).Error)
+			if tc.status == "running" {
+				claimed, err := model.ClaimAlertJob(ctx, "action", "old-action-worker", now.UnixMilli())
+				require.NoError(t, err)
+				require.NotNil(t, claimed)
+				require.Equal(t, job.ID, claimed.ID)
+				job = *claimed
+			} else {
+				job.Status, job.Attempts = tc.status, 2
+				require.NoError(t, model.DB.Model(&job).Updates(map[string]any{"status": job.Status, "attempts": job.Attempts}).Error)
+			}
+			if tc.edit == "expired" {
+				job.ExpiresAt = now.Add(-time.Second).UnixMilli()
+				require.NoError(t, model.DB.Model(&job).Update("expires_at", job.ExpiresAt).Error)
+			}
+			spec.Name = "Edited " + tc.name
+			spec.Severity, spec.Notify.OnRecovery, spec.Acknowledgement.RemindAfterSeconds = "P2", false, 60
+			switch tc.edit {
+			case "condition":
+				spec.Condition.ThresholdCount = 10
+			case "action":
+				spec.Actions = nil
+			case "pause":
+				spec.Enabled = false
+			}
+			if i == 0 {
+				// Presentation edits still authorize enabled actions through the
+				// existing HTTP step-up flow; the internal save is not a bypass.
+				router := gin.New()
+				router.Use(func(c *gin.Context) { c.Set("id", 1); c.Set("role", common.RoleCommonUser); c.Next() })
+				router.PATCH("/rules/:id", controller.SaveAlertRule)
+				body, err := common.Marshal(map[string]any{"config": spec, "owner_user_id": 1, "expected_revision": saved.Revision})
+				require.NoError(t, err)
+				request := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/rules/%d", saved.ID), bytes.NewReader(body))
+				request.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+				var untouched model.AlertRule
+				require.NoError(t, model.DB.First(&untouched, saved.ID).Error)
+				assert.Equal(t, saved.Revision, untouched.Revision)
+			}
+			_, err = alerting.SaveRule(ctx, alerting.Actor{ID: 2, Role: common.RoleCommonUser}, 1, saved.ID, saved.Revision, spec)
+			require.ErrorIs(t, err, alerting.ErrForbidden)
+			edited, err := alerting.SaveRule(ctx, alerting.Actor{ID: 1, Role: common.RoleCommonUser}, 1, saved.ID, saved.Revision, spec)
+			require.NoError(t, err)
+			var current model.AlertJob
+			require.NoError(t, model.DB.First(&current, job.ID).Error)
+			assert.Equal(t, job.EventID, current.EventID)
+			assert.Equal(t, job.DedupKey, current.DedupKey)
+			assert.Equal(t, job.ExpiresAt, current.ExpiresAt)
+			assert.Equal(t, job.Attempts, current.Attempts)
+			assert.Equal(t, job.AvailableAt, current.AvailableAt)
+			if tc.reauthorize {
+				assert.Equal(t, saved.Generation, edited.Generation)
+				assert.Equal(t, edited.Revision, current.RuleRevision)
+				assert.Empty(t, current.LockedBy)
+				assert.Zero(t, current.LockedUntil)
+				var audits, outbox int64
+				require.NoError(t, model.DB.Model(&model.AlertAudit{}).Where("operation = ? AND object_id = ? AND revision = ?", "action.reauthorize", job.ID, edited.Revision).Count(&audits).Error)
+				require.NoError(t, model.DB.Model(&model.AlertOutbox{}).Where("id = ?", model.AlertIdentity("action-reauthorize", job.ID, edited.Revision)).Count(&outbox).Error)
+				assert.EqualValues(t, 1, audits)
+				assert.EqualValues(t, 1, outbox)
+			} else {
+				assert.Equal(t, saved.Revision, current.RuleRevision)
+			}
+			if tc.status == "running" {
+				var event model.AlertEvent
+				require.NoError(t, model.DB.First(&event, job.EventID).Error)
+				require.ErrorIs(t, engine.ExecuteAction(ctx, job, *saved, spec, target, event), model.ErrAlertConflict, "the old revision cannot commit after reauthorization")
+				stale := model.DB.Model(&model.AlertJob{}).Where("id = ? AND status = ? AND locked_by = ? AND locked_until = ?", job.ID, "running", job.LockedBy, job.LockedUntil).Update("status", "canceled")
+				require.NoError(t, stale.Error)
+				assert.Zero(t, stale.RowsAffected, "old completion cannot overwrite requeued work")
+			}
+			require.NoError(t, engine.RunJobs(ctx, "action", time.Now()))
+			require.NoError(t, model.DB.First(&current, job.ID).Error)
+			assert.Equal(t, tc.expected, current.Status, current.LastError)
+			require.NoError(t, model.DB.First(&token, token.Id).Error)
+			if tc.expected == "succeeded" {
+				assert.Equal(t, common.TokenStatusDisabled, token.Status)
+			} else {
+				assert.Equal(t, common.TokenStatusEnabled, token.Status)
+			}
+			var holds int64
+			require.NoError(t, model.DB.Model(&model.AlertDisableHold{}).Where("rule_id = ?", row.ID).Count(&holds).Error)
+			if tc.expected == "succeeded" {
+				assert.EqualValues(t, 1, holds)
+			} else {
+				assert.Zero(t, holds)
+			}
+		})
+	}
+}
+
 func testAlertMilestoneActions(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -2094,16 +3383,23 @@ func testAlertTargetManagement(t *testing.T) {
 	input.Credentials.Address = "https://169.254.169.254/metadata"
 	_, err = rotated.Save(ctx, root, 0, 0, input)
 	assert.ErrorIs(t, err, alerting.ErrTargetRejected)
+	var lookups atomic.Int64
+	previousResolver := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		lookups.Add(1)
+		return nil, errors.New("DNS is unavailable during migration")
+	}}
+	t.Cleanup(func() { net.DefaultResolver = previousResolver })
 	for _, item := range []struct {
 		setting map[string]any
 		kind    string
 		feishu  bool
 	}{
 		{map[string]any{"notify_type": "email", "notification_email": "legacy@example.com"}, "email", false},
-		{map[string]any{"notify_type": "webhook", "webhook_url": "https://8.8.8.8/generic", "webhook_secret": "old-secret"}, "webhook_v1", false},
-		{map[string]any{"notify_type": "webhook", "webhook_url": "https://8.8.8.8/bot", "webhook_secret": "old-secret"}, "feishu", true},
-		{map[string]any{"notify_type": "bark", "bark_url": "https://8.8.8.8/key/{{title}}/{{content}}"}, "bark", false},
-		{map[string]any{"notify_type": "gotify", "gotify_url": "https://8.8.8.8", "gotify_token": "old-token", "gotify_priority": 7}, "gotify", false},
+		{map[string]any{"notify_type": "webhook", "webhook_url": "https://legacy-alert.invalid/generic", "webhook_secret": "old-secret"}, "webhook_v1", false},
+		{map[string]any{"notify_type": "webhook", "webhook_url": "https://127.0.0.1/bot", "webhook_secret": "old-secret"}, "feishu", true},
+		{map[string]any{"notify_type": "bark", "bark_url": "https://198.18.0.7/key/{{title}}/{{content}}"}, "bark", false},
+		{map[string]any{"notify_type": "gotify", "gotify_url": "http://10.0.0.7:8080", "gotify_token": "old-token", "gotify_priority": 7}, "gotify", false},
 	} {
 		setting, err := common.Marshal(item.setting)
 		require.NoError(t, err)
@@ -2118,6 +3414,17 @@ func testAlertTargetManagement(t *testing.T) {
 		assert.Equal(t, first.ID, second.ID, "repeat import reuses the same encrypted destination")
 		secret, err := rotated.Open(*first)
 		require.NoError(t, err)
+		switch item.kind {
+		case "email":
+			assert.Equal(t, item.setting["notification_email"], secret.Address)
+		case "webhook_v1", "feishu":
+			assert.Equal(t, item.setting["webhook_url"], secret.Address)
+			assert.Equal(t, "old-secret", secret.Secret)
+		case "bark":
+			assert.Equal(t, item.setting["bark_url"], secret.Address)
+		case "gotify":
+			assert.Equal(t, item.setting["gotify_url"], secret.Address)
+		}
 		if item.kind == "gotify" {
 			assert.Equal(t, "old-token", secret.Token)
 			assert.Equal(t, 7, secret.Priority)
@@ -2125,7 +3432,14 @@ func testAlertTargetManagement(t *testing.T) {
 		var unchanged model.User
 		require.NoError(t, model.DB.Select("id", "setting").First(&unchanged, 2).Error)
 		assert.Equal(t, string(setting), unchanged.Setting)
+		if item.kind == "feishu" {
+			_, err = rotated.Save(ctx, root, 2, 0, alerting.TargetInput{Name: "New target", Type: "feishu", Enabled: true, Credentials: &secret})
+			assert.ErrorIs(t, err, alerting.ErrTargetRejected, "new target validation remains independent of migration")
+			_, err = rotated.Deliver(ctx, *first, model.AlertEvent{Kind: "test"})
+			assert.ErrorIs(t, err, alerting.ErrTargetRejected, "import must not bypass delivery-time network checks")
+		}
 	}
+	assert.Zero(t, lookups.Load(), "legacy imports must not depend on DNS availability")
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 2).Update("setting", "").Error)
 }
 
@@ -2273,4 +3587,374 @@ func testAlertUsageBridge(t *testing.T) {
 	assert.EqualValues(t, 1, count)
 	require.NoError(t, model.DB.Model(&model.QuotaData{}).Where("model_name = ?", "alert-minimal-only").Count(&count).Error)
 	assert.Zero(t, count)
+}
+
+func testAlertLegacyChannelNotifications(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	ctx := context.Background()
+	root := alerting.Actor{ID: 3, Role: common.RoleRootUser}
+	oldEnabled, oldControls, oldShadow, oldDisable, oldErrorLog := common.AlertingEnabled, common.AlertingControlsEnabled, common.AlertingShadowMode, common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
+	oldOptions := common.OptionMap
+	common.AlertingEnabled, common.AlertingControlsEnabled, common.AlertingShadowMode = true, true, false
+	common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = false, false
+	common.OptionMap = map[string]string{"feishu_qianfei_webhook_url": "https://127.0.0.1/local-notice"}
+	t.Cleanup(func() {
+		common.AlertingEnabled, common.AlertingControlsEnabled, common.AlertingShadowMode, common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = oldEnabled, oldControls, oldShadow, oldDisable, oldErrorLog
+		common.OptionMap = oldOptions
+	})
+	// Production cooldowns are process-wide; each database uses distinct channel
+	// identities so one engine fixture cannot suppress another engine's notice.
+	base := map[string]int{"sqlite": 900, "mysql": 1900, "postgres": 2900}[model.DB.Dialector.Name()]
+	for _, id := range []int{base + 1, base + 2, base + 3, base + 4} {
+		require.NoError(t, model.DB.Create(&model.Channel{Id: id, Name: fmt.Sprintf("local-notice-%d", id), Type: 24, Status: common.ChannelStatusEnabled, Models: "model-a"}).Error)
+	}
+	vault, err := alerting.NewTargetVault("active", map[string]string{"active": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))})
+	require.NoError(t, err)
+	option := model.Option{Key: "feishu_qianfei_webhook_url"}
+	require.NoError(t, model.DB.FirstOrCreate(&option, model.Option{Key: option.Key}).Error)
+	require.NoError(t, model.DB.Model(&option).Update("value", common.OptionMap[option.Key]).Error)
+	migration, err := alerting.ImportLegacyNotice(ctx, root, vault, "channel_arrears", "site")
+	require.NoError(t, err)
+	var row model.AlertRule
+	require.NoError(t, model.DB.First(&row, migration.RuleID).Error)
+	spec, err := model.AlertRuleConfig(row)
+	require.NoError(t, err)
+	spec.Scope.ChannelIDs = []int{base + 3, base + 1, base + 4, base + 1}
+	require.NoError(t, alerting.Validate(ctx, root, 0, &spec))
+	assert.Equal(t, []int{base + 1, base + 3, base + 4}, spec.Scope.ChannelIDs)
+	for _, invalid := range []struct {
+		signal   string
+		channels []int
+	}{{"channel_arrears", []int{999999}}, {"uid_day", []int{base + 1}}} {
+		bad := spec
+		bad.Condition.LegacySignal, bad.Scope.ChannelIDs = invalid.signal, invalid.channels
+		assert.ErrorIs(t, alerting.Validate(ctx, root, 0, &bad), alerting.ErrInvalid)
+	}
+	saved, err := alerting.SaveRule(ctx, root, 0, row.ID, row.Revision, spec)
+	require.NoError(t, err)
+	snapshot, err := alerting.LegacyNoticeSnapshot(ctx, migration.Kind, migration.ObjectID)
+	require.NoError(t, err)
+	if migration.Executor != "unified" {
+		require.NoError(t, alerting.SwitchLegacyNotice(ctx, root, migration.ID, migration.Revision, "cutover", snapshot.SnapshotHash, saved.Revision))
+	}
+	for _, test := range []struct {
+		id, status int
+		message    string
+		events     int64
+	}{
+		{base + 1, 402, "Insufficient Balance api_key:must-be-masked", 1},
+		{base + 2, 403, "Access denied. https://help.aliyun.com/zh/model-studio/error-code#access-denied", 0},
+		{base + 3, 403, "Access denied. https://help.aliyun.com/zh/model-studio/error-code#access-denied", 1},
+		{base + 4, 403, "Access denied: model permission is missing", 0},
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		apiErr := types.NewOpenAIError(errors.New(test.message), types.ErrorCodeBadResponseStatusCode, test.status)
+		channel := types.ChannelError{ChannelId: test.id, ChannelName: fmt.Sprintf("local-notice-%d", test.id), AutoBan: true}
+		service.ProcessChannelError(c, channel, apiErr, nil, "", 0, false)
+		var count int64
+		require.NoError(t, model.DB.Model(&model.AlertEvent{}).Where("rule_id = ? AND target_name = ?", row.ID, channel.ChannelName).Count(&count).Error)
+		assert.Equal(t, test.events, count, test.message)
+		var loaded model.Channel
+		require.NoError(t, model.DB.First(&loaded, test.id).Error)
+		assert.Equal(t, common.ChannelStatusEnabled, loaded.Status, "sending a notification must not enable automatic channel disablement")
+	}
+	var event model.AlertEvent
+	require.NoError(t, model.DB.Where("rule_id = ? AND target_name = ?", row.ID, fmt.Sprintf("local-notice-%d", base+1)).First(&event).Error)
+	assert.NotContains(t, event.Evidence, "must-be-masked")
+	assert.Contains(t, event.Evidence, fmt.Sprintf(`"channel_id":%d`, base+1))
+	// A source without channel metadata must not escape a configured restriction.
+	oldSends := 0
+	legacy := func(context.Context) error { oldSends++; return nil }
+	require.NoError(t, alerting.DispatchLegacyNotice(ctx, "channel_arrears", "site", "missing-channel-metadata", "unknown-local-channel", alerting.LegacyNotice{Title: "Unknown channel", Content: "must be skipped"}, legacy))
+	assert.Zero(t, oldSends)
+	var unknown int64
+	require.NoError(t, model.DB.Model(&model.AlertEvent{}).Where("rule_id = ? AND target_name = ?", row.ID, "unknown-local-channel").Count(&unknown).Error)
+	assert.Zero(t, unknown)
+	option = model.Option{Key: "slow_error_feishu_webhook_url"}
+	require.NoError(t, model.DB.FirstOrCreate(&option, model.Option{Key: option.Key}).Error)
+	require.NoError(t, model.DB.Model(&option).Update("value", "https://127.0.0.1/slow-events").Error)
+	slow, err := alerting.ImportLegacyNotice(ctx, root, vault, "slow_error", "site")
+	require.NoError(t, err)
+	row = model.AlertRule{}
+	require.NoError(t, model.DB.First(&row, slow.RuleID).Error)
+	spec, err = model.AlertRuleConfig(row)
+	require.NoError(t, err)
+	spec.Scope.ChannelIDs = []int{base + 1}
+	saved, err = alerting.SaveRule(ctx, root, 0, row.ID, row.Revision, spec)
+	require.NoError(t, err)
+	snapshot, err = alerting.LegacyNoticeSnapshot(ctx, slow.Kind, slow.ObjectID)
+	require.NoError(t, err)
+	require.NoError(t, alerting.SwitchLegacyNotice(ctx, root, slow.ID, slow.Revision, "cutover", snapshot.SnapshotHash, saved.Revision))
+	for _, id := range []int{base + 1, base + 2} {
+		notice := alerting.LegacyNotice{ChannelID: id, Title: "Slow error", Content: "500 after 211 seconds; threshold 180 seconds; request local-slow-request"}
+		require.NoError(t, alerting.DispatchLegacyNotice(ctx, "slow_error", "site", fmt.Sprintf("local-slow-%d", id), fmt.Sprintf("local-notice-%d", id), notice, legacy))
+	}
+	var slowEvents []model.AlertEvent
+	require.NoError(t, model.DB.Where("rule_id = ?", slow.RuleID).Find(&slowEvents).Error)
+	require.Len(t, slowEvents, 1)
+	assert.Equal(t, fmt.Sprintf("local-notice-%d", base+1), slowEvents[0].TargetName)
+	assert.Contains(t, alerting.RenderNotification("zh-CN", slowEvents[0]), "local-slow-request")
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", root.ID); c.Set("role", root.Role); c.Next() })
+	router.GET("/rules", controller.ListAlertRules)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/rules?page=1&scope=all&channel_id=%d", base+1), nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var related struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+			Total int `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &related))
+	assert.Equal(t, 2, related.Data.Total, "channel links must include both scoped legacy rules")
+	require.Len(t, related.Data.Items, 2)
+	assert.ElementsMatch(t, []int64{migration.RuleID, slow.RuleID}, []int64{related.Data.Items[0].ID, related.Data.Items[1].ID})
+}
+
+func TestAlertNotificationUsageAndLegacyDetails(t *testing.T) {
+	for _, language := range []string{"en", "zh-CN", "zh-TW"} {
+		t.Run(language, func(t *testing.T) {
+			condition := model.AlertCondition{Metric: "spend_net", ThresholdUSD: "1000", Window: model.AlertWindow{Timezone: "Asia/Shanghai"}}
+			event := alertNotificationFixture(t, condition, 157340000, "milestone")
+			spec := model.AlertRuleSpec{Name: "User spending", Severity: "P2", QuotaUnit: 1000000, Scope: model.AlertScope{Type: "account"}, Condition: condition, Trigger: model.AlertTrigger{Mode: "milestone", StepUSD: "1000"}}
+			config, err := common.Marshal(spec)
+			require.NoError(t, err)
+			event.RuleConfig = string(config)
+			event.MilestoneFirst, event.MilestoneLast = 443, 444
+			for _, target := range []alerting.MonitoredTarget{{Type: "account", ID: 62, OwnerUserID: 62}, {Type: "api_key", ID: 19, OwnerUserID: 62}} {
+				evidence, err := common.Marshal(map[string]any{"target": target, "measurement": alerting.Measurement{Value: 444500000000, Samples: 16, Status: "complete"}})
+				require.NoError(t, err)
+				event.Evidence = string(evidence)
+				message := alerting.RenderNotification(language, event)
+				assert.Contains(t, message, "UserID=62")
+				if target.Type == "api_key" {
+					assert.Contains(t, message, "KeyID=19")
+				}
+				assert.Contains(t, message, "444000 USD")
+				assert.Contains(t, message, "1000 USD")
+				assert.NotContains(t, message, "alert.target.")
+				assert.NotContains(t, message, "alert.milestone.amount")
+			}
+			body, err := common.Marshal(alerting.LegacyNotice{ChannelID: 49, Title: "Slow channel error", Content: "local environment\nChannel usapi-gemini (49)\nStatusCode: 500\nRequestId: local-request-123\n211s > 180s"})
+			require.NoError(t, err)
+			event.Kind, event.Evidence, event.CreatedAt = "legacy_notice", string(body), time.Date(2026, 11, 15, 13, 6, 28, 0, time.UTC).UnixMilli()
+			message := alerting.RenderNotification(language, event)
+			assert.Contains(t, message, "local-request-123")
+			assert.Contains(t, message, "211s > 180s")
+			assert.Contains(t, message, "2026-11-15T21:06:28+08:00")
+			assert.Contains(t, message, "/alerts?event_id=29")
+			assert.NotContains(t, message, "alert.notice.context")
+		})
+	}
+}
+
+func testAlertTrafficBaselines(t *testing.T) {
+	ctx := context.Background()
+	root := alerting.Actor{ID: 3, Role: common.RoleRootUser}
+	target := model.AlertTarget{OwnerUserID: 0, Name: "Traffic operations", Type: "email", Enabled: true, Revision: 1}
+	require.NoError(t, model.DB.Create(&target).Error)
+	for _, id := range []int{3101, 3102} {
+		require.NoError(t, model.DB.Create(&model.Channel{Id: id, Name: fmt.Sprintf("traffic-%d", id), Type: 1, Status: common.ChannelStatusEnabled, Models: "traffic-model", Group: "default"}).Error)
+	}
+	var spec model.AlertRuleSpec
+	require.NoError(t, common.UnmarshalJsonStr(fmt.Sprintf(`{"name":"Traffic drop","category":"health","severity":"P2","enabled":true,"management_mode":"platform_enforced","scope":{"type":"channel_model","channel_ids":[3101],"group_mode":"per_entity","model_selector":{"mode":"explicit","models":["traffic-model"]}},"condition":{"metric":"request_volume_change","change_direction":"decrease","baseline":{"mode":"manual","count":10},"operator":"gte","threshold_bps":5000,"recovery_threshold_bps":2000,"min_samples":0,"hold_seconds":0,"recovery_seconds":0,"window":{"type":"rolling","duration_seconds":300,"timezone":"Asia/Shanghai"}},"trigger":{"mode":"incident","repeat_seconds":60},"notify":{"target_ids":[%d],"on_recovery":true},"actions":[],"recovery":{"mode":"manual"}}`, target.ID), &spec))
+	require.NoError(t, alerting.Validate(ctx, root, 0, &spec))
+	row, err := alerting.SaveRule(ctx, root, 0, 0, 0, spec)
+	require.NoError(t, err)
+	now := time.Now().Add(-2 * time.Second)
+	row.EffectiveAt = now.Add(-time.Hour).UnixMilli()
+	require.NoError(t, model.DB.Model(row).Update("effective_at", row.EffectiveAt).Error)
+	targets, err := alerting.ResolveTargets(ctx, *row, spec)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	monitored := targets[0]
+	for i := range 4 {
+		at := now.Add(-time.Duration(30+i) * time.Second).UnixMilli()
+		fact := model.AlertObservation{ID: model.AlertIdentity("traffic-start", i), SourceID: model.AlertIdentity("traffic-source", i), Namespace: "health", Kind: "started", Layer: "channel_attempt", ChannelID: 3101, ChannelName: "traffic-3101", UserID: 1, TokenID: 11, ModelKey: monitored.Model, ConfigVersion: monitored.ConfigVersion, SampleClass: "production", AttributionCovered: true, Sequence: 1, StartedAt: at, OccurredAt: at, RequestID: "same-user-request"}
+		require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+		fact.ID = model.AlertIdentity("traffic-metadata", i)
+		fact.Kind = "metadata"
+		fact.Sequence = 2
+		fact.OccurredAt++
+		require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+	}
+	parent := model.AlertObservation{ID: model.AlertIdentity("traffic-parent-start"), SourceID: model.AlertIdentity("traffic-parent"), Namespace: "health", Kind: "started", Layer: "request", SampleClass: "security", Sequence: 1, StartedAt: now.Add(-time.Minute).UnixMilli(), OccurredAt: now.Add(-time.Minute).UnixMilli(), RequestID: "same-user-request"}
+	require.NoError(t, model.AcceptAlertObservation(ctx, parent))
+	parent.ID = model.AlertIdentity("traffic-parent-metadata")
+	parent.Kind = "metadata"
+	parent.Sequence = 2
+	parent.SampleClass = "production"
+	parent.ModelKey = "traffic-model"
+	parent.UserID = 1
+	parent.AttributionCovered = true
+	parent.OccurredAt++
+	require.NoError(t, model.AcceptAlertObservation(ctx, parent))
+	measured, err := alerting.Measure(ctx, *row, spec, monitored, now)
+	require.NoError(t, err)
+	require.Equal(t, "complete", measured.Status, measured.Reason)
+	assert.EqualValues(t, 6000, measured.Value, "four started attempts against a baseline of ten is a 60 percent decrease, even while all are in flight")
+	engine := alerting.Engine{}
+	require.NoError(t, engine.ApplyMeasurement(ctx, *row, spec, monitored, measured, now))
+	var events []model.AlertEvent
+	require.NoError(t, model.DB.Where("rule_id = ?", row.ID).Find(&events).Error)
+	require.Len(t, events, 1)
+	for _, language := range []string{"en", "zh-CN", "zh-TW"} {
+		notification := alerting.RenderNotification(language, events[0])
+		assert.Contains(t, notification, "60%")
+		assert.Contains(t, notification, "50%")
+		assert.NotContains(t, notification, "6000")
+	}
+	// A drifted history must not replace the incident's original baseline.
+	drifted := measured
+	var payload map[string]any
+	encoded, err := common.Marshal(drifted)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	traffic := payload["traffic"].(map[string]any)
+	traffic["baseline_scaled"] = "40000"
+	encoded, err = common.Marshal(payload)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(encoded, &drifted))
+	require.NoError(t, engine.ApplyMeasurement(ctx, *row, spec, monitored, drifted, now.Add(time.Second)))
+	var incident model.AlertIncident
+	require.NoError(t, model.DB.Where("rule_id = ?", row.ID).First(&incident).Error)
+	assert.Equal(t, "firing", incident.Status, "a falling baseline must not silently recover an ongoing drop")
+	// A fresh engine must recover against the persisted baseline, with its own
+	// recovery hold, even when the current historical baseline is unavailable.
+	recovered := measured
+	recovered.Traffic = &alerting.TrafficMeasurement{Count: 8, CurrentComplete: true}
+	recovered.Status, recovered.Reason = "warming_up", "baseline_insufficient"
+	recoverySpec := spec
+	recoverySpec.Condition.RecoverySeconds = 10
+	restarted := alerting.Engine{}
+	require.NoError(t, restarted.ApplyMeasurement(ctx, *row, recoverySpec, monitored, recovered, now.Add(2*time.Second)))
+	require.NoError(t, model.DB.First(&incident, incident.ID).Error)
+	assert.Equal(t, "firing", incident.Status)
+	require.NoError(t, restarted.ApplyMeasurement(ctx, *row, recoverySpec, monitored, recovered, now.Add(12*time.Second)))
+	require.NoError(t, model.DB.First(&incident, incident.ID).Error)
+	assert.Equal(t, "resolved", incident.Status)
+	var recoveryEvent model.AlertEvent
+	require.NoError(t, model.DB.Where("rule_id = ? AND kind = ?", row.ID, "recovery").First(&recoveryEvent).Error)
+	assert.Contains(t, alerting.RenderNotification("en", recoveryEvent), "20%")
+	// Absolute request counts treat a fully covered empty window as zero.
+	absolute := spec
+	absolute.Condition.Metric = "request_started_count"
+	absolute.Condition.Operator = "lt"
+	absolute.Condition.ThresholdCount = 1
+	absolute.Condition.RecoveryThresholdCount = 1
+	absolute.Condition.Window.DurationSeconds = 60
+	absolute.Scope.Type = "channel"
+	absolute.Scope.ChannelIDs = []int{3102}
+	absolute.Condition.Baseline = nil
+	absolute.Condition.ChangeDirection = ""
+	require.NoError(t, alerting.Validate(ctx, root, 0, &absolute))
+	emptyRow, err := alerting.SaveRule(ctx, root, 0, 0, 0, absolute)
+	require.NoError(t, err)
+	emptyRow.EffectiveAt = row.EffectiveAt
+	require.NoError(t, model.DB.Model(emptyRow).Update("effective_at", emptyRow.EffectiveAt).Error)
+	emptyTargets, err := alerting.ResolveTargets(ctx, *emptyRow, absolute)
+	require.NoError(t, err)
+	zero, err := alerting.Measure(ctx, *emptyRow, absolute, emptyTargets[0], now)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", zero.Status, zero.Reason)
+	assert.Zero(t, zero.Value)
+	require.NoError(t, engine.ApplyMeasurement(ctx, *emptyRow, absolute, emptyTargets[0], zero, now))
+	var zeroEvents int64
+	require.NoError(t, model.DB.Model(&model.AlertEvent{}).Where("rule_id = ?", emptyRow.ID).Count(&zeroEvents).Error)
+	assert.EqualValues(t, 1, zeroEvents)
+	// Global models use parent operations, not the four retry attempts.
+	global := spec
+	global.Scope.Type = "model"
+	global.Scope.ChannelIDs = nil
+	global.Condition.LatencyBasis = "gateway_request"
+	globalRow, err := alerting.SaveRule(ctx, root, 0, 0, 0, global)
+	require.NoError(t, err)
+	globalRow.EffectiveAt = row.EffectiveAt
+	require.NoError(t, model.DB.Model(globalRow).Update("effective_at", globalRow.EffectiveAt).Error)
+	globalTargets, err := alerting.ResolveTargets(ctx, *globalRow, global)
+	require.NoError(t, err)
+	require.Len(t, globalTargets, 1)
+	overall, err := alerting.Measure(ctx, *globalRow, global, globalTargets[0], now)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", overall.Status, overall.Reason)
+	assert.EqualValues(t, 9000, overall.Value)
+	assert.Error(t, alerting.Validate(ctx, alerting.Actor{ID: 1, Role: common.RoleCommonUser}, 0, &global))
+	for _, invalid := range []struct {
+		name   string
+		change func(*model.AlertRuleSpec)
+	}{
+		{"zero manual baseline", func(s *model.AlertRuleSpec) { s.Condition.Baseline.Count = 0 }},
+		{"decrease above 100 percent", func(s *model.AlertRuleSpec) { s.Condition.ThresholdBPS = 10001 }},
+		{"recovery overlaps trigger", func(s *model.AlertRuleSpec) { s.Condition.RecoveryThresholdBPS = s.Condition.ThresholdBPS }},
+		{"overlapping history", func(s *model.AlertRuleSpec) {
+			s.Condition.Baseline = &model.AlertTrafficBaseline{Mode: "historical", HistorySeconds: 60}
+		}},
+		{"non-incident trigger", func(s *model.AlertRuleSpec) { s.Trigger.Mode = "once" }},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			encoded, err := common.Marshal(spec)
+			require.NoError(t, err)
+			var candidate model.AlertRuleSpec
+			require.NoError(t, common.Unmarshal(encoded, &candidate))
+			invalid.change(&candidate)
+			assert.ErrorIs(t, alerting.Validate(ctx, root, 0, &candidate), alerting.ErrInvalid)
+		})
+	}
+	historical := spec
+	historical.Condition.ChangeDirection = "increase"
+	historical.Condition.ThresholdBPS = 15000
+	historical.Condition.Baseline = &model.AlertTrafficBaseline{Mode: "historical", HistorySeconds: 1800, MinimumCount: 1}
+	historyRow, err := alerting.SaveRule(ctx, root, 0, 0, 0, historical)
+	require.NoError(t, err)
+	historyRow.EffectiveAt = row.EffectiveAt
+	require.NoError(t, model.DB.Model(historyRow).Update("effective_at", historyRow.EffectiveAt).Error)
+	for i := range 9 {
+		at := now.Add(-10 * time.Minute).UnixMilli()
+		fact := model.AlertObservation{ID: model.AlertIdentity("traffic-history", i), SourceID: model.AlertIdentity("traffic-history-source", i), Namespace: "health", Kind: "started", Layer: "channel_attempt", ChannelID: 3101, UserID: 1, ModelKey: monitored.Model, ConfigVersion: monitored.ConfigVersion, SampleClass: "production", AttributionCovered: true, Sequence: 1, StartedAt: at, OccurredAt: at}
+		require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+	}
+	for _, excluded := range []struct {
+		class   string
+		channel int
+	}{{"probe", 3101}, {"production", 3102}} {
+		at := now.Add(-10 * time.Minute).UnixMilli()
+		fact := model.AlertObservation{ID: model.AlertIdentity("traffic-excluded", excluded.class), SourceID: model.AlertIdentity("traffic-excluded-source", excluded.class), Namespace: "health", Kind: "started", Layer: "channel_attempt", ChannelID: excluded.channel, UserID: 1, ModelKey: monitored.Model, ConfigVersion: monitored.ConfigVersion, SampleClass: excluded.class, Sequence: 1, StartedAt: at, OccurredAt: at}
+		require.NoError(t, model.AcceptAlertObservation(ctx, fact))
+	}
+	growth, err := alerting.Measure(ctx, *historyRow, historical, monitored, now)
+	require.NoError(t, err)
+	require.Equal(t, "complete", growth.Status, growth.Reason)
+	assert.EqualValues(t, 15000, growth.Traffic.BaselineScaled, "nine historical starts over 30 minutes normalize to 1.5 calls per five-minute window")
+	assert.EqualValues(t, 16666, growth.Value, "growth beyond 100 percent is valid")
+	var beforeEvents, afterEvents int64
+	require.NoError(t, model.DB.Model(&model.AlertEvent{}).Count(&beforeEvents).Error)
+	points, err := alerting.ReplayRule(ctx, *historyRow, historical, now.Add(-time.Second).UnixMilli(), now.UnixMilli(), 1, now)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.True(t, points[0].Matched)
+	assert.EqualValues(t, 16666, points[0].Measurement.Value)
+	require.NoError(t, model.DB.Model(&model.AlertEvent{}).Count(&afterEvents).Error)
+	assert.Equal(t, beforeEvents, afterEvents, "replay does not emit notifications")
+	historical.Condition.Baseline.MinimumCount = 2
+	low, err := alerting.Measure(ctx, *historyRow, historical, monitored, now)
+	require.NoError(t, err)
+	assert.Equal(t, "warming_up", low.Status)
+	assert.Equal(t, "baseline_insufficient", low.Reason)
+	// Previously configured final-request counts also accept a healthy zero.
+	absolute.Condition.Metric = "request_count"
+	finalCount, err := alerting.Measure(ctx, *emptyRow, absolute, emptyTargets[0], now)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", finalCount.Status, finalCount.Reason)
+	assert.Zero(t, finalCount.Value)
+	require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", "alert-test-boot").Update("healthy", false).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", "alert-test-boot").Update("healthy", true).Error)
+	})
+	absolute.Condition.Metric = "request_started_count"
+	unknown, err := alerting.Measure(ctx, *emptyRow, absolute, emptyTargets[0], now)
+	require.NoError(t, err)
+	assert.NotEqual(t, "complete", unknown.Status, "a telemetry outage cannot be treated as zero traffic")
 }

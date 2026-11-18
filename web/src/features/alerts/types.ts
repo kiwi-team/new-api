@@ -27,6 +27,7 @@ export type AlertScope =
   | 'api_key'
   | 'channel'
   | 'channel_model'
+  | 'model'
   | 'system'
   | 'uid_budget'
   | 'project_budget'
@@ -40,17 +41,24 @@ export type RuleSpec = {
   scope: {
     type: AlertScope
     selector: string
-    entity_ids: number[]
-    channel_ids: number[]
+    entity_ids?: number[] | null
+    channel_ids?: number[] | null
     group_mode: string
     include_future: boolean
     model_selector: {
       mode: string
-      models: string[]
+      models: string[] | null
       include_future_models: boolean
     }
   }
   condition: {
+    baseline?: {
+      mode: 'manual' | 'historical'
+      count?: number
+      history_seconds?: number
+      minimum_count?: number
+    }
+    change_direction?: 'increase' | 'decrease'
     legacy_signal?: string
     balance_pool?: string
     subscription_id?: number
@@ -94,8 +102,8 @@ export type RuleSpec = {
       partial_after_seconds: number
     }
   }
-  notify: { target_ids: number[]; on_recovery: boolean }
-  actions: { type: string; target: string }[]
+  notify: { target_ids: number[] | null; on_recovery: boolean }
+  actions: { type: string; target: string }[] | null
   action_guard?: { min_remaining_channels: number; on_no_alternative: string }
   recovery: {
     protocol?: string
@@ -104,13 +112,13 @@ export type RuleSpec = {
     duration_limit_ms: number
     successes: number
     observe_seconds: number
-    models?: string[]
+    models?: string[] | null
   }
   acknowledgement: {
     required: boolean
     remind_after_seconds: number
     escalate_after_seconds: number
-    escalation_target_ids: number[]
+    escalation_target_ids: number[] | null
   }
 }
 export type AlertRule = {
@@ -237,6 +245,15 @@ export type Catalog = {
   budget_options?: (NamedOption & { type: AlertScope })[]
 }
 export type Measurement = {
+  traffic?: {
+    count: string
+    baseline_scaled: string
+    change_bps: string
+    baseline_start: number
+    baseline_end: number
+    current_complete: boolean
+    frozen: boolean
+  }
   value: string
   samples: string
   numerator: string

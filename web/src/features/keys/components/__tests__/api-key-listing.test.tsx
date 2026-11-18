@@ -560,3 +560,42 @@ it('keeps mobile quota readable and opens complete model and IP restrictions by 
   expect(within(details).getByText('192.0.2.1')).toBeVisible()
   expect(within(details).getByText('2001:db8::1')).toBeVisible()
 })
+
+it.each([false, true])(
+  'shows key ownership and lets root select and batch delete keys on mobile=%s',
+  async (mobile) => {
+    if (mobile) {
+      const matchMedia = window.matchMedia
+      vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+        ...matchMedia(query),
+        matches: query.includes('max-width'),
+      }))
+    }
+    const { post } = await renderKeysPage(
+      1,
+      { user_id: 42, username: 'target-user' },
+      ROLE.SUPER_ADMIN
+    )
+    expect(
+      screen.getByText(mobile ? 'Username: target-user' : 'target-user')
+    ).toBeVisible()
+    post.mockResolvedValue({ data: { success: true, data: 0 } })
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Delete selected API keys' })
+    )
+    const confirmation = await screen.findByRole('alertdialog')
+    expect(confirmation).toHaveTextContent('Delete 1 API key(s)?')
+    expect(post).not.toHaveBeenCalled()
+    await userEvent.click(
+      within(confirmation).getByRole('button', { name: 'Delete' })
+    )
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/token/batch', { ids: [7] })
+    )
+    await screen.findByText('Successfully deleted 0 API key(s)')
+    expect(
+      screen.getByRole('checkbox', { name: 'Select all' })
+    ).not.toBeChecked()
+  }
+)

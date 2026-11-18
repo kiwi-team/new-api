@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
-import { Badge } from '@/components/ui/badge'
+import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 
 import { alertLabel } from '../lib/labels'
@@ -33,6 +33,25 @@ type Props = {
   onPause: (rule: AlertRule) => void
   onDelete: (rule: AlertRule) => void
 }
+const dataStatusVariants: Record<string, StatusVariant> = {
+  complete: 'success',
+  partial: 'warning',
+  warming_up: 'warning',
+  stale: 'danger',
+  error: 'danger',
+}
+const severityVariants: Record<string, StatusVariant> = {
+  P0: 'danger',
+  P1: 'danger',
+  P2: 'warning',
+  P3: 'info',
+}
+const severityBackgrounds: Record<string, string> = {
+  P0: 'bg-destructive/10',
+  P1: 'bg-destructive/10',
+  P2: 'bg-warning/10',
+  P3: 'bg-info/10',
+}
 export function RulesTable(props: Props) {
   const { t } = useTranslation()
   return (
@@ -44,10 +63,10 @@ export function RulesTable(props: Props) {
           id: 'name',
           header: t('Rule'),
           cell: (row) => (
-            <div className='max-w-72 font-medium break-words'>
+            <div className='max-w-72 min-w-48 font-medium break-words whitespace-normal'>
               {row.config.name}
               <p className='text-muted-foreground text-xs'>
-                {alertLabel(row.config.management_mode, t)}
+                #{row.id} · {alertLabel(row.config.management_mode, t)}
               </p>
             </div>
           ),
@@ -74,18 +93,39 @@ export function RulesTable(props: Props) {
           header: t('Status'),
           cell: (row) => (
             <>
-              <Badge variant='outline'>
-                {t(row.config.enabled ? 'Enabled' : 'Paused')}
-              </Badge>
-              <Badge variant='outline'>{row.config.severity}</Badge>
-              <p className='text-muted-foreground text-xs'>
-                {alertLabel(row.runtime?.data_status || 'no_data', t)}
+              <div className='flex flex-wrap gap-1'>
+                <StatusBadge
+                  label={t(row.config.enabled ? 'Enabled' : 'Paused')}
+                  variant={row.config.enabled ? 'success' : 'neutral'}
+                  className={row.config.enabled ? 'bg-success/10' : 'bg-muted'}
+                  copyable={false}
+                  showDot
+                />
+                <StatusBadge
+                  label={row.config.severity}
+                  variant={severityVariants[row.config.severity] ?? 'neutral'}
+                  className={severityBackgrounds[row.config.severity]}
+                  copyable={false}
+                />
+              </div>
+              <div className='mt-1 text-xs'>
+                <StatusBadge
+                  label={alertLabel(row.runtime?.data_status || 'no_data', t)}
+                  variant={
+                    dataStatusVariants[row.runtime?.data_status || 'no_data'] ??
+                    'neutral'
+                  }
+                  type='text'
+                  className='text-xs'
+                  copyable={false}
+                  showDot
+                />
                 {row.last_evaluation_error && (
-                  <span className='block'>
+                  <span className='text-destructive block'>
                     {alertLabel(row.last_evaluation_error, t)}
                   </span>
                 )}
-              </p>
+              </div>
             </>
           ),
         },
@@ -113,6 +153,7 @@ export function RulesTable(props: Props) {
                 <Button
                   size='sm'
                   variant='outline'
+                  className='border-warning/40 text-warning hover:bg-warning/10 hover:text-warning'
                   onClick={() => props.onPause(row)}
                 >
                   {t('Pause')}
@@ -124,6 +165,7 @@ export function RulesTable(props: Props) {
                   <Button
                     size='sm'
                     variant='outline'
+                    className='border-success/40 text-success hover:bg-success/10 hover:text-success'
                     onClick={() =>
                       props.onEdit({
                         ...row,

@@ -32,8 +32,10 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { toIntlLocale } from '@/i18n/languages'
 
 import { alertRequest } from '../api'
+import { formatAlertEventSummary } from '../lib/event-summary'
 import { alertLabel } from '../lib/labels'
 import type {
   AlertEvent,
@@ -49,7 +51,8 @@ export function EventDetailDialog(props: {
   canManage: boolean
   onClose: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const client = useQueryClient()
   const query = useQuery({
     queryKey: ['alerts', 'event', props.event.id],
@@ -112,7 +115,12 @@ export function EventDetailDialog(props: {
         if (!open) props.onClose()
       }}
       title={props.event.target_name}
-      description={props.event.summary}
+      description={formatAlertEventSummary(
+        props.event.summary,
+        t,
+        locale,
+        query.data?.config.quota_unit || undefined
+      )}
       contentClassName='sm:max-w-4xl'
     >
       <div className='flex items-center gap-2 text-sm'>

@@ -108,7 +108,7 @@ export function alertLabel(value: string, t: TFunction): string {
     case 'redis_stream':
       return t('Redis input')
     case 'engine_health':
-      return t('Engine status')
+      return t('Alert service status')
     case 'report':
       return t('Usage report')
     case 'report_revision':
@@ -135,6 +135,16 @@ export function alertLabel(value: string, t: TFunction): string {
       return t('Remaining balance')
     case 'spend_net':
       return t('Net spending')
+    case 'model':
+      return t('Model across all channels')
+    case 'request_started_count':
+      return t('Started calls')
+    case 'request_volume_change':
+      return t('Call volume change')
+    case 'baseline_insufficient':
+      return t('Waiting for enough baseline traffic')
+    case 'baseline_window_coverage':
+      return t('Waiting for baseline coverage')
     case 'request_count':
       return t('Request count')
     case 'input_tokens':
@@ -197,9 +207,9 @@ export function alertLabel(value: string, t: TFunction): string {
     case 'targets':
       return t('Notification targets')
     case 'holds':
-      return t('Isolation sources')
+      return t('Automatic disable records')
     case 'engine':
-      return t('Engine status')
+      return t('Alert service status')
     case 'channels':
       return t('Channel protection')
     case 'rolling':
@@ -222,6 +232,8 @@ export function alertLabel(value: string, t: TFunction): string {
       return t('Mean')
     case 'complete':
       return t('Complete')
+    case 'error':
+      return t('Error')
     case 'partial':
       return t('Partial')
     case 'stale':

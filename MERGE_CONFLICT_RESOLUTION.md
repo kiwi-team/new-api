@@ -162,6 +162,11 @@
 
 | 保护能力 | 已发生的问题或保护背景 | 后续合并必须保持的行为 | 主要实现与回归锚点 |
 |---|---|---|---|
+| Claude 请求禁止合成占位上下文（2026-11-18 用户明确批准） | 先前为真正空消息填 `...`、为非 user 起始历史补虚构 user，且将空工具结果改成 `...`。用户明确要求取消这三类行为，取代此前保留空消息兜底的约定。 | Chat Completions 和 Responses 转 Claude Messages 均不再合成占位文本或首条 user。先完成工具块组装，真正空消息、空对话及非 user 起始历史返回客户端参数错误；空工具结果与工具 ID 保留，真实文本与签名思考不变。不得在合并时恢复旧占位逻辑。 | `internal/oai_chat/to_claude_messages_req.go`、`internal/oai_responses/to_claude_messages_req.go`、`internal/shared/claude/messages.go:ValidateMessages`（均位于 `relaykit/relayconvert/`）；`TestConvertRequestToClaudeDoesNotFabricateContext`、`TestConvertRequestResponsesToClaudeMergesEmptyContentWithTools`、`TestOpenAIChatRequestToClaudeMessagesPreservesToolOnlyContent`、`TestGoldenRequestConversionMatrix`；保留 `reasoning.ClientError` 经宿主转换为 HTTP 400/不重试的处理。 |
+| 飞书告警卡片（2026-11-17） | 用户要求按触发/持续/恢复、等级和对象区分彩色卡片，避免原纯文本中数字、场景和监控对象混杂。 | 保留统一飞书目标的原生卡片、状态图标、等级配色、渠道/模型分栏、正确单位与恢复阈值。通知使用不可变事件快照；用户名称及兼容正文为 plain_text；长消息满足大小限制。继续校验原生签名和平台业务码，不能回退为忽略业务失败或改变通用 Webhook 协议。 | `service/alerting/feishu.go`、`render.go`、`targets.go`；已有 `alerting_test.go` 的 `TestAlertFeishuCard*`、`TestAlertDeliveryProtocolsAndBusinessErrors`、`TestLegacyFeishuDeliveryProtocolsAndBusinessErrors`、`TestAlertNotification*` 与 `i18n/TestLocalesRenderEveryKey`。 |
+| Root 跨用户配置告警通知（2026-11-17） | 创建个人规则时通知候选被规则属主过滤，Root 无法选择其他用户目标；首批候选无法覆盖超过 200 项的数据。 | 保留账号/Key 规则的归属用户搜索分页；Root 可查询并绑定任意用户的普通及升级目标，跨归属引用由前后端自动设为平台强制管理。普通用户保持属主隔离；平台监控范围仍 owner=0；停用/缺失目标与自动动作权限校验不得绕过。 | `ListAlertTargets`、`alerting.Validate`、`RuleEditor`、`useTargetOptions`；`testAlertRootTargets`、`testAlertRuleDeliveryRequirement` 的三数据库矩阵，`rule-editor.test.tsx` / `rule-form.test.ts` 与共享多选测试。 |
+| 渠道模型级非流请求上游流式桥接（2026-11-16） | 用户要求将既有设计落地；客户端仍使用 Chat/Messages 非流式 JSON，规则属于渠道并按原始模型匹配。 | 保留 `setting.model_behaviors`、模型多选入口及全部语言；每次尝试重新判断，不能把 `stream=true`、失败的流状态或响应缓存泄漏到后续渠道。透传只改写 stream，参数覆盖后仍强制流式；完整聚合及转换前不得写客户端 SSE/心跳。保留原始计费用量、缓存和签名，成功只结算一次，日志按客户端非流口径。其他协议尤其 Responses WebSocket 的显式流式状态不得被该规则重置。 | `relay/buffered_stream.go`、`RelayInfo.InitChannelMeta`、`TextHelper`/`ClaudeHelper`、`relay/chat_completions_via_responses.go`、`BufferedStreamSetting`；`relay/buffered_stream_test.go` 的 `TestBuffered*`，`model/channel_settings_test.go` 的模型行为校验与三数据库配置往返，前端 `buffered-stream-setting.test.tsx`；支持边界、命令和验证限制见 `CHANNEL_MODEL_NON_STREAM_TO_STREAM_DESIGN.md` 第 15 节。 |
+| Claude thinking 签名透传（2026-11-16） | 请求 `toio202611161040440884120001LbBuC7U` 的上游 thinking 块带有 7412 字符签名；非流式转换只复制 thinking，漏读 signature，最终 JSON 因 `omitempty` 丢失签名。 | Claude 原生响应转 Chat Completions 时，同一 thinking 块的推理内容和签名必须配对保留，签名原样写入 `choices[0].message.signature`；thinking 后接工具调用且文本为空时同样必须返回签名。无签名和纯文本响应继续省略该字段。流式 `signature_delta` 继续写入 `choices[*].delta.signature`，不得变成推理文本或换行。 | `relaykit/relayconvert/internal/claude_messages/to_oai_chat_resp.go` 的 `ResponseClaude2OpenAI`、`StreamResponseClaude2OpenAI`，共享 DTO 与实际 handler 调用链；同目录 `to_oai_chat_resp_signature_test.go` 的 `TestResponseClaude2OpenAIPreservesThinkingSignature`、`TestStreamResponseClaude2OpenAIPassesThroughSignature`、`TestStreamResponseClaude2OpenAIKeepsThinkingDelta`；下述签名合并复核列出命令。 |
 | Gemini Omni 官方 token 计费与视频兼容渠道（2026-11-12） | 仅接入 Gemini/Vertex 原生计量时，OpenAI 兼容渠道仍进入 Sora 秒数计量，官方表达式读取 `u("input_tokens")` 得到 nil。原生任务转换成公开视频响应时也曾丢弃上游 `usage`，使级联下游无法精确结算。 | 未显式绑定插件的 Omni 在 Gemini/Vertex 走 Interactions，在 OpenAI/Sora 兼容渠道保留 `/v1/videos`，均按提交时冻结的输入、文本输出、思考和视频输出单价结算；不能用秒数替代实际 token，不能重复收取思考或视频原生音频费用。查询响应透传经过校验的官方用量；缺失或异常用量保留预扣并等待结算，显式零用量结算为零。显式插件绑定与普通 Sora/Veo 继续使用原协议和计量。保留签名视频直链及空白地址回退；退款和补扣仍只调整额度，不重复累计请求或 token。 | `relay/relay_adaptor.go`、`relay/channel/task/{gemini,vertex,sora}/`、`setting/billing_setting/builtin_billing.go`；`relay/relay_task_test.go` 的 `TestGeminiOmniOfficialUsageExpression`、`TestGeminiOmniOfficialUsageSettlement`、`TestGeminiOmniCompatibleSubmitAndUsageRoundTrip`、`TestGeminiOmniNativeSubmitFreezesOfficialExpression`；同时运行 `TestVideoTaskQueryPreservesUpstreamURLDatabaseMatrix`、`TestQuotaDataPersistenceDatabaseMatrix`、`TestTaskBillingAttributionDatabase`、`TestImmediateTaskSettlementDatabase` 的真实三库版本。 |
 | 统一告警与渠道模型隔离（2026-11-05） | 请求只在终态统计会遗漏在途变慢；模型 A 的故障不能停掉同渠道正常模型 B。新采集、旧执行方和通知订阅若在合并时被绕过，可能重复处置或让已撤销凭证继续使用。 | 保留独立采集及真实开始/有效输出/终态语义，统计和日志关闭仍可采集；来源必须绑定当前 boot 和连续接受前缀，未知覆盖不得新增隔离或恢复。渠道、渠道模型和 Key 的有效 hold 参与全部新调用准入，人工停用与其他 hold 不被恢复覆盖。在途只通知。旧提醒以共享迁移标记确定唯一执行方，自然周期从明确边界接管，退款不回退最高档位；不得重新扣费或退款。通知目标撤销、凭证版本和精确操作重新认证必须在服务端执行。 | `common/alerting.go`、`service/alerting.go`、`service/alerting/`、`model/alert*.go`、`middleware/alerting.go`、`router/alert_router.go`、`controller/alerting*.go`；`TestAlertingDatabaseMatrix`（三库及真实 Redis）、`TestAlertLifecycleWithoutDebugTiming`、`TestAlertDeliveryProtocolsAndBusinessErrors`、`TestAlertMutationGuardsRunBeforeHandler`、`TestAlertProof*`、`TestProcessChannelErrorSendsFeishuAlerts`，以及下述 2026-11-05 记录中的资金回归和前端入口测试。 |
 | Claude 转 Chat Completions 的客户端 usage（2026-10-23 用户确认） | 用户确认现有 `/v1/chat/completions` 返回的 `prompt_tokens` 包含缓存读取和缓存写入，并要求固定为后续合并保护；此项是现有行为确认，不是本次新发现的故障。 | Claude 原生响应转换后，`prompt_tokens = 原始 input_tokens + cache_read_input_tokens + 缓存写入总量`，`cached_tokens` 是其中的缓存读取子集；写入总量取上游汇总与 5m/1h 分项之和的较大值，不重复相加。非流式 JSON 与流式最终 usage 帧保持一致，转换后的 `input_tokens = prompt_tokens`，`total_tokens = prompt_tokens + completion_tokens`，保留 `usage_semantic=openai`、`usage_source=anthropic` 和缓存明细。仅转换对外副本，内部 Claude usage 与原始 `BillingUsage` 不得被覆盖；不能按模型名给已有 OpenAI 口径的上游 usage 再加缓存。 | `relay/channel/claude/relay-claude.go` 的 `HandleClaudeResponseData`、`HandleStreamFinalResponse`、`buildOpenAIStyleUsageFromClaudeUsage`；`relaykit/relayconvert/internal/claude_messages/to_oai_chat_resp.go` 的 `UsageFromClaudeUsage`。测试：`TestBuildOpenAIStyleUsageFromClaudeUsage*`、`TestClaudeStreamFinalUsageEstimatesOnlyUncountedUsage`、`TestConvertResponseProviderToOAIChatUsage`；命令和复核要求见下节。 |
@@ -234,6 +239,32 @@ GOWORK=off go test ./relayconvert -run '^TestConvertResponseProviderToOAIChatUsa
 ```
 
 2026-10-23 本次分析已执行第二条 `relaykit` 测试并通过；本次仅记录既有行为，未修改业务代码。第一条为后续受影响合并的必跑命令，不在本次已执行验证范围内。
+
+### Claude thinking signature 合并复核（2026-11-16）
+
+- 故障证据：请求 `toio202611161040440884120001LbBuC7U`，响应 `msg_011CfWT0X6ccGs92nCd82Ios`。原始内容为带签名的 thinking 和 `exec` 工具调用，文本为空。修复前使用该原始响应复现：上游签名长 7412 字符，转换后签名长度为 0，最终 JSON 不含 `signature`；推理内容与工具调用仍正常返回。此处记录已确认的字段遗漏，不推断其由某次历史合并引入，也不保存签名正文。
+- 修复契约：`ResponseClaude2OpenAI` 从与 `thinkingContent` 相同的 thinking 块读取 `thinkingSignature`，写入 `choice.Message.Signature`。签名作为不透明字符串逐字保留，不截断、不解码、不混入 `reasoning_content`；带工具调用、空文本的响应同样适用。无签名的 thinking 和纯文本继续省略 `signature`。保留流式 `signature_delta` → `choices[*].delta.signature` 的现有透传。
+- 实现与调用链：`relaykit/relayconvert/internal/claude_messages/to_oai_chat_resp.go`、`relaykit/relayconvert/response_compat.go`、`relaykit/relayconvert/response_registry.go:convertClaudeMessagesResponseToOAIChat`、`relay/channel/claude/relay-claude.go:HandleClaudeResponseData`；AWS SDK 的非流式 Claude 路径也复用该 handler。保留 `relaykit/dto/claude.go` 的 `ClaudeMediaMessage.Signature`、`relaykit/dto/openai_request.go` 的 `Message.Signature` 和流式 DTO 的签名字段。后续迁移必须核对实际 JSON/SSE 调用链，不能只保留 DTO 或未被调用的转换函数；不得因 main 缺少实现而删除此行为。
+- 回归锚点：现有 `to_oai_chat_resp_signature_test.go` 中的 `TestResponseClaude2OpenAIPreservesThinkingSignature` 覆盖签名 thinking＋工具调用、签名 thinking＋文本、无签名 thinking、纯文本，并断言序列化后的 `choices[0].message`；同时保留 `TestStreamResponseClaude2OpenAIPassesThroughSignature` 和 `TestStreamResponseClaude2OpenAIKeepsThinkingDelta`。非流式用例已先在旧实现上因缺少签名失败，再通过修复。
+- 本次修复验证：用户提供的原始响应经修复后序列化，7412 字符签名与上游逐字一致，推理内容和工具调用均保留；`relaykit/` 内 `GOWORK=off go test ./...` 与 `GOWORK=off go build ./...` 均通过。签名修复不改变 usage 或内部计费快照。
+- 请求回放补充（2026-11-17）：用户提供的 `/v1/chat/completions` 请求在 assistant 消息中同时回传 `content: null`、`tool_calls`、55 字符 `reasoning_content` 和 1876 字符 `signature`，但转换后的 Anthropic 请求只有占位文本和 `tool_use`。`to_claude_messages_req.go` 原先仅在纯字符串且 `ToolCalls == nil` 的分支恢复 thinking 块，工具调用与数组内容分支均遗漏此字段；不推断其由哪次历史合并引入，不保存签名正文。
+- 请求侧契约与回归：`OpenAIChatRequestToClaudeMessages` 必须将 assistant 的非空推理内容及其签名配对还原为 `content[]` 中的 `thinking` 块，并置于文本和 `tool_use` 之前；纯文本、数组内容，以及带工具调用的 null/空文本均适用。签名逐字保留，不为已有签名思考的空文本插入 `...`。现有 `to_claude_messages_req_signature_test.go` 的 `TestOpenAIChatRequestToClaudeMessagesRestoresSignedThinkingBlock` 通过实际序列化覆盖上述分支，同时校验工具参数和 `tool_result`；`TestOpenAIChatRequestToClaudeMessagesKeepsStringContentWithoutSignature` 保留无签名消息的行为。
+- 请求侧修复验证：新增分支用例在旧实现上失败，修复后通过。原始请求经宿主 `claude.Adaptor.ConvertOpenAIRequest`、`RemoveDisabledFields` 和 `WriteJson` 后，55 字符推理及 1876 字符签名均逐字一致，内容块为 `thinking`、`tool_use`。`relaykit/` 内 `GOWORK=off go test ./...`、`GOWORK=off go build ./...`，以及根目录 `go test ./relay/channel/claude -run '^(TestConvert.*|TestBuildOpenAIStyleUsageFromClaudeUsage.*|TestClaudeStreamFinalUsageEstimatesOnlyUncountedUsage)$' -count=1` 均通过。
+
+- 纯工具调用初步修复（2026-11-18，后续策略已更新）：最初修复了 Chat Completions 的空文本＋工具调用，以及 Responses 的空消息随后合并工具块时多插入 `...` 的问题；当时保留了真正空消息和起始 user 的占位兜底。对应原始回归先在旧实现上失败，修复后通过，并更新 `openai_to_claude.golden.json`。这项历史记录不再授权保留占位兜底，当前合同以下述用户明确批准的最终策略为准。
+- 用户批准取消三类占位（2026-11-18）：用户明确要求去掉“真正空消息补 `...`”“首条不是 user 时补虚构 user”“空工具返回值改成 `...`”三类行为。Chat Completions 与 Responses 的相关合成代码均删除，包括只含 system/instructions 时制造 user 的逻辑；不会删除客户端真实的 `...`。空工具结果保留为空并保留工具调用 ID，不丢弃 `tool_result` 块。
+- 当前实现：两条路径均在工具块组装后调用 `internal/shared/claude/messages.go:ValidateMessages`；无消息、真正空消息及首条不是 user 的历史以 `reasoning.ClientError` 明确失败，由宿主已有错误处理返回 HTTP 400 并跳过重试。Responses 的既有尾部 assistant prefill 处理保留；空 assistant 随后合并普通/自定义工具调用，以及空 user 随后合并工具结果，仍能正常转换。此处仅改变这三类合成行为，不撤销已受保护的签名和工具调用内容。
+- 当前回归：`request_registry_test.go:TestConvertRequestToClaudeDoesNotFabricateContext` 在两条实际注册转换路径验证空对话、null/空字符串/空数组消息、空工具列表、system-only、assistant/tool-call 起始错误，以及空字符串/null/空数组工具结果；新增用例先在旧实现上失败。`TestConvertRequestResponsesToClaudeMergesEmptyContentWithTools` 取代旧名 `TestConvertRequestResponsesToClaudeDefersEmptyContentFallback`，保留工具块合并和真实省略号文本覆盖。原先断言空消息生成占位文本的用例由新客户端错误用例替代，不再固定旧兜底策略。
+- 最终验证（2026-11-18）：`relaykit/` 内 `GOWORK=off go test ./...`、`GOWORK=off go build ./...` 均通过；新参数/空结果矩阵覆盖 12 种情况×两条路径，原有签名、工具合并与 golden 测试同时通过。仓库根目录 `go test ./relay/channel/claude -run '^TestConvert' -count=1`、`go test ./relay -run '^TestUnknownModelModifierIsBadRequestWithoutRetry$' -count=1` 通过，后者复核同一 typed client error 分支的 HTTP 400/不重试映射。两份目标请求转换器已无 `"..."` 合成代码；客户端实际输入的省略号仍由序列化回归覆盖。`git diff --check` 通过。
+
+后续涉及上述 DTO、转换器或调用链的合并必须在 `relaykit/` 目录运行：
+
+```sh
+GOWORK=off go test ./relayconvert/internal/claude_messages -run '^(TestResponseClaude2OpenAIPreservesThinkingSignature|TestStreamResponseClaude2OpenAIPassesThroughSignature|TestStreamResponseClaude2OpenAIKeepsThinkingDelta)$' -count=1
+GOWORK=off go test ./relayconvert/internal/oai_chat -run '^TestOpenAIChatRequestToClaudeMessages(RestoresSignedThinkingBlock|KeepsStringContentWithoutSignature|PreservesToolOnlyContent)$' -count=1
+GOWORK=off go test ./relayconvert -run '^(TestGoldenRequestConversionMatrix|TestConvertRequestResponsesToClaudeMergesEmptyContentWithTools|TestConvertRequestToClaudeDoesNotFabricateContext)$' -count=1
+GOWORK=off go build ./...
+```
 
 ### Required merge review procedure
 
@@ -468,3 +499,252 @@ go test ./model -run '^TestQuotaDataPersistenceDatabaseMatrix$' -count=1 -v
 - 前端锚点：`web/src/features/alerts/components/__tests__/rule-editor.test.tsx`、`related-alerts-link.test.tsx`、`web/src/features/alerts/lib/__tests__/rule-form.test.ts`、Key 的现有测试，以及账号 step-up、渠道表格回归。执行 `bun run typecheck`、定向 oxlint/oxfmt 与 `bun run build`。Key 的 `channel-rules.test.ts` 使用 Node runner，单独 `bun test`，其余使用 Vitest。
 - 权限变更按 OWASP ASVS 5.0.0、Authentication、Session Management 和 SSRF Cheat Sheets 的相关控制核对：服务端归属/角色、PAT 降权、Origin/body 限制、精确单次操作 proof、主库凭证撤销、目标加密与 DNS/连接时校验、撤销订阅后的投递重新授权。不得把本次定向检查描述为完整 ASVS 认证。没有使用真实通知目标或生产上游发送测试消息，也未部署。
 - 完整 `go vet` 仍受本次未修改的 `controller/cliend_user_quota.go` 和 `service/token_counter.go` 的既有 unreachable code 影响；相关包可用 `go vet -unreachable=false` 复核其他检查。原始事实的长期归档、生产容量和一分钟目标按技术文档第 16 节记录，不以通过单元测试或构建代替现场验收。
+
+## 2026-11-13 告警周期、恢复与旧飞书投递修复
+
+- 旧 `SendFeishuNotifyContext` 必须使用飞书机器人正文中的秒级 `timestamp` 和 `sign`，不能用通用 Webhook 签名头替代。HTTP 2xx 仍须校验业务 `code`（兼容旧 `StatusCode`）；错误码、空响应、非法 JSON 和超过 64 KiB 的响应均为发送失败，调用方不能推进告警检查点。通用 Webhook 的原签名协议保持不变。
+- `once_per_period` 按已接受指标窗口所属的自然小时、日或月去重，不能按执行时钟把上一周期尚未推进的数据当作新周期消费。`once` 和 `once_per_period` 只抑制重复触发，不能跳过未确认提醒和升级；确认或关闭后停止升级。每次恢复和新故障都重新建立恢复计时，不能继承历史 `RecoveryAt`。Realtime 查询必须包含 `base_url`，以便自定义上游的样本匹配渠道配置版本，并识别运行期间的地址变更。
+- 回归集中在 `service/alerting/alerting_test.go`：`TestLegacyFeishuDeliveryProtocolsAndBusinessErrors`，以及 `TestAlertingDatabaseMatrix` 的 `natural periods follow accepted input`、`recurrent incidents require fresh recovery`、`one-shot incidents retain acknowledgement escalation`、`realtime custom endpoints retain metric coverage`。这些用例已先在修复前验证失败。旧渠道通知测试的成功响应夹具使用真实飞书成功协议。
+- 真实隔离实例验证通过：SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15、Redis 8.10.2。设置隔离库的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN` 和 `ALERTING_TEST_REDIS_SOCKET` 后执行 `go test -race ./service/alerting -count=1 -v`；设置 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后执行 `go test ./model -run '^TestQuotaDataPersistenceDatabaseMatrix$' -count=1 -v`；分别使用 `TEST_TASK_DB_DIALECT=mysql` / `postgres` 执行 `go test ./controller -run '^TestTaskBillingAttributionDatabase$' -count=1 -v`，SQLite 任务归属由 controller 全量测试覆盖。告警矩阵沿用发布版本用户/令牌升级夹具及重复迁移检查，未变更模式、驱动或计费累计实现。
+- `go build ./...` 和 `go vet -unreachable=false ./service/alerting ./service` 通过。`go test ./service ./controller ./relay ./middleware ./router ./common -count=1` 中除 router 外均通过。router 的既存 `TestAccessTokenRouteRulesCoverEveryDashboardRoute` 报告 `POST /api/alerts/migrations/batch` 缺少权限声明；以本次生产改动之前的文件构造临时 Go overlay，单独执行该用例仍同样失败。本次未修改该权限流程。
+
+### 旧告警迁移跳过网络校验（用户明确要求）
+
+- 导入既有 Token、账号消费/日报、Key 小时/日及旧通知订阅时，只读取并加密复制原地址与凭据，离线生成脱敏地址提示，不做 DNS、IP 网段、连通性或新目标地址策略检查。内网、Fake-IP、暂不可解析的域名和原有 HTTP/自定义端口地址不能因此阻断迁移。导入例外只存在于服务端旧配置导入入口，不增加可由客户端提交的跳过校验字段；非 `ENV=dev` 环境下，新建或替换通知地址及实际投递仍执行原网络校验。开发环境例外见下文。
+- 原归属/Root 限制、迁移租约、稳定身份、重复导入幂等、凭据加密、检查点和单一执行方契约继续保留；导入不发送消息，不自动切换执行方，也不修改资金或 Key 状态。
+- 回归沿用 `TestAlertingDatabaseMatrix` 中的批量导入、账号档位/日报、Key 自然周期、旧事件适配和通知目标管理用例：覆盖内网与保留地址导入、不可用 DNS 下的凭据完整复制、失败项隔离和重复导入，并验证新建目标及实际投递的校验仍生效。新增预期已先在旧实现上验证失败。
+- 本次验证通过：SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15 和独立 Redis 8.10.2。设置隔离实例的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后执行 `go test -race ./service/alerting -count=1 -v`，三库和 Redis 用例均执行、无跳过；`go vet -unreachable=false ./service/alerting`、`go build ./...` 与 `git diff --check` 通过。未更改数据库模式、驱动或既有计费检查点语义。
+
+## 2026-11-14 告警规则归属用户搜索
+
+- 规则编辑器的归属用户使用可搜索列表，显示显示名称、账号与 ID，通过既有管理员用户接口在完整用户集合上搜索，再分页返回；不能改回仅加载前 200 人后在浏览器过滤。每页 50 人，支持继续加载。用户名、显示名称及数字 ID 均支持部分匹配；`SearchUsers` 保留原精确数字 ID 匹配、筛选条件与敏感字段排除，ID 文本转换使用 MySQL/SQLite 的 `CHAR` 和 PostgreSQL 的 `TEXT`。
+- 已有规则按确切用户 ID 单独回显名称，不要求用户出现在当前页或当前搜索结果中；切换归属清空原用户的 Key、通知/升级目标、订阅和旧预览。兼容迁移规则仍只读，非平台管理者不显示跨用户选择入口。
+- 用户选择器现位于 `web/src/features/users/components/user-select.tsx`（`UserSelect`），由告警和创建 API Key 共用。它只组合业务数据，复用共享 `ui/combobox`、`ErrorState`、`LoadingState` 和 `useDebounce`；已有 `combobox-input` 的本地过滤/自定义输入不能满足远程搜索分页，因此使用共享 Combobox 的组合接口，关闭其重复本地过滤。保留搜索防抖、错误重试、空态、键盘选择及详情加载期间的已选名称，未添加通用下拉替代组件。
+- 回归在已有 `model/user_pagination_test.go` 与告警 `rule-editor.test.tsx`：真实 205 人数据验证显示名称、精确/部分 ID、筛选与分页；前端覆盖远程搜索、跨 200 人加载、编辑回显、迁移只读、键盘及失败重试。新增交互和 ID 模糊匹配预期均已先验证旧实现失败。
+- 隔离三库验证通过：SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15。设置 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后运行 `go test ./model -run '^(TestSearchUsersDatabaseMatrix|TestGetAllUsersSortsBeforePagination|TestSearchUsersSortsBeforePagination)$' -count=1 -v`，三库均执行；`go test ./model -count=1` 与 `go build ./...` 通过。`web/` 下 `bun run test src/features/alerts/components/__tests__ src/features/alerts/lib/__tests__`（25 用例）、`bun run typecheck`、改动文件的 oxlint/oxfmt 检查、`bun run build` 和 `bun run i18n:sync` 通过，新文案覆盖七种界面语言。
+
+### 创建 API Key 的用户选择（同日扩展）
+
+- 创建 Key 的“为用户创建”复用上述远程搜索和分页，每页 50 人，支持显示名称、账号和部分 ID，超过 200 人时仍搜索完整用户集合。“我的账号”为独立选项，搜索或加载失败不改变已选归属；切回此选项后提交不带 `user_id`，指定用户仍发送确切 ID。归属选择继续只向 Root 的新建界面提供，编辑和普通用户的行为不变。
+- 回归扩展已有 `api-keys-mutate-drawer.test.tsx`，覆盖第 205 人的名称和部分 ID 查询、跨 200 人分页、无匹配结果、切回本人、加载失败与重试，以及实际创建请求的归属。测试卸载组件后再恢复请求 mock，避免清空缓存时触发真实网络请求。
+- 已检查 [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 和当前稳定版 ASVS 5.0.0；本次仅改用户选择与读取，沿用管理员用户查询接口、服务端 `AddToken` 的 Root/本人权限验证及既有会话机制，不增加凭据读取或授权绕过入口。`go test ./controller -run '^TestAddTokenOwnerAuthorization$' -count=1` 通过，覆盖 Root 代建、本人创建、普通用户跨用户拒绝和不存在用户拒绝。
+- `web/` 下 `bun run test src/features/keys/components/__tests__ src/features/keys/lib/__tests__/auto-group-form.test.ts src/features/alerts/components/__tests__ src/features/alerts/lib/__tests__`（101 用例）、`bun test src/features/keys/lib/__tests__/channel-rules.test.ts`（15 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run build`、`bun run i18n:sync` 通过。渠道规则旧测试使用 `node:test`，单独通过 Bun 运行。本次复用已有翻译键，未修改数据库行为。
+
+### 本地开发跳过通知目标网络校验（同日，用户明确要求）
+
+- 仅进程环境变量精确为 `ENV=dev` 时，通知目标的保存及投递前检查跳过 DNS 预解析和目标 IP 网络访问规则，实际 HTTP 连接也使用普通拨号，不再拒绝 Clash Fake-IP、内网及回环地址。只跳过前置解析，实际连接仍需要正常解析和连通性；保留 HTTPS/443、URL 格式、类型、必填凭据、TLS 证书验证、超时和禁止重定向。
+- 未设置 `ENV` 或值为 `production`、`DEV`、`development` 等时，继续检查全部 A/AAAA 地址，并在连接时固定已验证 IP。客户端请求不能控制该例外。`.env.example` 记录本地开关；实际 `.env` 已是 `ENV=dev`。
+- 回归沿用 `service/alerting/alerting_test.go`，新增 `TestAlertTargetDevelopmentNetworkValidation`：覆盖精确环境值、内网/元数据/回环/Fake-IP 的 IPv4/IPv6、连接阶段策略、不可用 DNS 下的校验和投递，以及开发模式下的 URL/凭据限制。连接测试使用取消的上下文，避免真实访问内网或绑定固定端口。生产安全与数据库矩阵用例显式设置环境，避免依赖开发者 shell 的 `ENV`。新增开发模式预期已先在旧实现上验证失败。
+- 验证通过：定向 `go test -race ./service/alerting -run '^(TestAlertTargetDevelopmentNetworkValidation|TestAlertTargetCredentialBinding|TestAlertTargetValidationResponse|TestAlertDeliveryProtocolsAndBusinessErrors)$' -count=1 -v`、`ENV=dev go test -race ./service/alerting -count=1 -v`、`go build ./...`、`go vet -unreachable=false ./service/alerting` 与 `git diff --check`。整体回归本轮执行 SQLite 3.50.4；未配置独立 MySQL/PostgreSQL/Redis 测试实例，对应用例跳过。本次不修改数据库模式、查询、驱动或计费逻辑。
+
+### 通知目标测试冷却提示（同日）
+
+- 同一通知目标仍限制每 60 秒测试一次。`controller/alerting_operations.go` 的原子更新未命中时，重新读取当前目标的版本与测试时间：版本一致且处于冷却期返回 HTTP 429 和 `Retry-After` 剩余秒数，提示“同一通知目标每 60 秒只能测试一次，请稍后重试。”；真实版本变更继续返回 HTTP 409 和原刷新提示。冷却请求不得延长冷却时间或重复创建测试事件、任务与审计记录。
+- 回归扩展已有 `TestAlertingDatabaseMatrix`，覆盖冷却过期后接受测试、连续测试限频、拒绝请求不延长冷却/重复入队，以及读取目标后发生并发测试或并发编辑时的不同响应。并发变更使用查询后的受控数据库更新模拟，不使用 sleep 或时序竞争。原实现已复现 HTTP 409 与预期 HTTP 429 不符。新增提示通过翻译脚本和 `i18n:sync` 覆盖七种界面语言。
+- 本次新读取查询及原事务在真实 SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15 上均验证通过。设置隔离实例的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET`（独立 Redis 8.10.2）后执行 `ENV=dev go test -race ./service/alerting -count=1 -v`，三库和 Redis 均执行、无跳过；`go build ./...`、`go vet -unreachable=false ./controller ./service/alerting` 通过。前端 `bun run test src/lib/__tests__/server-error-notifications.test.ts src/features/alerts/components/__tests__ src/features/alerts/lib/__tests__`（46 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run i18n:sync`、`bun run build` 通过。未修改数据库模式、驱动或生产数据。
+
+### 渠道余额通知迁移缺少旧地址（同日）
+
+- `channel_arrears/site` 从旧配置 `feishu_qianfei_webhook_url` 读取渠道余额告警地址，与新通知目标及 UID/慢错误地址分别保存。本地该项缺失，导致没有通知目标的规则被通用校验拒绝。本次按用户此前指定的飞书机器人地址补齐这一项本地配置，在旧通知租约下写入并检查接管后的配置保护；迁移预览确认 `DestinationPresent=true`。地址凭据未写入仓库或日志。
+- `ImportLegacyNotice` 在没有任何目标时返回 `migration_destination_missing`，HTTP 409 提示“请先配置旧告警的通知地址，再执行迁移。”，覆盖七种界面语言。保留原始缺项拒绝行为及 UID 预算仅配置邮件的兼容路径；已配置的旧地址仍离线加密导入，不增加网络校验或自动接管。
+- 在已有 `TestAlertingDatabaseMatrix` 中增加渠道余额迁移用例，复现旧实现的笼统 HTTP 400；覆盖地址缺失/空白时的明确提示和不落迁移/目标，配置后通过原 HTTP 导入入口导入 Fake-IP 地址及签名凭据，保留 `legacy/observing` 执行状态，重复导入复用同一规则和目标。
+- 验证通过：独立 SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15 和 Redis 8.10.2。设置隔离实例的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后运行 `ENV=dev go test -race ./service/alerting -count=1 -v`，三库和 Redis 用例均执行、无跳过。`go build ./...`、`go vet -unreachable=false ./controller ./service/alerting`、前端告警及错误提示回归（46 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run i18n:sync` 和 `git diff --check` 通过。数据库模式与驱动未修改。
+
+### 告警条件字段分组（同日）
+
+- 规则编辑器复用 `ui/field` 的 `FieldSet`、`FieldLegend`、`FieldGroup`：指标、比较运算符和阈值在“告警条件”区域相邻排列，窄屏下指标独占一行，运算符与阈值同排；持续时长、恢复阈值及指标特有字段置于其下。窗口、聚合方式、样本数、协议、流式筛选和时区归入“统计设置”，避免无关字段穿插比较条件。比较运算符复用已有专用翻译键，不能使用表示操作人的 `Operator`。
+- 已有 `rule-editor.test.tsx` 增加分组、键盘焦点顺序及实际预览参数回归：调整比较符、阈值、恢复阈值、窗口、聚合和样本数后，验证提交值正确；保留迁移规则只读与预览失效用例。新增分组预期先在旧布局上验证失败。`bun run test src/features/alerts/components/__tests__/rule-editor.test.tsx`（11 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run build`、`bun run i18n:sync` 和 `git diff --check` 通过；两项分组标题覆盖七种界面语言。
+
+### 迁移规则的空列表回显（同日）
+
+- Go 的 nil slice 会将 `actions`、通知目标、升级目标和模型列表编码为 `null`，空的对象/渠道 ID 选择器还可能被省略。前端 `RuleSpec` 类型必须反映这些响应值；`ruleDefaults` 在读取动作、映射通知/升级目标时使用空列表语义，并保留已配置的动作、目标、模型及对象 ID。不能恢复为直接读取 `actions[0]` 或对可能为空的响应字段直接调用 `map`。
+- 预览结果同样可能含 `actions:null`，保存时按无动作处理；启用且确有动作的规则仍走原二次验证条件。修复仅发生在前端回显与空值判断，不需要改写已有规则数据或更改服务端 JSON 合同。
+- 复用已有表单及编辑器测试：`rule-form.test.ts` 覆盖 null 集合、省略选择器及完整配置往返；`rule-editor.test.tsx` 覆盖兼容账号通知、账号日报、账号消费里程碑、Key 消费里程碑四类响应的打开、修改、预览及保存，并模拟服务端预览返回空动作。旧实现先复现 `null.map`、`null[0]`，随后单独复现保存阶段的空动作访问错误。
+- `web/` 下 `bun run test src/features/alerts/components/__tests__ src/features/alerts/lib/__tests__`（33 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run build` 和 `git diff --check` 通过。
+
+### 本地模板规则初始化记录（同日）
+
+- 按用户要求检查六类模板的实际规则，按归属、监控类型、指标、触发方式及在途截止类型匹配，而非仅比较名称。本地 Root 的 API Key 消费档位（规则 1）及账号每日汇总（规则 6）已存在，保留原配置和启用状态。
+- 在本地 PostgreSQL 18.3 补建平台规则 17–20：渠道模型延迟、渠道模型失败率、等待首个输出、输出停滞。配置复用前端 `ruleTemplates`、`ruleDefaults`、`buildRule`，经 `alerting.SaveRule` 校验和持久化；归属平台（owner 0）、创建人为 Root（用户 1）、全部暂停且无自动动作，通知目标复用本地平台飞书目标 16。监控范围为当前 44 个可用渠道，模型选择为 `all_configured` 且包含这些渠道后续新增的模型；新增渠道需要另行选择。
+- 初始化在归属锁和事务内执行。回读确认四条规则均为 revision 1、各有一条版本记录、没有投递任务，原有规则的配置、启用状态和版本保持一致；再次执行创建数为 0，六类均匹配已有记录。这是已完成的本地数据初始化记录，不是应用启动时应自动重放的种子逻辑。平台规则需切换告警中心顶部“我的告警”至“全部账号”视图查看。
+
+## 2026-11-15 告警比例阈值与聚合方式
+
+- 成功率、失败率、超时率、慢请求率及预算剩余比例的阈值与恢复阈值，在表单内按百分比输入并显示 `%` 后缀；`80` 表示 80%，取值 0～100，最多两位小数。前端提交时转换为整数基点，编辑旧规则时从基点还原，服务端和持久化单位保持不变。指标默认值及失败率模板同步使用百分比，不能只修改标签而漏掉保存或回显换算。
+- 规则编辑器复用 `ui/input-group` 和 `ui/field` 展示单位与字段错误；请求量、金额等非比例指标不显示 `%`。聚合方式仅对实际使用聚合计算的 `duration_ms`、`ttft_ms` 显示，其他指标隐藏。
+- 已有表单和编辑器测试覆盖五类比例的读写往返、0/100 边界、小数精度、越界拒绝、旧渠道规则回显与预览、模板阈值保持，以及指标切换时的单位和聚合显示。新增预期先在旧实现中复现 11 个失败；`bun run test src/features/alerts --reporter=dot`（52 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run build`、七种语言翻译与别名校验、`bun run i18n:sync` 和 `git diff --check` 通过。
+- 比例指标的异常生命周期规则还须在前端校验恢复阈值与告警阈值的关系，与既有服务端校验一致：`lt` 使用恢复阈值 ≥ 告警阈值，`lte` 使用 >，`gt` 使用 ≤，`gte` 使用 <。例如成功率 < 100% 时不能用 99% 作为恢复阈值，否则两种条件重叠。字段下显示具体关系错误，不能一律显示百分比取值范围错误；一次性规则不增加恢复关系限制。
+- 关联校验在既有测试文件中先复现 5 个失败，覆盖四种比较符的边界，以及 100%/99% 阻止预览、改为 100%/100% 后提交整数基点的交互。`bun run test src/features/alerts --reporter=dot`（62 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run build`、`bun run i18n:sync`、七种语言与别名校验、`git diff --check` 通过；此次只补前端校验，服务端限制未放宽。
+
+### 通知目标缺项的明确提示（同日）
+
+- 既有服务端规则要求 `notify.target_ids` 和 `actions` 至少一项非空；渠道成功率 95%/恢复 99% 合法，但两项均为空仍必须拒绝。该分支改为保留 `errors.Is(err, ErrInvalid)` 语义的专用错误，HTTP 400 返回七种语言可翻译的明确原因及 `field: notify.target_ids`，不能通过允许无通知、无动作的规则绕过校验。
+- 前端在通知目标字段下显示同一要求；在途规则始终仅通知，不能用残留但不会提交的动作值满足校验。复用既有 `MultiSelect`、`ui/field`，仅兼容扩展多选组件的 `aria-invalid`、`aria-describedby` 传递，保留搜索和多选交互。切换归属用户后仍清除原通知目标，必须重新选择该用户可用的目标。
+- 在已有 `service/alerting/alerting_test.go` 中通过真实预览处理器复现渠道 49、95%/99%、空目标的 HTTP 400，验证明确提示、补选平台通知目标后 HTTP 200，以及保留纯自动动作规则。新增前端预期和旧接口提示均先在旧实现中复现失败。完整隔离矩阵验证 SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15、Redis 8.10.2：设置独立空库的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN` 和独立 Redis 的 `ALERTING_TEST_REDIS_SOCKET` 后执行 `ENV=dev go test -race ./service/alerting -count=1 -v`，全部通过、无跳过；重复迁移和发布版本升级夹具沿用原矩阵。测试容器和 Redis 实例已清理。
+- `web/` 下执行 `bun run test src/features/alerts src/components/multi-select/__tests__ --reporter=dot`（82 用例）、`bun run typecheck`、改动文件 oxlint/oxfmt、`bun run i18n:sync`、`bun run build` 均通过，随后根目录 `go build ./...` 通过；后端嵌入前端产物，不能与清理产物的前端构建并行。七种语言与中文别名、保护版权头、`git diff --check` 均已校验。
+
+### 平台规则的通知目标归属（同日）
+
+> 2026-11-17 用户明确要求 Root 可选择所有用户创建的通知目标及升级通知目标，下面历史记录中的“Root 只能选择平台目标”限制已被替代。当前合同是普通用户仅限自身目标，Root 可跨用户引用且跨归属规则自动由平台强制管理；具体回归见文末“Root 跨用户配置通知目标”。平台监控对象的 owner=0 和自动动作授权边界仍需保留。
+
+- 本地渠道 49 的规则归属平台（owner 0），通知目标 6 属于用户 1，目标 16 属于平台。创建规则时表单内部仍可能保存当前用户 owner 1；若使用它筛选渠道规则的通知目标，会错误展示并提交个人目标，随后被服务端拒绝。前端统一根据监控范围推导实际规则归属，渠道、渠道模型、系统、UID 预算和项目预算五类规则只选择平台目标；普通通知和升级通知使用同一策略，预览、回放、保存都提交实际归属。
+- 切换个人/平台监控范围时清理原目标与升级目标；模板及渠道入口同样使用实际归属。保留 Root 强制管理的个人规则引用平台目标的既有能力，取消强制管理时移除不再可用的目标。预览、回放、保存前检查已选目标，避免旧选择、删除或停用状态导致笼统错误；暂停规则保留服务端允许引用停用目标的语义。
+- 服务端保持原属主授权边界，分别标记 `notify.target_ids` 和 `acknowledgement.escalation_target_ids` 的错误。不存在与越权目标统一 HTTP 403 和相同静态提示，不返回资源元数据；属于规则但已停用的目标在启用规则时返回明确 HTTP 400。错误仍保留 `ErrForbidden`/`ErrInvalid` 分类，数据库故障不伪装成目标权限错误。登录、JWT、Session 以及自动动作的二次验证条件保持原实现。
+- 在已有后端矩阵中验证预览、回放、新建、编辑四个真实 HTTP 入口：平台目标成功；Root 自己的个人目标、其他用户目标、缺失目标均拒绝；升级目标使用相同边界；停用目标给出字段提示。前端先复现 7 个失败，覆盖五类范围切换、创建到保存全流程、旧选择拒绝，并补齐模板、渠道入口及 Root 强制个人规则的回归。
+- 完整验证通过：SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15、Redis 8.10.2。设置隔离空库的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN` 和独立 `ALERTING_TEST_REDIS_SOCKET` 后运行 `ENV=dev go test -race ./service/alerting -count=1 -v`，无失败、无跳过，沿用发布版本升级与重复迁移夹具；测试实例已清理。`bun run test src/features/alerts src/components/multi-select/__tests__ --reporter=dot`（100 用例），编辑器最终定向回归（30 用例），`bun run typecheck`、改动文件 oxlint/oxfmt、七种语言与中文别名校验、`bun run i18n:sync`、`bun run build`、随后 `go build ./...` 和 `git diff --check` 均通过。
+- 已查阅 [OWASP ASVS 5.0.0](https://asvs.owasp.org/)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 及 [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)。本次适用控制为服务端逐请求属主授权、默认拒绝、资源不可枚举及静态拒绝提示；验证范围为上述告警接口，不作整站 ASVS 合规声明。
+
+### 告警通知的百分比与时区显示（同日）
+
+- 共用 `RenderNotification` 将成功率、失败率、超时率、慢请求率和预算剩余比例的基点值转换为百分比正文；9500 显示为 95%，1 显示为 0.01%，使用十进制换算保留精度。比例恢复通知显示恢复阈值；请求量、耗时、金额等指标保留各自单位。持久化证据和规则条件仍使用原始单位，不能通过更改通知显示改变告警判定。
+- 英文、简体中文、繁体中文的比例指标名称移除基点/万分比说明；窗口时间使用规则实际配置的时区和 RFC3339 时差，避免 UTC 时间旁标注 Asia/Shanghai。缺省或无法识别的时区使用 UTC，并同步显示 UTC 标签。补齐既有告警语言键在 `i18n/keys.go` 中的声明，保留三语言完整性检查。
+- 在已有 `service/alerting/alerting_test.go` 中先复现 9 个失败，覆盖用户事件的三语言正文、五类比例、小数和 0/100 边界、恢复阈值，以及非比例单位保持。`go test -race ./service/alerting -run '^TestAlert(NotificationPercentageAndTimezone|DeliveryProtocolsAndBusinessErrors)$' -count=1 -v`、`go test ./i18n -count=1`、`go build ./...`、gofmt 与 `git diff --check` 均通过。本次为通知渲染与语言目录变更，无数据库模式、查询或规则持久化变更。
+
+## 2026-11-16 usapi-gemini 本地监控与投递验证
+
+- 按用户要求在本地 PostgreSQL 为渠道 49（usapi-gemini）创建 16 条平台规则（22–37），名称以 `[本地验证]` 开头，通知目标为平台飞书目标 17。全部经 `alerting.SaveRule` 的 Root 属主校验、归属锁、版本和审计流程创建；不增加启动时自动重放的种子逻辑。既有规则 21 保持 revision 3 和启用状态。
+- 常规 13 条规则使用 60 秒滚动窗口、最少 1 个有效样本、0 秒持续满足时间，并设为 `once`，每条本轮只发一条消息；恢复通知和确认升级关闭。首包等待、输出停滞、在途总时长三条使用 10 秒截止、至少 1 个超限请求、0 秒持续时间，按系统约束使用 `incident`，持续异常的重复间隔为 60 秒。规则均仅通知，`actions` 为空。耗时阈值和慢请求界限为 1 ms，属于快速本地验证参数。
+
+| 规则 ID | 范围 | 条件 | 验证事件 ID |
+| --- | --- | --- | --- |
+| 22 | 渠道 | 成功率 < 100% | 55 |
+| 23 | 渠道 | 失败率 > 0% | 56 |
+| 24 | 渠道 | 请求量 ≥ 1 | 48 |
+| 25 | 渠道 | 超时次数 ≥ 1 | 57 |
+| 26 | 渠道 | 超时率 > 0% | 58 |
+| 27 | 渠道 | 连续失败次数 ≥ 1 | 59 |
+| 28 | 渠道 | 请求耗时 p95 > 1 ms | 49 |
+| 29 | 渠道 | 慢请求次数 ≥ 1 | 50 |
+| 30 | 渠道 | 慢请求比例 > 0% | 51 |
+| 31 | gemini-3.8-flash | 成功率 < 100% | 60 |
+| 32 | gemini-3.8-flash | 失败率 > 0% | 61 |
+| 33 | gemini-3.8-flash | 请求耗时 p95 > 1 ms | 52 |
+| 34 | gemini-3.8-flash | 首包耗时 p95 > 1 ms | 53 |
+| 35 | gemini-3.8-flash | 10 秒仍无首个有效输出 | 62 |
+| 36 | gemini-3.8-flash | 输出停滞 10 秒 | 47 |
+| 37 | gemini-3.8-flash | 请求在途超过 10 秒 | 46 |
+
+- 通过实际 `/v1/chat/completions` 请求验证，沿用用户提供的 API Key、模型和 UID，使用既有管理员渠道固定机制确保请求命中渠道 49；输出上限收小到 64 token。原配置请求返回网关 `500/do_request_failed`。为稳定覆盖首包、输出停滞和超时，仅对带本轮测试标记的请求使用临时本地上游代理，返回原生 Gemini SSE、延迟首包/后续输出，以及受控 504；普通请求转发原上游。这里的受控故障是告警链路验证证据，不代表真实提供方发生了同样的超时或停滞。
+- 初次检查发现旧进程因笔记本休眠触发 `clock_changed`，暂停了评估/发送并把样本标为 unsupported。通过 Air 重启本地进程建立新的健康 boot 后重新开始本轮规则验证，没有修改时钟保护或把旧 unsupported 样本改成 production。35 的首包等待验证将受控首包延迟增加到 35 秒，避开采集水位与评估周期边界；已验证的 36/37 临时暂停以避免额外通知，结束后恢复启用。
+- 2026-11-16 09:50:52–09:54:27（Asia/Shanghai），上述 16 条规则各有且仅有 1 条飞书通知任务，全部 `succeeded`，每条均为 1 次发送尝试。最终回读确认 16 条规则全部启用；原上游地址已按原值恢复。恢复后的固定渠道请求生成 production/failure 样本，其配置版本与最初原配置请求一致，且不再经过临时代理；随后关闭代理并清理临时程序和配置备份。
+- 后续重做常规一次性验证可暂停再启用对应规则以建立新的判定周期，仍需等待 60 秒统计窗口预热。三条在途规则继续按异常生命周期运行。此记录为已完成的本地配置与真实飞书投递回执，不涉及数据库模式、计费实现或生产渠道配置变更。
+
+
+### 2026-11-16：告警规则列表完整性、分页与筛选
+
+- `controller.ListAlertRules` 在显式传入 `page` 时返回 `data: {items, total, page, page_size}`，未传 `page` 的旧调用仍返回数组并支持 `before_id`。支持服务端名称（忽略大小写、按字面匹配）或精确 ID 搜索、启用/暂停、监控对象、指标、P0–P3 级别及管理方式组合筛选；筛选先于分页，不能退回前端过滤第一页。页大小 1–200，页码越界回到最后有效页，空集保留第 1 页。
+- 配置存储仍为 TEXT；配置字段通过只读 ID/config 的 200 条批次筛选，最终只查询当前页对应行与运行状态，避免数据库方言 JSON 运算符或损坏的旧配置中断整个列表。不引入 schema、迁移或规则写入行为变化。
+- `RulesList` 复用 `RulesTable`/`StaticDataTable`、`useDataTable`、`DataTablePagination` 和 `NativeSelect`。默认每页 20 条，可切换页大小、跳页及查看总数；筛选变化重置页码，保留账号/渠道/Key 关联范围，错误显示重试而非空列表。规则名称下显示 ID。详情权限读取对应规则，不依赖当前列表页。
+- 有 `catalog.read_all` 权限时默认全部账号，避免平台 owner=0 的规则被“我的告警”隐藏；普通用户不发送 `scope=all`。切换账号范围仍重置分页，服务端原所有权校验同时约束列表和总数。新增 UI 文案通过 i18n 技能脚本补齐七种语言并执行 `bun run i18n:sync`。
+- 回归锚点：`service/alerting/alerting_test.go::testAlertRuleList`（纳入已有数据库矩阵）；`web/src/features/alerts/components/__tests__/rules-list.test.tsx`。先验证原接口因数组响应无法解析分页数据而失败，修复后覆盖 205 条记录完整翻页、末页配置组合筛选、字面百分号、ID、空集、非法参数、旧游标兼容、外部 owner 拒绝与 Root 总数；UI 覆盖超过 200 条后的页面访问、页大小切换、筛选重置、范围保留、错误重试、默认全部/个人边界。
+- 实测数据库：SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15，MySQL/PostgreSQL 与 Redis 均为独立临时实例。设置 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后运行 `ENV=dev go test -race ./service/alerting -count=1 -v`：全部通过，无跳过（27.866s）。未使用本地业务数据库执行测试或改写业务规则。
+- 前端验证命令：在 `web/` 运行 `bun run test src/features/alerts --reporter=dot`（89 项通过）、`bun run typecheck`、对本次 TSX 文件运行 `bunx --no-install oxlint -c .oxlintrc.json`，并执行 `bun run build`；随后在根目录执行 `go build ./...`。分页组件使用现有实现，不新增通用分页封装。
+
+
+### 2026-11-16：本地消费、慢错误与疑似欠费提醒
+
+- 用户确认生产示例在本地映射到 Root User（UserID=1）、key2（KeyID=2）和 usapi-gemini（ChannelID=49）。复用并启用规则 6（日汇总，Asia/Shanghai 每日 00:10）、5（累计新增每 $1000）、4（请求耗时达到 180 秒后失败）、16（疑似欠费），新增规则 38（Key 每个自然小时消耗达到 $150，一小时至多提醒一次）。两个生产渠道欠费例子映射到同一条本地规则 16。所有规则名以 `[本地]` 开头。
+- 规则 4、16 保留 `legacy_notice` 事件适配器，并通过原迁移租约/CAS 切换为 unified/active，仅接收渠道 49。规则 5、6 的旧累计状态含已发送/含糊标记，保持 legacy 执行及原有效时间、累计基线和通知检查点，继续由原消费统计执行器发送；不擅自确认含糊历史，不重置账单或补造历史消费。`ENABLE_UID_FEISHU_ALERTS=true`、`ALERTING_ENABLED=true`、非 shadow 已核对。原生规则 38 使用统一引擎，无处置动作。
+- 复用平台飞书目标 17，账号兼容规则仍引用同地址的既有个人目标 5、6。通知 URL 和密钥未写入仓库/记录。`slow_error_threshold_seconds=180`、`ErrorWarningEnvName=本地开发环境` 经既有设置写入与保护路径保存，重载本地后端后再接管渠道提醒。最终核对规则 4/16 revision=3、5/6 revision=2、38 revision=1，均 enabled。配置前后 Root 钱包及使用量、Key 额度/状态/AuthVersion 均未变化；未发送演示消息，未写入生产示例中的金额或日期。
+- `LegacyNotice.channel_id` 把渠道身份放入持久化通知快照。仅慢错误/疑似欠费允许配置 `scope.channel_ids`，Root/owner=0 边界不变；校验存在性、排序去重，事件入队前执行范围过滤，缺失渠道元数据时不能绕过范围。没有渠道筛选的旧规则继续接收全站事件。渠道关联规则查询也包含这两类有渠道范围的兼容规则。
+- `ProcessChannelError` 将疑似欠费通知与自动停用判定解耦，不修改停用策略或开关。402、明确的余额不足、阿里 Model Studio Access Denied 文档特征及既有关键词可发“可能欠费”提醒；普通 403 权限失败不会仅凭状态码被识别为欠费。无有效渠道 ID 的本地请求错误不发渠道提醒。原渠道级冷却和单执行器语义保留：慢错误 10 分钟，疑似欠费通常 1 分钟，阿里等既有特殊条件 1 小时。
+- 飞书原生消息补充 UserID/KeyID、实际达到的 USD 档位；兼容渠道消息保留环境、渠道、状态码、RequestId、掩码错误，并增加规则名、含时区的触发时间和事件详情链接。英语/简体/繁体后端翻译与键目录同步，不把原始错误或凭据引入新模板。保留“@管理员”的旧文本语义，不伪造管理员的飞书身份或新增群全员提醒。
+- 回归集中在既有 `service/alerting/alerting_test.go`：通过实际 `ProcessChannelError` 覆盖关闭自动停用时的 402 与指定阿里 403、其他渠道排除、普通 403 排除、秘密掩码及渠道持续启用；同时覆盖未知渠道/不允许的事件筛选拒绝、慢错误的匹配/排除、缺失元数据不能绕过、关联分页查询以及三语言身份/金额/时间/事件链接。原停用开关耦合通过 Go overlay 复现失败，消息增强预期也已在旧模板上复现失败；测试不回退运行中的开发服务。三库测试使用不同渠道身份，隔离进程级通知冷却，避免前一数据库抑制后一数据库的真实源事件。
+- 实测 SQLite 3.50.4、MySQL 8.4.13、PostgreSQL 16.15 及独立 Redis，配置临时实例的 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后执行 `ENV=dev go test -race ./service/alerting -count=1 -v`：全部通过、无跳过（28.775s）。`go test ./service -run 'TestProcessChannelErrorSendsFeishuAlerts' -count=1`、`go test ./i18n -count=1`、`go build ./...`、`go vet -unreachable=false ./service/alerting ./service` 与 `git diff --check` 通过。没有 schema 或依赖变化；本地配置使用受限临时程序调用原 SaveRule/TargetVault/迁移域函数，临时程序和隔离测试实例在验证后删除。
+
+
+### 2026-11-16：告警列表视口裁切与分页不可见
+
+- 用户截图中的问题是页面布局：`AuthenticatedLayout`/`SidebarInset` 限定可用高度且隐藏溢出，告警页的原生 `<main>` 未建立收缩和滚动边界。真实 Chrome 中，810px 高视口的分页起点落在 y=1594，分页逻辑存在但无法从页面内访问；不能只用接口分页或 DOM 已渲染的测试判定完整显示。
+- `AlertsPage` 接入既有 `SectionPageLayout`，保留统一标题/操作栏，内容区通过共享布局的 `min-h-0 flex-1 overflow-auto` 滚动；`RulesList` 用 `PageFooterPortal` 将既有 `DataTablePagination` 放到固定页脚。其他游标列表页签也复用该页脚，切换页签时移除上一页签的分页。没有新增通用滚动、分页或页面布局组件。
+- 窄屏使用既有分页组件的 compact 模式，保留总数、当前页与前后页操作。规则名称显式覆盖表格单元格继承的 `white-space: nowrap`，在 12rem 最小宽度、18rem 最大宽度内换行，窄屏可通过表格原有横向滚动查看其他列。翻页/切换页大小后，在新数据就绪时滚动到表格起点；首次进入及定时刷新不主动改变阅读位置。
+- 回归扩展 `web/src/features/alerts/components/__tests__/rules-list.test.tsx`，先复现分页仍在受裁切页签中、名称不换行、翻页不复位等失败，再验证完整一页、独立分页页脚、低宽度分页、切换页签不残留旧分页、长名称及翻页滚动。`web/` 下执行 `bun run test src/features/alerts --reporter=dot`：6 个文件、94 项通过；`bun run typecheck`、对本次四个 TSX 文件执行 `bunx --no-install oxlint -c .oxlintrc.json`、`bun run build`、根目录 `go build ./...` 和 `git diff --check` 通过。版权头原样保留，复用现有翻译键；未修改后台、数据库或本地告警配置。
+- 浏览器验证使用隔离 Rsbuild 测试入口，加载实际 `AlertsPage`、共享 Header/SidebarInset 和项目 CSS，接口边界返回 38 条明确 fixture，使用系统 Google Chrome 与 Playwright；不读取浏览器登录资料、不向真实接口写入数据、不触发飞书消息。验证 1335×810、1280×600、390×667、320×568、844×390 五种尺寸：分页完全位于视口、滚动末行后页脚不移动、末行可滚到页脚上方、长名称换行、标题低于全局导航、页面无横向溢出、翻页显示新页第一行、最后一行及最后页禁用状态正确，均通过且无页面异常。修复后分页桌面 y=766/556，移动 y=613/514，横屏低高度 y=346，均含在对应视口内。
+
+### 2026-11-16：调用量基线与跨渠道模型告警
+
+- 保护行为：`request_started_count` 按真实生产调用的开始时间计数，包含未结束调用，metadata/progress 按 source 去重；`request_count` 继续使用终态口径。健康完整空窗口必须得到 0，采集失联或覆盖缺失不能当成 0。渠道与渠道模型使用实际尝试（含重试）；新 `model` 范围按客户端原始名称跨渠道统计网关请求，重试不能放大逻辑调用量。`controller/relay.go` 绑定父请求 metadata 时必须保留 `OriginModelName`，不能使用子 attempt 的渠道映射身份覆盖它。
+- `request_volume_change` 支持手动次数基线和不包含当前窗口的历史平均基线；历史归一化到当前窗口，低基线/历史覆盖不足明确暖机。UI 使用百分比，上涨允许超过 100%，下降最大 100%；恢复阈值严格小于触发阈值。基线在 pending/firing 期间冻结并持久化，恢复必须以最初冻结值判断，不能因历史均值随异常下跌而误恢复；服务重启和历史覆盖变化不能丢失已冻结上下文。新流量指标只支持 incident 和通知。
+- 权限与存储：跨渠道模型规则继续受 Root、owner=0、platform_enforced 边界保护，模型列表明确且有界，个人权限不能提升为平台规则。新增参数保存在现有配置 JSON；`AlertRuleState.Baseline` 使用每窗口调用数×10000，`PeriodKey` 保存冻结历史区间，仅限新流量 incident，不修改累计档位和周期规则。事件快照固化实际调用数、基线、变化基点、窗口，通知与事件详情显示百分比；预览/回放没有外部副作用。技术合同与完整配置示例见 `UNIFIED_ALERTING_DEVELOPMENT_DESIGN.md` 第 4.6 节。
+- 实现锚点：`model/alert.go`、`service/alerting/traffic.go`、`metrics.go`、`rules.go`、`engine.go`、`replay.go`、`render.go`、`controller/alerting.go`、`controller/relay.go`；前端 `rule-form.ts`、`templates.ts`、`rule-editor.tsx`、`rule-preview.tsx`、`rule-replay.tsx`、`evidence-summary.tsx`。界面复用已有 Dialog、Field、InputGroup、MultiSelect、NativeSelect、StaticDataTable，没有引入替代通用组件。新增 28 个文案键覆盖七种界面语言，后端通知覆盖 en/zh-CN/zh-TW。
+- 回归锚点：`TestAlertingDatabaseMatrix/*/traffic_baselines_and_zero_volume`，覆盖手动/历史基线、增长超过 100%、去重、在途计数、跨渠道请求去重与权限、零调用、历史排除当前/其他渠道/探测、冻结基线、恢复持续时间、重启、回放不产生事件及非法参数。矩阵保留已有 fresh 和代表性 released-core 升级、重复迁移检查；本次未增加数据库列或索引。
+- 真实数据库验证：SQLite **3.50.4**（项目 `glebarez/sqlite` 驱动）、MySQL **8.4.13**、PostgreSQL **16.15**。只使用临时 `codex-traffic-mysql`/`codex-traffic-postgres` 容器和独立 Redis socket；环境变量指向对应一次性测试库后，运行 `go test -race ./service/alerting -count=1 -v`，三库全部通过，没有跳过 MySQL/PostgreSQL。服务端其他验证：`go test ./i18n ./common ./middleware ./controller -count=1`、`go vet ./service/alerting ./model`、`go build ./...` 通过。额外执行 `go vet ./service/alerting ./controller ./model` 时，controller 包被原有 `controller/cliend_user_quota.go:41:2: unreachable code` 阻止；该文件未修改，未将该项报告为通过。
+- 前端验证：`bun run test src/features/alerts --reporter=dot`（107 项）、`bun run typecheck`、对上述受影响前端文件执行 `bunx --no-install oxlint -c .oxlintrc.json`、`bun run i18n:sync`、`bun run build` 通过。版权头保持原样。隔离浏览器入口加载真实编辑器和项目样式，在 1440×1000、390×844、320×568 检查历史/手动基线切换、跨渠道模型选择、150% 增长阈值序列化、60% 预览、隐藏无用聚合和最少样本控件，无横向溢出或页面异常；接口只返回 fixture，无真实通知或业务数据变更。
+
+### 2026-11-16：告警字段说明与点击示例
+
+- 保护行为：持续满足时长、恢复持续时长、恢复阈值以及调用量的指标、运算符、阈值、方向、基线和窗口字段应保留就近可点击的问号说明；不能仅依赖悬停，也不能把按钮嵌入输入框的 label。按钮必须为 `type=button`，点击不提交表单或修改配置；支持键盘打开、Escape 关闭并返回焦点，展开状态与可访问名称一致。
+- 说明须忠实于规则语义：统计窗口与持续时长独立，0 秒在下一次匹配评估时处理；条件中断/数据不可用会重启计时，恢复时长不等于自动重新启用对象。恢复变化阈值使用冻结基线，不是已恢复流量比例。基线 200、触发变化 50%、恢复变化 20% 的上涨例子为 300 次触发、≤240 次满足恢复；下降例子为 ≤100 次触发、≥160 次满足恢复，均需恢复持续时长。方向切换须更新示例；历史平均说明须保留 120 次/30 分钟折算 20 次/5 分钟及排除当前窗口的示例。
+- 实现与复用：`web/src/features/alerts/components/rule-field-help.tsx` 仅组合已有业务组件 `LearnMore` 和 `PopoverTitle`，没有新增独立问号/弹层实现；`rule-editor.tsx` 保留标签与输入关联。弹层高度同时受 Base UI `--available-height` 与视口约束，允许内部滚动，不能仅给一个大于锚点可用空间的视口最大高度。20 个新说明键通过项目翻译脚本写入七种界面语言，版权头保持原样。技术说明同步到 `UNIFIED_ALERTING_DEVELOPMENT_DESIGN.md` 第 4.6 节。
+- 验证：`bun run test src/features/alerts --reporter=dot`（109 项）、`bun run typecheck`、对 `rule-editor.tsx`/`rule-field-help.tsx`/`__tests__/rule-editor.test.tsx` 执行 `bunx --no-install oxlint -c .oxlintrc.json`、`bun run i18n:sync`、`bun run build`、`go build ./...` 通过；交互测试覆盖定义与示例、上涨/下降切换、历史归一化说明、键盘展开、Escape 和焦点返回、点击不发送 POST。未改动后端行为、数据库或本地规则配置。
+
+### 2026-11-16：告警复查修复与规则状态颜色
+
+- 保护行为：改规则名称不能重置未展示的通知恢复开关、最少替代渠道数、独立探测模型/次数/观察时长、确认提醒/升级时间、报告回补/等待参数或 `quota_unit`。恢复探测模型与被监控模型分别保存；说明展示保存的实际探测要求，移除动作时不保留 `probe` 模式。
+- 处置任务：仅名称、级别、分类、通知和确认配置变化时，同一归属、同一 condition generation、启用状态下，保存事务为仍有效的 `pending/retry_wait/running` 自动动作更新授权 revision，写审计和 outbox。事件与去重身份、原有效期、可领取时间、尝试次数不变；旧执行租约失效。执行策略/条件/权限变化、暂停和过期/终态任务不沿用授权；执行前仍按当前版本、权限和指标复核。不能直接放宽 `engine.runJob` 或 `CommitAlertHold` 的版本检查。
+- 迁移和预览：旧事件通知回退只被 `pending/running/retry_wait` 阻止，不能被不可重试的 `expired/canceled` 永久锁住。24 小时滚动预览按接受水位读取完整窗口，不由虚构生效时间裁成预热；真实来源覆盖检查和正式规则启用预热仍保留，累计/在途预览的原起点不变。
+- 状态展示复用共享 `StatusBadge`，保留文字并区分启用绿/暂停灰、P0/P1 红/P2 黄/P3 蓝、数据完整绿/预热和部分数据黄/过期与错误红/无数据和未知灰；暂停操作黄、恢复操作绿。复用原有表格和按钮，未新增替代通用组件。探针说明的一个新键按 `i18n-translate` 脚本同步七种界面语言，数字格式使用 `toIntlLocale` 和共享 `formatNumber`，版权头原样保留。
+- 实现锚点：`model/alert_store.go:reauthorizeAlertActions`、`controller/alerting.go:PreviewAlertRule`、`service/alerting/legacy_notices.go:SwitchLegacyNotice`，前端 `rule-form.ts`、`rule-editor.tsx`、`rules-table.tsx`、`labels.ts`。回归扩展于现有 `service/alerting/alerting_test.go` 与现有两份前端表单/编辑器测试文件，没有另建散落测试文件。
+- 数据库验证：一次性空库的 SQLite **3.50.4**、MySQL **8.4.13**（本机 33685）、PostgreSQL **16.15**（本机 34055），独立 Redis socket `/tmp/codex-alert-fix-1116-redis.sock`。设置 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后运行 `go test -race ./service/alerting -count=1 -v`，三库全部通过，无跳过；沿用 fresh alert 表、代表 released-core 升级与连续两次迁移检查，无新增表结构或索引。最终权限断言与预览改动后，补跑 `go test -race ./service/alerting -run 'TestAlertingDatabaseMatrix/(sqlite|mysql|postgres)/(presentation_edits|rule_preview|legacy_event)' -count=1 -v`，三库均通过，覆盖真实处置、重试、旧租约和版本失效、到期/取消不复活、外用户拒绝、无安全证明拒绝、终态迁移回退和 24 小时窗口。
+- 权限核对参照 [ASVS 5.0.0](https://asvs.owasp.org/) 的 `v5.0.0-8.2.1`、`v5.0.0-8.2.2`、`v5.0.0-8.3.1`、`v5.0.0-8.3.2`，以及 [Authorization](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)、[Authentication](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 指南。新增测试验证未授权主体、缺失证明、当前修订版本与旧 worker 失效；没有修改会话/凭证机制，不声明完整 ASVS 合规。
+- 其他检查：告警前端 **112 项**、`bun run typecheck`、六个受影响 TS/TSX 文件定向 oxlint、`bun run i18n:sync`、`bun run build`、`go build ./...`、`go vet ./service/alerting ./model`、`go test ./i18n ./common ./middleware ./controller -count=1` 和 `git diff --check` 通过。隔离 Chrome 入口使用真实组件与项目样式，检查浅/深色主题、1440×1000/390×844/320×568、七种界面语言及非法语言降级，状态颜色可区分、无页面异常或文档横向溢出；编辑器预览保留自定义策略。仅 fixture 接口，无业务数据修改或实际飞书推送；临时测试设施用后清理。
+- 前端复跑记录：一轮执行耗时 2107.57 秒，期间出现长时间停顿并有 3 项失败；未改变实现、断言或超时配置，随后完整重跑为 6 文件、112 项全部通过（12.26 秒），首次执行也全部通过（15.71 秒）。不将中断的那一轮报告为通过。
+
+### 2026-11-16：事件摘要的百分比展示
+
+- 保护行为：异常生命周期、触发历史、事件详情摘要中的比例指标必须显示百分比，已有历史记录同样适用。`request_volume_change=50000 | samples=6` 显示为“调用量变化：500%｜有效样本数：6”，不能把 50000 当作调用数量或 50000%。触发、重复提醒与恢复事件均转换，数量指标保留原单位。
+- 实现锚点：`web/src/features/alerts/lib/event-summary.ts:formatAlertEventSummary` 复用 `formatAlertMetricValue`、`alertLabel` 和共享数字格式化，仅识别摘要末尾的指标/样本段；规则名、对象名、旧通知和已经格式化的摘要保留。三个入口在渲染时转换并响应语言切换，原始事件与审计证据不修改，无数据库变更。继续使用已有 Dialog、StaticDataTable 和七种语言的翻译键，未新增通用组件或翻译键，版权头原样保留。
+- 验证：先新增实际 `IncidentDetailDialog` 回归用例，确认旧实现找不到 `500%` 展示而失败，再接入修复。`bun run test src/features/alerts` 为 **7 文件、129 项通过**，新增覆盖历史 trigger/repeat/recovery、语言切换、七种界面语言和非法语言降级、精度大于 JavaScript 安全整数、规则名包含类似字段、数量/旧文本/已格式化摘要不转换。`bun run typecheck`、五个受影响 TS/TSX 文件定向 oxlint、保留版权头的格式检查、`bun run build` 与 `git diff --check` 通过。
+- 浏览器使用实际编辑器、共享样式、隔离 API fixture 和系统 Chrome，在 1440×1000、390×844、320×568、844×390 验证弹层可见、视口内定位、长内容滚动、中文→法语切换、Escape/Enter 操作，无页面错误或横向溢出；所有场景 POST 数均为 0。320×568 的法语弹层 y=293、高约 258，内容超长时内部滚动，保持在可见区域。
+
+
+### 2026-11-16：告警金额统一展示美元
+
+- 保护行为：异常生命周期、触发历史、事件详情摘要以及结构化金额证据/报告中，`spend_net` 与 `balance_remaining` 应展示 USD。历史 `spend_net=19770000 | samples=3` 展示为“净消耗：$39.54｜有效样本数：3”。换算单位缺省采用系统标准 500000，事件详情与证据优先使用配置快照的 `quota_unit`；不依赖全站人民币、Tokens 或自定义币种展示选项。原始事件、计费与资金数据不修改。
+- 实现锚点：`web/src/features/alerts/lib/event-summary.ts:formatAlertMoney` 被摘要和 `EvidenceSummary` 共用，`EventDetailDialog` 将事件配置的换算单位传给摘要。共享 `lib/currency.ts` 增加 `formatUSD`：原有货币封装随全站设置换汇，无法表达固定 USD，因此兼容增加显式 USD 入口，继续复用原有货币格式化实现，不改变其他调用方。普通数额以本地化美元显示；大整数或浮点不能保持八位小数时使用 BigInt 精确结果与 USD 标识，保留负净额和最小额度精度。
+- 验证：先扩展实际异常详情回归，确认旧实现无法显示 `$39.54` 后实施修复；`bun run test src/features/alerts` **7 文件、141 项通过**，覆盖金额/余额、历史事件、零值、单额度、退款、安全整数边界及超出边界、保存的换算单位、七种语言/非法语言降级与语言切换、全站 CNY/Tokens/自定义币种不改变告警美元。`bun run typecheck`、六个受影响 TS/TSX 文件定向 oxlint、保留版权头的格式检查、`bun run build` 与 `git diff --check` 通过。复用已有 UI 和翻译键，没有数据库或接口查询变更、业务数据修改或实际通知推送。
+
+
+### 2026-11-16：线上旧告警迁移页的空列表兼容
+
+- 事故与保护行为：打开「旧告警迁移」时，未配置旧 Key 告警的实例可能由接口返回 `legacy_tokens: null`，旧前端直接 `.map()` 导致整页错误。`migrations` 与 `legacy_quota_items` 也须兼容 `null` 和旧响应中的缺失字段；某一集合为空不能丢弃其他候选/已导入记录或破坏去重，真正请求失败仍应显示可重试错误。
+- 实现锚点：`web/src/features/alerts/components/migrations-panel.tsx` 明确接口集合的 nullable/optional 类型，加载成功后分别归一化为空数组，使映射、展开、查找和表格渲染共用同一份有效集合。沿用原有 StaticDataTable、ErrorState、导入/接管/回退与安全验证流程，没有新增通用组件、翻译键、接口或数据库改动。
+- 回归锚点：扩展现有 `components/__tests__/migration-import.test.tsx`，先以 `legacy_tokens: null` 在旧实现上复现相同 `Cannot read properties of null (reading 'map')`（原第 130 行），再验证三个集合分别为空、同时为空、字段缺失、标准空数组、正常候选与迁移记录保留及过滤、请求错误与重试恢复。迁移文件 11 项通过，`bun run test src/features/alerts` **7 文件、148 项通过**；`bun run typecheck`、两个受影响 TSX 文件的定向 oxlint、保留版权头的格式检查、`bun run build`、`go build ./...` 与 `git diff --check` 通过。未连接线上管理接口或改变实际迁移执行方；线上需要发布包含此修复的新版本。
+- 浏览器验证：隔离 Chrome 通过实际 `AlertsPage` 点击中文「旧告警迁移」，依次模拟全部集合为 null、旧 Key 为 null 但保留已导入账号记录、其他集合为 null 但保留可导入 Key，均正常显示；页面异常为 0、写请求为 0。仅使用本地 fixture，不连接线上业务接口，临时服务已清理。
+
+
+## Root 跨用户配置通知目标（2026-11-17）
+
+- 用户明确要求 Root 创建规则时可选择归属用户，并可使用所有用户创建的通知及升级目标。以此替代 2026-11-15 记录中 Root 只能为平台范围选择平台目标的限制；普通用户仍只能绑定自己的目标，平台监控范围仍要求 Root、owner=0 和 platform_enforced。
+- 账号/Key 规则复用已有 `UserSelect` 的名称/ID 服务端查询与分页。两类通知选择器复用 `MultiSelect`，兼容扩展远程查询回调及分页/重试页脚；现有组件缺少这两个接入点，未另建通用选择器。Root 查询全用户目标，标注属主与目标 ID；每页最多 200 项，搜索可命中未加载目标，已选目标按每批最多 20 个 ID 回填并在搜索变化后保留名称。
+- Root 选择跨归属通知或升级目标时，前端自动启用平台强制管理，服务端规范化同样强制该管理模式，不能通过直接请求保留可由普通用户编辑的跨用户引用。取消平台强制管理时移除跨归属引用。启用规则继续拒绝停用、缺失及删除目标。普通用户无法通过数字查询或 IDs 回填跨归属目标，也不能借助规则修改继承 Root 权限。
+- 回归锚点：已有 `service/alerting/alerting_test.go` 的 `testAlertRootTargets` 和 `testAlertRuleDeliveryRequirement`，覆盖 205 个目标分页、名称/ID 查询、受限回填、凭证不返回、普通用户隔离、Root 跨归属保存自动强制管理，以及预览/回放/新建/编辑四个 HTTP 入口；已有 `rule-editor.test.tsx` / `rule-form.test.ts` 和共享多选组件用例覆盖对应界面流程、超过 200 用户和目标、超出单批的已选目标回填、查询失败重试及停用目标拒绝。
+- 数据库验证使用可销毁空库与独立 Redis：SQLite 3.50.4、MySQL 8.4.13（37005）、PostgreSQL 16.15（41837）、Redis 8.10.2（Unix socket）。设置 `ALERTING_TEST_MYSQL_DSN`、`ALERTING_TEST_POSTGRES_DSN`、`ALERTING_TEST_REDIS_SOCKET` 后执行 `go test -race ./service/alerting -count=1 -v`，三库全部通过，无跳过；包含已有代表发布版本升级与重复迁移夹具。本次没有模型或迁移改动，也未操作业务库或发送真实飞书通知。
+- 权限核对参考 [OWASP ASVS 5.0.0](https://asvs.owasp.org/) 的 `v5.0.0-8.2.1`、`v5.0.0-8.2.2`、`v5.0.0-8.3.1`，以及 [Authorization](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)、[Authentication](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 指南。适用控制为服务端角色/属主授权、跨用户引用仅 Root 批准、普通用户不可继承平台能力及凭证不返回；没有修改登录、会话或自动动作重新认证机制，不作整站 ASVS 合规声明。
+- 可销毁 MySQL/PostgreSQL 容器、独立 Redis 和浏览器夹具服务已清理。
+- 最终校验：`web/` 下 `bun run test src/features/alerts src/components/multi-select/__tests__`（11 文件、167 用例）全部通过；`bun run typecheck`、改动文件 `bun x oxlint -c .oxlintrc.json ...`、`bun run i18n:sync` 和七语言逐键检查、`bun run build` 通过，随后根目录 `go build ./...` 通过。`go vet ./service/alerting ./model`、`go test ./service -run '^TestAlertProof' -count=1` 和 `go test ./router -run '^TestAlertMutationGuardsRunBeforeHandler$' -count=1` 通过。基于完整 RuleEditor 的隔离浏览器夹具在 1440/390 像素宽度验证 Root 选择用户 245、跨用户普通/升级目标、分页和预览/保存实际请求，均无页面错误和横向溢出；未连接真实通知服务。
+
+### 切回自定义告警模板恢复归属用户（2026-11-17）
+
+- 复现：Root 由自定义规则切到渠道模型模板，归属用户按平台范围隐藏；再切回“自定义规则”时，原处理器因未找到预设而跳过重置，导致表面选中自定义、实际仍保留渠道模型范围和参数。普通用户由消耗档位切回自定义时也保留消耗指标。
+- 修复：自定义选项与预设共用现有模板切换处理器；切回时加载普通 API Key 默认表单及当前账号归属，清除模板名称、对象/通知选择和旧预览、回放结果。归属用户继续依据实际监控范围显示，复用既有 NativeSelect、UserSelect 和表单重置，不另建选择器或增加同步 effect。
+- 回归：已有 `rule-editor.test.tsx` 新增两个用户可见流程；修复前稳定复现 Root 找不到归属用户、普通用户保留消耗指标两个失败。覆盖 Root 在平台/账号模板与自定义之间反复切换、归属用户重新选择及预览请求的数据归属，以及普通用户恢复默认指标并保持原归属权限。
+- 验证：`bun run test src/features/alerts src/components/multi-select/__tests__ --maxWorkers=2`（11 文件、169 用例）、`bun run typecheck`、两个改动 TSX 文件的 oxlint、保护版权头与 `git diff --check` 通过；`bun run build` 后顺序执行根目录 `go build ./...` 通过。隔离浏览器夹具在 1440/390 像素宽度分别验证三次模板往返、归属用户恢复、改选用户 245 以及 API Key 预览/保存实际请求，无页面错误或横向溢出；夹具服务已清理。本次仅修改前端模板切换和回归测试，无数据库改动。
+
+## 飞书告警消息卡片（2026-11-17）
+
+- 用户明确要求美化飞书告警，因此告警中心的 `feishu` 目标由 text 升级为 interactive 原生卡片。P0/P1 红色、P2 橙色、P3 蓝色；标题附带等级色点和场景图标。触发 🚨、持续 ⏳、恢复 ✅、探测 🧪、升级 📣、待确认 ⏰、消费档位 💰、汇总 📊、修订 📝、数据缺失 ⚠️、服务异常 🛠️、测试 🔔 各有表达；恢复为绿色、升级为紫色、数据缺失为黄色。
+- 卡片拆分渠道/模型、账号/API Key、系统/预算等对象身份，并显示当前指标、比较阈值、样本、数据完整性、本地时区窗口与事件时间。USD/百分比/毫秒沿用共用格式化；修复原非比例恢复通知仍显示触发阈值的问题。汇总隐藏无意义的触发阈值，保留报告明细和补发/部分数据说明。探测事件中的在途安全检查不能冒充原失败率/耗时指标；恢复卡片提醒以详情确认最终可用状态。
+- 使用不可变规则和证据快照，不查询实时凭证或原始请求正文。动态名称、旧告警正文均作为 plain_text；超长 Unicode 文本截短，必要时缩减正文给 20 KiB 限制及签名留出空间。详情按钮仅使用已配置站点的 HTTP(S) URL 和事件 ID，缺失/非法站点地址不生成无效按钮。测试覆盖报告、流量基线、旧渠道消息、特殊字符和超长文本。
+- 原生 Feishu timestamp/sign、HTTP/业务码校验、网络访问规则、速率和重试继续走既有路径。通用 Webhook v1/v2、企业微信等保留原 payload 契约；未由统一目标接管的旧 `SendFeishuNotifyContext` 保持原文本协议与加签回归。
+- 新增回归全部集中在已有 `service/alerting/alerting_test.go`：先复现 text 类型不符合卡片、卡片缺失等失败，再验证 15 种事件/等级组合、三种语言、对象与单位、方向正确的恢复比较符、汇总/流量细节、探测语义及大小限制。三语言补齐 29 个卡片文案键，键目录及语言完整性测试通过。
+- 验证命令：`go test -race ./service/alerting ./i18n -count=1`、`go vet ./service/alerting ./i18n`、`go test -race ./service -run 'TestProcessChannelError(SendsFeishuAlerts|MasksDisableReasonAndNotification)$' -count=1`、`go build ./...`、gofmt 与 `git diff --check`。本次不改变数据库模式、查询或规则判定；完整包测试执行其 SQLite 路径，未配置的 MySQL/PostgreSQL/Redis 矩阵分支沿既有规则跳过，不表述为本次重跑三库。
+- 协议参考 [飞书自定义机器人](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)、[卡片按钮](https://open.feishu.cn/document/ukTMukTMukTM/uYzM3QjL2MzN04iNzcDN/component-list/interactive-components)、[卡片结构官方示例](https://open.feishu.cn/community/articles/7271149634339422210)。通过实际 Deliver 序列化和内存 HTTP transport 生成 8 张示例卡片；本地示意在 1440/390 宽度无横向溢出。没有向真实群发送演示消息，最终排版以飞书客户端为准。
+
+### 规则详情的指标单位与空样本（2026-11-17）
+
+- 复现：规则详情的状态表直接展示 `last_value`，导致成功率 10000 显示为原始基点，消耗金额显示内部额度单位。修复前新增详情回归分别无法找到 `100%` 和 `$19.77`。
+- 保护行为：详情复用既有百分比和 USD 格式化，成功率/失败率等比例的 10000 为 100%、1234 为 12.34%；保存的 `quota_unit` 决定美元换算。数量、样本的 int64 字符串保持精确，不能统一转为 JS Number。比例有有效样本时 0 显示 0%；无分母的请求比例显示 `—`。调用量下降至零和预算比例仍可在当前样本为零时有有效百分比，不能一并隐藏；调用量基线不完整时继续显示 `—`。
+- 详情、预览、回放、事件证据及摘要共用带样本上下文的 `formatAlertMetricValue`；后端判定、数据状态和持久化单位不变。继续复用 `StaticDataTable`、`Dialog`、`formatAlertMoney` 和 `toIntlLocale`，未新增 UI 组件或文案键。
+- 验证：`web/` 下 `bun run test src/features/alerts src/components/multi-select/__tests__ --maxWorkers=2`（12 文件、192 用例）、`bun run typecheck`、10 个改动 TS/TSX 文件的定向 oxlint 与 `bun run build` 通过。回归覆盖详情实际单元格、真实零值/无样本、预览/回放、预算与零流量例外、七种界面语言及非法语言降级、运行时切换语言、USD 与超安全整数精度。隔离浏览器在 1440×1100 和 390×844 验证百分比、无样本、语言切换，无页面异常或文档横向溢出；只使用夹具数据。
+- 前端构建完成后顺序执行根目录 `go build ./...` 通过；`git diff --check` 和全部 10 个 TS/TSX 文件版权头检查通过，临时浏览器服务已清理。无数据库或规则配置变更。

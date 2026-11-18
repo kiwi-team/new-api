@@ -253,7 +253,8 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.TimingContext = timingContext
 		}
 		attemptStart := time.Now()
-		alertMetadata := common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: channel.Id, ChannelName: channel.Name, Model: relayInfo.OriginModelName, Protocol: string(relayFormat), Stream: relayInfo.IsStream, OutputCovered: relayInfo.IsStream && (relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatClaude || relayFormat == types.RelayFormatGemini || relayFormat == types.RelayFormatOpenAIResponses)}
+		clientStream := relayInfo.ClientIsStream || (relayInfo.IsStream && !relayInfo.BufferStreamResponse)
+		alertMetadata := common.AlertHealthEvent{Layer: "channel_attempt", RequestID: c.GetString(common.RequestIdKey), UserID: c.GetInt("id"), TokenID: c.GetInt("token_id"), ChannelID: channel.Id, ChannelName: channel.Name, Model: relayInfo.OriginModelName, Protocol: string(relayFormat), Stream: clientStream, OutputCovered: clientStream && (relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatClaude || relayFormat == types.RelayFormatGemini || relayFormat == types.RelayFormatOpenAIResponses)}
 		if full, err := model.CacheGetChannel(channel.Id); err == nil && full != nil {
 			alertMetadata.Model, _, alertMetadata.ConfigVersion = model.ResolveChannelModelIdentity(full, relayInfo.OriginModelName)
 		}
@@ -261,7 +262,11 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			alertMetadata.SampleClass = "transport"
 		}
 		if requestSpan := common.AlertSpanFromContext(timingContext); requestSpan != nil {
-			requestSpan.Bind(alertMetadata)
+			requestMetadata := alertMetadata
+			// Gateway traffic follows the client's model name, even while a
+			// channel attempt uses its canonical routing identity.
+			requestMetadata.Model = relayInfo.OriginModelName
+			requestSpan.Bind(requestMetadata)
 		}
 		alertContext, alertSpan := common.BeginAlertSpan(timingContext, alertMetadata)
 		defer alertSpan.End(context.Background(), "failure")
@@ -273,7 +278,7 @@ func RelayWithoutRace(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.TimingContext = alertContext
 		}
 		c.Set("alert_protocol", string(relayFormat))
-		c.Set("alert_stream", relayInfo.IsStream)
+		c.Set("alert_stream", clientStream)
 		relayInfo.ChannelAttemptStartTime = attemptStart
 		originalWriter := c.Writer
 		channelSetting, _ := common.GetContextKeyType[relaykitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)

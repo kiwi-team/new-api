@@ -141,7 +141,16 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other.SetPublic("cache_ratio", cacheRatio)
 	other.SetPublic("model_price", modelPrice)
 	other.SetPublic("user_group_ratio", userGroupRatio)
-	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
+	if relayInfo.BufferStreamResponse {
+		other.SetPublic("frt", float64(0))
+		bridge := map[string]any{"client_stream": false, "upstream_stream": true, "buffered": true, "rule_model": relayInfo.OriginModelName}
+		if !relayInfo.UpstreamFirstChunkTime.IsZero() {
+			bridge["upstream_first_chunk_ms"] = relayInfo.UpstreamFirstChunkTime.Sub(relayInfo.StartTime).Milliseconds()
+		}
+		other.SetAdmin("stream_bridge", bridge)
+	} else {
+		other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
+	}
 	if relayInfo.ReasoningEffort != "" {
 		other.SetPublic("reasoning_effort", relayInfo.ReasoningEffort)
 	}
@@ -422,6 +431,9 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 	}
 	other.SetPublic("billing_mode", "tiered_expr")
 	other.SetPublic("expr_b64", base64.StdEncoding.EncodeToString([]byte(snap.ExprString)))
+	if snap.TaskUsageBilling && relayInfo.BillingRequestInput != nil {
+		other.SetPublic("usage_facts", relayInfo.BillingRequestInput.Usage)
+	}
 	if result != nil {
 		if result.Characters != nil {
 			other.SetPublic("characters", *result.Characters)

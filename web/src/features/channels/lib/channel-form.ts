@@ -262,6 +262,9 @@ export const channelFormSchema = z
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
     // Channel extra settings (stored in setting JSON, not sent directly)
+    force_upstream_stream_for_non_stream_models: z
+      .array(z.string().trim().min(1))
+      .optional(),
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z
@@ -273,6 +276,50 @@ export const channelFormSchema = z
     tls_insecure_skip_verify: z.boolean().optional(),
     pass_through_body_enabled: z.boolean().optional(),
     responses_websocket_enabled: z.boolean().optional(),
+    google_request_privacy: z
+      .object({
+        enabled: z.boolean(),
+        user_agent_mode: z.enum(['preserve', 'custom', 'omit']).optional(),
+        custom_user_agent: z.string().optional(),
+        sdk_version_headers: z.enum(['preserve', 'omit']).optional(),
+      })
+      .superRefine((value, ctx) => {
+        if (!value.enabled || value.user_agent_mode !== 'custom') {
+          return
+        }
+        const userAgent = value.custom_user_agent ?? ''
+        if (!userAgent.trim()) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['custom_user_agent'],
+            message: 'Custom user agent is required',
+          })
+        }
+        if (
+          new TextEncoder().encode(userAgent).length > 256 ||
+          /[\r\n]/.test(userAgent)
+        ) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['custom_user_agent'],
+            message:
+              'Custom user agent must be at most 256 bytes and contain no line breaks',
+          })
+        }
+        if (
+          [...userAgent].some((char) => {
+            const code = char.charCodeAt(0)
+            return (code < 32 && code !== 9) || code === 127
+          })
+        ) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['custom_user_agent'],
+            message: 'Custom user agent contains invalid header characters',
+          })
+        }
+      })
+      .optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
     google_file_upload: z.string().optional(),
@@ -473,6 +520,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
+  force_upstream_stream_for_non_stream_models: [] as string[],
   force_format: false,
   thinking_to_content: false,
   proxy: '',
@@ -527,8 +575,11 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    google_request_privacy:
+      undefined as ChannelFormValues['google_request_privacy'],
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
+    force_upstream_stream_for_non_stream_models: [] as string[],
     force_format: false,
     thinking_to_content: false,
     proxy: '',
@@ -556,9 +607,37 @@ export function transformChannelToFormDefaults(
       const shards = normalizeHttp2ConnectionShards(
         parsed.http2_connection_shards
       )
+      const privacy = parsed.google_request_privacy
+      const privacyDefaults =
+        privacy && typeof privacy === 'object' && !Array.isArray(privacy)
+          ? {
+              ...privacy,
+              enabled: privacy.enabled ?? false,
+              user_agent_mode:
+                privacy.user_agent_mode === ''
+                  ? undefined
+                  : privacy.user_agent_mode,
+              sdk_version_headers:
+                privacy.sdk_version_headers === ''
+                  ? undefined
+                  : privacy.sdk_version_headers,
+            }
+          : (privacy ?? undefined)
       extraSettings = {
+        google_request_privacy: privacyDefaults,
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
+        force_upstream_stream_for_non_stream_models: Object.entries(
+          (parsed.model_behaviors ?? {}) as Record<
+            string,
+            { force_upstream_stream_for_non_stream?: boolean }
+          >
+        )
+          .filter(
+            ([, behavior]) =>
+              behavior?.force_upstream_stream_for_non_stream === true
+          )
+          .map(([model]) => model),
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
@@ -712,6 +791,7 @@ function linesFromList(value: unknown): string {
 
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
+    google_request_privacy: formData.google_request_privacy,
     task_plugin_key:
       formData.type === CHANNEL_TYPE_TASK_PLUGIN
         ? formData.task_plugin_key?.trim() || ''
@@ -721,6 +801,15 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       formData.task_extend_plugin_keys?.length
         ? formData.task_extend_plugin_keys
         : undefined,
+    model_behaviors: formData.force_upstream_stream_for_non_stream_models
+      ?.length
+      ? Object.fromEntries(
+          formData.force_upstream_stream_for_non_stream_models.map((model) => [
+            model,
+            { force_upstream_stream_for_non_stream: true },
+          ])
+        )
+      : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: formData.proxy?.trim() || '',

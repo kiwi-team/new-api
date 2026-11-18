@@ -441,6 +441,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 }
 
 func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+	keyword = strings.TrimSpace(keyword)
 	var users []*User
 	var total int64
 	var err error
@@ -471,9 +472,13 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	// 尝试将关键字转换为整数ID
 	keywordInt, err := strconv.Atoi(keyword)
 	if err == nil {
-		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		likeArgs = append([]any{keywordInt}, likeArgs...)
+		// Match partial IDs as text without truncating PostgreSQL's cast to CHAR(1).
+		idText := "CAST(id AS CHAR)"
+		if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+			idText = "CAST(id AS TEXT)"
+		}
+		likeCondition = "id = ? OR " + idText + " LIKE ? OR " + likeCondition
+		likeArgs = append([]any{keywordInt, "%" + keyword + "%"}, likeArgs...)
 	}
 
 	query = query.Where("("+likeCondition+")", likeArgs...)
@@ -589,64 +594,60 @@ func HardDeleteUserById(id int) (int64, error) {
 	return user.HardDelete()
 }
 
-// BatchDeleteUsers 批量硬删除用户，并级联硬删除这些用户名下的所有 token。
-// 在一个事务内完成，保证「用户记录」与「其 token」原子性删除；
-// 提交后异步清理用户缓存与 token 缓存。返回成功删除的用户数量。
+// BatchDeleteUsers permanently deletes non-root users and their credentials in
+// one transaction. Root accounts are protected even if their role changed after
+// the caller selected the batch.
 func BatchDeleteUsers(ids []int) (int, error) {
 	if len(ids) == 0 {
-		return 0, errors.New("ids 不能为空！")
+		return 0, common.NewMessage("Invalid parameters")
 	}
-
-	tx := DB.Begin()
-
-	// 先捞出待删用户（确认实际存在的数量，并用于缓存清理）
-	// Unscoped 使已注销(软删除)用户也被纳入计数与缓存清理
 	var users []User
-	if err := tx.Unscoped().Where("id IN (?)", ids).Find(&users).Error; err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-	if len(users) == 0 {
-		tx.Rollback()
-		return 0, nil
-	}
-
-	// 先捞出这些用户名下的 token（用于提交后清理 Redis 缓存）
-	// Unscoped 同时覆盖已被软删除的 token
 	var tokens []Token
-	if err := tx.Unscoped().Where("user_id IN (?)", ids).Find(&tokens).Error; err != nil {
-		tx.Rollback()
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx.Unscoped()).Where("id IN ? AND role < ?", ids, common.RoleRootUser).Order("id").Find(&users).Error; err != nil {
+			return err
+		}
+		if len(users) == 0 {
+			return nil
+		}
+		userIDs := make([]int, 0, len(users))
+		for _, user := range users {
+			userIDs = append(userIDs, user.Id)
+		}
+		if common.RedisEnabled {
+			if err := tx.Unscoped().Select("id", commonKeyCol).Where("user_id IN ?", userIDs).Find(&tokens).Error; err != nil {
+				return err
+			}
+		}
+		for i := range users {
+			version, err := IncrementUserAuthVersionWithTx(tx, users[i].Id)
+			if err != nil {
+				return err
+			}
+			users[i].AuthVersion = version
+			if _, err := DeleteUserAccessTokensWithTx(tx, users[i].Id); err != nil {
+				return err
+			}
+			if err := deleteUserAuthenticationData(tx, users[i].Id); err != nil {
+				return err
+			}
+		}
+		return tx.Unscoped().Where("id IN ?", userIDs).Delete(&User{}).Error
+	})
+	if err != nil {
 		return 0, err
 	}
-
-	// 级联硬删除 token（Unscoped 真正删除，避免遗留指向已删用户的孤儿记录）
-	if err := tx.Unscoped().Where("user_id IN (?)", ids).Delete(&Token{}).Error; err != nil {
-		tx.Rollback()
-		return 0, err
+	for _, user := range users {
+		if err := publishCommittedUserAuthVersion(user.Id, user.AuthVersion); err != nil {
+			common.SysError(common.LogText("failed to publish auth tombstone after hard deleting user %d: %v", user.Id, err))
+		}
+		if err := invalidateUserCache(user.Id); err != nil {
+			common.SysError(common.LogText("failed to invalidate user cache after hard deleting user %d: %v", user.Id, err))
+		}
 	}
-
-	// 硬删除用户记录
-	if err := tx.Unscoped().Where("id IN (?)", ids).Delete(&User{}).Error; err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return 0, err
-	}
-
-	// 清理缓存（用户状态缓存 + token 缓存）
-	// 同步执行：invalidateTokenCacheForMutation 会竖起 fence,晚一步竖起就给并发读者
-	// 留下把已删除 token 的快照重新写回缓存的窗口。
 	if err := invalidateTokensCache(tokens); err != nil {
 		common.SysError("failed to invalidate token cache after batch deleting users: " + err.Error())
 	}
-	for _, u := range users {
-		if err := invalidateUserCache(u.Id); err != nil {
-			common.SysError(fmt.Sprintf("failed to invalidate user cache after batch deleting user %d: %v", u.Id, err))
-		}
-	}
-
 	return len(users), nil
 }
 

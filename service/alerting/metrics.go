@@ -25,27 +25,28 @@ type MonitoredTarget struct {
 }
 
 func (t MonitoredTarget) Key() string {
-	if t.Type == "channel_model" {
+	if t.Type == "channel_model" || t.Type == "model" {
 		return model.AlertIdentity(t.Type, t.ID, "routing", t.Model)
 	}
 	return model.AlertIdentity(t.Type, t.ID)
 }
 
 type Measurement struct {
-	Requests           []RequestEvidence `json:"requests,omitempty"`
-	Report             *ReportSummary    `json:"report,omitempty"`
-	Value              int64             `json:"value,string"`
-	Samples            int64             `json:"samples,string"`
-	Numerator          int64             `json:"numerator,string"`
-	Missing            int64             `json:"missing,string"`
-	Status             string            `json:"status"`
-	Reason             string            `json:"reason,omitempty"`
-	WindowStart        int64             `json:"window_start"`
-	WindowEnd          int64             `json:"window_end"`
-	RequestIDs         []string          `json:"request_ids"`
-	AttributionCovered bool              `json:"attribution_covered"`
-	ThresholdCrossedAt int64             `json:"threshold_crossed_at"`
-	SourceAcceptedAt   int64             `json:"source_accepted_at"`
+	Traffic            *TrafficMeasurement `json:"traffic,omitempty"`
+	Requests           []RequestEvidence   `json:"requests,omitempty"`
+	Report             *ReportSummary      `json:"report,omitempty"`
+	Value              int64               `json:"value,string"`
+	Samples            int64               `json:"samples,string"`
+	Numerator          int64               `json:"numerator,string"`
+	Missing            int64               `json:"missing,string"`
+	Status             string              `json:"status"`
+	Reason             string              `json:"reason,omitempty"`
+	WindowStart        int64               `json:"window_start"`
+	WindowEnd          int64               `json:"window_end"`
+	RequestIDs         []string            `json:"request_ids"`
+	AttributionCovered bool                `json:"attribution_covered"`
+	ThresholdCrossedAt int64               `json:"threshold_crossed_at"`
+	SourceAcceptedAt   int64               `json:"source_accepted_at"`
 }
 
 // RequestEvidence contains timing references only. Raw bodies, headers and
@@ -93,6 +94,12 @@ func ResolveTargets(ctx context.Context, row model.AlertRule, spec model.AlertRu
 				return nil, err
 			}
 			out = append(out, MonitoredTarget{Type: "project_budget", ID: row.Id, Name: project.ProjectName + " / " + plan.PlanName + " / " + row.ClientUserId, ClientUserID: row.ClientUserId, ProjectID: row.ProjectId, PlanID: row.PlanId})
+		}
+		return out, nil
+	case "model":
+		out := make([]MonitoredTarget, 0, len(scope.ModelSelector.Models))
+		for _, name := range scope.ModelSelector.Models {
+			out = append(out, MonitoredTarget{Type: "model", Model: name, Name: name})
 		}
 		return out, nil
 	case "account":
@@ -212,6 +219,8 @@ func targetFacts(query *gorm.DB, target MonitoredTarget, spec model.AlertRuleSpe
 		}
 	case "channel":
 		query = query.Where("channel_id = ?", target.ID)
+	case "model":
+		query = query.Where("model_hash = ?", model.AlertIdentity("model", target.Model))
 	case "channel_model":
 		query = query.Where("channel_id = ? AND model_hash = ?", target.ID, model.AlertIdentity("model", target.Model))
 	}
@@ -337,6 +346,9 @@ func Measure(ctx context.Context, rule model.AlertRule, spec model.AlertRuleSpec
 	if status != "complete" {
 		m.Status, m.Reason = status, reason
 		return m, nil
+	}
+	if trafficMetric(c.Metric) {
+		return measureTraffic(ctx, rule, spec, target, m, now)
 	}
 	return measureMetricSQL(ctx, rule, spec, target, m, acceptedNow)
 }

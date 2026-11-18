@@ -238,6 +238,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	}
 	tools := make([]dto.ToolCallResponse, 0)
 	thinkingContent := ""
+	thinkingSignature := ""
 	annotations := make([]any, 0)
 
 	fullTextResponse.Id = claudeResponse.Id
@@ -256,6 +257,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 		case "thinking":
 			if message.Thinking != nil {
 				thinkingContent = *message.Thinking
+				thinkingSignature = message.Signature
 			}
 		case "text":
 			text := message.GetText()
@@ -271,7 +273,8 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	choice := dto.OpenAITextResponseChoice{
 		Index: 0,
 		Message: dto.Message{
-			Role: "assistant",
+			Role:      "assistant",
+			Signature: thinkingSignature,
 		},
 		FinishReason: StopReasonClaudeToOpenAI(claudeResponse.StopReason),
 	}

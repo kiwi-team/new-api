@@ -184,6 +184,7 @@ export function UsersTable() {
 
   const { table } = useDataTable({
     data: users,
+    getRowId: (user) => String(user.id),
     columns,
     enableRowSelection: true,
     columnFilters,
@@ -225,6 +226,7 @@ export function UsersTable() {
         'No users available. Try adjusting your search or filters.'
       )}
       skeletonKeyPrefix='users-skeleton'
+      showMobileBulkActions
       applyHeaderSize
       toolbarProps={{
         searchPlaceholder: t('Filter by username, name or email...'),

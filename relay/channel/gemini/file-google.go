@@ -14,11 +14,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
-	"cloud.google.com/go/storage"
-	"google.golang.org/api/option"
 	"google.golang.org/genai"
 )
 
@@ -134,8 +133,7 @@ func UploadFileToGoogle(ctx context.Context, fileUri string, bucket string, cred
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	bytes := []byte(credentials)
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(bytes))
+	client, err := service.NewGoogleStorageClient(ctx, credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -257,11 +255,15 @@ func UploadByConfigAPI(ctx context.Context, fileUri string) (*genai.File, error)
 }
 
 // DeleteGCSObject deletes an object from Google Cloud Storage.
-func DeleteGCSObject(credentials string, bucket string, object string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func DeleteGCSObject(credentials string, bucket string, object string, contexts ...context.Context) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = context.WithoutCancel(contexts[0])
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(credentials)))
+	client, err := service.NewGoogleStorageClient(ctx, credentials)
 	if err != nil {
 		fmt.Printf("failed to create GCS client for object deletion, err: %v\n", err)
 		return
@@ -274,9 +276,9 @@ func DeleteGCSObject(credentials string, bucket string, object string) {
 }
 
 // CleanupGCSObjects deletes all uploaded GCS objects in the background.
-func CleanupGCSObjects(objects []relaycommon.GCSObjectRef) {
+func CleanupGCSObjects(objects []relaycommon.GCSObjectRef, contexts ...context.Context) {
 	for _, obj := range objects {
-		go DeleteGCSObject(obj.Credentials, obj.Bucket, obj.Object)
+		go DeleteGCSObject(obj.Credentials, obj.Bucket, obj.Object, contexts...)
 	}
 }
 

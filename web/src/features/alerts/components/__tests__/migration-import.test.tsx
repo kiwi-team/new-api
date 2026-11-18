@@ -23,7 +23,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import type { Catalog } from '../../types'
 import { MigrationImport, type MigrationCandidate } from '../migration-import'
+import { MigrationsPanel } from '../migrations-panel'
 
 function fixture(count = 2, disabled = false) {
   const candidates: MigrationCandidate[] = Array.from(
@@ -60,6 +62,159 @@ function fixture(count = 2, disabled = false) {
   )
   return { candidates, pending, client }
 }
+
+function panelFixture(data: unknown, failed = false) {
+  const request = vi.spyOn(api, 'request').mockResolvedValue({
+    data: { success: !failed, data, message: failed ? 'List unavailable' : '' },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  const catalog: Catalog = {
+    scopes: [],
+    metrics: [],
+    target_types: [],
+    api_keys: [],
+    enabled: true,
+    actions_enabled: false,
+    encryption_configured: true,
+    read_all: true,
+    manage_platform: true,
+    read_engine_health: true,
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <MigrationsPanel catalog={catalog} />
+    </QueryClientProvider>
+  )
+  return { request, client }
+}
+
+const legacyKey = {
+  id: 11,
+  name: 'Legacy key',
+  owner_user_id: 1,
+  threshold_usd: 100,
+  configured: true,
+}
+const legacyAccount = {
+  kind: 'user_spend',
+  object_id: '2',
+  name: 'Legacy account',
+  owner_user_id: 2,
+  threshold_usd: '1000',
+  configured: true,
+}
+const migration = {
+  id: 'migrated-account',
+  kind: 'user_spend',
+  object_id: '2',
+  rule_id: 31,
+  owner_user_id: 2,
+  executor: 'legacy',
+  status: 'observing',
+  revision: 1,
+  cutover_at: 0,
+  checkpoint: '{}',
+}
+
+it.each([
+  {
+    name: 'legacy token list is null',
+    data: {
+      legacy_tokens: null,
+      legacy_quota_items: [legacyAccount],
+      migrations: [migration],
+    },
+    configured: 0,
+    visible: ['Legacy account'],
+    existing: true,
+  },
+  {
+    name: 'quota candidate list is null',
+    data: {
+      legacy_tokens: [legacyKey],
+      legacy_quota_items: null,
+      migrations: [migration],
+    },
+    configured: 1,
+    visible: ['Legacy key', '2'],
+    existing: true,
+  },
+  {
+    name: 'migration list is null',
+    data: {
+      legacy_tokens: [legacyKey],
+      legacy_quota_items: [legacyAccount],
+      migrations: null,
+    },
+    configured: 2,
+    visible: ['Legacy key', 'Legacy account'],
+    existing: false,
+  },
+  {
+    name: 'all lists are null',
+    data: { legacy_tokens: null, legacy_quota_items: null, migrations: null },
+    configured: 0,
+    visible: [],
+    existing: false,
+  },
+  {
+    name: 'list fields are absent',
+    data: {},
+    configured: 0,
+    visible: [],
+    existing: false,
+  },
+  {
+    name: 'all lists are empty arrays',
+    data: { legacy_tokens: [], legacy_quota_items: [], migrations: [] },
+    configured: 0,
+    visible: [],
+    existing: false,
+  },
+])(
+  'keeps the migration panel usable when $name',
+  async ({ data, configured, visible, existing }) => {
+    const { request, client } = panelFixture(data)
+    const bulk = await screen.findByRole('button', {
+      name: `Import configured alerts (${configured})`,
+    })
+    if (configured === 0) expect(bulk).toBeDisabled()
+    else expect(bulk).toBeEnabled()
+    for (const name of visible) expect(screen.getByText(name)).toBeVisible()
+    if (existing) {
+      expect(screen.getByRole('button', { name: 'Cut over' })).toBeEnabled()
+    } else {
+      expect(
+        screen.queryByRole('button', { name: 'Cut over' })
+      ).not.toBeInTheDocument()
+    }
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'GET', url: '/api/alerts/migrations' })
+    )
+    client.clear()
+  }
+)
+
+it('shows migration request errors and can retry into an empty nullable response', async () => {
+  const { request, client } = panelFixture(null, true)
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  expect(
+    screen.queryByRole('button', { name: 'Import configured alerts (0)' })
+  ).not.toBeInTheDocument()
+  request.mockResolvedValue({
+    data: {
+      success: true,
+      data: { legacy_tokens: null, legacy_quota_items: null, migrations: null },
+    },
+  })
+  await userEvent.setup().click(retry)
+  expect(
+    await screen.findByRole('button', { name: 'Import configured alerts (0)' })
+  ).toBeDisabled()
+  client.clear()
+})
 
 afterEach(() => {
   cleanup()

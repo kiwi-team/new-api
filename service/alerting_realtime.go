@@ -48,7 +48,7 @@ func (t *RealtimeAlertTracker) Admit(ctx context.Context, kind string) error {
 	}
 	if common.AlertingControlsEnabled || common.AlertingEnabled {
 		var channel model.Channel
-		if err := model.DB.WithContext(ctx).Select("id", "name", "type", "models", "model_mapping", "group", "settings").First(&channel, t.metadata.ChannelID).Error; err != nil {
+		if err := model.DB.WithContext(ctx).Select("id", "name", "type", "base_url", "models", "model_mapping", "group", "settings").First(&channel, t.metadata.ChannelID).Error; err != nil {
 			return err
 		}
 		key, _, version := model.ResolveChannelModelIdentity(&channel, t.requestedModel)

@@ -237,6 +237,13 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 	if client == nil {
 		client = http.DefaultClient
 	}
+	client, err = service.GooglePrivacyHTTPClient(client, service.GoogleRequestPrivacyForChannel(channel.Type, setting))
+	if err != nil {
+		return &taskMediaProxyError{
+			status: http.StatusInternalServerError, code: "artifact_internal_error",
+			message: "Failed to create artifact proxy client", err: err,
+		}
+	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, parsedURL.String(), bytes.NewReader(descriptor.Body))
 	if err != nil {

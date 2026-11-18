@@ -31,6 +31,7 @@ import {
   useDataTable,
 } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Empty,
   EmptyDescription,
@@ -144,6 +145,14 @@ function ApiKeysMobileList({
 
   return (
     <div className='min-w-0 space-y-3'>
+      <label className='flex items-center gap-2 text-xs'>
+        <Checkbox
+          checked={table.getIsAllPageRowsSelected()}
+          indeterminate={table.getIsSomePageRowsSelected()}
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+        />
+        {t('Select all')}
+      </label>
       {rows.map((row) => {
         const apiKey = row.original
         const statusConfig = API_KEY_STATUSES[apiKey.status]
@@ -163,9 +172,19 @@ function ApiKeysMobileList({
             )}
           >
             <div className='flex items-start justify-between gap-3'>
-              <div className='min-w-0'>
+              <Checkbox
+                checked={row.getIsSelected()}
+                onCheckedChange={(value) => row.toggleSelected(!!value)}
+                aria-label={t('Select row {{number}}', {
+                  number: row.index + 1,
+                })}
+              />
+              <div className='min-w-0 flex-1'>
                 <div className='text-sm leading-5 font-semibold break-words'>
                   {apiKey.name}
+                </div>
+                <div className='text-muted-foreground mt-1 break-words'>
+                  {t('Username')}: {apiKey.username || apiKey.user_id || '—'}
                 </div>
               </div>
               {statusConfig && (
@@ -338,6 +357,7 @@ export function ApiKeysTable() {
 
   const { table } = useDataTable({
     data: apiKeys,
+    getRowId: (apiKey) => String(apiKey.id),
     columns,
     enableRowSelection: true,
     columnFilters,
@@ -433,6 +453,7 @@ export function ApiKeysTable() {
       mobile={
         <ApiKeysMobileList table={table} isLoading={isLoading} now={now} />
       }
+      showMobileBulkActions
       getRowClassName={(row) =>
         isDisabledApiKeyRow(row.original) ? DISABLED_ROW_DESKTOP : undefined
       }

@@ -63,10 +63,21 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	requestStr := ""
 	responseStr := ""
 	if saveRequestResponse {
-		requestBytes, marshalErr := common.Marshal(request)
-		if marshalErr == nil {
-			requestStr = string(requestBytes)
+		if info.BufferStreamResponse {
+			requestStr, err = bufferedClientRequestLog(c)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
+			}
+		} else {
+			requestBytes, marshalErr := common.Marshal(request)
+			if marshalErr == nil {
+				requestStr = string(requestBytes)
+			}
 		}
+	}
+
+	if info.BufferStreamResponse {
+		request.Stream = common.GetPointer(true)
 	}
 
 	includeUsage := true
@@ -114,11 +125,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 		if containAudioTokens && containsAudioRatios {
-			service.PostAudioConsumeQuota(c, info, usage, nil, "", "")
+			service.PostAudioConsumeQuota(c, info, usage, nil, requestStr, info.BufferedResponseJSON)
 		} else {
 			//extraContent := []string{}
 			//postConsumeQuota(c, info, usage, extraContent, "", "")
-			service.PostTextConsumeQuota(c, info, usage, nil, "", "")
+			service.PostTextConsumeQuota(c, info, usage, nil, requestStr, info.BufferedResponseJSON)
 		}
 		return nil
 	}
@@ -160,6 +171,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 		if info.ChannelType == constant.ChannelTypeAnthropic {
 			//common.PrintJson("Anthropic upstream request", common.RawMessage(jsonData))
+			common.WriteJson("claude-request-1118", common.RawMessage(jsonData))
 		}
 
 		var beforeFileOverride []byte
@@ -195,6 +207,24 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		defer closer.Close()
 		jsonData = nil
+		requestBody = body
+	}
+
+	if info.BufferStreamResponse {
+		// The final constraint also covers raw-body passthrough and overrides.
+		data, readErr := io.ReadAll(requestBody)
+		if readErr != nil {
+			return types.NewError(readErr, types.ErrorCodeConvertRequestFailed)
+		}
+		data, err = forceBufferedStreamRequest(info, data)
+		if err != nil {
+			return newBufferedStreamError(c, info, err)
+		}
+		body, closer, bodyErr := relaycommon.NewOutboundJSONBody(data)
+		if bodyErr != nil {
+			return types.NewError(bodyErr, types.ErrorCodeConvertRequestFailed)
+		}
+		defer closer.Close()
 		requestBody = body
 	}
 
@@ -244,14 +274,20 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	// 创建流式响应记录器（如果需要记录响应）
 	var streamRecorder *helper.StreamResponseRecorder
-	if saveRequestResponse && httpResp != nil {
+	if saveRequestResponse && httpResp != nil && !info.BufferStreamResponse {
 		// 使用流式记录器包装原始响应体，不影响实时传输
 		streamRecorder = helper.NewStreamResponseRecorder(httpResp.Body)
 		httpResp.Body = streamRecorder
 		defer streamRecorder.Release()
 	}
 
-	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
+	var usage any
+	var newApiErr *types.NewAPIError
+	if info.BufferStreamResponse {
+		usage, responseStr, newApiErr = doBufferedStreamResponse(c, httpResp, info, adaptor)
+	} else {
+		usage, newApiErr = adaptor.DoResponse(c, httpResp, info)
+	}
 	common.MarkResponseHandlingEnded(c)
 	if newApiErr != nil {
 		// reset status code 重置状态码
@@ -338,7 +374,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 	var thinking dto.AnthropicThinking
 
 	if textRequest.THINKING != nil {
-		err := json.Unmarshal(textRequest.THINKING, &thinking)
+		err := common.Unmarshal(textRequest.THINKING, &thinking)
 		if err != nil {
 			return err
 		}
@@ -349,7 +385,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				reasoning := openrouter.RequestReasoning{
 					MaxTokens: thinking.BudgetTokens,
 				}
-				reasoningJSON, err := json.Marshal(reasoning)
+				reasoningJSON, err := common.Marshal(reasoning)
 				if err != nil {
 					return fmt.Errorf("failed to marshal reasoning: %w", err)
 				}
@@ -361,7 +397,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 				if textRequest.ReasoningEffort != "" {
 					reasoning.Effort = textRequest.ReasoningEffort
 				}
-				reasoningJSON, err := json.Marshal(reasoning)
+				reasoningJSON, err := common.Marshal(reasoning)
 				if err != nil {
 					return fmt.Errorf("failed to marshal reasoning: %w", err)
 				}
@@ -371,7 +407,7 @@ func transParmas(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayI
 			reasoning := openrouter.RequestReasoning{
 				Enabled: common.GetPointer(false),
 			}
-			reasoningJSON, _ := json.Marshal(reasoning)
+			reasoningJSON, _ := common.Marshal(reasoning)
 			textRequest.Reasoning = reasoningJSON
 		}
 	} else if isChat && textRequest.THINKING != nil {
@@ -534,7 +570,7 @@ func filterParmas(textRequest *dto.GeneralOpenAIRequest) {
 		return
 	}
 	filterConfigMap := &model.ModelParamsFilterMap{}
-	err := json.Unmarshal([]byte(filterConfig), filterConfigMap)
+	err := common.Unmarshal([]byte(filterConfig), filterConfigMap)
 	if err != nil {
 		common.SysError("filterParmas Unmarshal failed: " + err.Error())
 		return

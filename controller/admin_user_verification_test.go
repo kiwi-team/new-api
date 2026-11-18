@@ -1,11 +1,15 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // setupAdminUserTest promotes the enrolled operator to root and creates a
@@ -386,4 +391,169 @@ func TestAdminUserVerificationPolicy(t *testing.T) {
 		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&flows).Error)
 		assert.Zero(t, flows)
 	})
+}
+
+// The list and deletion paths share the real database fixture so the contract
+// is exercised against each supported engine, including a separate audit DB.
+func TestAdminListsAndBatchDeletionDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("real database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			operator, identity, target := setupAdminUserTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.Token{}, &model.ExternalIdentityClaim{}))
+			other := &model.User{Username: "other-root", AffCode: "other-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+			require.NoError(t, model.DB.Create(other).Error)
+			deleted := &model.User{Username: "deleted-member", AffCode: "deleted-member", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+			require.NoError(t, model.DB.Create(deleted).Error)
+			require.NoError(t, model.DB.Delete(deleted).Error)
+			require.NoError(t, model.DB.Model(target).Update("email", "managed@example.com").Error)
+			key := seedToken(t, model.DB, target.Id, "shared-name", "managed-secret-key")
+			rootKey := seedToken(t, model.DB, operator.Id, "shared-name", "root-secret-key")
+			seedToken(t, model.DB, deleted.Id, "deleted-key", "deleted-secret-key")
+			bundle, err := service.CreateLoginSession(target.Id, "password", "127.0.0.1", "batch-test")
+			require.NoError(t, err)
+			_, accessToken := createScopedAccessToken(t, target.Id, 0, "user:read")
+			targetIdentity, err := service.ParseAccessToken(bundle.AccessToken)
+			require.NoError(t, err)
+			issueSecurityEnrollmentProof(t, targetIdentity, service.VerificationOperation{Scope: service.VerificationScopePasswordChange}, service.VerificationMethodPassword)
+			require.NoError(t, model.DB.Create(&model.ExternalIdentityClaim{Provider: "github", Subject: target.GitHubId, UserId: target.Id}).Error)
+
+			for _, endpoint := range []struct {
+				path    string
+				handler gin.HandlerFunc
+			}{
+				{"/api/token/?user_id=0", GetAllTokens},
+				{"/api/token/search?user_id=0&keyword=shared-name", SearchTokens},
+			} {
+				response := adminUserRequest(http.MethodGet, endpoint.path, "", "", identity, common.RoleRootUser, nil, endpoint.handler)
+				var page struct {
+					Success bool
+					Data    struct {
+						Items []struct {
+							UserID   int    `json:"user_id"`
+							Username string `json:"username"`
+							Key      string `json:"key"`
+						} `json:"items"`
+					}
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &page))
+				require.True(t, page.Success)
+				owners := map[int]string{}
+				for _, item := range page.Data.Items {
+					owners[item.UserID] = item.Username
+				}
+				assert.Equal(t, target.Username, owners[target.Id])
+				assert.Equal(t, operator.Username, owners[operator.Id])
+				assert.NotContains(t, response.Body.String(), key.Key)
+				assert.NotContains(t, response.Body.String(), rootKey.Key)
+				response = adminUserRequest(http.MethodGet, endpoint.path, "", "", identity, common.RoleCommonUser, nil, endpoint.handler)
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &page))
+				require.True(t, page.Success)
+				require.Len(t, page.Data.Items, 1)
+				assert.Equal(t, operator.Username, page.Data.Items[0].Username)
+			}
+
+			for _, endpoint := range []struct {
+				path    string
+				handler gin.HandlerFunc
+			}{
+				{"/api/user/", GetAllUsers}, {"/api/user/search?keyword=managed", SearchUsers},
+			} {
+				response := adminUserRequest(http.MethodGet, endpoint.path, "", "", identity, common.RoleRootUser, nil, endpoint.handler)
+				assert.Contains(t, response.Body.String(), "managed@example.com")
+			}
+
+			// Non-root batches stay owner-scoped; root can remove other owners' keys.
+			probeKey := seedToken(t, model.DB, target.Id, "batch-probe", "batch-probe-secret")
+			probeBody := fmt.Sprintf(`{"ids":[%d]}`, probeKey.Id)
+			deniedToken := adminUserRequest(http.MethodPost, "/api/token/batch", probeBody, "", identity, common.RoleCommonUser, nil, DeleteTokenBatch)
+			assert.Contains(t, deniedToken.Body.String(), `"data":0`)
+			rootToken := adminUserRequest(http.MethodPost, "/api/token/batch", probeBody, "", identity, common.RoleRootUser, nil, DeleteTokenBatch)
+			assert.Contains(t, rootToken.Body.String(), `"data":1`)
+			var remainingKey int64
+			require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", probeKey.Id).Count(&remainingKey).Error)
+			assert.Zero(t, remainingKey)
+
+			body := fmt.Sprintf(`{"ids":[%d,%d,%d,%d,%d,%d]}`, other.Id, target.Id, operator.Id, deleted.Id, target.Id, 999999)
+			operation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserBatchDelete, Context: []byte(fmt.Sprintf(`{"user_ids":[%d,%d,%d,%d,999999]}`, operator.Id, target.Id, deleted.Id, other.Id))}
+			missing := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, "", identity, common.RoleRootUser, nil, DeleteUserBatch)
+			assert.Contains(t, missing.Body.String(), "SECURITY_PROOF_REQUIRED")
+			for _, role := range []int{common.RoleCommonUser, common.RoleAdminUser} {
+				denied := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, "", identity, role, nil, DeleteUserBatch)
+				assert.Contains(t, denied.Body.String(), `"success":false`)
+			}
+			for _, invalid := range []string{`{"ids":[]}`, `{"ids":[0]}`, `{"ids":[-1]}`, `{"ids":"all"}`} {
+				denied := adminUserRequest(http.MethodPost, "/api/user/batch/delete", invalid, "", identity, common.RoleRootUser, nil, DeleteUserBatch)
+				assert.Contains(t, denied.Body.String(), `"success":false`)
+			}
+			wrongOperation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserBatchDelete, Context: []byte(fmt.Sprintf(`{"user_ids":[%d]}`, target.Id))}
+			wrongProof := issueSecurityEnrollmentProof(t, identity, wrongOperation, service.VerificationMethodPassword)
+			mismatch := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, wrongProof, identity, common.RoleRootUser, nil, DeleteUserBatch)
+			assert.Contains(t, mismatch.Body.String(), "SECURITY_PROOF_CONTEXT_MISMATCH")
+			expiredProof := issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+			require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("user_id = ? AND consumed_at IS NULL", operator.Id).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			expired := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, expiredProof, identity, common.RoleRootUser, nil, DeleteUserBatch)
+			assert.Contains(t, expired.Body.String(), "SECURITY_PROOF_EXPIRED")
+			_, err = model.GetUserById(target.Id, false)
+			require.NoError(t, err)
+
+			// A failure at the final user delete must roll back credentials too.
+			require.NoError(t, model.DB.Callback().Delete().Before("gorm:delete").Register("batch_delete_failure", func(tx *gorm.DB) {
+				if tx.Statement.Schema != nil && tx.Statement.Schema.ModelType == reflect.TypeFor[model.User]() {
+					tx.AddError(errors.New("injected user delete failure"))
+				}
+			}))
+			_, err = model.BatchDeleteUsers([]int{target.Id, deleted.Id})
+			require.Error(t, err)
+			require.NoError(t, model.DB.Callback().Delete().Remove("batch_delete_failure"))
+			for _, entity := range []any{&model.UserSession{}, &model.UserAccessToken{}, &model.Token{}} {
+				var remaining int64
+				require.NoError(t, model.DB.Model(entity).Where("user_id = ?", target.Id).Count(&remaining).Error)
+				assert.Positive(t, remaining)
+			}
+
+			proof := issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+			response := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, proof, identity, common.RoleRootUser, nil, DeleteUserBatch)
+			assert.Contains(t, response.Body.String(), `"success":true`)
+			assert.Contains(t, response.Body.String(), `"deleted":2`)
+			assert.Contains(t, response.Body.String(), `"skipped":3`)
+			for _, entity := range []any{&model.User{}, &model.Token{}} {
+				column := "user_id"
+				if _, ok := entity.(*model.User); ok {
+					column = "id"
+				}
+				var remaining int64
+				require.NoError(t, model.DB.Unscoped().Model(entity).Where(column+" IN ?", []int{target.Id, deleted.Id}).Count(&remaining).Error)
+				assert.Zero(t, remaining)
+			}
+			for _, entity := range []any{&model.UserSession{}, &model.UserAccessToken{}, &model.AuthFlow{}, &model.ExternalIdentityClaim{}} {
+				var remaining int64
+				require.NoError(t, model.DB.Model(entity).Where("user_id = ?", target.Id).Count(&remaining).Error)
+				assert.Zero(t, remaining)
+			}
+			deletedIdentity, err := service.ParseAccessToken(bundle.AccessToken)
+			if err == nil {
+				err = service.ValidateStepUpIdentity(deletedIdentity)
+			}
+			assert.Error(t, err)
+			var tokenCount int64
+			require.NoError(t, model.DB.Model(&model.UserAccessToken{}).Where("id = ?", accessToken.Id).Count(&tokenCount).Error)
+			assert.Zero(t, tokenCount)
+			var rootCount int64
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id IN ?", []int{operator.Id, other.Id}).Count(&rootCount).Error)
+			assert.EqualValues(t, 2, rootCount)
+			replayed := adminUserRequest(http.MethodPost, "/api/user/batch/delete", body, proof, identity, common.RoleRootUser, nil, DeleteUserBatch)
+			assert.Contains(t, replayed.Body.String(), "SECURITY_PROOF_CONSUMED")
+			var audit model.AuditLog
+			require.NoError(t, model.LOG_DB.Where("action = ?", "user.batch_delete").First(&audit).Error)
+			assert.Equal(t, "Deleted 2 user(s); skipped 3.", audit.Content)
+			payload, err := common.Marshal(audit)
+			require.NoError(t, err)
+			assert.NotContains(t, string(payload), proof)
+			assert.NotContains(t, string(payload), key.Key)
+		})
+	}
 }

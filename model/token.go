@@ -192,6 +192,7 @@ const searchHardLimit = 100
 
 // func SearchUserTokens(userId int, keyword string, token string, offset int, limit int) (tokens []*Token, total int64, err error) {
 func SearchUserTokens(userId int, keyword string, token string, modelName string, channel string, offset int, limit int) (tokens []*Token, total int64, err error) {
+	keyword = strings.TrimSpace(keyword)
 	// model 层强制截断
 	if limit <= 0 || limit > searchHardLimit {
 		limit = searchHardLimit
@@ -204,7 +205,7 @@ func SearchUserTokens(userId int, keyword string, token string, modelName string
 		token = strings.TrimPrefix(token, "sk-")
 	}
 
-	// 超量用户（令牌数超过上限）只允许精确搜索，禁止模糊搜索
+	// Limit explicit wildcard queries above the token creation limit.
 	maxTokens := operation_setting.GetMaxUserTokens()
 	hasFuzzy := strings.Contains(keyword, "%") || strings.Contains(token, "%")
 	if hasFuzzy {
@@ -229,7 +230,15 @@ func SearchUserTokens(userId int, keyword string, token string, modelName string
 		if err != nil {
 			return nil, 0, err
 		}
-		baseQuery = baseQuery.Where("name LIKE ? ESCAPE '!'", keywordPattern)
+		// Plain names use substring matching; keep explicit wildcard patterns compatible.
+		if !strings.Contains(keyword, "%") {
+			keywordPattern = "%" + keywordPattern + "%"
+		}
+		likeOp := "LIKE"
+		if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+			likeOp = "ILIKE"
+		}
+		baseQuery = baseQuery.Where("name "+likeOp+" ? ESCAPE '!'", keywordPattern)
 	}
 	if token != "" {
 		tokenPattern, err := sanitizeLikePattern(token)

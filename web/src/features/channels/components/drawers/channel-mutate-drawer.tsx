@@ -206,6 +206,7 @@ import {
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
+import { BufferedStreamSetting } from '../buffered-stream-setting'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
 import { ChannelTypeLogo } from '../channel-type-badge'
@@ -222,6 +223,7 @@ import {
   type PassthroughKind,
 } from '../dialogs/passthrough-warning-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
+import { GoogleRequestPrivacySetting } from '../google-request-privacy-setting'
 import {
   ModelMappingBatchDialog,
   type ModelMappingBatchResult,
@@ -319,6 +321,8 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_auto_sync_enabled',
   'upstream_model_update_ignored_models',
   'google_file_bucket',
+  'google_request_privacy',
+  'force_upstream_stream_for_non_stream_models',
   'model_output_mapping',
   'response_model_use_request_model',
   'path_whitelist',
@@ -3139,6 +3143,7 @@ export function ChannelMutateDrawer({
         disabled={sensitiveLocked}
         className='space-y-4 disabled:opacity-60'
       >
+        <BufferedStreamSetting disabled={sensitiveLocked} />
         <FormField
           control={form.control}
           name='model_output_mapping'
@@ -4881,6 +4886,10 @@ export function ChannelMutateDrawer({
                 className='space-y-4 disabled:opacity-60'
               >
                 <ResponsesWebSocketSetting
+                  channelType={currentType}
+                  disabled={sensitiveLocked || isSubmitting}
+                />
+                <GoogleRequestPrivacySetting
                   channelType={currentType}
                   disabled={sensitiveLocked || isSubmitting}
                 />
