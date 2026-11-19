@@ -176,5 +176,6 @@ func geminiPreConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage 
 	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
 	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
 
-	return service.PreWssConsumeQuota(ctx, info, usage)
+	_, err := service.PreWssConsumeQuota(ctx, info, usage)
+	return err
 }

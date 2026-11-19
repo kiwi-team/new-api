@@ -315,7 +315,7 @@ func DoubaoRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						usage.OutputTokens, usage.OutputTokenDetails.TextTokens, usage.OutputTokenDetails.AudioTokens,
 						usage.TotalTokens))
 
-					if consumeErr := service.PreWssConsumeQuota(c, info, usage); consumeErr != nil {
+					if _, consumeErr := service.PreWssConsumeQuota(c, info, usage); consumeErr != nil {
 						errChan <- fmt.Errorf("error consume usage: %v", consumeErr)
 						return
 					}

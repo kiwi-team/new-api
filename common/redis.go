@@ -204,6 +204,12 @@ func RedisHGetObj(key string, obj any) error {
 
 			// Enhanced type handling for Token struct
 			switch fieldValue.Kind() {
+			case reflect.Float64:
+				n, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					return fmt.Errorf("failed to parse %s: %w", fieldName, err)
+				}
+				fieldValue.SetFloat(n)
 			case reflect.String:
 				fieldValue.SetString(value)
 			case reflect.Int, reflect.Int64:

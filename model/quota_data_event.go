@@ -164,7 +164,7 @@ func (event QuotaDataEvent) validate() error {
 	if key != event.BucketKey {
 		return invalid("bucket checksum mismatch")
 	}
-	for _, n := range []int{q.Count, q.TokenUsed, q.PromptTokens, q.CompletionTokens, q.CachedTokens,
+	for _, n := range []int{q.CacheReadTokens, q.CacheCreationTokens, q.Count, q.TokenUsed, q.PromptTokens, q.CompletionTokens, q.CachedTokens,
 		q.ClaudeCacheCreation5mTokens, q.ClaudeCacheCreation1hTokens, q.CacheWrite5mRequestCount,
 		q.CacheWrite1hRequestCount, q.CacheReadRequestCount, q.StreamRequestCount, q.FrtSum, q.RequestTimeSum} {
 		if n < 0 {
@@ -196,10 +196,15 @@ func (event QuotaDataEvent) validate() error {
 }
 
 func (q *QuotaData) accumulateChecked(delta QuotaData) error {
+	q.CacheReadTokens = max(q.CacheReadTokens, q.CachedTokens)
+	q.CacheCreationTokens = max(q.CacheCreationTokens, q.ClaudeCacheCreation5mTokens+q.ClaudeCacheCreation1hTokens)
+	delta.CacheReadTokens = max(delta.CacheReadTokens, delta.CachedTokens)
+	delta.CacheCreationTokens = max(delta.CacheCreationTokens, delta.ClaudeCacheCreation5mTokens+delta.ClaudeCacheCreation1hTokens)
 	for _, pair := range []struct {
 		target *int
 		delta  int
 	}{
+		{&q.CacheReadTokens, delta.CacheReadTokens}, {&q.CacheCreationTokens, delta.CacheCreationTokens},
 		{&q.Count, delta.Count}, {&q.Quota, delta.Quota}, {&q.TokenUsed, delta.TokenUsed},
 		{&q.PromptTokens, delta.PromptTokens}, {&q.CompletionTokens, delta.CompletionTokens}, {&q.CachedTokens, delta.CachedTokens},
 		{&q.ClaudeCacheCreation5mTokens, delta.ClaudeCacheCreation5mTokens}, {&q.ClaudeCacheCreation1hTokens, delta.ClaudeCacheCreation1hTokens},
@@ -216,7 +221,7 @@ func (q *QuotaData) accumulateChecked(delta QuotaData) error {
 }
 
 var quotaDataCounterColumns = []string{
-	"count", "quota", "token_used", "prompt_tokens", "completion_tokens", "cached_tokens",
+	"cache_read_tokens", "cache_creation_tokens", "count", "quota", "token_used", "prompt_tokens", "completion_tokens", "cached_tokens",
 	"claude_cache_creation5m_tokens", "claude_cache_creation1h_tokens", "cache_write_5m_request_count",
 	"cache_write_1h_request_count", "cache_read_request_count", "stream_request_count", "frt_sum", "request_time_sum",
 }
@@ -319,6 +324,7 @@ func applyQuotaDataEvents(ctx context.Context, events []QuotaDataEvent) error {
 			// Insert an empty bucket first. Its unique key serializes competing
 			// writers even when the bucket did not exist before this transaction.
 			empty := delta
+			empty.CacheReadTokens, empty.CacheCreationTokens = 0, 0
 			empty.Count, empty.Quota, empty.TokenUsed, empty.PromptTokens, empty.CompletionTokens, empty.CachedTokens = 0, 0, 0, 0, 0, 0
 			empty.ClaudeCacheCreation5mTokens, empty.ClaudeCacheCreation1hTokens = 0, 0
 			empty.CacheWrite5mRequestCount, empty.CacheWrite1hRequestCount, empty.CacheReadRequestCount = 0, 0, 0

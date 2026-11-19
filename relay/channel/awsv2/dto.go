@@ -1,7 +1,7 @@
 package awsv2
 
 import (
-	"encoding/json"
+	"github.com/QuantumNous/new-api/common"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
@@ -160,7 +160,7 @@ func convertOpenAIToConverse(req *dto.GeneralOpenAIRequest) (*ConverseRequest, e
 				// Parse arguments from JSON string to map
 				var inputMap map[string]any
 				if tc.Function.Arguments != "" {
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &inputMap)
+					_ = common.Unmarshal([]byte(tc.Function.Arguments), &inputMap)
 				}
 				if inputMap == nil {
 					inputMap = make(map[string]any)
@@ -261,14 +261,7 @@ func convertOpenAIToolsToConverse(tools []dto.ToolCallRequest, toolChoice any) *
 		// Convert parameters to map
 		var paramsMap map[string]any
 		if tool.Function.Parameters != nil {
-			switch p := tool.Function.Parameters.(type) {
-			case map[string]any:
-				paramsMap = p
-			default:
-				// Try to marshal and unmarshal to get map
-				data, _ := json.Marshal(tool.Function.Parameters)
-				_ = json.Unmarshal(data, &paramsMap)
-			}
+			_ = common.Unmarshal(tool.Function.Parameters, &paramsMap)
 		}
 
 		toolSpec := &ToolSpec{

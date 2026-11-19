@@ -470,6 +470,7 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	common.SetContextKey(c, constant.ContextKeyConsumeLog, &params)
 	if c != nil && c.Request != nil {
 		if timing := common.TimingSnapshot(c.Request.Context(), "consume_log"); timing != nil {
 			if params.Other == nil {
@@ -503,6 +504,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled || common.AlertingEnabled {
 		// Record before returning so shutdown can flush every completed request.
+		cacheWrites := 0
+		if other != nil {
+			cacheWrites, _ = other.public["cache_creation_tokens"].(int)
+		}
 		LogQuotaData(&LogQuotaDataCache{
 			EventID:                     quotaEventID,
 			UserId:                      userId,
@@ -515,6 +520,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			PromptTokens:                params.PromptTokens,
 			CompletionTokens:            params.CompletionTokens,
 			CachedTokens:                params.CachedTokens,
+			CacheCreationTokens:         cacheWrites,
 			ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
 			ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
 			ChannelId:                   params.ChannelId,

@@ -164,10 +164,12 @@ type seeduplexTestBilling struct {
 	reject   bool
 }
 
-func (*seeduplexTestBilling) Settle(int) error           { return nil }
-func (*seeduplexTestBilling) Refund(*gin.Context)        {}
-func (*seeduplexTestBilling) NeedsRefund() bool          { return false }
-func (b *seeduplexTestBilling) GetPreConsumedQuota() int { return b.reserved }
+func (*seeduplexTestBilling) Settle(int) error                      { return nil }
+func (*seeduplexTestBilling) Refund(*gin.Context)                   {}
+func (*seeduplexTestBilling) NeedsRefund() bool                     { return false }
+func (b *seeduplexTestBilling) GetPreConsumedQuota() int            { return b.reserved }
+func (b *seeduplexTestBilling) ReserveBeforeSubmit(quota int) error { return b.Reserve(quota) }
+
 func (b *seeduplexTestBilling) Reserve(quota int) error {
 	b.targets = append(b.targets, quota)
 	if b.reject {

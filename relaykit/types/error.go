@@ -42,6 +42,9 @@ const (
 	ErrorCodeInvalidRequest         ErrorCode = "invalid_request"
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
 	ErrorCodeRateLimit              ErrorCode = "rate_limit"
+	ErrorCodeRequestRejected        ErrorCode = "request_rejected"
+	ErrorCodeRequestPluginFailed    ErrorCode = "request_plugin_failed"
+	ErrorCodeResponseRejected       ErrorCode = "response_rejected"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
 
 	// new api error

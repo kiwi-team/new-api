@@ -48,6 +48,8 @@ type requestErrorWriter struct {
 	body bytes.Buffer
 }
 
+func (w *requestErrorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func isRelayErrorRequest(c *gin.Context) bool {
 	path := c.Request.URL.Path
 	return c.GetString(RouteTagKey) == "relay" || strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/v1beta/") || strings.HasPrefix(path, "/v1alpha/")

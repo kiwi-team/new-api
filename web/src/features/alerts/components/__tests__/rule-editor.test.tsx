@@ -313,9 +313,9 @@ function mockOwnerDirectory(
         },
       }
     }
-    const page = Number(config?.params?.p ?? url.searchParams.get('p') ?? 1)
+    const page = Number((config?.params as { p?: number } | undefined)?.p ?? url.searchParams.get('p') ?? 1)
     const pageSize = Number(
-      config?.params?.page_size ?? url.searchParams.get('page_size') ?? 50
+      (config?.params as { page_size?: number } | undefined)?.page_size ?? url.searchParams.get('page_size') ?? 50
     )
     const keyword = (url.searchParams.get('keyword') ?? '').toLowerCase()
     const matches = keyword
@@ -402,8 +402,8 @@ it('continues loading owner pages past 200 users', async () => {
     if (path === '/api/user/1') {
       return { data: { success: true, data: users[0] } }
     }
-    const page = Number(config?.params?.p ?? 1)
-    const size = Number(config?.params?.page_size ?? 50)
+    const page = Number((config?.params as { p?: number } | undefined)?.p ?? 1)
+    const size = Number((config?.params as { page_size?: number } | undefined)?.page_size ?? 50)
     return {
       data: {
         success: true,

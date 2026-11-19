@@ -11,6 +11,7 @@ var ModelList = []string{
 	"qwq-32b",
 	"qwen3-235b-a22b",
 	"text-embedding-v1",
+	"qwen3-vl-embedding",
 	"gte-rerank-v2",
 	"fun-asr", "fun-asr-2025-11-07", "fun-asr-2025-08-25",
 	"fun-asr-mtl", "fun-asr-mtl-2025-08-25", "fun-asr-flash-2026-06-15",

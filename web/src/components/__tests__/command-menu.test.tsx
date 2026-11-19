@@ -25,9 +25,18 @@ import {
 } from '@tanstack/react-router'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterAll, afterEach, beforeAll, expect, test } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+  vi,
+} from 'vitest'
 
 import { SearchProvider } from '@/context/search-provider'
+import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -36,7 +45,12 @@ import { CommandMenu } from '../command-menu'
 import { Search } from '../search'
 
 const adminEntries = ['Channels', 'Models', 'Users', 'Redemption Codes']
-const superAdminEntries = ['System Info', 'Task Plugins', 'System Settings']
+const superAdminEntries = [
+  'System Info',
+  'Plugins',
+  'Request processing',
+  'System Settings',
+]
 
 // jsdom lacks the Web Animations API the menu's scroll area waits on.
 const getAnimationsDescriptor = Object.getOwnPropertyDescriptor(
@@ -61,6 +75,10 @@ afterAll(() => {
   } else {
     Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations')
   }
+})
+
+beforeEach(() => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: [] } })
 })
 
 afterEach(() => {
@@ -117,6 +135,15 @@ test('admins find admin pages in search but not super admin pages', async () => 
   for (const entry of superAdminEntries) {
     expect(entries).not.toContain(entry)
   }
+})
+
+test('super admins find Request processing right after Plugins', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+
+  expect(entries).toEqual(expect.arrayContaining(superAdminEntries))
+  expect(entries.indexOf('Request processing')).toBe(
+    entries.indexOf('Plugins') + 1
+  )
 })
 
 test('pages hidden in the sidebar settings stay out of search', async () => {

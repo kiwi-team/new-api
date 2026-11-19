@@ -15,7 +15,9 @@ import (
 
 // QuotaData 柱状图数据
 type QuotaData struct {
-	Id int `json:"id"`
+	CacheReadTokens     int `json:"cache_read_tokens,omitempty" gorm:"default:0"`
+	CacheCreationTokens int `json:"cache_creation_tokens,omitempty" gorm:"default:0"`
+	Id                  int `json:"id"`
 	// Legacy rows keep NULL keys. BeforeCreate assigns a nonempty key to every
 	// new bucket; the unique index protects those buckets without rewriting history.
 	BucketKey                   string `json:"-" gorm:"size:64;uniqueIndex:idx_quota_data_bucket"`
@@ -58,6 +60,7 @@ type QuotaData struct {
 }
 
 type LogQuotaDataCache struct {
+	CacheCreationTokens int
 	// EventID identifies a server-side billing action. Replays must reuse its full payload.
 	EventID                     string
 	UserId                      int
@@ -145,6 +148,8 @@ func quotaDataDelta(params *LogQuotaDataCache, createdAt int64) *QuotaData {
 		PromptTokens:                params.PromptTokens,
 		CompletionTokens:            params.CompletionTokens,
 		CachedTokens:                params.CachedTokens,
+		CacheReadTokens:             params.CachedTokens,
+		CacheCreationTokens:         max(params.CacheCreationTokens, params.ClaudeCacheCreation5mTokens+params.ClaudeCacheCreation1hTokens),
 		ClaudeCacheCreation5mTokens: params.ClaudeCacheCreation5mTokens,
 		ClaudeCacheCreation1hTokens: params.ClaudeCacheCreation1hTokens,
 		CacheWrite5mRequestCount:    cacheWrite5mReq,
@@ -163,6 +168,7 @@ func quotaDataDelta(params *LogQuotaDataCache, createdAt int64) *QuotaData {
 		PlanId:                      params.PlanId,
 	}
 	if params.IsSettlementAdjustment {
+		quotaData.CacheReadTokens, quotaData.CacheCreationTokens = 0, 0
 		quotaData.TokenUsed, quotaData.PromptTokens, quotaData.CompletionTokens = 0, 0, 0
 		quotaData.CachedTokens, quotaData.ClaudeCacheCreation5mTokens, quotaData.ClaudeCacheCreation1hTokens = 0, 0, 0
 	}
@@ -585,10 +591,20 @@ func GetQuotaDataStatistics(startTime int64, endTime int64, modelName string, cl
 	return statistics, err
 }
 
+// Legacy buckets predate the aggregate cache columns. Read the best available
+// count from each row before summing buckets from different schema generations.
+const dashboardCacheRead = "CASE WHEN COALESCE(cache_read_tokens, 0) > COALESCE(cached_tokens, 0) THEN cache_read_tokens ELSE COALESCE(cached_tokens, 0) END"
+const dashboardCacheWrite = "CASE WHEN COALESCE(cache_creation_tokens, 0) > COALESCE(claude_cache_creation5m_tokens, 0) + COALESCE(claude_cache_creation1h_tokens, 0) THEN cache_creation_tokens ELSE COALESCE(claude_cache_creation5m_tokens, 0) + COALESCE(claude_cache_creation1h_tokens, 0) END"
+const dashboardCounters = "sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as completion_tokens, sum(" + dashboardCacheRead + ") as cache_read_tokens, sum(" + dashboardCacheWrite + ") as cache_creation_tokens"
+
 func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).Find(&quotaDatas).Error
+	for _, row := range quotaDatas {
+		row.CacheReadTokens = max(row.CacheReadTokens, row.CachedTokens)
+		row.CacheCreationTokens = max(row.CacheCreationTokens, row.ClaudeCacheCreation5mTokens+row.ClaudeCacheCreation1hTokens)
+	}
 	return quotaDatas, err
 }
 
@@ -596,14 +612,14 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64, defaultTim
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	//err = DB.Table("quota_data").Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).Find(&quotaDatas).Error
-	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used,sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as  completion_tokens , created_at").Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Group("model_name, created_at").Find(&quotaDatas).Error
+	err = DB.Table("quota_data").Select("model_name, created_at, "+dashboardCounters).Where("created_at >= ? and created_at <= ? and user_id = ?", startTime, endTime, userId).Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 
 func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	err = DB.Table("quota_data").
-		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Select("username, created_at, "+dashboardCounters).
 		Where("created_at >= ? and created_at <= ?", startTime, endTime).
 		Group("username, created_at").
 		Find(&quotaDatas).Error
@@ -618,7 +634,7 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string, defaultTi
 	// 从quota_data表中查询数据
 	// only select model_name, sum(count) as count, sum(quota) as quota, model_name, created_at from quota_data group by model_name, created_at;
 	//err = DB.Table("quota_data").Where("created_at >= ? and created_at <= ?", startTime, endTime).Find(&quotaDatas).Error
-	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used,sum(prompt_tokens) as prompt_tokens, sum(completion_tokens) as  completion_tokens , created_at").Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
+	err = DB.Table("quota_data").Select("model_name, created_at, "+dashboardCounters).Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
 }
 

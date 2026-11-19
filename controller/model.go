@@ -2,6 +2,11 @@ package controller
 
 import (
 	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -21,9 +26,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
-	"net/http"
-	"strings"
-	"time"
 )
 
 // https://platform.openai.com/docs/api-reference/models/list
@@ -116,8 +118,8 @@ func init() {
 		}
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {
-			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
-				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			if models := channelTypePluginModels(i); len(models) > 0 {
+				channelId2Models[i] = models
 			}
 			continue
 		}
@@ -128,8 +130,8 @@ func init() {
 		adaptor.Init(meta)
 		channelId2Models[i] = adaptor.GetModelList()
 		if len(channelId2Models[i]) == 0 {
-			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
-				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			if models := channelTypePluginModels(i); len(models) > 0 {
+				channelId2Models[i] = models
 			}
 		}
 	}
@@ -139,6 +141,20 @@ func init() {
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
+}
+
+// channelTypePluginModels lists the models of every plugin declaring a
+// built-in channel type, each once, in plugin key order.
+func channelTypePluginModels(channelType int) []string {
+	var models []string
+	for _, plugin := range jsplugin.DefaultRegistry.PluginsByChannelType(channelType) {
+		for _, name := range plugin.Meta.Models {
+			if !slices.Contains(models, name) {
+				models = append(models, name)
+			}
+		}
+	}
+	return models
 }
 
 func channelOwnerName(channelType int) string {
@@ -349,8 +365,8 @@ func DashboardListModels(c *gin.Context) {
 		modelsByChannel[channelType] = append([]string(nil), models...)
 	}
 	for channelType := 1; channelType <= constant.ChannelTypeDummy; channelType++ {
-		if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(channelType); ok {
-			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
+		if models := channelTypePluginModels(channelType); len(models) > 0 {
+			modelsByChannel[channelType] = models
 		}
 	}
 	c.JSON(200, gin.H{

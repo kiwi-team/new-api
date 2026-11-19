@@ -143,7 +143,7 @@ test('time filtering uses the common log compact range picker', async () => {
   renderPage(ROLE.ADMIN)
 
   const rangeTrigger = await screen.findByRole('button', {
-    name: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} ~ \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+    name: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ~ \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
   })
   await user.click(rangeTrigger)
 

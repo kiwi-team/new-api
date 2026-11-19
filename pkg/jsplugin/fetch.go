@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/Calcium-Ion/moejs"
+	"github.com/MoeForge/moejs"
 	"github.com/QuantumNous/new-api/common"
 )
 
@@ -21,10 +22,17 @@ import (
 type Fetcher func(ctx context.Context, request FetchRequest) (FetchResponse, error)
 
 type FetchRequest struct {
-	Hook           string // the calling hook, filled by the engine for logs and errors
-	URL            string
-	Method         string
-	Headers        map[string]string
+	Hook    string // the calling hook, filled by the engine for logs and errors
+	URL     string
+	Method  string
+	Headers map[string]string
+	// Body is the text a POST sends; only postFetchHooks may POST.
+	Body string
+	// BodyStream, when set, is what the POST sends instead of Body: Body
+	// with the media refs it names replaced by their data URLs, BodySize
+	// bytes long.
+	BodyStream     io.Reader
+	BodySize       int64
 	Credentialless bool
 	ResponseType   string
 }
@@ -50,6 +58,10 @@ const (
 
 type fetcherContextKey struct{}
 
+// postFetchHooks may POST through utils.fetch for credential exchanges,
+// scheduled account maintenance and calls to request processing services.
+var postFetchHooks = map[string]bool{"login": true, "refresh": true, "revoke": true, "exchangeKey": true, "scheduled": true, "ingress": true, "egress": true, ReplyHook: true, ReportHook: true}
+
 // WithFetcher makes utils.fetch available to the hook called with ctx.
 func WithFetcher(ctx context.Context, fetcher Fetcher) context.Context {
 	return context.WithValue(ctx, fetcherContextKey{}, fetcher)
@@ -59,12 +71,14 @@ func WithFetcher(ctx context.Context, fetcher Fetcher) context.Context {
 // see it. The engine sets it for one call and clears it when the call ends,
 // so an idle pooled runtime keeps no request data.
 type runtimeCall struct {
-	engine   *Engine
-	runtime  *moejs.Runtime
-	ctx      context.Context
-	hook     string
-	fetcher  Fetcher
-	watchdog *runtimeWatchdog
+	engine  *Engine
+	runtime *moejs.Runtime
+	ctx     context.Context
+	hook    string
+	fetcher Fetcher
+	// transform is the context of a stage hook call, nil for other hooks.
+	transform *TransformContext
+	watchdog  *runtimeWatchdog
 	// holdsSlot and parked are what the call holds of the engine's
 	// semaphore and parked tokens; release returns exactly that.
 	holdsSlot bool
@@ -92,7 +106,7 @@ func (c *runtimeCall) fetch(r *moejs.Realm, argument moejs.Value) (moejs.Value, 
 	if c.fetcher == nil {
 		return moejs.Undefined(), fmt.Errorf("utils.fetch is not available in %s", c.hook)
 	}
-	request, host, wantBytes, err := fetchRequest(r, argument)
+	request, host, wantBytes, err := fetchRequest(r, argument, postFetchHooks[c.hook])
 	if err != nil {
 		return moejs.Undefined(), err
 	}
@@ -110,31 +124,25 @@ func (c *runtimeCall) fetch(r *moejs.Realm, argument moejs.Value) (moejs.Value, 
 		timeout, timeoutCause = remaining, fmt.Errorf("utils.fetch to %s ran past the %s of requests per hook call", host, maxFetchTimePerCall)
 	}
 
-	if !c.watchdog.pause() {
-		// The call timed out or its caller left; the interrupt ends it.
-		return moejs.Undefined(), r.CheckInterrupt()
-	}
-	c.yieldSlot()
-	fetchContext, cancel := context.WithTimeoutCause(c.ctx, timeout, timeoutCause)
-	started := time.Now()
-	response, err := c.fetcher(fetchContext, request)
-	c.fetchTime += time.Since(started)
-	if err != nil && fetchContext.Err() != nil {
-		err = context.Cause(fetchContext)
-	}
-	cancel()
-	if !c.reclaimSlot() {
-		// JavaScript must not run without a slot, and a thrown error could be
-		// caught; interrupting discards the runtime as a timeout does.
-		cause := context.Cause(c.ctx)
-		if cause == nil {
-			cause = fmt.Errorf("plugin call could not resume after utils.fetch: %w", ErrCallAdmissionTimeout)
+	if source := c.mediaSource(); source != nil && request.Body != "" {
+		// The media refs of the request go out as data URLs, streamed from
+		// the request body.
+		if request.BodyStream, request.BodySize, err = source.FetchBody(request.Body); err != nil {
+			return moejs.Undefined(), r.TypeError("utils.fetch: %s", err)
 		}
-		c.runtime.Interrupt(cause)
-		return moejs.Undefined(), r.CheckInterrupt()
 	}
-	c.watchdog.resume()
-	if interrupted := r.CheckInterrupt(); interrupted != nil {
+
+	var response FetchResponse
+	if interrupted := c.offSlot(r, "utils.fetch", func() {
+		fetchContext, cancel := context.WithTimeoutCause(c.ctx, timeout, timeoutCause)
+		started := time.Now()
+		response, err = c.fetcher(fetchContext, request)
+		c.fetchTime += time.Since(started)
+		if err != nil && fetchContext.Err() != nil {
+			err = context.Cause(fetchContext)
+		}
+		cancel()
+	}); interrupted != nil {
 		return moejs.Undefined(), interrupted
 	}
 
@@ -209,9 +217,10 @@ func (c *runtimeCall) fetch(r *moejs.Realm, argument moejs.Value) (moejs.Value, 
 }
 
 // fetchRequest reads the utils.fetch argument: {url, method?, headers?,
-// responseType?}. wantBytes is a responseType of "bytes": the body is
-// returned as an ArrayBuffer instead of parsed JSON or text.
-func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, host string, wantBytes bool, err error) {
+// responseType?}, plus body when allowPost is set. wantBytes is a
+// responseType of "bytes": the body is returned as an ArrayBuffer instead of
+// parsed JSON or text.
+func fetchRequest(r *moejs.Realm, argument moejs.Value, allowPost bool) (request FetchRequest, host string, wantBytes bool, err error) {
 	if !argument.IsObject() {
 		return FetchRequest{}, "", false, r.TypeError("utils.fetch request must be an object")
 	}
@@ -224,6 +233,7 @@ func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, h
 		return FetchRequest{}, "", false, r.TypeError("utils.fetch request must be an object")
 	}
 	request = FetchRequest{Method: http.MethodGet}
+	hasBody := false
 	for name, value := range members {
 		switch name {
 		case "url":
@@ -271,11 +281,34 @@ func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, h
 			if request.Credentialless, ok = value.(bool); !ok {
 				return FetchRequest{}, "", false, r.TypeError("utils.fetch credentialless must be a boolean")
 			}
+		case "body":
+			if !allowPost {
+				return FetchRequest{}, "", false, r.TypeError("utils.fetch request has unsupported member %q", name)
+			}
+			if value == nil {
+				continue
+			}
+			text, isString := value.(string)
+			if !isString {
+				return FetchRequest{}, "", false, r.TypeError("utils.fetch body must be a string")
+			}
+			request.Body, hasBody = text, true
 		default:
 			return FetchRequest{}, "", false, r.TypeError("utils.fetch request has unsupported member %q", name)
 		}
 	}
-	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+	switch {
+	case request.Method == http.MethodGet || request.Method == http.MethodHead:
+		if hasBody {
+			return FetchRequest{}, "", false, r.TypeError("utils.fetch body requires method POST")
+		}
+	case request.Method == http.MethodPost && allowPost:
+		if len(request.Body) > MaxFetchBodyBytes {
+			return FetchRequest{}, "", false, r.TypeError("utils.fetch body exceeds %d bytes", MaxFetchBodyBytes)
+		}
+	case allowPost:
+		return FetchRequest{}, "", false, r.TypeError("utils.fetch supports only GET, HEAD and POST")
+	default:
 		return FetchRequest{}, "", false, r.TypeError("utils.fetch supports only GET and HEAD")
 	}
 	if len(request.URL) > maxFetchURLBytes {
@@ -289,6 +322,9 @@ func fetchRequest(r *moejs.Realm, argument moejs.Value) (request FetchRequest, h
 		return FetchRequest{}, "", false, r.TypeError("utils.fetch: %s", err)
 	}
 	if request.Credentialless {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			return FetchRequest{}, "", false, r.TypeError("credentialless fetch requires GET or HEAD")
+		}
 		if parsed.User != nil || parsed.Fragment != "" {
 			return FetchRequest{}, "", false, r.TypeError("credentialless fetch URL must not contain credentials or a fragment")
 		}

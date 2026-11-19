@@ -380,6 +380,8 @@ type qwenRealtimeTestBilling struct {
 	fail    bool
 }
 
+func (b *qwenRealtimeTestBilling) ReserveBeforeSubmit(quota int) error { return b.Reserve(quota) }
+
 func (b *qwenRealtimeTestBilling) Reserve(quota int) error {
 	b.targets = append(b.targets, quota)
 	if b.fail {

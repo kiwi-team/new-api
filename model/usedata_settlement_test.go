@@ -197,6 +197,7 @@ func TestRecordConsumeLogReadyForQuotaFlush(t *testing.T) {
 func testQuotaDataCounters(t *testing.T) {
 	resetQuotaDataState(t)
 	event := quotaDataTestEvent()
+	event.CacheCreationTokens = 7
 	for range 2 {
 		LogQuotaData(&event)
 		require.NoError(t, SaveQuotaDataCache())
@@ -207,13 +208,13 @@ func testQuotaDataCounters(t *testing.T) {
 		Id: row.Id, BucketKey: row.BucketKey, UserID: 1, Username: "quota-test", ModelName: "test-model", CreatedAt: 3600,
 		TokenId: 11, TokenName: "test-token", ChannelId: 22, UseGroup: "default", NodeName: "node-a",
 		ClientUserId: "uid-a", ClientScenairo: "scenario-a", ProjectName: "project-a", PlanId: 1,
-		Quota: 200, Count: 2, TokenUsed: 30, PromptTokens: 20, CompletionTokens: 10, CachedTokens: 8,
+		Quota: 200, Count: 2, TokenUsed: 30, PromptTokens: 20, CompletionTokens: 10, CachedTokens: 8, CacheReadTokens: 8, CacheCreationTokens: 14,
 		ClaudeCacheCreation5mTokens: 4, ClaudeCacheCreation1hTokens: 6,
 		CacheWrite5mRequestCount: 2, CacheWrite1hRequestCount: 2, CacheReadRequestCount: 2,
 		StreamRequestCount: 2, FrtSum: 200, RequestTimeSum: 4000,
 	}
 	assert.Equal(t, want, row)
-	event.Quota, event.IsSettlementAdjustment = -20, true
+	event.Quota, event.IsSettlementAdjustment, event.CacheCreationTokens = -20, true, 0
 	event.TokenUsed, event.PromptTokens, event.CompletionTokens, event.CachedTokens = 0, 0, 0, 0
 	event.ClaudeCacheCreation5mTokens, event.ClaudeCacheCreation1hTokens = 0, 0
 	event.FirstTokenMs, event.UseTimeSeconds = 0, 0

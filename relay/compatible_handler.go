@@ -20,6 +20,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -141,6 +142,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
+			return newAPIError
+		}
 		if common.DebugEnabled {
 			if debugBytes, bErr := storage.Bytes(); bErr == nil {
 				logger.LogDebug(c, "requestBody: %s", debugBytes)
@@ -169,6 +173,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
+			return newAPIError
+		}
 		if info.ChannelType == constant.ChannelTypeAnthropic {
 			//common.PrintJson("Anthropic upstream request", common.RawMessage(jsonData))
 			common.WriteJson("claude-request-1118", common.RawMessage(jsonData))
@@ -184,6 +191,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
 			}
+		}
+		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
+			return newAPIError
 		}
 
 		if filePlan != nil {
@@ -766,20 +776,4 @@ func getPromptTokens(c *gin.Context, textRequest *dto.GeneralOpenAIRequest, info
 	}
 	info.Usage.PromptTokens = promptTokens
 	return promptTokens, err
-}
-
-func checkRequestSensitive(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.RelayInfo) ([]string, error) {
-	var err error
-	var words []string
-	switch info.RelayMode {
-	case relayconstant.RelayModeChatCompletions:
-		words, err = service.CheckSensitiveMessages(textRequest.Messages)
-	case relayconstant.RelayModeCompletions:
-		//words, err = service.CheckSensitiveInput(textRequest.Prompt)
-	case relayconstant.RelayModeModerations:
-		//words, err = service.CheckSensitiveInput(textRequest.Input)
-	case relayconstant.RelayModeEmbeddings:
-		//words, err = service.CheckSensitiveInput(textRequest.Input)
-	}
-	return words, err
 }

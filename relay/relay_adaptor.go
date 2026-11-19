@@ -46,6 +46,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
 	ppioImage "github.com/QuantumNous/new-api/relay/channel/ppio"
+	"github.com/QuantumNous/new-api/relay/channel/providerplugin"
 	"github.com/QuantumNous/new-api/relay/channel/qwen_realtime"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/reve"
@@ -196,6 +197,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &newapi.Adaptor{}
 	case constant.APITypeTypeSafe:
 		return &typesafe.Adaptor{}
+	case constant.APITypeProviderPlugin:
+		return &providerplugin.Adaptor{}
 	}
 	return nil
 }

@@ -154,7 +154,7 @@ func testQuotaDataSpoolRecovery(t *testing.T) {
 				Id: row.Id, BucketKey: row.BucketKey, UserID: 1, Username: "quota-test", ModelName: "test-model", CreatedAt: 3600,
 				TokenId: 11, TokenName: "test-token", ChannelId: 22, UseGroup: "default", NodeName: "node-a",
 				ClientUserId: "uid-a", ClientScenairo: "scenario-a", ProjectName: "project-a", PlanId: 1,
-				Quota: 180, Count: 2, TokenUsed: 30, PromptTokens: 20, CompletionTokens: 10, CachedTokens: 8,
+				Quota: 180, Count: 2, TokenUsed: 30, PromptTokens: 20, CompletionTokens: 10, CachedTokens: 8, CacheReadTokens: 8, CacheCreationTokens: 10,
 				ClaudeCacheCreation5mTokens: 4, ClaudeCacheCreation1hTokens: 6,
 				CacheWrite5mRequestCount: 2, CacheWrite1hRequestCount: 2, CacheReadRequestCount: 2,
 				StreamRequestCount: 2, FrtSum: 200, RequestTimeSum: 4000,

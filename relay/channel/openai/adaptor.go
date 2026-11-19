@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
@@ -427,41 +428,29 @@ func ConvertChatRequestToResponseRequest(c *gin.Context, info *relaycommon.Relay
 }
 */
 func dealFunctionCall(request *dto.GeneralOpenAIRequest) {
-	if request.Tools == nil {
-		return
-	}
-	for i, tool := range request.Tools {
-		if tool.Function.Parameters == nil {
+	for i := range request.Tools {
+		function := &request.Tools[i].Function
+		if len(function.Parameters) == 0 {
 			continue
 		}
-		params, ok := tool.Function.Parameters.(map[string]any)
-		if !ok {
-			continue
-		}
-		if properties, ok := params["properties"]; ok {
-			if properties, ok := properties.(map[string]any); ok {
-				for j, prop := range properties {
-					if prop, ok := prop.(map[string]any); ok {
-						if typ, ok := prop["type"]; ok {
-							if enum, ok := prop["enum"]; ok {
-								if typ != "string" {
-									if description, ok := prop["description"].(string); ok {
-										if enum, ok := enum.([]any); ok {
-											var enumValues []string
-											for _, v := range enum {
-												enumValues = append(enumValues, fmt.Sprintf("%v", v))
-											}
-											prop["description"] = description + " \n Enum values:[" + strings.Join(enumValues, ", ") + "]"
-											delete(prop, "enum")
-											request.Tools[i].Function.Parameters.(map[string]any)["properties"].(map[string]any)[j] = prop
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+		schema := ojson.NewDoc(function.Parameters)
+		changed := false
+		for name, property := range schema.Get("properties").Map() {
+			typ, description, enum := property.Get("type"), property.Get("description"), property.Get("enum")
+			if !typ.Exists() || typ.Str == "string" || description.Type != ojson.String || !enum.IsArray() {
+				continue
 			}
+			values := make([]string, 0, len(enum.Array()))
+			for _, value := range enum.Array() {
+				values = append(values, fmt.Sprint(value.Value()))
+			}
+			path := "properties." + ojson.Escape(name)
+			if schema.Set(path+".description", description.Str+" \n Enum values:["+strings.Join(values, ", ")+"]") == nil && schema.Delete(path+".enum") == nil {
+				changed = true
+			}
+		}
+		if changed {
+			function.Parameters = schema.Bytes()
 		}
 	}
 }
@@ -924,31 +913,29 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				_ = file.Close()
 			}
 
-			// Handle mask file if present
-			if maskFiles, exists := mf.File["mask"]; exists && len(maskFiles) > 0 {
-				maskFile, err := maskFiles[0].Open()
-				if err != nil {
-					return nil, errors.New("failed to open mask file")
+			for _, name := range []string{"mask", "markup"} {
+				files, exists := mf.File[name]
+				if !exists || len(files) == 0 {
+					continue
 				}
-				// 复制完立即关闭，避免在循环内使用 defer 占用资源
+				file, err := files[0].Open()
+				if err != nil {
+					return nil, fmt.Errorf("failed to open %s file", name)
+				}
 
-				// Determine MIME type for mask file
-				mimeType := detectImageMimeType(maskFiles[0].Filename)
-
-				// Create a form file with the appropriate content type
 				h := make(textproto.MIMEHeader)
-				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="mask"; filename="%s"`, maskFiles[0].Filename))
-				h.Set("Content-Type", mimeType)
+				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, name, files[0].Filename))
+				h.Set("Content-Type", detectImageMimeType(files[0].Filename))
 
-				maskPart, err := writer.CreatePart(h)
+				part, err := writer.CreatePart(h)
 				if err != nil {
-					return nil, errors.New("create form file failed for mask")
+					return nil, fmt.Errorf("create form file failed for %s", name)
 				}
 
-				if _, err := io.Copy(maskPart, maskFile); err != nil {
-					return nil, errors.New("copy mask file failed")
+				if _, err := io.Copy(part, file); err != nil {
+					return nil, fmt.Errorf("copy %s file failed", name)
 				}
-				_ = maskFile.Close()
+				_ = file.Close()
 			}
 		} else {
 			return nil, errors.New("no multipart form data found")

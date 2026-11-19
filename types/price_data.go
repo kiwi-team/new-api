@@ -7,6 +7,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Long-lived cache writes cost a fixed multiple of the short write price.
+const (
+	// https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+	ClaudeCacheCreation1hMultiplier = 6 / 3.75
+	// https://developers.openai.com/api/docs/guides/prompt-caching
+	OpenAICacheCreation12hMultiplier = 2
+)
+
 type GroupRatioInfo struct {
 	GroupRatio             float64
 	GroupSpecialRatio      float64
@@ -42,6 +50,7 @@ type PriceData struct {
 	TieredCachedInputPrice float64 // 匹配到的档位缓存读取价格（每百万 Token）；0=未配置，回退模型级缓存倍率
 	TieredCacheWritePrice  float64 // 匹配到的档位缓存写入价格（每百万 Token，5m 基准）；0=未配置，回退模型级缓存创建倍率
 	TieredMaxTokens        int     // 匹配到的档位阈值
+	CacheCreation12hRatio  float64
 }
 
 type PerCallPriceData struct {
@@ -51,7 +60,7 @@ type PerCallPriceData struct {
 }
 
 func (p *PriceData) ToSetting() string {
-	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, CacheCreation5mRatio: %f, CacheCreation1hRatio: %f, QuotaToPreConsume: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f, UseTieredPrice: %t, TieredInputPrice: %f, TieredOutputPrice: %f, TieredCachedInputPrice: %f, TieredCacheWritePrice: %f, TieredMaxTokens: %d", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.CacheCreation5mRatio, p.CacheCreation1hRatio, p.QuotaToPreConsume, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio, p.UseTieredPrice, p.TieredInputPrice, p.TieredOutputPrice, p.TieredCachedInputPrice, p.TieredCacheWritePrice, p.TieredMaxTokens)
+	return fmt.Sprintf("ModelPrice: %f, ModelRatio: %f, CompletionRatio: %f, CacheRatio: %f, GroupRatio: %f, UsePrice: %t, CacheCreationRatio: %f, CacheCreation5mRatio: %f, CacheCreation1hRatio: %f, CacheCreation12hRatio: %f, QuotaToPreConsume: %d, ImageRatio: %f, AudioRatio: %f, AudioCompletionRatio: %f, UseTieredPrice: %t, TieredInputPrice: %f, TieredOutputPrice: %f, TieredCachedInputPrice: %f, TieredCacheWritePrice: %f, TieredMaxTokens: %d", p.ModelPrice, p.ModelRatio, p.CompletionRatio, p.CacheRatio, p.GroupRatioInfo.GroupRatio, p.UsePrice, p.CacheCreationRatio, p.CacheCreation5mRatio, p.CacheCreation1hRatio, p.CacheCreation12hRatio, p.QuotaToPreConsume, p.ImageRatio, p.AudioRatio, p.AudioCompletionRatio, p.UseTieredPrice, p.TieredInputPrice, p.TieredOutputPrice, p.TieredCachedInputPrice, p.TieredCacheWritePrice, p.TieredMaxTokens)
 }
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
 	if !isValidOtherRatio(ratio) {

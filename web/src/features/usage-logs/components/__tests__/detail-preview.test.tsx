@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -116,6 +123,9 @@ beforeEach(async () => {
     .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
+  client.setQueryData(['usage-logs', 'filter-options', 'channels'], [
+    { value: '1', label: 'Test channel', name: 'Test channel' },
+  ])
   client.setQueryData(
     ['pricing'],
     { data: [], vendors: [] },
@@ -330,10 +340,14 @@ test.each([false, true])(
     expect(preview.textContent).toBe(
       'Dynamic Pricing · Special billing expression'
     )
-    await act(() => i18n.changeLanguage('zh'))
-    expect(
-      screen.getByRole('button', { name: '动态计费 · 特殊计费表达式' })
-    ).toBeVisible()
+    act(() => {
+      void i18n.changeLanguage('zh')
+    })
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: '动态计费 · 特殊计费表达式' })
+      ).toBeVisible()
+    })
   }
 )
 
@@ -386,15 +400,17 @@ test.each([true, false])(
     )
     expect(preview.textContent).toBe('Per-call · $0.25')
     fireEvent.click(preview)
-    const dialog = within(await screen.findByRole('dialog'))
-    if (isAdmin) {
-      expect(dialog.getByText('Incho')).toBeVisible()
-      expect(dialog.getByText('1.0.1')).toBeVisible()
-      expect(dialog.getByText('Plugin maintainer')).toBeVisible()
-    } else {
-      expect(dialog.queryByText('Incho')).not.toBeInTheDocument()
-      expect(dialog.queryByText('Plugin maintainer')).not.toBeInTheDocument()
-    }
+    await waitFor(() => {
+      const dialog = within(screen.getByRole('dialog'))
+      if (isAdmin) {
+        expect(dialog.getByText('Incho')).toBeVisible()
+        expect(dialog.getByText('1.0.1')).toBeVisible()
+        expect(dialog.getByText('Plugin maintainer')).toBeVisible()
+      } else {
+        expect(dialog.queryByText('Incho')).not.toBeInTheDocument()
+        expect(dialog.queryByText('Plugin maintainer')).not.toBeInTheDocument()
+      }
+    })
   }
 )
 
@@ -480,10 +496,14 @@ test('task log prices use localized unit labels from pricing metadata', async ()
     matched_tier: 'images',
   })
   expect(preview).toHaveTextContent('images · images $0.25/image')
-  await act(() => i18n.changeLanguage('zh-CN'))
-  expect(
-    screen.getByRole('button', { name: /images · images/ })
-  ).toHaveTextContent('images · images $0.25/张')
+  act(() => {
+    void i18n.changeLanguage('zh-CN')
+  })
+  await waitFor(() => {
+    expect(
+      screen.getByRole('button', { name: /images · images/ })
+    ).toHaveTextContent('images · images $0.25/张')
+  })
 })
 
 test('task log prices select the executing provider’s schema', () => {

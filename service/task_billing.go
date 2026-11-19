@@ -112,6 +112,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	if usage.UsageSemantic != "anthropic" {
 		promptTokens = max(promptTokens-usage.PromptTokensDetails.CachedTokens-usage.PromptTokensDetails.CacheCreationTokensTotal(), 0)
 	}
+	if len(info.RequestPluginSteps) > 0 {
+		other.SetAdmin("request_plugins", info.RequestPluginSteps)
+	}
+	appendRequestPluginRecord(info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		PromptTokens:                promptTokens,
 		CompletionTokens:            usage.CompletionTokens,

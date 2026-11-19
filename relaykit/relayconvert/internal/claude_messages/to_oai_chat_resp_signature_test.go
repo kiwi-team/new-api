@@ -3,11 +3,11 @@ package claudemessages
 import (
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 func TestResponseClaude2OpenAIPreservesThinkingSignature(t *testing.T) {
@@ -67,7 +67,7 @@ func TestResponseClaude2OpenAIPreservesThinkingSignature(t *testing.T) {
 
 			wire, err := kitutil.Marshal(resp)
 			require.NoError(t, err)
-			assert.JSONEq(t, tc.wantMessage, gjson.GetBytes(wire, "choices.0.message").Raw)
+			assert.JSONEq(t, tc.wantMessage, ojson.GetBytes(wire, "choices.0.message").Raw)
 		})
 	}
 }

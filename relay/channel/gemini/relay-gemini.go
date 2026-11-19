@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
@@ -28,7 +29,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
-	"github.com/tidwall/gjson"
 )
 
 // https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference?hl=zh-cn#blob
@@ -438,20 +438,21 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				urlContext = true
 				continue
 			}
-			if tool.Function.Parameters != nil {
-
-				params, ok := tool.Function.Parameters.(map[string]interface{})
-				if ok {
-					if props, hasProps := params["properties"].(map[string]interface{}); hasProps {
-						if len(props) == 0 {
-							tool.Function.Parameters = nil
-						}
+			if len(tool.Function.Parameters) != 0 {
+				var params map[string]any
+				if err := common.Unmarshal(tool.Function.Parameters, &params); err != nil {
+					return nil, err
+				}
+				if props, ok := params["properties"].(map[string]any); ok && len(props) == 0 {
+					tool.Function.Parameters = nil
+				} else {
+					cleaned, err := common.Marshal(cleanFunctionParameters(params))
+					if err != nil {
+						return nil, err
 					}
+					tool.Function.Parameters = cleaned
 				}
 			}
-			// Clean the parameters before appending
-			cleanedParams := cleanFunctionParameters(tool.Function.Parameters)
-			tool.Function.Parameters = cleanedParams
 			functions = append(functions, tool.Function)
 		}
 		geminiTools := geminiRequest.GetTools()
@@ -1777,7 +1778,7 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			}
 		}
 		common.ObserveTimingProtocol(c.Request.Context(), "", output, false)
-		info.ObserveResponseModel(gjson.Get(data, "modelVersion").Str)
+		info.ObserveResponseModel(ojson.Get(data, "modelVersion").Str)
 		for _, candidate := range geminiResponse.Candidates {
 			if candidate.FinishReason == nil || *candidate.FinishReason == "" || *candidate.FinishReason == "FINISH_REASON_UNSPECIFIED" {
 				continue
@@ -2046,7 +2047,7 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	common.ObserveTimingProtocol(c.Request.Context(), "response_parsed_at_ms", false, false)
-	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
+	info.ObserveResponseModel(ojson.GetBytes(responseBody, "modelVersion").Str)
 	var grounding geminiGroundingCounter
 	grounding.observe(&geminiResponse)
 	grounding.commit(info)
@@ -2183,7 +2184,13 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// Google has not yet clarified how embedding models will be billed
 	// refer to openai billing method to use input tokens billing
 	// https://platform.openai.com/docs/guides/embeddings#what-are-embeddings
-	usage := service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
+	var usage *dto.Usage
+	if upstream := geminiResponse.UsageMetadata.GeminiUsageMetadata(); upstream != nil {
+		upstreamUsage := buildUsageFromGeminiMetadata(upstream, info.GetEstimatePromptTokens())
+		usage = &upstreamUsage
+	} else {
+		usage = service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
+	}
 	openAIResponse.Usage = *usage
 
 	jsonResponse, jsonErr := common.Marshal(openAIResponse)
