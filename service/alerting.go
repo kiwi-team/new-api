@@ -59,13 +59,13 @@ func StartAlerting() {
 			common.SysError(common.LogText("alerting deployment namespace initialization failed"))
 			return
 		}
+		alertingClockStart = time.Now()
+		alertingStartedAt = alertingClockStart.UnixMilli()
 		go runAlertingTransport()
 		go runAlertingMaintenance()
 		if !common.AlertingEnabled {
 			return
 		}
-		alertingClockStart = time.Now()
-		alertingStartedAt = alertingClockStart.UnixMilli()
 		common.SetAlertHealthSink(recordAlertHealth)
 		go runAlertingHeartbeat()
 		// SQL leases/CAS provide leadership and job ownership. Running on every
@@ -266,21 +266,39 @@ func AlertEngineHealth(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"metric_cache_hits": strconv.FormatInt(hits, 10), "metric_cache_misses": strconv.FormatInt(misses, 10), "failed_rules": failedRules, "enabled": common.AlertingEnabled, "actions_enabled": common.AlertingActionsEnabled, "shadow_mode": common.AlertingShadowMode, "encryption_configured": AlertTargetVault != nil, "receive_mode": mode, "sources": sources, "uncovered_nodes": uncovered, "job_backlog": strconv.FormatInt(backlog, 10)}, nil
 }
 
-// Maintenance only deletes disposable delivery hints and expired limit rows.
-// Immutable receipts, cumulative progress, active holds and unresolved lifecycles
-// remain authoritative and are deliberately retained.
+// Drain a backlog in short transactions. Pause between full batches so expiry
+// yields the database connection to request traffic.
 func runAlertingMaintenance() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		if !alertingClockStable() {
-			continue
+	for {
+		if alertingClockStable() {
+			now := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := model.CleanAlertDeliveryHints(ctx, now)
+			if err != nil {
+				common.SysError(common.LogText("alerting hint cleanup failed"))
+			}
+			ready, err := model.AlertLogReadersReady(ctx, now)
+			cancel()
+			if err != nil {
+				common.SysError(common.LogText("alerting log cleanup failed: %s", err.Error()))
+			}
+			for ready && alertingClockStable() && time.Since(now) < time.Minute {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				more, err := model.CleanAlertLogBatch(ctx, now)
+				cancel()
+				if err != nil {
+					common.SysError(common.LogText("alerting log cleanup failed: %s", err.Error()))
+					break
+				}
+				if !more {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := model.CleanAlertDeliveryHints(ctx, time.Now()); err != nil {
-			common.SysError(common.LogText("alerting hint cleanup failed"))
-		}
-		cancel()
+		<-ticker.C
 	}
 }
 

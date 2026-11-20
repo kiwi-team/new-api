@@ -133,7 +133,7 @@ func LegacyTokenSnapshot(ctx context.Context, tokenID int) (LegacyTokenPreview, 
 		if err := tx.Model(&model.QuotaData{}).Where("token_id = ?", tokenID).Select("COALESCE(SUM(quota),0)").Scan(&used).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&model.AlertObservation{}).Where("namespace = ? AND token_id = ?", "usage", tokenID).Select("COALESCE(SUM(quota),0)").Scan(&accepted).Error; err != nil {
+		if err := acceptedAlertQuota(tx, MonitoredTarget{Type: "api_key", ID: tokenID}, 0, &accepted); err != nil {
 			return err
 		}
 		result = LegacyTokenPreview{TokenID: token.Id, Name: token.Name, OwnerUserID: token.UserId, ThresholdUSD: decimal.NewFromFloat(token.AlertThreshold).String(), UsedQuota: used, NotifiedQuota: int64(token.AlertNotifiedQuota), LastNotifiedTime: token.AlertLastNotifiedTime, AcceptedUsage: accepted, DestinationPresent: user.GetSetting().WebhookUrl != ""}
@@ -320,11 +320,11 @@ func SwitchLegacyToken(ctx context.Context, actor Actor, id string, expected int
 			if err = tx.Model(&model.QuotaData{}).Where("token_id = ?", tokenID).Select("COALESCE(SUM(quota),0)").Scan(&used).Error; err != nil {
 				return err
 			}
-			if err = tx.Model(&model.AlertObservation{}).Where("namespace = ? AND token_id = ?", "usage", tokenID).Select("COALESCE(SUM(quota),0)").Scan(&accepted).Error; err != nil {
+			if err = acceptedAlertQuota(tx, MonitoredTarget{Type: "api_key", ID: tokenID}, 0, &accepted); err != nil {
 				return err
 			}
 			if operation == "rollback" && current.MetricStartAt > 0 {
-				if err = tx.Model(&model.AlertObservation{}).Where("namespace = ? AND token_id = ? AND occurred_at >= ?", "usage", tokenID, current.MetricStartAt).Select("COALESCE(SUM(quota),0)").Scan(&accepted).Error; err != nil {
+				if err = acceptedAlertQuota(tx, MonitoredTarget{Type: "api_key", ID: tokenID}, current.MetricStartAt, &accepted); err != nil {
 					return err
 				}
 			}

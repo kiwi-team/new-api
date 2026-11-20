@@ -366,7 +366,7 @@ type AlertJobAttempt struct {
 	HTTPStatus int    `json:"http_status"`
 	ErrorCode  string `json:"error_code" gorm:"size:64"`
 	DurationMS int64  `json:"duration_ms"`
-	CreatedAt  int64  `json:"created_at" gorm:"autoCreateTime:milli"`
+	CreatedAt  int64  `json:"created_at" gorm:"autoCreateTime:milli;index"`
 }
 
 type AlertDisableHold struct {
@@ -379,8 +379,8 @@ type AlertDisableHold struct {
 	TokenID                int    `json:"token_id" gorm:"index"`
 	ModelKey               string `json:"model_key" gorm:"type:text"`
 	RuleID                 int64  `json:"rule_id" gorm:"index"`
-	IncidentID             int64  `json:"incident_id"`
-	Active                 bool   `json:"active" gorm:"index"`
+	IncidentID             int64  `json:"incident_id" gorm:"index:idx_alert_hold_incident,priority:1"`
+	Active                 bool   `json:"active" gorm:"index;index:idx_alert_hold_incident,priority:2"`
 	ConfigVersion          string `json:"config_version" gorm:"size:64"`
 	CreatedAt              int64  `json:"created_at" gorm:"autoCreateTime:milli"`
 	ReleasedAt             int64  `json:"released_at"`
@@ -458,8 +458,8 @@ type AlertDeployment struct {
 
 type AlertOutbox struct {
 	ID          string `json:"id" gorm:"primaryKey;size:64"`
-	Kind        string `json:"kind" gorm:"size:24"`
-	Reference   string `json:"reference" gorm:"size:64"`
+	Kind        string `json:"kind" gorm:"size:24;index:idx_alert_outbox_reference,priority:1"`
+	Reference   string `json:"reference" gorm:"size:64;index:idx_alert_outbox_reference,priority:2"`
 	CreatedAt   int64  `json:"created_at" gorm:"autoCreateTime:milli;index"`
 	PublishedAt int64  `json:"published_at" gorm:"index"`
 }
@@ -495,10 +495,53 @@ func AlertIdentity(parts ...any) string {
 }
 
 func AlertModels() []any {
-	return []any{&AlertRule{}, &AlertRuleRevision{}, &AlertTarget{}, &AlertObservation{}, &AlertLifecycle{}, &AlertRuleState{}, &AlertIncident{}, &AlertEvent{}, &AlertJob{}, &AlertJobAttempt{}, &AlertDisableHold{}, &AlertWorkerCheckpoint{}, &AlertChannelPolicy{}, &AlertChannelModelControl{}, &AlertOutbox{}, &AlertAudit{}, &AlertNotificationLimit{}, &AlertDeadLetter{}, &AlertDeployment{}, &AlertReportPeriod{}, &AlertMigration{}, &AlertMetricBucket{}}
+	return []any{&AlertRule{}, &AlertRuleRevision{}, &AlertTarget{}, &AlertObservation{}, &AlertLifecycle{}, &AlertRuleState{}, &AlertIncident{}, &AlertEvent{}, &AlertJob{}, &AlertJobAttempt{}, &AlertDisableHold{}, &AlertWorkerCheckpoint{}, &AlertChannelPolicy{}, &AlertChannelModelControl{}, &AlertOutbox{}, &AlertAudit{}, &AlertNotificationLimit{}, &AlertDeadLetter{}, &AlertDeployment{}, &AlertReportPeriod{}, &AlertMigration{}, &AlertMetricBucket{}, &AlertObservationReceipt{}, &AlertMetricHistory{}, &AlertEventReceipt{}}
 }
 
-func MigrateAlertModels(db *gorm.DB) error { return db.AutoMigrate(AlertModels()...) }
+func MigrateAlertModels(db *gorm.DB) error {
+	if err := db.AutoMigrate(AlertModels()...); err != nil {
+		return err
+	}
+	const index = "idx_alert_outbox_pending_created"
+	switch {
+	case common.UsingMainDatabase(common.DatabaseTypeMySQL):
+		if db.Migrator().HasIndex(&AlertOutbox{}, index) {
+			return nil
+		}
+		err := db.Exec("CREATE INDEX " + index + " ON alert_outboxes (published_at, created_at)").Error
+		if err != nil && db.Migrator().HasIndex(&AlertOutbox{}, index) {
+			return nil // Another migrator created the index.
+		}
+		return err
+	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
+		var valid bool
+		found := db.Raw("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(?) AND indrelid = 'alert_outboxes'::regclass", index).Scan(&valid)
+		if found.Error != nil {
+			return found.Error
+		}
+		if found.RowsAffected > 0 {
+			if valid {
+				return nil
+			}
+			// An interrupted concurrent build leaves an invalid index with the same name.
+			if err := db.Exec("DROP INDEX CONCURRENTLY IF EXISTS " + index).Error; err != nil {
+				return err
+			}
+		}
+		return db.Exec("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + index + " ON alert_outboxes (created_at) WHERE published_at = 0").Error
+	default: // SQLite
+		if db.Migrator().HasIndex(&AlertOutbox{}, index) {
+			return nil
+		}
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("CREATE INDEX IF NOT EXISTS " + index + " ON alert_outboxes (published_at, created_at)").Error; err != nil {
+				return err
+			}
+			// Existing single-column statistics can otherwise make SQLite sort the queue.
+			return tx.Exec("ANALYZE alert_outboxes").Error
+		})
+	}
+}
 
 // AlertMigration keeps the old and new executors mutually exclusive. Baseline
 // offsets are internal quota units, never wallet adjustments or refunds.

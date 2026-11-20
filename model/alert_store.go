@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -168,62 +170,111 @@ func AcceptAlertObservationTx(tx *gorm.DB, observation AlertObservation) error {
 	return AcceptAlertObservationsTx(tx, []AlertObservation{observation})
 }
 
-// AcceptAlertObservationsTx locks shared minute revisions in stable order. It
-// preserves the accounting batch's original accumulation order and avoids
-// deadlocks between batches that contain different immutable event IDs.
+type alertLifecycleUpdate struct {
+	row              AlertLifecycle
+	wasEmpty         bool
+	receivedTerminal bool
+	changed          bool
+}
+
+func (o *AlertObservation) tracksLifecycle() bool {
+	return o.Namespace == "health" && o.SampleClass != "recovery_probe" && o.SampleClass != "transport"
+}
+
+// AcceptAlertObservationsTx updates each producer once, after its immutable
+// receipts, metric revisions and lifecycle changes have succeeded.
 func AcceptAlertObservationsTx(tx *gorm.DB, observations []AlertObservation) error {
-	// A consumer batch can contain several producers. Lock their acceptance
-	// checkpoints in one order before minute rows, including the single-event
-	// SQL fallback path, so two nodes cannot deadlock in opposite source order.
-	sources := map[string]AlertWorkerCheckpoint{}
-	for _, observation := range observations {
-		if observation.BootID != "" && observation.SourceSequence > 0 {
-			sources[observation.BootID] = AlertWorkerCheckpoint{ID: observation.BootID, BootID: observation.BootID, NodeID: observation.NodeID, Kind: "producer"}
+	// Keep the caller's slice immutable. Receipts are inserted by ID while
+	// lifecycle changes for each request retain the caller's event order.
+	batch := slices.Clone(observations)
+	order := make([]int, len(batch))
+	lifecycles := make(map[string]*alertLifecycleUpdate)
+	for i := range batch {
+		o := &batch[i]
+		if len(o.ID) != 64 || o.OccurredAt < 0 || o.SourceID == "" || o.Namespace != "health" && o.Namespace != "usage" {
+			return ErrInvalidAlertObservation
 		}
-	}
-	ids := make([]string, 0, len(sources))
-	for id := range sources {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	for _, id := range ids {
-		source := sources[id]
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&source).Error; err != nil {
-			return err
+		if o.Namespace == "health" {
+			if o.Sequence <= 0 || o.StartedAt <= 0 || o.Layer != "request" && o.Layer != "channel_attempt" || o.DurationMS != nil && *o.DurationMS < 0 || o.TTFTMS != nil && *o.TTFTMS < 0 {
+				return ErrInvalidAlertObservation
+			}
+			if o.SampleClass == "" {
+				o.SampleClass = "production"
+			}
 		}
-		if err := lockForUpdate(tx).Select("id").First(&source, "id = ?", id).Error; err != nil {
-			return err
+		if o.tracksLifecycle() {
+			lifecycles[o.SourceID] = nil
 		}
+		order[i] = i
 	}
-	prepared, err := prepareAlertMetricBuckets(tx, observations)
-	if err != nil {
+	if err := prepareAlertMetricBuckets(tx, batch); err != nil {
 		return err
 	}
-	for _, observation := range observations {
-		if err := acceptAlertObservationTx(tx, observation, prepared); err != nil {
+	// Serialize only overlapping requests before acquiring their receipt locks.
+	lifecycleIDs := slices.Sorted(maps.Keys(lifecycles))
+	for _, id := range lifecycleIDs {
+		state := &alertLifecycleUpdate{row: AlertLifecycle{ID: id}}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&state.row).Error; err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).Take(&state.row).Error; err != nil {
+			return err
+		}
+		state.wasEmpty = state.row.Sequence == 0
+		lifecycles[id] = state
+	}
+
+	slices.SortStableFunc(order, func(i, j int) int { return strings.Compare(batch[i].ID, batch[j].ID) })
+	accepted := make([]bool, len(batch))
+	for _, i := range order {
+		var err error
+		accepted[i], err = insertAlertObservationTx(tx, &batch[i])
+		if err != nil {
+			return err
+		}
+	}
+	sources := make(map[string]AlertWorkerCheckpoint)
+	for i, ok := range accepted {
+		if !ok {
+			continue
+		}
+		o := &batch[i]
+		if o.BootID != "" && o.SourceSequence > 0 {
+			source := sources[o.BootID]
+			source.ID, source.BootID = o.BootID, o.BootID
+			source.NodeID, source.Kind = o.NodeID, "producer"
+			source.AcceptedCount++
+			sources[o.BootID] = source
+		}
+		if state := lifecycles[o.SourceID]; state != nil && o.Namespace == "health" {
+			if o.Kind == "finished" {
+				state.receivedTerminal = true
+			}
+			if o.tracksLifecycle() {
+				state.apply(o)
+			}
+		}
+	}
+	for _, id := range lifecycleIDs {
+		if err := lifecycles[id].save(tx); err != nil {
+			return err
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(sources)) {
+		source := sources[id]
+		increment := clause.Assignments(map[string]any{
+			"accepted_count": gorm.Expr("COALESCE(?, 0) + ?", clause.Column{Table: clause.CurrentTable, Name: "accepted_count"}, source.AcceptedCount),
+		})
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: increment}).Create(&source).Error; err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func acceptAlertObservationTx(tx *gorm.DB, observation AlertObservation, prepared map[string]bool) error {
-	if len(observation.ID) != 64 || observation.OccurredAt < 0 || observation.SourceID == "" || observation.Namespace != "health" && observation.Namespace != "usage" {
-		return ErrInvalidAlertObservation
-	}
-	if observation.Namespace == "health" {
-		if observation.SampleClass == "" {
-			observation.SampleClass = "production"
-		}
-		if observation.Sequence <= 0 || observation.StartedAt <= 0 || observation.Layer != "request" && observation.Layer != "channel_attempt" || observation.DurationMS != nil && *observation.DurationMS < 0 || observation.TTFTMS != nil && *observation.TTFTMS < 0 {
-			return ErrInvalidAlertObservation
-		}
-	}
-	if bucket, ok := alertMetricBucket(observation); ok && !prepared[bucket.ID] {
-		if _, err := prepareAlertMetricBuckets(tx, []AlertObservation{observation}); err != nil {
-			return err
-		}
-	}
+// insertAlertObservationTx returns true only for the transaction that
+// inserted the raw fact and its projection hint.
+func insertAlertObservationTx(tx *gorm.DB, observation *AlertObservation) (bool, error) {
 	observation.AcceptedAt = 0
 	if observation.Namespace == "health" && observation.Kind == "finished" {
 		key := AlertIdentity("terminal", observation.SourceID)
@@ -240,65 +291,69 @@ func acceptAlertObservationTx(tx *gorm.DB, observation AlertObservation, prepare
 	observation.ModelHash = AlertIdentity("model", observation.ModelKey)
 	encoded, err := common.Marshal(observation)
 	if err != nil {
-		return err
+		return false, err
 	}
 	observation.PayloadHash = AlertIdentity("observation", string(encoded))
+	// All producers and cleanup claim the same unique identities. A point
+	// lookup by ID distinguishes an exact replay from a terminal/sequence
+	// collision even when MySQL reports one affected row for a no-op insert.
+	identity := observation.receipt()
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&identity).Error; err != nil {
+		return false, err
+	}
+	var persisted AlertObservationReceipt
+	found := lockForUpdate(tx).Select("payload_hash", "archived").Where("id = ?", observation.ID).Limit(1).Find(&persisted)
+	if found.Error != nil {
+		return false, found.Error
+	}
+	if found.RowsAffected == 0 || persisted.PayloadHash != observation.PayloadHash {
+		return false, ErrAlertObservationConflict
+	}
+	if persisted.Archived {
+		return false, nil
+	}
+
 	observation.AcceptedAt = time.Now().UnixMilli()
 	observation.ReceiptNonce = common.GetUUID()
-	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&observation)
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(observation)
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
 	// MySQL CLIENT_FOUND_ROWS reports one affected row even for the no-op
 	// ON DUPLICATE KEY branch. A persisted nonce proves who inserted the fact.
 	var receipt AlertObservation
-	query := tx.Select("id", "payload_hash", "receipt_nonce").Where("id = ?", observation.ID)
-	if observation.TerminalKey != nil {
-		query = query.Or("terminal_key = ?", *observation.TerminalKey)
+	found = lockForUpdate(tx).Select("payload_hash", "receipt_nonce").Where("id = ?", observation.ID).Limit(1).Find(&receipt)
+	if found.Error != nil {
+		return false, found.Error
 	}
-	if observation.SourcePositionKey != nil {
-		query = query.Or("source_position_key = ?", *observation.SourcePositionKey)
-	}
-	if err := query.First(&receipt).Error; err != nil {
-		return err
-	}
-	if receipt.PayloadHash != observation.PayloadHash {
-		return ErrAlertObservationConflict
+	// A different ID claiming an existing terminal or producer position was
+	// rejected by the unique index, including for pre-retention raw rows.
+	if found.RowsAffected == 0 || receipt.PayloadHash != observation.PayloadHash {
+		return false, ErrAlertObservationConflict
 	}
 	if receipt.ReceiptNonce != observation.ReceiptNonce {
-		return nil
+		return false, nil
 	}
-	if bucket, ok := alertMetricBucket(observation); ok {
+	if bucket, ok := alertMetricBucket(*observation); ok {
 		if err := tx.Model(&AlertMetricBucket{}).Where("id = ?", bucket.ID).Update("version", gorm.Expr("version + 1")).Error; err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := tx.Create(&AlertOutbox{ID: AlertIdentity("projection", observation.ID), Kind: "projection", Reference: observation.ID, CreatedAt: observation.AcceptedAt}).Error; err != nil {
-		return err
+		return false, err
 	}
-	if observation.BootID != "" && observation.SourceSequence > 0 {
-		checkpoint := AlertWorkerCheckpoint{ID: observation.BootID, BootID: observation.BootID, NodeID: observation.NodeID, Kind: "producer"}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&checkpoint).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&AlertWorkerCheckpoint{}).Where("id = ?", observation.BootID).Update("accepted_count", gorm.Expr("accepted_count + 1")).Error; err != nil {
-			return err
-		}
-	}
-	if observation.Namespace != "health" || observation.SampleClass == "recovery_probe" || observation.SampleClass == "transport" {
-		return nil
-	}
-	row := AlertLifecycle{ID: observation.SourceID}
-	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-		return err
-	}
-	if err := lockForUpdate(tx).First(&row, "id = ?", observation.SourceID).Error; err != nil {
-		return err
-	}
+	return true, nil
+}
+
+func (lifecycle *alertLifecycleUpdate) apply(observation *AlertObservation) {
+	row := &lifecycle.row
 	// Terminal tombstones dominate a delayed start/progress, including after a
 	// process restart. Each terminal observation is counted separately only once.
-	if row.FinishedAt != 0 || (row.Sequence >= observation.Sequence && row.Sequence != 0) {
-		return nil
+	if row.FinishedAt != 0 || row.Sequence >= observation.Sequence {
+		return
+	}
+	if row.Sequence == 0 && lifecycle.receivedTerminal && observation.Kind != "finished" {
+		return
 	}
 	row.Layer, row.RequestID = observation.Layer, observation.RequestID
 	row.SampleClass = observation.SampleClass
@@ -318,34 +373,66 @@ func acceptAlertObservationTx(tx *gorm.DB, observation AlertObservation, prepare
 		row.FinishedAt = observation.OccurredAt
 		row.Outcome = observation.Outcome
 	}
-	return tx.Save(&row).Error
+	lifecycle.changed = true
+}
+
+func (state *alertLifecycleUpdate) save(tx *gorm.DB) error {
+	if state.row.Sequence == 0 {
+		// Replaying an archived receipt must not recreate its lifecycle.
+		return tx.Delete(&state.row).Error
+	}
+	if !state.changed {
+		return nil
+	}
+	if state.wasEmpty && !state.receivedTerminal {
+		// All inserts precede this read, which can lock a missing key's gap on MySQL.
+		var terminal AlertObservationReceipt
+		found := lockForUpdate(tx).Select("id").Where("terminal_key = ?", AlertIdentity("terminal", state.row.ID)).Limit(1).Find(&terminal)
+		if found.Error != nil {
+			return found.Error
+		}
+		if found.RowsAffected > 0 {
+			return tx.Delete(&state.row).Error
+		}
+	}
+	return tx.Save(&state.row).Error
 }
 
 // VerifyAlertSourcePrefix proves every offered position has a durable receipt.
 // A total receipt count is insufficient: a newer event must not conceal an
 // older gap. Unique source positions make this indexed interval count exact.
 func VerifyAlertSourcePrefix(ctx context.Context, bootID string) error {
-	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var source AlertWorkerCheckpoint
-		if err := lockForUpdate(tx).First(&source, "id = ?", bootID).Error; err != nil {
+	db := DB.WithContext(ctx)
+	var source AlertWorkerCheckpoint
+	if err := db.Where("id = ?", bootID).Take(&source).Error; err != nil {
+		return err
+	}
+	updates := map[string]any{}
+	if source.OfferedSequence > source.AcceptedThrough {
+		positions := "boot_id = ? AND source_sequence > ? AND source_sequence <= ?"
+		recent := db.Model(&AlertObservation{}).Where(positions, bootID, source.AcceptedThrough, source.OfferedSequence).Where("namespace = ?", "health").Select("COUNT(*) AS n")
+		archived := db.Model(&AlertObservationReceipt{}).Where(positions, bootID, source.AcceptedThrough, source.OfferedSequence).Where("archived = ?", true).Select("COUNT(*) AS n")
+		var count int64
+		if err := db.Table("(? UNION ALL ?) AS positions", recent, archived).Select("SUM(n)").Scan(&count).Error; err != nil {
 			return err
 		}
-		through := source.AcceptedThrough
-		if source.OfferedSequence > through {
-			var count int64
-			if err := tx.Model(&AlertObservation{}).Where("boot_id = ? AND source_sequence > ? AND source_sequence <= ? AND namespace = ?", bootID, through, source.OfferedSequence, "health").Count(&count).Error; err != nil {
-				return err
-			}
-			if count == source.OfferedSequence-through {
-				through = source.OfferedSequence
-			}
+		if count != source.OfferedSequence-source.AcceptedThrough {
+			return nil
 		}
-		updates := map[string]any{"accepted_through": through}
-		if source.Healthy && through >= source.OfferedSequence {
-			updates["last_complete_at"] = source.CapturedAt
-		}
-		return tx.Model(&AlertWorkerCheckpoint{}).Where("id = ?", bootID).Updates(updates).Error
-	})
+		updates["accepted_through"] = source.OfferedSequence
+	}
+	if source.Healthy && source.CapturedAt != source.LastCompleteAt {
+		updates["last_complete_at"] = source.CapturedAt
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	// A newer heartbeat or verifier owns its own proof. A concurrent receipt
+	// only adds a position and cannot invalidate a proven prefix.
+	return db.Model(&AlertWorkerCheckpoint{}).
+		Where("id = ? AND COALESCE(accepted_through, 0) = ? AND COALESCE(offered_sequence, 0) = ?", bootID, source.AcceptedThrough, source.OfferedSequence).
+		Where("COALESCE(captured_at, 0) = ? AND COALESCE(healthy, ?) = ? AND COALESCE(last_complete_at, 0) = ?", source.CapturedAt, false, source.Healthy, source.LastCompleteAt).
+		Updates(updates).Error
 }
 
 func AlertRuleConfig(row AlertRule) (AlertRuleSpec, error) {
@@ -364,11 +451,26 @@ func InsertAlertEventOnce(tx *gorm.DB, event *AlertEvent) (bool, error) {
 		return false, err
 	}
 	var persisted AlertEvent
-	if err := tx.Select("id", "receipt_nonce").Where("dedup_key = ?", event.DedupKey).First(&persisted).Error; err != nil {
+	if err := lockForUpdate(tx).Select("id", "receipt_nonce").Where("dedup_key = ?", event.DedupKey).First(&persisted).Error; err != nil {
 		return false, err
 	}
 	event.ID = persisted.ID
-	return persisted.ReceiptNonce == event.ReceiptNonce, nil
+	if persisted.ReceiptNonce != event.ReceiptNonce {
+		return false, nil
+	}
+	var receipt AlertEventReceipt
+	found := lockForUpdate(tx).Where("dedup_key = ?", event.DedupKey).Limit(1).Find(&receipt)
+	if found.Error != nil {
+		return false, found.Error
+	}
+	if found.RowsAffected == 0 {
+		return true, nil
+	}
+	if err := tx.Delete(event).Error; err != nil {
+		return false, err
+	}
+	event.ID = receipt.EventID
+	return false, nil
 }
 
 // CheckChannelModelAvailability uses primary-database holds, so a stale Redis

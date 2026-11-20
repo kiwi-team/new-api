@@ -44,7 +44,7 @@ func measureTraffic(ctx context.Context, rule model.AlertRule, spec model.AlertR
 		// Recheck the exact accepted window inside this snapshot. The outer
 		// coverage check can use a newer wall-clock interval than the watermark.
 		var unsupported int64
-		if err := targetFacts(tx.Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND sample_class = ? AND occurred_at >= ? AND occurred_at < ?", "health", "unsupported", m.WindowStart, m.WindowEnd).Count(&unsupported).Error; err != nil {
+		if err := unsupportedFacts(tx, target, spec, m.WindowStart, m.WindowEnd, false).Count(&unsupported).Error; err != nil {
 			return err
 		}
 		if unsupported > 0 {
@@ -81,7 +81,7 @@ func measureTraffic(ctx context.Context, rule model.AlertRule, spec model.AlertR
 			m.Status, m.Reason = "warming_up", "baseline_window_coverage"
 			return nil
 		}
-		if err := targetFacts(tx.Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND sample_class = ? AND occurred_at >= ? AND occurred_at < ?", "health", "unsupported", m.Traffic.BaselineStart, m.Traffic.BaselineEnd).Count(&unsupported).Error; err != nil {
+		if err := unsupportedFacts(tx, target, spec, m.Traffic.BaselineStart, m.Traffic.BaselineEnd, false).Count(&unsupported).Error; err != nil {
 			return err
 		}
 		if unsupported > 0 {
@@ -116,12 +116,14 @@ func countTrafficStarts(ctx context.Context, db *gorm.DB, spec model.AlertRuleSp
 	if spec.Condition.LatencyBasis == "channel_attempt" {
 		layer = "channel_attempt"
 	}
-	query := targetFacts(db.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).
-		Where("namespace = ? AND layer = ? AND sample_class = ? AND user_id > 0", "health", layer, "production").
-		Where("started_at >= ? AND started_at < ? AND occurred_at >= ? AND occurred_at < ?", start, end, start, accepted)
-	if target.ConfigVersion != "" {
-		query = query.Where("config_version = ?", target.ConfigVersion)
-	}
+	query := model.AlertMetricRows(db.WithContext(ctx), func(q *gorm.DB) *gorm.DB {
+		q = targetFacts(q, target, spec).Where("namespace = ? AND layer = ? AND sample_class = ? AND user_id > 0 AND source_id <> ''", "health", layer, "production").
+			Where("started_at >= ? AND started_at < ? AND occurred_at >= ? AND occurred_at < ?", start, end, start, accepted)
+		if target.ConfigVersion != "" {
+			q = q.Where("config_version = ?", target.ConfigVersion)
+		}
+		return q
+	}, "source_id", false)
 	var count int64
 	err := query.Distinct("source_id").Count(&count).Error
 	return count, err

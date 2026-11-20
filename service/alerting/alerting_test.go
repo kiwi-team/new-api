@@ -42,7 +42,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Representative released primary tables from v1.0.0-rc.47. The release uses
+// Representative persisted user/token schemas shared by v1.0.0-rc.47 and v1.0.0-rc.51. The release uses
 // the same GORM/driver versions as this branch; no release binary is executed.
 type alertReleasedUser struct {
 	Id                   int                        `json:"id"`
@@ -182,6 +182,7 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			for range 2 {
 				require.NoError(t, model.MigrateAlertModels(db))
 			}
+			require.True(t, db.Migrator().HasIndex(&model.AlertOutbox{}, "idx_alert_outbox_pending_created"))
 			require.NoError(t, model.InitializeAlertNamespace(context.Background()))
 			now := time.Now()
 			require.NoError(t, db.Create(&model.SystemInstance{NodeName: "alert-test-node", Info: `{"runtime":{"alerting_boot_id":"alert-test-boot"}}`, StartedAt: now.Add(-time.Minute).Unix(), LastSeenAt: now.Unix()}).Error)
@@ -199,6 +200,7 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Logf("%s version: %s", dialect, version)
 			t.Run("immutable lifecycle and terminal tombstones", testAlertLifecycle)
 			t.Run("source prefix rejects future receipts masking gaps", testAlertSourcePrefix)
+			t.Run("concurrent producer batches and superseded heartbeats", testAlertCheckpointWrites)
 			t.Run("ownership and incident delivery", testAlertIncident)
 			t.Run("withdrawn notification authorization", testAlertNotificationRevocation)
 			t.Run("low traffic and source loss", testAlertInflight)
@@ -216,7 +218,6 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Run("batch migration is retryable and preserves legacy delivery", testAlertBatchMigration)
 			t.Run("legacy baseline shadow cutover and rollback", testAlertMigration)
 			t.Run("account milestones retain baseline and refund high water", testAlertUserSpendMigration)
-			t.Run("daily report cutover retains accepted dates", testAlertUserReportMigration)
 			t.Run("natural Key migration schedules an unambiguous boundary", testAlertKeyPeriodMigration)
 			t.Run("legacy event adapters retain checkpoints and a single executor", testAlertLegacyNoticeMigration)
 			t.Run("channel balance migration requires its legacy destination", testAlertChannelArrearsMigration)
@@ -238,6 +239,8 @@ func TestAlertingDatabaseMatrix(t *testing.T) {
 			t.Run("traffic baselines and zero volume", testAlertTrafficBaselines)
 			t.Run("presentation edits retain approved actions", testAlertActionPresentationEdits)
 			t.Run("root selects targets across accounts", testAlertRootTargets)
+			t.Run("log retention preserves historical metrics and replay identities", testAlertLogRetention)
+			t.Run("daily report cutover retains accepted dates", testAlertUserReportMigration)
 		})
 	}
 }
@@ -446,6 +449,93 @@ func testAlertSourcePrefix(t *testing.T) {
 	assert.Equal(t, "partial", status)
 	assert.Equal(t, "producer_not_covered", reason)
 	require.NoError(t, model.DB.Model(&model.SystemInstance{}).Where("node_name = ?", "alert-test-node").Update("info", `{"runtime":{"alerting_boot_id":"alert-test-boot"}}`).Error)
+}
+
+func testAlertCheckpointWrites(t *testing.T) {
+	ctx := context.Background()
+	db := model.DB.WithContext(ctx)
+	now := time.Now().UnixMilli()
+	makeFact := func(boot string, seq int64) model.AlertObservation {
+		return model.AlertObservation{ID: model.AlertIdentity("checkpoint-fact", boot, seq), BootID: boot, SourceSequence: seq,
+			Namespace: "health", SourceID: model.AlertIdentity("checkpoint-lifecycle", boot), Kind: "progress",
+			Sequence: seq, Layer: "request", StartedAt: now, OccurredAt: now}
+	}
+	a, b := "batch-producer-a", "batch-producer-b"
+	first, second := makeFact(a, 1), makeFact(a, 2)
+	other := makeFact(b, 1)
+	second.Kind = "finished"
+	start, results := make(chan struct{}), make(chan error, 2)
+	for _, batch := range [][]model.AlertObservation{{first, other, second}, {second, other, first, first}} {
+		go func() {
+			<-start
+			results <- db.Transaction(func(tx *gorm.DB) error { return model.AcceptAlertObservationsTx(tx, batch) })
+		}()
+	}
+	close(start)
+	require.NoError(t, errors.Join(<-results, <-results))
+	var sources []model.AlertWorkerCheckpoint
+	require.NoError(t, db.Where("id IN ?", []string{a, b}).Order("id").Find(&sources).Error)
+	require.Len(t, sources, 2)
+	assert.EqualValues(t, 2, sources[0].AcceptedCount)
+	assert.EqualValues(t, 1, sources[1].AcceptedCount)
+	var lifecycle model.AlertLifecycle
+	require.NoError(t, db.Where("id = ?", first.SourceID).Take(&lifecycle).Error)
+	assert.Equal(t, now, lifecycle.FinishedAt)
+
+	if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		// A duplicate can finish on a second connection even while a heartbeat
+		// holds the producer row. SQLite serializes every writer.
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", a).Update("captured_at", now).Error; err != nil {
+				return err
+			}
+			replay, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			return model.AcceptAlertObservation(replay, first)
+		}))
+	}
+
+	rollback := errors.New("roll back accepted batch")
+	third := makeFact(a, 3)
+	require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+		if err := model.AcceptAlertObservationsTx(tx, []model.AlertObservation{third}); err != nil {
+			return err
+		}
+		return rollback
+	}), rollback)
+	var count int64
+	require.NoError(t, db.Model(&model.AlertObservation{}).Where("id = ?", third.ID).Count(&count).Error)
+	assert.Zero(t, count)
+
+	// Advance the heartbeat on a separate connection immediately after verification
+	// reads its snapshot. A proof for the first two positions cannot certify three.
+	require.NoError(t, db.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", a).
+		Updates(map[string]any{"offered_sequence": 2, "captured_at": now, "healthy": true, "accepted_through": nil, "last_complete_at": nil}).Error)
+	var superseded bool
+	const callback = "test:supersede_alert_heartbeat"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+		source, ok := tx.Statement.Dest.(*model.AlertWorkerCheckpoint)
+		if !ok || source.ID != a || superseded {
+			return
+		}
+		superseded = true
+		tx.AddError(db.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", a).
+			Updates(map[string]any{"offered_sequence": 3, "captured_at": now + 1}).Error)
+	}))
+	t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove(callback)) })
+	require.NoError(t, model.VerifyAlertSourcePrefix(ctx, a))
+	require.True(t, superseded)
+	var source model.AlertWorkerCheckpoint
+	require.NoError(t, db.Where("id = ?", a).Take(&source).Error)
+	assert.EqualValues(t, 2, source.AcceptedCount)
+	assert.Zero(t, source.AcceptedThrough)
+	assert.Zero(t, source.LastCompleteAt)
+	require.NoError(t, model.AcceptAlertObservation(ctx, third))
+	require.NoError(t, model.VerifyAlertSourcePrefix(ctx, a))
+	require.NoError(t, db.First(&source).Error)
+	assert.EqualValues(t, 3, source.AcceptedCount)
+	assert.EqualValues(t, 3, source.AcceptedThrough)
+	assert.Equal(t, now+1, source.LastCompleteAt)
 }
 
 func testAlertNotificationRevocation(t *testing.T) {
@@ -2174,7 +2264,7 @@ func testAlertReports(t *testing.T) {
 	for range 2 {
 		require.NoError(t, engine.EvaluateReports(ctx, rule, spec, target, now))
 	}
-	require.NoError(t, model.DB.Where("rule_id = ?", rule.ID).Find(&events).Error)
+	require.NoError(t, model.DB.Where("rule_id = ?", rule.ID).Order("id").Find(&events).Error)
 	require.Len(t, events, 3, "exactly one complete revision")
 	assert.Equal(t, "report_revision", events[2].Kind)
 	for i, name := range []string{"=SUM(1,1)", "Second business key"} {
@@ -2666,8 +2756,27 @@ func testAlertUserReportMigration(t *testing.T) {
 	require.NoError(t, model.DB.First(&rule, migration.RuleID).Error)
 	clock(future)
 	require.NoError(t, engine.EvaluateReports(ctx, rule, spec, targets[0], future))
-	require.NoError(t, model.DB.Model(&model.AlertJob{}).Where("rule_id = ? AND status = ?", rule.ID, "pending").Update("available_at", time.Now().Add(-time.Second).UnixMilli()).Error)
-	require.NoError(t, engine.RunJobs(ctx, "notify", time.Now()))
+	var delivery model.AlertJob
+	require.NoError(t, model.DB.Where("rule_id = ? AND status = ?", rule.ID, "pending").Take(&delivery).Error)
+	require.NoError(t, model.DB.Model(&delivery).Update("available_at", time.Now().Add(-time.Second).UnixMilli()).Error)
+	// Other fixtures share this queue. One worker batch can finish before the report is claimed.
+	deliveryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	for delivery.Status == "pending" {
+		require.NoError(t, engine.RunJobs(deliveryCtx, "notify", time.Now()))
+		require.NoError(t, model.DB.WithContext(deliveryCtx).Take(&delivery).Error)
+	}
+	require.Equal(t, "succeeded", delivery.Status)
+	// Expire the delivered report before switching back to the old executor.
+	for {
+		more, err := model.CleanAlertLogBatch(ctx, future.AddDate(0, 0, 4))
+		require.NoError(t, err)
+		if !more {
+			break
+		}
+	}
+	require.NoError(t, model.DB.Model(&model.AlertEvent{}).Where("rule_id = ? AND kind = ?", rule.ID, "report").Count(&count).Error)
+	require.Zero(t, count)
 	require.NoError(t, alerting.SwitchLegacyUserReport(ctx, root, migration.ID, 4, "rollback", snapshot.SnapshotHash, true, rule.Revision, future))
 	snapshot, err = alerting.LegacyUserReportSnapshot(ctx, 8)
 	require.NoError(t, err)
@@ -3957,4 +4066,163 @@ func testAlertTrafficBaselines(t *testing.T) {
 	unknown, err := alerting.Measure(ctx, *emptyRow, absolute, emptyTargets[0], now)
 	require.NoError(t, err)
 	assert.NotEqual(t, "complete", unknown.Status, "a telemetry outage cannot be treated as zero traffic")
+}
+
+func testAlertLogRetention(t *testing.T) {
+	t.Setenv("ALERTING_LOG_RETENTION_DAYS", "")
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Millisecond)
+	cutoff := now.Add(-72 * time.Hour).UnixMilli()
+	old := cutoff - 1
+	boot := model.AlertIdentity("retention-boot")
+	life := model.AlertIdentity("retention-life")
+	owner := 76001
+	require.NoError(t, model.DB.Create(&model.User{Id: owner, Username: "retention-test", AffCode: "retention-test", Status: common.UserStatusEnabled}).Error)
+	start := model.AlertObservation{ID: model.AlertIdentity("retention-start"), Namespace: "health", Layer: "request", Kind: "started", RequestID: "retention-diagnostic", UserID: owner, SourceID: life, BootID: boot, StartedAt: old - 1, OccurredAt: old - 1, SourceSequence: 1, Sequence: 1, SampleClass: "production"}
+	duration := int64(317)
+	finish := start
+	finish.ID, finish.Kind, finish.Outcome, finish.DurationMS = model.AlertIdentity("retention-finish"), "finished", "success", &duration
+	finish.Sequence, finish.SourceSequence, finish.OccurredAt = 2, 2, old
+	inflight := start
+	inflight.ID, inflight.SourceID, inflight.SourceSequence = model.AlertIdentity("retention-inflight"), model.AlertIdentity("inflight-life"), 4
+	usage := model.AlertObservation{ID: model.AlertIdentity("retention-usage"), Namespace: "usage", Kind: "settlement", SourceID: "retention-charge", UserID: owner, TokenID: 76, OccurredAt: old, Quota: 100, RequestCount: 1, InputTokens: 23, OutputTokens: 9, CachedTokens: 7, CacheWrite5mTokens: 3, CacheWrite1hTokens: 2}
+	refund := usage
+	refund.ID, refund.SourceID, refund.Quota, refund.RequestCount = model.AlertIdentity("retention-refund"), "retention-refund", -25, 0
+	refund.InputTokens, refund.OutputTokens, refund.CachedTokens, refund.CacheWrite5mTokens, refund.CacheWrite1hTokens = 0, 0, 0, 0, 0
+	boundary := usage
+	boundary.ID, boundary.SourceID, boundary.OccurredAt = model.AlertIdentity("retention-boundary"), "retention-boundary", cutoff
+	for _, f := range []model.AlertObservation{start, finish, inflight, usage, refund, boundary} {
+		require.NoError(t, model.AcceptAlertObservation(ctx, f))
+	}
+
+	event := model.AlertEvent{DedupKey: model.AlertIdentity("retention-event"), Kind: "test", OwnerUserID: owner, Summary: "old diagnostic", CreatedAt: old}
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		created, err := model.InsertAlertEventOnce(tx, &event)
+		assert.True(t, created)
+		return err
+	}))
+	done := model.AlertJob{DedupKey: model.AlertIdentity("retention-job"), EventID: event.ID, Status: "succeeded", Kind: "notify", CreatedAt: old, UpdatedAt: old}
+	require.NoError(t, model.DB.Create(&done).Error)
+	attempt := model.AlertJobAttempt{JobID: done.ID, CreatedAt: old}
+	require.NoError(t, model.DB.Create(&attempt).Error)
+	pendingEvent := model.AlertEvent{DedupKey: model.AlertIdentity("retention-active-event"), CreatedAt: old}
+	require.NoError(t, model.DB.Create(&pendingEvent).Error)
+	pending := model.AlertJob{EventID: pendingEvent.ID, Kind: "notify", DedupKey: model.AlertIdentity("retention-pending"), Status: "pending", CreatedAt: old, UpdatedAt: old}
+	require.NoError(t, model.DB.Create(&pending).Error)
+	audit := model.AlertAudit{Operation: "retention-test", CreatedAt: old}
+	require.NoError(t, model.DB.Create(&audit).Error)
+	dead := model.AlertDeadLetter{ID: model.AlertIdentity("retention-dead"), CreatedAt: old}
+	require.NoError(t, model.DB.Create(&dead).Error)
+
+	// Existing installations have raw observations without a compact receipt.
+	require.NoError(t, model.DB.Where("id = ?", usage.ID).Delete(&model.AlertObservationReceipt{}).Error)
+	t.Setenv("ALERTING_LOG_RETENTION_DAYS", "4")
+	_, err := model.CleanAlertLogBatch(ctx, now)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.First(&model.AlertObservation{}, "id = ?", usage.ID).Error)
+	t.Setenv("ALERTING_LOG_RETENTION_DAYS", "") // exercise the default cutoff
+
+	for range 2 {
+		for {
+			more, err := model.CleanAlertLogBatch(ctx, now)
+			require.NoError(t, err)
+			if !more {
+				break
+			}
+		}
+	}
+	for _, row := range []any{&attempt, &done, &event, &audit, &dead} {
+		assert.ErrorIs(t, model.DB.First(row).Error, gorm.ErrRecordNotFound)
+	}
+	require.NoError(t, model.DB.First(&pending).Error)
+	require.NoError(t, model.DB.First(&pendingEvent).Error)
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		duplicate := model.AlertEvent{DedupKey: event.DedupKey}
+		created, err := model.InsertAlertEventOnce(tx, &duplicate)
+		assert.False(t, created)
+		assert.Equal(t, event.ID, duplicate.ID)
+		return err
+	}))
+	var rows int64
+	require.NoError(t, model.DB.Model(&model.AlertObservation{}).Where("user_id = ?", owner).Count(&rows).Error)
+	assert.EqualValues(t, 1, rows)
+	require.NoError(t, model.DB.First(&model.AlertObservation{}, "id = ?", boundary.ID).Error)
+	require.NoError(t, model.DB.First(&model.AlertLifecycle{}, "id = ?", inflight.SourceID).Error)
+	assert.ErrorIs(t, model.DB.First(&model.AlertOutbox{}, "id = ?", model.AlertIdentity("projection", start.ID)).Error, gorm.ErrRecordNotFound)
+	for _, f := range []model.AlertObservation{usage, start, finish} {
+		require.NoError(t, model.AcceptAlertObservation(ctx, f))
+	}
+	conflict := usage
+	conflict.Quota++
+	assert.ErrorIs(t, model.AcceptAlertObservation(ctx, conflict), model.ErrAlertObservationConflict)
+	conflict = finish
+	conflict.ID = model.AlertIdentity("retention-second-terminal")
+	conflict.SourceSequence = 5
+	assert.ErrorIs(t, model.AcceptAlertObservation(ctx, conflict), model.ErrAlertObservationConflict)
+	conflict = start
+	conflict.SourceID, conflict.ID = model.AlertIdentity("unrelated-life"), model.AlertIdentity("duplicate-producer-position")
+	assert.ErrorIs(t, model.AcceptAlertObservation(ctx, conflict), model.ErrAlertObservationConflict)
+
+	require.NoError(t, model.DB.Model(&model.AlertWorkerCheckpoint{}).Where("id = ?", boot).Update("offered_sequence", 4).Error)
+	require.NoError(t, model.VerifyAlertSourcePrefix(ctx, boot))
+	var checkpoint model.AlertWorkerCheckpoint
+	require.NoError(t, model.DB.First(&checkpoint, "id = ?", boot).Error)
+	assert.Zero(t, checkpoint.AcceptedThrough)
+	late := start
+	late.ID, late.Kind, late.SourceSequence, late.Sequence = model.AlertIdentity("retention-late"), "metadata", 3, 3
+	require.NoError(t, model.AcceptAlertObservation(ctx, late))
+	require.NoError(t, model.VerifyAlertSourcePrefix(ctx, boot))
+	require.NoError(t, model.DB.First(&checkpoint).Error)
+	assert.EqualValues(t, 4, checkpoint.AcceptedThrough)
+	assert.ErrorIs(t, model.DB.First(&model.AlertLifecycle{}, "id = ?", life).Error, gorm.ErrRecordNotFound)
+
+	target := alerting.MonitoredTarget{Type: "account", ID: owner}
+	rule := model.AlertRule{OwnerUserID: owner, EffectiveAt: old - 10000}
+	spec := model.AlertRuleSpec{Scope: model.AlertScope{Type: "account"}, Condition: model.AlertCondition{Metric: "spend_net", Window: model.AlertWindow{Type: "cumulative", Timezone: "UTC"}}}
+	report, err := alerting.MeasureReport(ctx, rule, spec, target, old, cutoff+1, now)
+	require.NoError(t, err)
+	require.EqualValues(t, 175, report.Report.Totals.Quota)
+	assert.EqualValues(t, 2, report.Report.Totals.Requests)
+	assert.EqualValues(t, 46, report.Report.Totals.InputTokens)
+	assert.EqualValues(t, 18, report.Report.Totals.OutputTokens)
+	assert.EqualValues(t, 14, report.Report.Totals.CachedTokens)
+	assert.EqualValues(t, 6, report.Report.Totals.CacheWrite5mTokens)
+	assert.EqualValues(t, 4, report.Report.Totals.CacheWrite1hTokens)
+	report, err = alerting.MeasureReport(ctx, rule, spec, target, cutoff, cutoff+1, now)
+	require.NoError(t, err)
+	assert.EqualValues(t, 100, report.Report.Totals.Quota)
+
+	// Inspect past measurements through the production replay path, including
+	// exact terminal latency and distinct starts across archived/late metadata.
+	spec.Condition.Window = model.AlertWindow{Type: "rolling", DurationSeconds: 60, Timezone: "UTC"}
+	spec.Condition.Operator = "gte"
+	spec.Condition.Metric, spec.Condition.Aggregation, spec.Condition.ThresholdMS = "duration_ms", "p95", 1
+	points, err := alerting.ReplayRule(ctx, rule, spec, old-1000, cutoff+1, 1, now)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.EqualValues(t, duration, points[0].Measurement.Value)
+	assert.Empty(t, points[0].Measurement.RequestIDs)
+	spec.Condition.Metric, spec.Condition.ThresholdUSD = "spend_net", "1"
+	points, err = alerting.ReplayRule(ctx, rule, spec, old-1000, cutoff+1, 1, now)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.EqualValues(t, 175, points[0].Measurement.Value)
+	assert.EqualValues(t, 3, points[0].Measurement.Samples)
+	spec.Condition.Metric, spec.Condition.ThresholdCount = "request_started_count", 1
+	points, err = alerting.ReplayRule(ctx, rule, spec, old-1000, cutoff+1, 1, now)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.EqualValues(t, 2, points[0].Measurement.Value)
+
+	checkAt := now.Add(48 * time.Hour)
+	instance := model.SystemInstance{NodeName: "retention-rollout", Info: "{}", StartedAt: checkAt.Unix(), LastSeenAt: checkAt.Unix()}
+	require.NoError(t, model.DB.Create(&instance).Error)
+	ready, err := model.AlertLogReadersReady(ctx, checkAt)
+	require.NoError(t, err)
+	assert.False(t, ready)
+	require.NoError(t, model.DB.Model(&instance).Update("info", `{"runtime":{"alert_metric_history":true}}`).Error)
+	ready, err = model.AlertLogReadersReady(ctx, checkAt)
+	require.NoError(t, err)
+	assert.True(t, ready)
+	require.NoError(t, model.DB.Delete(&instance).Error)
 }

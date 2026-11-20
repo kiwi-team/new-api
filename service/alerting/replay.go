@@ -81,7 +81,7 @@ func ReplayRule(ctx context.Context, rule model.AlertRule, spec model.AlertRuleS
 				m.Status, m.Reason = sourceStatus, sourceReason
 			}
 			var unsupported int64
-			if err := targetFacts(model.DB.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND sample_class = ? AND occurred_at >= ? AND occurred_at < ?", "health", "unsupported", windowStart, windowEnd).Count(&unsupported).Error; err != nil {
+			if err := unsupportedFacts(model.DB.WithContext(ctx), target, spec, windowStart, windowEnd, false).Count(&unsupported).Error; err != nil {
 				return nil, err
 			}
 			if unsupported > 0 {

@@ -178,7 +178,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		if info.ChannelType == constant.ChannelTypeAnthropic {
 			//common.PrintJson("Anthropic upstream request", common.RawMessage(jsonData))
-			common.WriteJson("claude-request-1118", common.RawMessage(jsonData))
+			//common.WriteJson("claude-request-1118", common.RawMessage(jsonData))
 		}
 
 		var beforeFileOverride []byte

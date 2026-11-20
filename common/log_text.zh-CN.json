@@ -341,6 +341,7 @@
   "admin subscription creation": "管理员创建订阅",
   "admin subscription deletion": "管理员删除订阅",
   "admin subscription update": "管理员修改订阅",
+  "alerting log cleanup failed: %s": "告警日志清理失败：%s",
   "api_version not found, using default: %s": "未找到 api_version，使用默认值: %s",
   "audit actor role unavailable (request_id=%s, actor_role=%d)": "无法识别审计日志的操作者角色 (request_id=%s, actor_role=%d)",
   "audit log write failed (request_id=%s): %v": "审计日志写入失败 (request_id=%s): %v",

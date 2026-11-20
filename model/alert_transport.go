@@ -303,8 +303,19 @@ func PublishAlertOutbox(ctx context.Context, client *redis.Client) error {
 	for _, row := range rows {
 		if row.Kind == "projection" {
 			var fact AlertObservation
-			if err := DB.WithContext(ctx).First(&fact, "id = ?", row.Reference).Error; err != nil {
-				return err
+			found := DB.WithContext(ctx).Where("id = ?", row.Reference).Limit(1).Find(&fact)
+			if found.Error != nil {
+				return found.Error
+			}
+			if found.RowsAffected == 0 { // retention can retire the fact and its hint after this batch is read
+				var remaining int64
+				if err := DB.WithContext(ctx).Model(&AlertOutbox{}).Where("id = ?", row.ID).Count(&remaining).Error; err != nil {
+					return err
+				}
+				if remaining != 0 {
+					return gorm.ErrRecordNotFound
+				}
+				continue
 			}
 			if err := publishAlertMetricBucket(ctx, client, fact); err != nil {
 				return err
@@ -338,7 +349,17 @@ func PublishAlertOutbox(ctx context.Context, client *redis.Client) error {
 				return err
 			}
 			if err = DB.WithContext(ctx).First(&job, id).Error; err != nil {
-				return err
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				var remaining int64
+				if err = DB.WithContext(ctx).Model(&AlertOutbox{}).Where("id = ?", row.ID).Count(&remaining).Error; err != nil {
+					return err
+				}
+				if remaining != 0 {
+					return gorm.ErrRecordNotFound
+				}
+				continue
 			}
 			if job.Status != "pending" && job.Status != "retry_wait" {
 				if err = DB.WithContext(ctx).Model(&row).Update("published_at", time.Now().UnixMilli()).Error; err != nil {

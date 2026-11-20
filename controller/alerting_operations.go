@@ -210,6 +210,9 @@ func RetryAlertJob(c *gin.Context) {
 	}
 	now := time.Now().UnixMilli()
 	err := model.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := model.LockAlertEvent(tx, job.EventID); err != nil {
+			return err
+		}
 		if job.Kind == "notify" && (target.ID != job.TargetID || target.Revision != job.TargetRevision) {
 			// Explicitly retarget into a new delivery identity. Keep the original
 			// failure and its attempts immutable for investigation.

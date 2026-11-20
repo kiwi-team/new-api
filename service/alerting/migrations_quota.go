@@ -74,7 +74,7 @@ func legacyUserSpendSnapshot(tx *gorm.DB, owner int) (LegacyAccountPreview, stri
 	if err := tx.Model(&model.QuotaData{}).Where("user_id = ? AND created_at >= ?", owner, state.WindowStart).Select("COALESCE(SUM(quota),0)").Scan(&window).Error; err != nil {
 		return result, "", err
 	}
-	if err := tx.Model(&model.AlertObservation{}).Where("namespace = ? AND user_id = ?", "usage", owner).Select("COALESCE(SUM(quota),0)").Scan(&accepted).Error; err != nil {
+	if err := acceptedAlertQuota(tx, MonitoredTarget{Type: "account", ID: owner}, 0, &accepted); err != nil {
 		return result, "", err
 	}
 	notifiedValue := decimal.NewFromInt(state.MilestoneUSD).Mul(decimal.NewFromInt(int64(common.QuotaPerUnit)))
@@ -322,7 +322,7 @@ func SwitchLegacyUserSpend(ctx context.Context, actor Actor, id string, expected
 				}
 				accepted := snapshot.AcceptedUsage
 				if current.MetricStartAt > 0 {
-					if err := tx.Model(&model.AlertObservation{}).Where("namespace = ? AND user_id = ? AND occurred_at >= ?", "usage", rule.OwnerUserID, current.MetricStartAt).Select("COALESCE(SUM(quota),0)").Scan(&accepted).Error; err != nil {
+					if err := acceptedAlertQuota(tx, MonitoredTarget{Type: "account", ID: rule.OwnerUserID}, current.MetricStartAt, &accepted); err != nil {
 						return err
 					}
 				}
@@ -503,7 +503,18 @@ func SwitchLegacyUserReport(ctx context.Context, actor Actor, id string, expecte
 				for _, receipt := range receipts {
 					accepted[receipt.EventID] = true
 				}
-				last := snapshot.LastReportDay
+				var archived struct{ Earliest, Latest, WindowEnd int64 }
+				if err := tx.Model(&model.AlertEventReceipt{}).Where("report_rule_id = ? AND report_created_at >= ?", rule.ID, current.CutoverAt).
+					Select("COALESCE(MIN(report_start),0) AS earliest, COALESCE(MAX(report_start),0) AS latest, COALESCE(MAX(report_end),0) AS window_end").Scan(&archived).Error; err != nil {
+					return err
+				}
+				if archived.Earliest < 0 {
+					return ErrInvalid
+				}
+				if archived.WindowEnd > now.UnixMilli() {
+					return &BlockedAction{Code: "clock_skew"}
+				}
+				last := max(snapshot.LastReportDay, archived.Latest/1000)
 				for _, event := range events {
 					if !accepted[event.ID] {
 						continue

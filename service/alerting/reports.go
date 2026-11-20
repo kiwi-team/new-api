@@ -142,7 +142,7 @@ func MeasureReport(ctx context.Context, rule model.AlertRule, spec model.AlertRu
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	err = model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := targetFacts(tx.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND occurred_at >= ? AND occurred_at < ?", "usage", start, end)
+		query := usageFacts(tx.WithContext(ctx), spec, target, start, end, "quota, token_id, request_count, input_tokens, output_tokens, cached_tokens, cache_write5m_tokens, cache_write1h_tokens")
 		var rows []ReportUsage
 		columns := `COALESCE(SUM(quota),0) AS quota,COALESCE(SUM(request_count),0) AS requests,COALESCE(SUM(input_tokens),0) AS input_tokens,COALESCE(SUM(output_tokens),0) AS output_tokens,COALESCE(SUM(cached_tokens),0) AS cached_tokens,COALESCE(SUM(cache_write5m_tokens),0) AS cache_write5m_tokens,COALESCE(SUM(cache_write1h_tokens),0) AS cache_write1h_tokens`
 		// SQL checks aggregate overflow during int64 scanning. Totals include every

@@ -33,7 +33,7 @@ func alertMetricBucket(observation AlertObservation) (AlertMetricBucket, bool) {
 	return bucket, true
 }
 
-func prepareAlertMetricBuckets(tx *gorm.DB, observations []AlertObservation) (map[string]bool, error) {
+func prepareAlertMetricBuckets(tx *gorm.DB, observations []AlertObservation) error {
 	rows := map[string]AlertMetricBucket{}
 	for _, observation := range observations {
 		if row, ok := alertMetricBucket(observation); ok {
@@ -45,18 +45,16 @@ func prepareAlertMetricBuckets(tx *gorm.DB, observations []AlertObservation) (ma
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	prepared := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		row := rows[id]
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-			return nil, err
+			return err
 		}
 		if err := lockForUpdate(tx).Select("id").First(&row, "id = ?", id).Error; err != nil {
-			return nil, err
+			return err
 		}
-		prepared[id] = true
 	}
-	return prepared, nil
+	return nil
 }
 
 // AlertMetricRevision reads small minute/shard rows, independent of the number

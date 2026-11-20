@@ -13,8 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func metricFacts(db *gorm.DB, ctx context.Context, spec model.AlertRuleSpec, target MonitoredTarget, start, end int64) *gorm.DB {
-	query := targetFacts(db.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("occurred_at >= ? AND occurred_at < ?", start, end)
+func terminalFacts(db *gorm.DB, spec model.AlertRuleSpec, target MonitoredTarget, start, end int64) *gorm.DB {
+	query := targetFacts(db, target, spec).Where("occurred_at >= ? AND occurred_at < ?", start, end)
 	if target.ConfigVersion != "" {
 		query = query.Where("config_version = ?", target.ConfigVersion)
 	}
@@ -23,6 +23,12 @@ func metricFacts(db *gorm.DB, ctx context.Context, spec model.AlertRuleSpec, tar
 		layer = "channel_attempt"
 	}
 	return query.Where("namespace = ? AND kind = ? AND layer = ? AND sample_class = ?", "health", "finished", layer, "production")
+}
+
+func metricFacts(db *gorm.DB, ctx context.Context, spec model.AlertRuleSpec, target MonitoredTarget, start, end int64) *gorm.DB {
+	return model.AlertMetricRows(db.WithContext(ctx), func(q *gorm.DB) *gorm.DB {
+		return terminalFacts(q, spec, target, start, end)
+	}, "id, occurred_at, outcome, duration_ms, ttft_ms, attribution_covered", false)
 }
 
 // SQL aggregates and ordered rank lookups keep exact millisecond percentiles
@@ -71,14 +77,12 @@ func measureSQLWindow(db *gorm.DB, ctx context.Context, rule model.AlertRule, sp
 			Value   int64
 			Samples int64
 		}
-		query := targetFacts(db.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND occurred_at >= ? AND occurred_at < ?", "usage", m.WindowStart, m.WindowEnd)
+		start, end := m.WindowStart, m.WindowEnd
 		if migration.RuleID > 0 {
-			query = targetFacts(db.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("namespace = ?", "usage")
-			if migration.MetricStartAt > 0 {
-				query = query.Where("occurred_at >= ?", migration.MetricStartAt)
-			}
+			start, end = migration.MetricStartAt, 0
 		}
-		if err := query.Select("COALESCE(SUM(" + usageColumn + "),0) AS value, COUNT(*) AS samples").Scan(&totals).Error; err != nil {
+		query := usageFacts(db.WithContext(ctx), spec, target, start, end, usageColumn)
+		if err := query.Select("COALESCE(SUM(" + usageColumn + "),0) AS value, COALESCE(SUM(samples),0) AS samples").Scan(&totals).Error; err != nil {
 			return m, err
 		}
 		m.Value, m.Samples = totals.Value, totals.Samples
@@ -184,7 +188,7 @@ COALESCE(SUM(CASE WHEN attribution_covered = ? THEN 1 ELSE 0 END),0) AS uncovere
 			column, threshold = "ttft_ms", c.ThresholdMS
 		}
 		for _, kind := range []string{"slow", "normal"} {
-			query := metricFacts(db, ctx, spec, target, m.WindowStart, m.WindowEnd).Where("request_id <> ?", "")
+			query := terminalFacts(db.WithContext(ctx).Model(&model.AlertObservation{}), spec, target, m.WindowStart, m.WindowEnd).Where("request_id <> ?", "")
 			if kind == "slow" {
 				if threshold > 0 {
 					query = query.Where(column+" > ?", threshold)
@@ -232,4 +236,33 @@ COALESCE(SUM(CASE WHEN attribution_covered = ? THEN 1 ELSE 0 END),0) AS uncovere
 		m.Status, m.Reason = "warming_up", "window_coverage"
 	}
 	return m, nil
+}
+
+// The same dimensions and exact event-time boundaries apply to live samples
+// and compacted measurements, including a migration starting mid-period.
+func usageFacts(db *gorm.DB, spec model.AlertRuleSpec, target MonitoredTarget, start, end int64, columns string) *gorm.DB {
+	return model.AlertMetricRows(db, func(q *gorm.DB) *gorm.DB {
+		q = targetFacts(q, target, spec).Where("namespace = ?", "usage")
+		if start > 0 {
+			q = q.Where("occurred_at >= ?", start)
+		}
+		if end > 0 {
+			q = q.Where("occurred_at < ?", end)
+		}
+		return q
+	}, columns, true)
+}
+
+func acceptedAlertQuota(db *gorm.DB, target MonitoredTarget, start int64, amount *int64) error {
+	return usageFacts(db, model.AlertRuleSpec{}, target, start, 0, "quota").Select("COALESCE(SUM(quota),0)").Scan(amount).Error
+}
+
+func unsupportedFacts(db *gorm.DB, target MonitoredTarget, spec model.AlertRuleSpec, start, end int64, inclusive bool) *gorm.DB {
+	return model.AlertMetricRows(db, func(q *gorm.DB) *gorm.DB {
+		q = targetFacts(q, target, spec).Where("namespace = ? AND sample_class = ? AND occurred_at >= ?", "health", "unsupported", start)
+		if inclusive {
+			return q.Where("occurred_at <= ?", end)
+		}
+		return q.Where("occurred_at < ?", end)
+	}, "id", false)
 }

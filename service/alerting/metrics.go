@@ -314,7 +314,7 @@ func Measure(ctx context.Context, rule model.AlertRule, spec model.AlertRuleSpec
 	// An uncorrelated operation is missing coverage, not a failed or successful
 	// request. Preserve the evidence and withhold automated conclusions.
 	var unverified int64
-	if err := targetFacts(model.DB.WithContext(ctx).Model(&model.AlertObservation{}), target, spec).Where("namespace = ? AND sample_class = ? AND occurred_at >= ? AND occurred_at <= ?", "health", "unsupported", start, end).Count(&unverified).Error; err != nil {
+	if err := unsupportedFacts(model.DB.WithContext(ctx), target, spec, start, end, true).Count(&unverified).Error; err != nil {
 		return m, err
 	}
 	if unverified > 0 {
@@ -485,7 +485,11 @@ func configuredAlertModels(ctx context.Context, channel model.Channel) ([]string
 	}
 	if wildcard {
 		var observed []string
-		if err := model.DB.WithContext(ctx).Model(&model.AlertObservation{}).Where("namespace = ? AND kind = ? AND outcome = ? AND channel_id = ? AND occurred_at >= ?", "health", "finished", "success", channel.Id, time.Now().Add(-35*24*time.Hour).UnixMilli()).Distinct("model_key").Limit(101).Pluck("model_key", &observed).Error; err != nil {
+		cutoff := time.Now().Add(-35 * 24 * time.Hour).UnixMilli()
+		query := model.AlertMetricRows(model.DB.WithContext(ctx), func(q *gorm.DB) *gorm.DB {
+			return q.Where("namespace = ? AND kind = ? AND outcome = ? AND channel_id = ? AND occurred_at >= ?", "health", "finished", "success", channel.Id, cutoff)
+		}, "model_key", false)
+		if err := query.Distinct("model_key").Limit(101).Pluck("model_key", &observed).Error; err != nil {
 			return nil, err
 		}
 		if len(observed) > 100 {
